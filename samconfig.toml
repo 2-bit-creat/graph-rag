@@ -1,0 +1,23 @@
+version = 0.1
+
+[default.global.parameters]
+stack_name = "graph-rag-backend"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.deploy.parameters]
+stack_name = "graph-rag-backend"
+region = "ap-northeast-2"
+profile = "my-ai-app"
+resolve_s3 = true
+resolve_image_repos = true
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+# Secrets are passed at deploy time; do not commit real values here.
+# Example:
+#   sam deploy --parameter-overrides \
+#     DatabaseUrl="postgresql+asyncpg://..." \
+#     OpenAiApiKey="sk-..." \
+#     CorsOrigins="https://your-branch.your-app-id.amplifyapp.com"

@@ -1,0 +1,22 @@
+version: 1
+# Monorepo config: the Next.js app lives in ./frontend.
+# Set this file's path or paste its contents in the Amplify console build settings.
+applications:
+  - appRoot: frontend
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            - npm ci
+        build:
+          commands:
+            # NEXT_PUBLIC_API_BASE_URL must be set as an Amplify env var (build-time)
+            - npm run build
+      artifacts:
+        baseDirectory: .next
+        files:
+          - "**/*"
+      cache:
+        paths:
+          - node_modules/**/*
+          - .next/cache/**/*

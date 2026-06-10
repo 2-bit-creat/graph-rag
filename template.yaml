@@ -1,0 +1,57 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Graph RAG FastAPI backend on AWS Lambda (container image) + API Gateway HTTP API
+
+Parameters:
+  DatabaseUrl:
+    Type: String
+    NoEcho: true
+    Description: Async Postgres URL, e.g. postgresql+asyncpg://... (use a managed DB like Supabase/RDS)
+  OpenAiApiKey:
+    Type: String
+    NoEcho: true
+  CorsOrigins:
+    Type: String
+    Default: "*"
+    Description: Comma-separated frontend origins (e.g. your Amplify Hosting URL)
+
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 1024
+
+Resources:
+  GraphRagApi:
+    Type: AWS::Serverless::HttpApi
+
+  GraphRagFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: ./backend
+      DockerTag: latest
+    Properties:
+      PackageType: Image
+      Environment:
+        Variables:
+          DATABASE_URL: !Ref DatabaseUrl
+          OPENAI_API_KEY: !Ref OpenAiApiKey
+          CORS_ORIGINS: !Ref CorsOrigins
+      Events:
+        Root:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref GraphRagApi
+            Path: /
+            Method: ANY
+        Proxy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref GraphRagApi
+            Path: /{proxy+}
+            Method: ANY
+
+Outputs:
+  ApiUrl:
+    Description: Base URL for the deployed API (set as NEXT_PUBLIC_API_BASE_URL in Amplify)
+    Value: !Sub "https://${GraphRagApi}.execute-api.${AWS::Region}.amazonaws.com"
