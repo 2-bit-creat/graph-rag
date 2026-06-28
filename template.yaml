@@ -13,7 +13,7 @@ Parameters:
   CorsOrigins:
     Type: String
     Default: "*"
-    Description: Comma-separated frontend origins (e.g. your Amplify Hosting URL)
+    Description: Comma-separated allowed origins (Flutter web / API clients)
 
 Globals:
   Function:

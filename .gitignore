@@ -7,18 +7,16 @@ venv/
 .env
 *.log
 
-# Node / Next.js
-node_modules/
-.next/
-out/
-.turbo/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# Local Postgres data (docker volume)
+# Local Postgres / infra data
 pgdata/
+minio_data/
+backend/uploads/
+backend/debug_runs/
+
+# Flutter
+mobile/.dart_tool/
+mobile/build/
+mobile/.flutter-plugins-dependencies
 
 # Env files
 .env
@@ -30,3 +28,12 @@ pgdata/
 Thumbs.db
 .idea/
 .vscode/
+
+# Scratch / scratch test artifacts (not part of the app)
+backend/_*.json
+backend/py
+backend/sample.json
+backend/test_audio_ko.mp3
+
+# Generated runtime audio (quiz TTS output); keep the dir via .gitkeep
+backend/static/audio/*.mp3

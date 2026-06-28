@@ -6,14 +6,95 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    database_url: str = "postgresql+asyncpg://graphrag:graphrag@localhost:5432/graphrag"
+    database_url: str = "postgresql+asyncpg://graphrag:graphrag@localhost:6432/graphrag"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
-    cors_origins: str = "http://localhost:3000"
+    openai_premium_model: str = "gpt-4o"
+    cors_origins: str = "http://localhost:8080"
+
+    jwt_secret: str = "change-me-in-production"
+    jwt_expire_minutes: int = 60 * 24 * 7
+
+    upload_dir: str = "./uploads"
+    debug_runs_dir: str = "./debug_runs"
+    s3_bucket: str = ""
+    s3_endpoint: str = ""
+    s3_region: str = "ap-northeast-2"
+
+    redis_url: str = "redis://localhost:6379/0"
+    graph_processing_async: bool = False
+    graph_background: bool = False
+    graph_manual_only: bool = True
+    journal_skip_entity_refinement: bool = True
+
+    # Speaker diarization (optional — requires DEEPGRAM_API_KEY or local pyannote)
+    speaker_diarization_enabled: bool = False
+    deepgram_api_key: str = ""
+    pyannote_hf_token: str = ""
+
+    # Voice memory: segment embeddings → speaker_profiles (linked to Person nodes)
+    speaker_voice_memory_enabled: bool = True
+    speaker_embedding_backend: str = "spectral"  # spectral | resemblyzer
+    # Min cosine similarity to reuse an existing voice profile (spectral embeddings).
+    speaker_match_threshold: float = 0.85
+
+    # When Deepgram/pyannote collapse multiple voices into one label, split via embeddings
+    speaker_refinement_enabled: bool = True
+    speaker_refinement_threshold: float = 0.55
+    speaker_refinement_min_duration_sec: float = 4.0
+    # Reject embedding splits when both halves still sound like the same person.
+    speaker_refinement_same_speaker_sim_cap: float = 0.85
+
+    # Pre-STT silence trim (conservative — edges only; skipped when Deepgram diarization on)
+    audio_trim_enabled: bool = True
+    audio_trim_mode: str = "edges"  # edges = leading/trailing only | gaps = old multi-segment
+    audio_trim_adaptive: bool = True
+    audio_trim_normalize_quiet: bool = True
+    audio_trim_skip_when_diarization: bool = True
+    audio_trim_window_ms: int = 30
+    audio_trim_rms_threshold: float = 350.0  # used when adaptive=false
+    audio_trim_rms_threshold_floor: float = 60.0
+    audio_trim_min_speech_ms: int = 120
+    audio_trim_max_gap_ms: int = 700
+    audio_trim_padding_ms: int = 250
+    audio_trim_min_duration_sec: float = 0.4
+    audio_trim_min_keep_ratio: float = 0.85
+    audio_trim_max_remove_ratio: float = 0.25
+    hybrid_weight: float = 0.6
+    free_tier_quiz_limit: int = 3
+    free_tier_review_days: int = 7
+
+    # Quiz MVP v2 — manual generation only when False
+    quiz_auto_enabled: bool = False
+    quiz_session_size: int = 10
+    quiz_review_ratio: float = 0.7
+    quiz_level_window: int = 3
+    quiz_min_new_queue: int = 5
+    quiz_max_nodes: int = 10
+    quiz_max_edges: int = 15
+    quiz_max_hops: int = 2
+    quiz_recency_weight: float = 0.7
+    quiz_random_weight: float = 0.3
 
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    def quiz_selection_snapshot(self, current_level: int = 10) -> dict:
+        """Global quiz graph-selection parameters for trace IO / profile API."""
+        from .level_guidelines import cefr_label, window_for_level
+
+        lo, hi = window_for_level(current_level, self.quiz_level_window)
+        return {
+            "quiz_max_nodes": self.quiz_max_nodes,
+            "quiz_max_edges": self.quiz_max_edges,
+            "quiz_max_hops": self.quiz_max_hops,
+            "quiz_recency_weight": self.quiz_recency_weight,
+            "quiz_random_weight": self.quiz_random_weight,
+            "quiz_level_window": self.quiz_level_window,
+            "level_window": [lo, hi],
+            "cefr_label": cefr_label(current_level),
+        }
 
 
 @lru_cache
