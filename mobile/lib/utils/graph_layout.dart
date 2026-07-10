@@ -589,8 +589,8 @@ double graphNodeRadiusForDegree(int degree, int maxDegree, {int totalNodes = 20}
 FontWeight fontWeightForImportance(int score, int maxScore) {
   if (maxScore <= 0 || score <= 0) return FontWeight.w500;
   final t = (score / maxScore).clamp(0.0, 1.0);
-  if (t >= 0.8) return FontWeight.w900;
-  if (t >= 0.55) return FontWeight.w800;
+  if (t >= 0.8) return FontWeight.w700;
+  if (t >= 0.55) return FontWeight.w700;
   if (t >= 0.3) return FontWeight.w700;
   if (t >= 0.1) return FontWeight.w600;
   return FontWeight.w500;

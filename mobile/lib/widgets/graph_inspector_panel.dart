@@ -1114,7 +1114,7 @@ class _ImportanceCard extends StatelessWidget {
             '$score',
             style: TextStyle(
               fontSize: 20,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w700,
               color: Colors.deepOrange.shade600,
             ),
           ),

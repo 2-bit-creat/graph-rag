@@ -737,7 +737,7 @@ class _ClaimCard extends StatelessWidget {
                   '$index',
                   style: TextStyle(
                     fontSize: 10,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                     color: AppColors.hubGraph.withValues(alpha: 0.95),
                   ),
                 ),
@@ -853,7 +853,7 @@ class _ClaimCard extends StatelessWidget {
                     '${c.importance}',
                     style: const TextStyle(
                       fontSize: 9,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w700,
                       color: AppColors.accent,
                     ),
                   ),

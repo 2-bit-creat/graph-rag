@@ -34,8 +34,9 @@ class _CardShell extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(title!,
+                      // w800 breaks CanvasKit's Korean fallback glyphs on web.
                       style: const TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w800)),
+                          fontSize: 13, fontWeight: FontWeight.w700)),
                 ),
                 if (onClose != null)
                   InkWell(

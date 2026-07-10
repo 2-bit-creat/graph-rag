@@ -364,7 +364,7 @@ class _QueueItemCard extends StatelessWidget {
             child: Text('$index',
                 style: const TextStyle(
                     fontSize: 11,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                     color: AppColors.hubQuiz)),
           ),
           const SizedBox(width: AppSpacing.sm),
