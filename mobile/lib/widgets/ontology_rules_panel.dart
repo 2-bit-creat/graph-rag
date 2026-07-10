@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../utils/graph_layout.dart';
-import ../theme/app_theme.dart
+import '../theme/app_theme.dart';
 
 /// Collapsible ontology rules reference (entity + relation types).
 class OntologyRulesPanel extends StatelessWidget {

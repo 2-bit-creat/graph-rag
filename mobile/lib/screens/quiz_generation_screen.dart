@@ -4,7 +4,7 @@ import '../api/client.dart';
 import '../compose/compose_session_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
-import 'tutor_screen.dart' show tutorLangLabel;
+import '../utils/tutor_lang_label.dart';
 
 /// 문제 생성 페이지 — 작문(composition) 문제를 수동으로 만들고 대기 큐를 관리한다.
 ///

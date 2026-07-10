@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
-import ../theme/app_theme.dart
+import '../theme/app_theme.dart';
 
 /// Bottom sheet: [👍 맞아요] [🔍 다른 사람 선택] [✏️ 직접 입력]
 Future<bool?> showSpeakerIdentitySheet({

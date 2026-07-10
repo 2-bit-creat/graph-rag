@@ -547,10 +547,282 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     ];
   }
 
+  bool _isIdentityCategoryType(String? raw) {
+    final t = canonicalEntityType(raw ?? '').toLowerCase();
+    return t == 'person' ||
+        t == 'speaker' ||
+        t == 'individual' ||
+        t == 'source' ||
+        t == 'identity';
+  }
+
+  /// Learned aliases (다른 명칭들) + fuzzy-embedding readiness for identity nodes —
+  /// '나' 노드에 매칭한 '장세영' 같은 별칭이 여기 쌓이고, 임베딩 학습 여부를 보여준다.
+  List<Widget> _aliasSection(Map<String, dynamic> node, ThemeData theme) {
+    if (!_isIdentityCategoryType(node['type']?.toString())) return [];
+    final aliases = ((node['aliases'] as List?) ?? [])
+        .map((a) => a.toString().trim())
+        .where((a) => a.isNotEmpty)
+        .toList();
+    final embCount = (node['alias_embedding_count'] as num?)?.toInt() ?? 0;
+    if (aliases.isEmpty) {
+      return [
+        Row(
+          children: [
+            Icon(Icons.badge_outlined, size: 13, color: AppColors.textMuted),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                '학습된 별칭 없음 — 검토에서 다른 이름을 이 정체성에 연결하면 여기 쌓입니다.',
+                style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+      ];
+    }
+    return [
+      Row(
+        children: [
+          Icon(Icons.badge_outlined, size: 13, color: AppColors.textMuted),
+          const SizedBox(width: 4),
+          Text('별칭 (${aliases.length})',
+              style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+          const Spacer(),
+          Icon(
+            embCount > 0 ? Icons.auto_awesome : Icons.auto_awesome_outlined,
+            size: 12,
+            color: embCount > 0 ? const Color(0xFFB07BFF) : AppColors.textMuted,
+          ),
+          const SizedBox(width: 3),
+          Text(
+            embCount > 0 ? '임베딩 $embCount개 학습됨' : '임베딩 대기',
+            style: TextStyle(
+              fontSize: 11,
+              color: embCount > 0 ? const Color(0xFFB07BFF) : AppColors.textMuted,
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 6),
+      Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (final a in aliases)
+            Chip(
+              label: Text(a, style: const TextStyle(fontSize: 11)),
+              visualDensity: VisualDensity.compact,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+            ),
+        ],
+      ),
+      if (embCount < aliases.length) ...[
+        const SizedBox(height: 4),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: _saving ? null : _reindexAliases,
+            icon: const Icon(Icons.auto_awesome, size: 15),
+            label: const Text('별칭 임베딩 생성', style: TextStyle(fontSize: 12)),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+            ),
+          ),
+        ),
+      ],
+      const SizedBox(height: 10),
+    ];
+  }
+
+  /// Backfill embeddings for aliases learned before the embedding index existed.
+  Future<void> _reindexAliases() async {
+    setState(() => _saving = true);
+    try {
+      final n = await apiClient.reindexAliasEmbeddings();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('별칭 임베딩 $n개 생성됨')),
+        );
+      }
+      widget.onUpdated?.call();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  /// 사후 교정 허브: Concept는 정체성 전환(in-place retype) 또는 기존 정체성·개념에
+  /// 병합, 정체성 노드는 다른 정체성에 병합(중복 제거). 병합 시 관계·일기 연결이
+  /// 대상으로 승계되고 이름이 별칭으로 학습돼 이후 추출이 자동 수렴한다.
+  Future<void> _mergeOrConvert(Map<String, dynamic> node) async {
+    final id = node['id'].toString();
+    final name = node['name']?.toString() ?? '';
+    final isConcept =
+        canonicalEntityType(node['type']?.toString() ?? '').toLowerCase() ==
+            'concept';
+
+    // 병합 후보: 정체성 노드 우선, Concept 노드는 개념끼리 병합용으로 뒤에.
+    final identityCands = widget.nodeById.values
+        .where((n) =>
+            n['id'].toString() != id &&
+            _isIdentityCategoryType(n['type']?.toString()))
+        .toList()
+      ..sort((a, b) =>
+          (a['name'] ?? '').toString().compareTo((b['name'] ?? '').toString()));
+    final conceptCands = isConcept
+        ? (widget.nodeById.values
+            .where((n) =>
+                n['id'].toString() != id &&
+                canonicalEntityType(n['type']?.toString() ?? '')
+                        .toLowerCase() ==
+                    'concept')
+            .toList()
+          ..sort((a, b) => (a['name'] ?? '')
+              .toString()
+              .compareTo((b['name'] ?? '').toString())))
+        : const <Map<String, dynamic>>[];
+
+    final choice = await showModalBottomSheet<Map<String, String?>>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) {
+        var filter = '';
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            bool match(Map<String, dynamic> n) =>
+                filter.isEmpty ||
+                (n['name'] ?? '')
+                    .toString()
+                    .toLowerCase()
+                    .contains(filter.toLowerCase());
+            final idents = identityCands.where(match).take(30).toList();
+            final concepts = conceptCands.where(match).take(30).toList();
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                    bottom: MediaQuery.of(ctx).viewInsets.bottom),
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.only(bottom: 12),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                      child: Text(
+                          isConcept
+                              ? "'$name' 병합·정체성 전환"
+                              : "'$name' 을(를) 다른 정체성에 병합",
+                          style: Theme.of(ctx).textTheme.titleSmall),
+                    ),
+                    if (isConcept)
+                      ListTile(
+                        leading: const Icon(Icons.person_add_alt_1),
+                        title: const Text('새 개체로 전환'),
+                        subtitle: const Text(
+                            '이 노드를 그대로 정체성(Identity) 타입으로 바꿉니다.'),
+                        onTap: () => Navigator.pop(ctx, {'mergeInto': null}),
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                      child: TextField(
+                        autofocus: false,
+                        decoration: const InputDecoration(
+                          hintText: '병합 대상 검색',
+                          prefixIcon: Icon(Icons.search, size: 18),
+                          isDense: true,
+                          border: OutlineInputBorder(),
+                        ),
+                        onChanged: (v) => setSheetState(() => filter = v),
+                      ),
+                    ),
+                    if (idents.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
+                        child: Text('정체성에 병합 (관계·일기 연결·별칭 승계)',
+                            style: Theme.of(ctx).textTheme.bodySmall),
+                      ),
+                      for (final p in idents)
+                        ListTile(
+                          dense: true,
+                          leading: Icon(p['is_self'] == true
+                              ? Icons.account_circle
+                              : Icons.person_outline),
+                          title: Text(p['is_self'] == true
+                              ? '${p['name']} (본인)'
+                              : (p['name'] ?? '').toString()),
+                          subtitle: Text((p['type'] ?? '').toString(),
+                              style: const TextStyle(fontSize: 11)),
+                          onTap: () => Navigator.pop(
+                              ctx, {'mergeInto': p['id'].toString()}),
+                        ),
+                    ],
+                    if (concepts.isNotEmpty) ...[
+                      const Divider(height: 16),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                        child: Text('다른 개념에 병합 (중복 개념 정리)',
+                            style: Theme.of(ctx).textTheme.bodySmall),
+                      ),
+                      for (final p in concepts)
+                        ListTile(
+                          dense: true,
+                          leading: const Icon(Icons.lightbulb_outline),
+                          title: Text((p['name'] ?? '').toString()),
+                          onTap: () => Navigator.pop(
+                              ctx, {'mergeInto': p['id'].toString()}),
+                        ),
+                    ],
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+    if (choice == null || !mounted) return;
+
+    setState(() => _saving = true);
+    try {
+      final mergeInto = choice['mergeInto'];
+      await apiClient.reclassifyNode(id,
+          toType: 'Identity', mergeInto: mergeInto);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(mergeInto == null
+                ? "'$name' 을(를) 정체성 노드로 전환했습니다."
+                : "'$name' 을(를) 병합했습니다 — 관계·일기 연결이 승계되었습니다."),
+          ),
+        );
+      }
+      if (mergeInto != null) widget.onClose?.call();
+      widget.onUpdated?.call();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   List<Widget> _nodeInspector(Map<String, dynamic> node, ThemeData theme) {
     final chunkSection =
         _isChunkNode(node) ? _chunkReadOnlySection(node, theme) : <Widget>[];
     final id = node['id'].toString();
+    final locked = node['source_entry_id'] != null;
     final color = colorForType(_type ?? node['type']?.toString() ?? '', widget.typeColors);
     final outgoing = widget.edges.where((e) => e['source_id'].toString() == id).toList();
     final incoming = widget.edges.where((e) => e['target_id'].toString() == id).toList();
@@ -568,6 +840,10 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
           Text('노드', style: theme.textTheme.labelLarge?.copyWith(color: Colors.grey)),
         ],
       ),
+      if (locked) ...[
+        const SizedBox(height: 10),
+        _LockedNotice(),
+      ],
       const SizedBox(height: 12),
       TextField(
         controller: _nameCtrl,
@@ -581,12 +857,13 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         onChanged: (v) => setState(() => _type = v),
       ),
       const SizedBox(height: 10),
+      ..._aliasSection(node, theme),
       if (_isStatementNode(node)) ...[
         Row(
           children: [
-            Icon(Icons.category_outlined, size: 13, color: context.mutedText),
+            Icon(Icons.category_outlined, size: 13, color: AppColors.textMuted),
             const SizedBox(width: 4),
-            Text('소스 유형: ', style: TextStyle(fontSize: 12, color: context.mutedText)),
+            Text('소스 유형: ', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
             Chip(
               label: Text(
                 _stmtCtxType(node),
@@ -610,6 +887,10 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         ),
       ),
       _sourceTranscriptWidget(node),
+      if (((node['importance_score'] as num?)?.toInt() ?? 0) > 0) ...[
+        const SizedBox(height: 12),
+        _ImportanceCard(score: (node['importance_score'] as num).toInt()),
+      ],
       const SizedBox(height: 14),
       _EmbeddingStatusCard(
         node: node,
@@ -618,6 +899,22 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       if (_isStatementNode(node)) ...[
         const SizedBox(height: 10),
         _NodeExpressionButton(nodeId: id, nodeName: node['name']?.toString() ?? ''),
+      ],
+      // 병합·전환: 잘못 추출된 노드를 사후 교정하는 허브. Concept는 정체성 전환/
+      // 정체성·개념 병합, 정체성은 다른 정체성에 병합(중복 제거). 병합 시 관계와
+      // 일기 연결(provenance)이 대상 노드로 승계되고 별칭으로 학습된다.
+      if (!_isStatementNode(node) && !_isChunkNode(node)) ...[
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: _saving ? null : () => _mergeOrConvert(node),
+          icon: const Icon(Icons.merge_type, size: 18),
+          label: Text(
+            canonicalEntityType(node['type']?.toString() ?? '').toLowerCase() ==
+                    'concept'
+                ? '병합·정체성 전환'
+                : '다른 정체성에 병합',
+          ),
+        ),
       ],
       const SizedBox(height: 14),
       Row(
@@ -652,12 +949,12 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       const SizedBox(height: 16),
       Text(
         'ID: ${id.substring(0, 8)}… · ${node['created_at']?.toString().split('T').first ?? ''}',
-        style: TextStyle(fontSize: 10, color: context.mutedText, fontFamily: 'monospace'),
+        style: TextStyle(fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
       ),
       const SizedBox(height: 8),
       Text(
         '저장: PostgreSQL nodes 테이블\nGraphRAG 배치 시 upsert',
-        style: TextStyle(fontSize: 10, color: context.mutedText, fontFamily: 'monospace'),
+        style: TextStyle(fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
       ),
     ];
   }
@@ -665,10 +962,16 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
   List<Widget> _edgeInspector(Map<String, dynamic> edge, ThemeData theme) {
     final src = widget.nodeById[edge['source_id'].toString()];
     final tgt = widget.nodeById[edge['target_id'].toString()];
+    final locked =
+        (src?['source_entry_id'] != null) || (tgt?['source_entry_id'] != null);
     final suggestions = _relationSuggestions(_relationCtrl.text);
 
     return [
       Text('관계 (Edge)', style: theme.textTheme.labelLarge?.copyWith(color: Colors.grey)),
+      if (locked) ...[
+        const SizedBox(height: 10),
+        _LockedNotice(),
+      ],
       const SizedBox(height: 12),
       ListTile(
         contentPadding: EdgeInsets.zero,
@@ -721,9 +1024,105 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       const SizedBox(height: 16),
       Text(
         '저장: PostgreSQL edges 테이블',
-        style: TextStyle(fontSize: 10, color: context.mutedText, fontFamily: 'monospace'),
+        style: TextStyle(fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
       ),
     ];
+  }
+}
+
+class _LockedNotice extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.accent.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.history_edu, size: 16, color: AppColors.accent),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '일기에서 생성된 그래프입니다. 여기서 수정하면 바로 반영되고, 일기 연결(원문 추적)은 유지됩니다.',
+              style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Cumulative LLM-assigned importance (Node.importance_score). Each time the
+/// concept is mentioned, its 1-5 score adds up — recurring themes weigh more.
+/// This is what drives the bolder label in the graph canvas.
+class _ImportanceCard extends StatelessWidget {
+  const _ImportanceCard({required this.score});
+
+  final int score;
+
+  @override
+  Widget build(BuildContext context) {
+    // Roughly map cumulative score → 1-5 pips (each mention adds up to 5).
+    final pips = ((score + 4) ~/ 5).clamp(1, 5);
+    final accent = Colors.deepOrange.shade400;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.deepOrange.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.deepOrange.withValues(alpha: 0.20)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.local_fire_department_outlined, size: 18, color: accent),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '누적 중요도',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                    color: Colors.deepOrange.shade700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    for (var i = 0; i < 5; i++)
+                      Icon(
+                        i < pips ? Icons.circle : Icons.circle_outlined,
+                        size: 9,
+                        color: i < pips ? accent : Colors.grey.shade400,
+                      ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '언급마다 1~5점 누적',
+                      style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          Text(
+            '$score',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              color: Colors.deepOrange.shade600,
+            ),
+          ),
+          const SizedBox(width: 2),
+          Text('점', style: TextStyle(fontSize: 12, color: Colors.deepOrange.shade600)),
+        ],
+      ),
+    );
   }
 }
 
@@ -739,7 +1138,8 @@ class _EmbeddingStatusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final voiceOk = node['voice_embedding_registered'] == true;
-    final nameOk = node['has_name_embedding'] == true;
+    final aliasEmbCount =
+        (node['alias_embedding_count'] as num?)?.toInt() ?? 0;
     final label = node['voice_profile_label']?.toString();
     final samples = node['voice_sample_count'];
     final duration = (node['voice_total_duration_sec'] as num?)?.toDouble() ?? 0.0;
@@ -779,10 +1179,12 @@ class _EmbeddingStatusCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             _StatusRow(
-              icon: Icons.text_fields,
-              label: '이름 시맨틱 임베딩',
-              ok: nameOk,
-              detail: nameOk ? 'GraphRAG/pgvector 병합용' : 'GraphRAG 반영 후 생성됨',
+              icon: Icons.auto_awesome,
+              label: '별칭 임베딩 (유사 매칭)',
+              ok: aliasEmbCount > 0,
+              detail: aliasEmbCount > 0
+                  ? '$aliasEmbCount개 학습됨 — 이름이 달라도 유사하면 자동 제안'
+                  : '아직 없음 — 이 정체성에 다른 이름을 연결하면 학습됩니다',
             ),
             if (voiceOk && onUnlinkVoice != null) ...[
               const SizedBox(height: 12),
@@ -833,7 +1235,7 @@ class _StatusRow extends StatelessWidget {
               Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
               Text(
                 detail,
-                style: TextStyle(fontSize: 11, color: context.subtleText, height: 1.3),
+                style: TextStyle(fontSize: 11, color: Colors.grey[700], height: 1.3),
               ),
             ],
           ),
@@ -872,10 +1274,10 @@ class _SourceTranscriptSectionState extends State<_SourceTranscriptSection> {
                 Icon(
                   _expanded ? Icons.expand_less : Icons.expand_more,
                   size: 16,
-                  color: context.mutedText,
+                  color: Colors.grey[600],
                 ),
                 const SizedBox(width: 4),
-                Text(label, style: TextStyle(fontSize: 12, color: context.mutedText)),
+                Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
               ],
             ),
           ),
@@ -1102,7 +1504,7 @@ class _ExpressionList extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   meaning,
-                  style: TextStyle(fontSize: 12, color: context.subtleText),
+                  style: TextStyle(fontSize: 12, color: Colors.grey[700]),
                 ),
               ],
               if (example.isNotEmpty) ...[
@@ -1142,7 +1544,7 @@ class _RelationTile extends StatelessWidget {
           child: Row(
             children: [
               Expanded(child: Text(label, style: const TextStyle(fontSize: 12))),
-              Icon(Icons.chevron_right, size: 18, color: context.mutedText),
+              Icon(Icons.chevron_right, size: 18, color: Colors.grey[500]),
             ],
           ),
         ),

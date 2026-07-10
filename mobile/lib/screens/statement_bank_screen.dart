@@ -88,15 +88,23 @@ class _StatementBankScreenState extends State<StatementBankScreen> {
   }
 
   Future<void> _delete(Map<String, dynamic> item) async {
-    final nodeId = item['source_node_id']?.toString() ?? '';
     final expression = item['expression']?.toString() ?? '';
-    if (nodeId.isEmpty || expression.isEmpty) return;
+    if (expression.isEmpty) return;
+    // A merged card can span several origin nodes; deleting removes the word
+    // from all of them (else it reappears from a surviving origin).
+    final originCount = (item['origins'] as List?)?.length ?? 1;
 
     final ok = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
             title: const Text('표현 삭제'),
-            content: Text('「$expression」을(를) 삭제할까요?\n\n모든 표현이 삭제된 노드는 다시 추출될 수 있습니다.'),
+            content: Text(
+              originCount > 1
+                  ? '「$expression」을(를) 단어장에서 삭제할까요?\n\n'
+                      '이 표현이 나온 $originCount개 노드 모두에서 제거됩니다. '
+                      '개별 노드만 빼려면 지식그래프에서 해당 노드를 삭제하세요.'
+                  : '「$expression」을(를) 삭제할까요?\n\n모든 표현이 삭제된 노드는 다시 추출될 수 있습니다.',
+            ),
             actions: [
               TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
               FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('삭제')),
@@ -107,8 +115,8 @@ class _StatementBankScreenState extends State<StatementBankScreen> {
     if (!ok) return;
 
     try {
+      // No nodeId → delete from all origins.
       await apiClient.deleteStatementExpression(
-        nodeId: nodeId,
         language: widget.language,
         expression: expression,
       );
@@ -177,14 +185,47 @@ class _ExpressionCard extends StatelessWidget {
   final Map<String, dynamic> item;
   final VoidCallback onDelete;
 
+  /// Origin nodes for this merged lemma. Falls back to the back-compat single
+  /// source fields when the API didn't send an `origins` list.
+  List<Map<String, dynamic>> get _origins {
+    final raw = item['origins'];
+    if (raw is List && raw.isNotEmpty) {
+      return raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+    }
+    return [
+      {
+        'node_id': item['source_node_id'],
+        'node_name': item['source_node_name'],
+        'example': item['example'],
+      },
+    ];
+  }
+
+  String _originLabel(Map<String, dynamic> o) {
+    final name = o['node_name']?.toString() ?? '';
+    if (name.isNotEmpty) return name;
+    final id = o['node_id']?.toString() ?? '';
+    if (id.isEmpty) return '노드';
+    return '노드 ${id.length > 8 ? id.substring(0, 8) : id}…';
+  }
+
   @override
   Widget build(BuildContext context) {
     final expr = item['expression']?.toString() ?? '';
     final meaning = item['meaning']?.toString() ?? '';
-    final example = item['example']?.toString() ?? '';
-    final nodeId = item['source_node_id']?.toString() ?? '';
-    final nodeName = item['source_node_name']?.toString() ?? '';
     final cefr = item['cefr']?.toString() ?? '';
+    final origins = _origins;
+
+    // Distinct example sentences across origins (deduped, non-empty).
+    final examples = <String>{
+      for (final o in origins)
+        if ((o['example']?.toString() ?? '').trim().isNotEmpty)
+          o['example'].toString().trim(),
+    }.toList();
+    if (examples.isEmpty) {
+      final fallback = item['example']?.toString().trim() ?? '';
+      if (fallback.isNotEmpty) examples.add(fallback);
+    }
 
     return Card(
       child: Padding(
@@ -204,6 +245,10 @@ class _ExpressionCard extends StatelessWidget {
                           style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
                         ),
                       ),
+                      if (origins.length > 1) ...[
+                        const SizedBox(width: 6),
+                        _SharedBadge(count: origins.length),
+                      ],
                       if (cefr.isNotEmpty) ...[
                         const SizedBox(width: 6),
                         _CefrBadge(cefr: cefr),
@@ -214,13 +259,13 @@ class _ExpressionCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       meaning,
-                      style: TextStyle(fontSize: 13, color: context.subtleText),
+                      style: TextStyle(fontSize: 13, color: Colors.grey[700]),
                     ),
                   ],
-                  if (example.isNotEmpty) ...[
+                  for (final ex in examples) ...[
                     const SizedBox(height: 4),
                     Text(
-                      example,
+                      ex,
                       style: TextStyle(
                         fontSize: 12,
                         fontStyle: FontStyle.italic,
@@ -228,21 +273,24 @@ class _ExpressionCard extends StatelessWidget {
                       ),
                     ),
                   ],
-                  if (nodeName.isNotEmpty || nodeId.isNotEmpty) ...[
+                  if (origins.isNotEmpty) ...[
                     const SizedBox(height: 6),
-                    Row(
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
                       children: [
-                        Icon(Icons.account_tree_outlined, size: 11, color: context.mutedText),
-                        const SizedBox(width: 4),
-                        Flexible(
-                          child: Text(
-                            nodeName.isNotEmpty
-                                ? nodeName
-                                : '노드 ${nodeId.length > 8 ? nodeId.substring(0, 8) : nodeId}…',
-                            style: TextStyle(fontSize: 11, color: context.mutedText),
-                            overflow: TextOverflow.ellipsis,
+                        for (final o in origins)
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.account_tree_outlined, size: 11, color: Colors.grey[500]),
+                              const SizedBox(width: 3),
+                              Text(
+                                _originLabel(o),
+                                style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                              ),
+                            ],
                           ),
-                        ),
                       ],
                     ),
                   ],
@@ -250,12 +298,36 @@ class _ExpressionCard extends StatelessWidget {
               ),
             ),
             IconButton(
-              icon: Icon(Icons.delete_outline, size: 20, color: context.mutedText),
+              icon: Icon(Icons.delete_outline, size: 20, color: Colors.grey[500]),
               onPressed: onDelete,
               tooltip: '삭제',
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// "N곳에서 공유" badge for a lemma extracted from multiple statement nodes.
+class _SharedBadge extends StatelessWidget {
+  const _SharedBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Colors.indigo.shade400;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Text(
+        '공유 ×$count',
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: color),
       ),
     );
   }

@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
-import ../theme/app_theme.dart
 
 /// LangChain-style node → edge → node flow graph with tap-to-inspect.
 class PipelineFlowGraph extends StatelessWidget {
@@ -29,24 +28,26 @@ class PipelineFlowGraph extends StatelessWidget {
       if (source == 'whisper_fallback') return 'Whisper\n(폴백)';
     }
     const labels = {
-      'semantic_chunk_ingest': 'Semantic\nChunk',
-      'incremental_graph_pipeline': 'Semantic\nChunk',
-      'graph_provenance': '출처\n기록',
-      'speaker_person_link': '화자\n연결',
-      'embedding_chunks': '청크\n임베딩',
-      'apply_ontology': 'Open\nDomain',
-      'slow_path_start': 'GraphRAG\n시작',
-      'graph_review_apply': '검토\n·반영',
       'precision_text_ingest': '라벨링\n입력',
-      'llm_triple_extraction': '트리플\n추출',
-      'graph_upsert': '그래프\nupsert',
-      'audio_trim': '무음\n제거',
+      'audio_ingest': '오디오\n수집',
+      'audio_vad_trim': '무음\n제거',
       'speaker_diarize': '화자\n분리',
       'speaker_voice_memory': '음성\n메모리',
       'whisper_stt': 'Whisper\nSTT',
-      'gpt_cleanup': 'GPT\n정제',
-      'fast_path_complete': 'Fast\n완료',
+      'gpt_cleanup_translate': 'GPT\n정제·번역',
+      'fast_path_complete': '정제\n완료',
+      'statement_graph_draft': '그래프\n드래프트',
+      'graph_apply': '검토·확정\n커밋',
+      'quiz_manual_trigger': '퀴즈\n시작',
+      'quiz_level_load': '레벨\n로드',
+      'quiz_source_fetch': '소스\n수집',
+      'graph_context_resolve': '소스\n수집',
+      'quiz_llm_generate': 'GPT\n생성',
+      'quiz_validate': '검증',
+      'quiz_enqueue_new': '신규큐\n적재',
       'quiz_audio_tts': 'Edge-TTS\n음성',
+      'quiz_queue_pick': '큐\n출제',
+      'quiz_sm2_update': 'SM-2\n갱신',
     };
     return labels[raw] ?? raw.replaceAll('_', '\n');
   }
@@ -95,7 +96,7 @@ class PipelineFlowGraph extends StatelessWidget {
               children: [
                 Text(
                   'Edge payload (output of $fromName)',
-                  style: TextStyle(fontSize: 12, color: context.mutedText),
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
                 if (latency != null) ...[
                   const SizedBox(height: 4),
@@ -160,47 +161,50 @@ class PipelineFlowGraph extends StatelessWidget {
                 Text(
                   'type: $type · ${step['latency_ms'] ?? '?'}ms'
                   '${status != null ? ' · $status' : ''}',
-                  style: TextStyle(fontSize: 12, color: context.mutedText),
+                  style: TextStyle(fontSize: 13, color: Colors.grey[600], fontWeight: FontWeight.w500),
                 ),
                 if (step['io_hint'] != null) ...[
                   const SizedBox(height: 6),
                   Text(
                     step['io_hint'].toString(),
-                    style: TextStyle(fontSize: 11, color: context.subtleText),
+                    style: TextStyle(fontSize: 12, color: Colors.grey[700]),
                   ),
                 ],
-                if (step['system_prompt'] != null) ...[
-                  const SizedBox(height: 12),
-                  const Text('System Prompt',
-                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
-                  SelectableText(
-                    step['system_prompt'].toString(),
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                if (step['system_prompt'] != null)
+                  _DetailSection(
+                    icon: Icons.psychology_outlined,
+                    title: 'System Prompt',
+                    color: Colors.purple.shade700,
+                    child: SelectableText(
+                      step['system_prompt'].toString(),
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.4),
+                    ),
                   ),
-                ],
-                if (hasInput) ...[
-                  const SizedBox(height: 12),
-                  const Text('Input',
-                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
-                  SelectableText(
-                    prettyJson(step['input']),
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                if (hasInput)
+                  _DetailSection(
+                    icon: Icons.login_rounded,
+                    title: 'Input',
+                    color: Colors.blue.shade700,
+                    child: SelectableText(
+                      prettyJson(step['input']),
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.4),
+                    ),
                   ),
-                ],
-                if (hasOutput) ...[
-                  const SizedBox(height: 12),
-                  const Text('Output',
-                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
-                  SelectableText(
-                    prettyJson(step['output']),
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                if (hasOutput)
+                  _DetailSection(
+                    icon: Icons.output_rounded,
+                    title: 'Output',
+                    color: Colors.green.shade700,
+                    child: SelectableText(
+                      prettyJson(step['output']),
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.4),
+                    ),
                   ),
-                ],
                 if (!hasInput && !hasOutput && status == 'skipped') ...[
                   const SizedBox(height: 12),
                   Text(
                     '이 분기는 실행되지 않았습니다 (skip).',
-                    style: TextStyle(fontSize: 12, color: context.subtleText),
+                    style: TextStyle(fontSize: 12, color: Colors.grey[700]),
                   ),
                 ],
                 if (!hasInput && !hasOutput && status == 'pending') ...[
@@ -342,12 +346,12 @@ class PipelineFlowGraph extends StatelessWidget {
             if (subtitle != null)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
-                child: Text(subtitle!, style: TextStyle(fontSize: 11, color: context.mutedText)),
+                child: Text(subtitle!, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
               ),
             const SizedBox(height: 4),
             Text(
               '노드 탭 = 상세 · 화살표(엣지) 탭 = output payload',
-              style: TextStyle(fontSize: 10, color: context.mutedText),
+              style: TextStyle(fontSize: 10, color: Colors.grey[500]),
             ),
             const SizedBox(height: 12),
             SingleChildScrollView(
@@ -392,6 +396,54 @@ class PipelineFlowGraph extends StatelessWidget {
       }
     }
     return widgets;
+  }
+}
+
+/// A labeled, color-coded card for one field of the node detail modal
+/// (System Prompt / Input / Output) — keeps the three LLM I/O pieces visually
+/// distinct instead of a plain stacked text wall.
+class _DetailSection extends StatelessWidget {
+  const _DetailSection({
+    required this.icon,
+    required this.title,
+    required this.color,
+    required this.child,
+  });
+
+  final IconData icon;
+  final String title;
+  final Color color;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 14),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 15, color: color),
+              const SizedBox(width: 6),
+              Text(
+                title,
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: color),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          child,
+        ],
+      ),
+    );
   }
 }
 
@@ -451,7 +503,7 @@ class _FlowNode extends StatelessWidget {
               if (ms != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
-                  child: Text('${ms}ms', style: TextStyle(fontSize: 9, color: context.mutedText)),
+                  child: Text('${ms}ms', style: TextStyle(fontSize: 9, color: Colors.grey[600])),
                 ),
             ],
           ),
@@ -642,7 +694,7 @@ class SlowPathActionCard extends StatelessWidget {
                                         : 'Slow Path 대기',
                         style: TextStyle(
                           fontSize: 12,
-                          color: _failed ? Colors.red.shade700 : context.subtleText,
+                          color: _failed ? Colors.red.shade700 : Colors.grey[700],
                         ),
                       ),
                     ],
@@ -692,7 +744,7 @@ class SlowPathActionCard extends StatelessWidget {
               const SizedBox(height: 10),
               Text(
                 '백그라운드 실행 중… 완료되면 자동으로 갱신됩니다.',
-                style: TextStyle(fontSize: 11, color: context.subtleText),
+                style: TextStyle(fontSize: 11, color: Colors.grey[700]),
               ),
               const SizedBox(height: 8),
               Row(
@@ -888,7 +940,7 @@ class PipelinePhaseConnector extends StatelessWidget {
           Expanded(child: Divider(color: Colors.grey.shade400)),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Text(label, style: TextStyle(fontSize: 11, color: context.mutedText)),
+            child: Text(label, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
           ),
           Expanded(child: Divider(color: Colors.grey.shade400)),
         ],

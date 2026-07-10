@@ -40,14 +40,49 @@ class TranslationEntryPanel extends StatelessWidget {
     final hasSuggestion = suggested != null && suggested.isNotEmpty;
     final hasCurrent = current != null && current.isNotEmpty;
     if (!hasSuggestion && !hasCurrent) return const SizedBox.shrink();
-    return _TypeSelector(
-      entryId: entryId,
-      current: hasCurrent ? current : null,
-      suggested: hasSuggestion ? suggested : null,
-      locked: locked,
-      isSource: entry['attribution_kind']?.toString() == 'source',
-      onRefresh: onRefresh,
+    final label = hasCurrent ? current : '$suggested (추천)';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+      child: Row(
+        children: [
+          Chip(
+            avatar: const Icon(Icons.category_outlined, size: 16),
+            label: Text('유형: $label'),
+            visualDensity: VisualDensity.compact,
+          ),
+          if (!locked)
+            TextButton(
+              onPressed: () => _pickType(context, hasCurrent ? current : suggested),
+              child: const Text('변경'),
+            ),
+        ],
+      ),
     );
+  }
+
+  Future<void> _pickType(BuildContext context, String? selected) async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Wrap(
+          children: [
+            for (final t in _kJournalTypes)
+              ListTile(
+                leading: Icon(
+                  t == selected
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_off,
+                ),
+                title: Text(t),
+                onTap: () => Navigator.pop(ctx, t),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || choice == selected) return;
+    await apiClient.setSourceType(entryId, choice);
+    await onRefresh(silent: true);
   }
 
   Future<void> _openMergeSheet(BuildContext context) async {

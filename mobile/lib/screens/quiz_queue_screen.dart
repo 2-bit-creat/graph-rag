@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
-import ../theme/app_theme.dart
 
 class QuizQueueScreen extends StatefulWidget {
   const QuizQueueScreen({super.key});
@@ -176,7 +175,7 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Text('$_total개', style: TextStyle(fontSize: 12, color: context.mutedText)),
+                child: Text('$_total개', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
               ),
             ),
           Expanded(
@@ -204,6 +203,7 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                                 final contextSentence =
                                     item['context_sentence']?.toString() ?? '';
                                 final quizType = item['quiz_type']?.toString() ?? '';
+                                final sourceLabel = item['source_label']?.toString() ?? '';
                                 final streak = (item['streak'] as num?)?.toInt() ?? 0;
                                 final nextReview = item['next_review_at']?.toString();
 
@@ -246,17 +246,26 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                                                 visualDensity: VisualDensity.compact,
                                                 padding: EdgeInsets.zero,
                                               ),
+                                              if (sourceLabel.isNotEmpty)
+                                                Chip(
+                                                  label: Text(sourceLabel,
+                                                      style: const TextStyle(fontSize: 10)),
+                                                  visualDensity: VisualDensity.compact,
+                                                  padding: EdgeInsets.zero,
+                                                  backgroundColor:
+                                                      Colors.deepPurple.shade50,
+                                                ),
                                               if (_queueKind == 'review') ...[
                                                 Text(
                                                   _reviewLabel(nextReview),
                                                   style: TextStyle(
-                                                      fontSize: 10, color: context.mutedText),
+                                                      fontSize: 10, color: Colors.grey[600]),
                                                 ),
                                                 if (streak > 0)
                                                   Text(
                                                     '스트릭 ${streak}회',
                                                     style: TextStyle(
-                                                        fontSize: 10, color: context.mutedText),
+                                                        fontSize: 10, color: Colors.grey[600]),
                                                   ),
                                               ],
                                             ],

@@ -44,6 +44,11 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
     super.dispose();
   }
 
+  // Only reveal the speaker once the answer is exposed (answered/disabled, or
+  // the user tapped "정답 보기"). Hearing the sentence before answering would
+  // give the blank away.
+  bool get _showAudio => _answerRevealed || !widget.enabled;
+
   String get _blank =>
       (widget.quizData['blank']?.toString() ??
               (widget.quizData['accepted_answers'] as List?)?.first?.toString() ??
@@ -138,10 +143,15 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
                 style: Theme.of(context).textTheme.titleLarge,
               ),
             ),
-            const SizedBox(width: 8),
-            QuizAudioButton(
-              key: widget.audioButtonKey,
-              audioUrl: widget.audioUrl,
+            Offstage(
+              offstage: !_showAudio,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: QuizAudioButton(
+                  key: widget.audioButtonKey,
+                  audioUrl: widget.audioUrl,
+                ),
+              ),
             ),
           ],
         ),
@@ -181,7 +191,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
         ],
         if (hintKo.isNotEmpty) ...[
           const SizedBox(height: 8),
-          Text(hintKo, style: TextStyle(fontSize: 13, color: context.subtleText)),
+          Text(hintKo, style: TextStyle(fontSize: 13, color: Colors.grey[700])),
         ],
         if (widget.enabled && !_answerRevealed) ...[
           const SizedBox(height: 12),
@@ -193,7 +203,14 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
                 label: const Text('힌트 보기'),
               ),
               TextButton.icon(
-                onPressed: _answerRevealed ? null : () => _revealAnswer(fillField: true),
+                onPressed: _answerRevealed
+                    ? null
+                    : () {
+                        _revealAnswer(fillField: true);
+                        // Answer is now on screen — play the audio immediately.
+                        widget.audioButtonKey?.currentState
+                            ?.play(showError: false);
+                      },
                 icon: const Icon(Icons.visibility_outlined, size: 18),
                 label: const Text('정답 보기'),
               ),

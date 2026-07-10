@@ -75,3 +75,78 @@ bool isGraphReviewPending(Map<String, dynamic>? entry) {
     graphReviewPending: graphReview,
   );
 }
+
+bool hasSpeakerScript(Map<String, dynamic>? entry) {
+  final segments = entry?['transcript_segments'] as List<dynamic>? ?? [];
+  return segments.isNotEmpty;
+}
+
+({
+  ComposePhase phase,
+  String label,
+  bool speakersPending,
+  bool graphReviewPending,
+  bool awaitingSpeakerAck,
+}) deriveChatJournalPhase(
+  Map<String, dynamic>? entry, {
+  required bool speakersAcknowledged,
+}) {
+  final base = deriveJournalPhase(entry);
+  if (entry == null) {
+    return (
+      phase: base.phase,
+      label: base.label,
+      speakersPending: base.speakersPending,
+      graphReviewPending: base.graphReviewPending,
+      awaitingSpeakerAck: false,
+    );
+  }
+
+  final status = entry['status']?.toString() ?? '';
+  final graphStatus = entry['graph_status']?.toString() ?? '';
+
+  if (base.phase == ComposePhase.needsInput && base.graphReviewPending) {
+    return (
+      phase: base.phase,
+      label: base.label,
+      speakersPending: base.speakersPending,
+      graphReviewPending: true,
+      awaitingSpeakerAck: false,
+    );
+  }
+  if (status == 'graph_processing' ||
+      graphStatus == 'graph_processing' ||
+      base.phase == ComposePhase.done ||
+      base.phase == ComposePhase.error) {
+    return (
+      phase: base.phase,
+      label: base.label,
+      speakersPending: base.speakersPending,
+      graphReviewPending: base.graphReviewPending,
+      awaitingSpeakerAck: false,
+    );
+  }
+
+  if (!speakersAcknowledged &&
+      status == 'ready' &&
+      hasSpeakerScript(entry)) {
+    final label = base.speakersPending
+        ? '화자 확인 필요'
+        : '화자 매칭 확인';
+    return (
+      phase: ComposePhase.needsInput,
+      label: label,
+      speakersPending: base.speakersPending,
+      graphReviewPending: false,
+      awaitingSpeakerAck: true,
+    );
+  }
+
+  return (
+    phase: base.phase,
+    label: base.label,
+    speakersPending: base.speakersPending,
+    graphReviewPending: base.graphReviewPending,
+    awaitingSpeakerAck: false,
+  );
+}

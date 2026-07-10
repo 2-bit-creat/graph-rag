@@ -3,7 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'pipeline_flow_graph.dart';
-import ../theme/app_theme.dart
+import '../theme/app_theme.dart';
 
 /// 2D DAG view driven by backend `flow_layout`.
 /// Fits to screen width; full Fast + Slow Path height visible via page scroll.

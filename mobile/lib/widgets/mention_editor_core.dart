@@ -337,6 +337,7 @@ class MentionAutocompleteField extends StatefulWidget {
     this.focusNode,
     this.onSubmitted,
     this.onDirtyChanged,
+    this.onChanged,
     this.initialText = '',
     this.enabled = true,
     this.showCounter = true,
@@ -348,6 +349,9 @@ class MentionAutocompleteField extends StatefulWidget {
   final FocusNode? focusNode;
   final ValueChanged<String>? onSubmitted;
   final ValueChanged<bool>? onDirtyChanged;
+
+  /// Raw text change callback (e.g. live character counter).
+  final ValueChanged<String>? onChanged;
   final String initialText;
   final bool enabled;
   final bool showCounter;
@@ -409,6 +413,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
   }
 
   void _onTextChanged() {
+    widget.onChanged?.call(_controller.text);
     final dirty = _controller.text.trim().isNotEmpty;
     if (dirty != _lastDirty) {
       _lastDirty = dirty;

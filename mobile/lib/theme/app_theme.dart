@@ -160,6 +160,10 @@ class AppShellTheme extends ThemeExtension<AppShellTheme> {
 extension AppShellThemeX on BuildContext {
   AppShellTheme get shell =>
       Theme.of(this).extension<AppShellTheme>() ?? AppShellTheme.dark;
+
+  // Shorthand tokens — several widgets read these directly off the context.
+  Color get mutedText => shell.mutedText;
+  Color get subtleText => shell.mutedText;
 }
 
 ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {

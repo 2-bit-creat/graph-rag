@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../api/client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
-import 'tutor_screen.dart' show tutorLangLabel;
+import '../utils/tutor_lang_label.dart';
 
 /// 튜터와 배운 표현 전체 목록 — 드릴에서 담은 표현을 뜻·예문·"언제 헷갈렸는지"와
 /// 함께 다시 본다. 표현마다 언어 배지가 붙는다. 롱프레스로 삭제.

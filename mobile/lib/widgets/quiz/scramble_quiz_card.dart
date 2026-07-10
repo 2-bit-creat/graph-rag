@@ -30,6 +30,10 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
   final List<int> _selectedIndices = [];
   bool _submitting = false;
 
+  // Hide the speaker until the card is answered/disabled — hearing the
+  // sentence beforehand gives the word order away.
+  bool get _showAudio => !widget.enabled;
+
   List<String> get _chunks {
     final raw = widget.quizData['chunks'];
     if (raw is! List) return [];
@@ -151,7 +155,7 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
                 child: Text(
                   hint,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: context.mutedText,
+                        color: AppColors.textMuted,
                         fontStyle: FontStyle.italic,
                         height: 1.45,
                       ),
@@ -159,10 +163,15 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
               )
             else
               const Spacer(),
-            const SizedBox(width: AppSpacing.sm),
-            QuizAudioButton(
-              key: widget.audioButtonKey,
-              audioUrl: widget.audioUrl,
+            Offstage(
+              offstage: !_showAudio,
+              child: Padding(
+                padding: const EdgeInsets.only(left: AppSpacing.sm),
+                child: QuizAudioButton(
+                  key: widget.audioButtonKey,
+                  audioUrl: widget.audioUrl,
+                ),
+              ),
             ),
           ],
         ),
@@ -170,7 +179,7 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
         Text(
           '내 답안',
           style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                color: context.mutedText,
+                color: AppColors.textMuted,
               ),
         ),
         const SizedBox(height: AppSpacing.md),
@@ -189,7 +198,7 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
               ? Text(
                   '아래 단어를 순서대로 탭하세요',
                   style: TextStyle(
-                    color: context.mutedText.withValues(alpha: 0.8),
+                    color: AppColors.textMuted.withValues(alpha: 0.8),
                     fontSize: 14,
                   ),
                 )
@@ -210,7 +219,7 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
         Text(
           '단어 조각',
           style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                color: context.mutedText,
+                color: AppColors.textMuted,
               ),
         ),
         const SizedBox(height: AppSpacing.md),

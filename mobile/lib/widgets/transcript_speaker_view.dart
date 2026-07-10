@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import 'speaker_identity_sheet.dart';
-import ../theme/app_theme.dart
 
 /// STT segments with tappable speaker chips — opens identity confirmation sheet.
 class TranscriptSpeakerView extends StatelessWidget {
@@ -12,6 +11,8 @@ class TranscriptSpeakerView extends StatelessWidget {
     required this.speakerSummaries,
     this.onConfirmed,
     this.readOnly = false,
+    this.showHeader = true,
+    this.wrapInCard = true,
   });
 
   final String entryId;
@@ -19,6 +20,12 @@ class TranscriptSpeakerView extends StatelessWidget {
   final List<dynamic> speakerSummaries;
   final Future<void> Function()? onConfirmed;
   final bool readOnly;
+
+  /// 접이식 섹션 안에 넣을 때는 상위가 제목을 그리므로 내부 헤더를 숨긴다.
+  final bool showHeader;
+
+  /// 접이식 섹션 안에 넣을 때는 Card 중첩을 피하기 위해 false.
+  final bool wrapInCard;
 
   Map<String, Map<String, dynamic>> _summaryByLabel() {
     final map = <String, Map<String, dynamic>>{};
@@ -56,28 +63,26 @@ class TranscriptSpeakerView extends StatelessWidget {
     final summaries = _summaryByLabel();
     final theme = Theme.of(context);
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
+    final content = Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              children: [
-                Icon(Icons.record_voice_over, color: theme.colorScheme.primary),
-                const SizedBox(width: 8),
-                Text('화자별 스크립트', style: theme.textTheme.titleSmall),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              readOnly
-                  ? '화자별 STT 결과 (읽기 전용 — 일기 쓰기에서 화자를 지정하세요)'
-                  : '목소리가 비슷하면 이름이 추천됩니다. 탭해서 확인하거나 수정하세요.',
-              style: TextStyle(fontSize: 12, color: context.mutedText),
-            ),
-            const SizedBox(height: 12),
+            if (showHeader) ...[
+              Row(
+                children: [
+                  Icon(Icons.record_voice_over, color: theme.colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Text('화자별 스크립트', style: theme.textTheme.titleSmall),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                readOnly
+                    ? '화자별 STT 결과 (읽기 전용 — 일기 쓰기에서 화자를 지정하세요)'
+                    : '목소리가 비슷하면 이름이 추천됩니다. 탭해서 확인하거나 수정하세요.',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 12),
+            ],
             ...segments.map((raw) {
               if (raw is! Map) return const SizedBox.shrink();
               final label = raw['speaker']?.toString() ?? 'Speaker';
@@ -148,7 +153,14 @@ class TranscriptSpeakerView extends StatelessWidget {
               );
             }),
           ],
-        ),
+        );
+
+    if (!wrapInCard) return content;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 16),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: content,
       ),
     );
   }

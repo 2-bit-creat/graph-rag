@@ -27,6 +27,10 @@ class _McqQuizCardState extends State<McqQuizCard> {
   int? _selected;
   bool _submitting = false;
 
+  // Hide the speaker until the card is answered/disabled — the audio reveals
+  // the natural phrasing that is the whole point of the question.
+  bool get _showAudio => !widget.enabled;
+
   Future<void> _submit() async {
     if (_selected == null || _submitting || !widget.enabled) return;
     setState(() => _submitting = true);
@@ -96,7 +100,7 @@ class _McqQuizCardState extends State<McqQuizCard> {
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
-                      color: isSelected ? Colors.white : context.mutedText,
+                      color: isSelected ? Colors.white : AppColors.textMuted,
                     ),
                   ),
                 ),
@@ -142,11 +146,16 @@ class _McqQuizCardState extends State<McqQuizCard> {
                 textAlign: TextAlign.center,
               ),
             ),
-            const SizedBox(width: AppSpacing.sm),
-            QuizAudioButton(
-              key: widget.audioButtonKey,
-              audioUrl: widget.audioUrl,
-              iconSize: 24,
+            Offstage(
+              offstage: !_showAudio,
+              child: Padding(
+                padding: const EdgeInsets.only(left: AppSpacing.sm),
+                child: QuizAudioButton(
+                  key: widget.audioButtonKey,
+                  audioUrl: widget.audioUrl,
+                  iconSize: 24,
+                ),
+              ),
             ),
           ],
         ),
@@ -155,7 +164,7 @@ class _McqQuizCardState extends State<McqQuizCard> {
           '가장 자연스러운 영어 표현을 고르세요',
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: context.mutedText,
+                color: AppColors.textMuted,
                 fontSize: 15,
               ),
         ),
