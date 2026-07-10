@@ -1,15 +1,5 @@
 import 'package:flutter/material.dart';
 
-import 'chat/chat_session_controller.dart';
-
-/// 猷⑦듃 ?대퉬寃뚯씠????????梨꾪똿)?쇰줈 蹂듦??????ъ슜.
+/// 루트 내비게이터 키 — Navigator 밖(작성 창 오버레이)에서 전체 화면 이동이
+/// 필요할 때 사용.
 final appNavigatorKey = GlobalKey<NavigatorState>();
-
-/// PiP ?놁씠 ?몃씪???쇨린 ?묒꽦 紐⑤뱶濡?吏꾩엯?쒕떎.
-void openInlineJournalCompose() {
-  final nav = appNavigatorKey.currentState;
-  if (nav != null) {
-    nav.popUntil((route) => route.isFirst);
-  }
-  chatSession.enterJournalMode();
-}

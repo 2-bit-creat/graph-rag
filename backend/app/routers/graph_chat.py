@@ -1,16 +1,16 @@
-"""Graph-chat API ? Claude-style multi-room conversation grounded in the KG.
+"""Graph-chat API — Claude-style multi-room conversation grounded in the KG.
 
 Sessions (chat rooms):
-  GET    /graph/chat/sessions                      ? list rooms (sidebar)
-  POST   /graph/chat/sessions                      ? new room
-  PATCH  /graph/chat/sessions/{id}                 ? rename
-  DELETE /graph/chat/sessions/{id}                 ? delete room + messages
-  GET    /graph/chat/sessions/{id}/messages        ? history, oldest-first
-  POST   /graph/chat/sessions/{id}/messages        ? send (RAG answer)
-  POST   /graph/chat/sessions/{id}/events          ? append a non-LLM record
+  GET    /graph/chat/sessions                      → list rooms (sidebar)
+  POST   /graph/chat/sessions                      → new room
+  PATCH  /graph/chat/sessions/{id}                 → rename
+  DELETE /graph/chat/sessions/{id}                 → delete room + messages
+  GET    /graph/chat/sessions/{id}/messages        → history, oldest-first
+  POST   /graph/chat/sessions/{id}/messages        → send (RAG answer)
+  POST   /graph/chat/sessions/{id}/events          → append a non-LLM record
                                                      (inline quiz cards, etc.)
 
-Distillation (chat ? journal) lives in graph_chat_distill.py, mounted below.
+Distillation (chat → journal) lives in graph_chat_distill.py, mounted below.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import crud
 from ..chat_summary import needs_summary_update, update_session_summary, watermark_from_state
 from ..db import get_session
-from ..deps import request_user_dep
+from ..dev_user import dev_user_dep
 from ..graph_chat import graph_chat_answer
 from ..models import ChatMessage, ChatSession, User
 from ..schemas import (
@@ -58,7 +58,7 @@ def _message_out(m: ChatMessage) -> GraphChatMessageOut:
 
 
 async def _session_out(session: AsyncSession, row: ChatSession) -> ChatSessionOut:
-    preview = await crud.last_message_preview(session, row.id, user_id=row.user_id)
+    preview = await crud.last_message_preview(session, row.id, user_id=user.id)
     return ChatSessionOut(
         id=str(row.id),
         title=row.title,
@@ -73,7 +73,7 @@ async def _require_session(
 ) -> ChatSession:
     row = await crud.get_chat_session(session, user.id, session_id)
     if row is None:
-        raise HTTPException(status_code=404, detail="???? ?? ? ???.")
+        raise HTTPException(status_code=404, detail="채팅방을 찾을 수 없어요.")
     return row
 
 
@@ -81,7 +81,7 @@ async def _migrate_legacy_json(session: AsyncSession, user: User) -> None:
     """One-time import of the pre-sessions JSON chat log into a single room.
 
     Runs only when the user has zero sessions, then renames the file so it never
-    re-imports. Best-effort ? a failure here must not block the sidebar.
+    re-imports. Best-effort — a failure here must not block the sidebar.
     """
     import json
     from pathlib import Path
@@ -96,7 +96,7 @@ async def _migrate_legacy_json(session: AsyncSession, user: User) -> None:
     except Exception:
         items = []
     if isinstance(items, list) and items:
-        row = await crud.create_chat_session(session, user.id, title="?? ??")
+        row = await crud.create_chat_session(session, user.id, title="이전 대화")
         await crud.append_chat_messages(
             session,
             row,
@@ -121,7 +121,7 @@ async def _migrate_legacy_json(session: AsyncSession, user: User) -> None:
 
 @router.get("/sessions", response_model=ChatSessionListOut)
 async def list_sessions(
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> ChatSessionListOut:
     rows = await crud.list_chat_sessions(session, user.id)
@@ -137,12 +137,11 @@ async def list_sessions(
 @router.post("/sessions", response_model=ChatSessionOut)
 async def create_session(
     payload: ChatSessionCreateRequest,
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> ChatSessionOut:
     row = await crud.create_chat_session(session, user.id, title=payload.title)
     await session.commit()
-    await session.refresh(row)
     return await _session_out(session, row)
 
 
@@ -150,20 +149,19 @@ async def create_session(
 async def rename_session(
     session_id: uuid.UUID,
     payload: ChatSessionRenameRequest,
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> ChatSessionOut:
     row = await _require_session(session, user, session_id)
     await crud.rename_chat_session(session, row, payload.title)
     await session.commit()
-    await session.refresh(row)
     return await _session_out(session, row)
 
 
 @router.delete("/sessions/{session_id}")
 async def delete_session(
     session_id: uuid.UUID,
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     row = await _require_session(session, user, session_id)
@@ -179,7 +177,7 @@ async def delete_session(
 async def list_messages(
     session_id: uuid.UUID,
     limit: int = Query(200, ge=1, le=500),
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> GraphChatHistoryOut:
     await _require_session(session, user, session_id)
@@ -194,7 +192,7 @@ async def send_message(
     session_id: uuid.UUID,
     payload: GraphChatRequest,
     background_tasks: BackgroundTasks,
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> GraphChatResponse:
     row = await _require_session(session, user, session_id)
@@ -206,6 +204,7 @@ async def send_message(
     summary_text = (summary_state.get("text") or "").strip() or None
     watermark = watermark_from_state(summary_state)
 
+    # RAG history = text turns after the summary watermark (quiz/draft cards excluded).
     prior = await crud.list_chat_messages(
         session,
         session_id,
@@ -219,9 +218,9 @@ async def send_message(
         result = await graph_chat_answer(
             session, user, message, history, summary=summary_text
         )
-    except Exception as exc:  # noqa: BLE001 ? surface LLM failures as a clean 502
+    except Exception as exc:  # noqa: BLE001 — surface LLM failures as a clean 502
         raise HTTPException(
-            status_code=502, detail="?? ??? ?????. ?? ? ?? ??? ???."
+            status_code=502, detail="답변 생성에 실패했어요. 잠시 후 다시 시도해 주세요."
         ) from exc
 
     appended = await crud.append_chat_messages(
@@ -236,6 +235,7 @@ async def send_message(
             },
         ],
     )
+    # Auto-title an untitled room from its first user message.
     if not row.title:
         await crud.rename_chat_session(session, row, message[:40])
     await session.commit()
@@ -258,7 +258,7 @@ async def send_message(
 async def append_event(
     session_id: uuid.UUID,
     payload: ChatEventRequest,
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> GraphChatMessageOut:
     row = await _require_session(session, user, session_id)

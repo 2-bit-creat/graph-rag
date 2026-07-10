@@ -250,7 +250,8 @@ class _QuizPipelinePanelState extends State<QuizPipelinePanel> {
         : '';
     final node = item['target_node']?.toString() ?? '';
     final type = quizTypeLabel(item['quiz_type']?.toString() ?? '');
-    return [date, type, node].where((s) => s.isNotEmpty).join(' · ');
+    final source = item['source_label']?.toString() ?? '';
+    return [date, type, source, node].where((s) => s.isNotEmpty).join(' · ');
   }
 
   @override
@@ -286,7 +287,10 @@ class _QuizPipelinePanelState extends State<QuizPipelinePanel> {
             onPlay: (type) => Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) => QuizSessionScreen(quizType: type),
+                builder: (_) => QuizSessionScreen(
+                  quizType: type,
+                  vocabSource: _selectedVocabId,
+                ),
               ),
             ),
           ),
@@ -592,6 +596,16 @@ class QuizGraphGenerateCard extends StatelessWidget {
     if (effectiveVocabId == null ||
         !filteredVocabs.any((v) => v['id']?.toString() == effectiveVocabId)) {
       effectiveVocabId = filteredVocabs.firstOrNull?['id']?.toString();
+    }
+    // Commit the resolved fallback back into parent state so what's DISPLAYED is
+    // always what gets SENT on generate. Without this, the dropdown showed a
+    // default while the request carried a stale/null vocab id (the "selected 학습
+    // 표현 but got IELTS" bug).
+    if (effectiveVocabId != null && effectiveVocabId != selectedVocabId) {
+      final resolved = effectiveVocabId;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        onVocabChanged?.call(resolved);
+      });
     }
 
     return AppSurfaceCard(

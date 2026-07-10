@@ -9,7 +9,7 @@ The draft step itself calls the LLM, so these tests exercise the commit half
 from __future__ import annotations
 
 import pytest
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import HTTPException
 
 from app import crud
 from app.models import JournalEntry
@@ -45,7 +45,7 @@ async def _staged_entry(db_session, user_id) -> JournalEntry:
 async def test_apply_commits_and_locks(db_session, iso_user):
     entry = await _staged_entry(db_session, iso_user.id)
 
-    out = await apply_entry_graph(entry.id, None, iso_user, db_session, background_tasks=BackgroundTasks())
+    out = await apply_entry_graph(entry.id, None, iso_user, db_session)
     assert out.status == "graph_ready"
 
     # Graph nodes committed and provenance-linked to the entry.
@@ -56,7 +56,7 @@ async def test_apply_commits_and_locks(db_session, iso_user):
 
     # Re-apply blocked — graph is now immutable.
     with pytest.raises(HTTPException) as exc:
-        await apply_entry_graph(entry.id, None, iso_user, db_session, background_tasks=BackgroundTasks())
+        await apply_entry_graph(entry.id, None, iso_user, db_session)
     assert exc.value.status_code == 409
     assert exc.value.detail["code"] == "graph_locked"
 
@@ -73,7 +73,7 @@ async def test_apply_uses_edited_claims_from_payload(db_session, iso_user):
         }],
         context_type="개인일기",
     )
-    out = await apply_entry_graph(entry.id, payload, iso_user, db_session, background_tasks=BackgroundTasks())
+    out = await apply_entry_graph(entry.id, payload, iso_user, db_session)
     assert out.status == "graph_ready"
 
     nodes = await crud.get_all_nodes(db_session, iso_user.id)
@@ -89,5 +89,5 @@ async def test_apply_without_draft_is_400(db_session, iso_user):
     await db_session.commit()
     await db_session.refresh(entry)
     with pytest.raises(HTTPException) as exc:
-        await apply_entry_graph(entry.id, None, iso_user, db_session, background_tasks=BackgroundTasks())
+        await apply_entry_graph(entry.id, None, iso_user, db_session)
     assert exc.value.status_code == 400

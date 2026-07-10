@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
-import '../api/config.dart';
-import '../auth/device_auth.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import 'quiz_queue_screen.dart';
@@ -66,21 +64,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Map<String, double> _langLevels = {'english': 10};
   bool _loading = true;
   bool _saving = false;
-  final _serverUrlController = TextEditingController();
-  bool _testingServer = false;
-  String? _serverTestResult;
 
   @override
   void initState() {
     super.initState();
-    _serverUrlController.text = resolvedApiBaseUrl;
     _load();
-  }
-
-  @override
-  void dispose() {
-    _serverUrlController.dispose();
-    super.dispose();
   }
 
   Future<void> _load() async {
@@ -112,42 +100,6 @@ final rawLangs = profile['target_languages'];
       }
     } catch (_) {
       if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _saveServerUrl() async {
-    final url = _serverUrlController.text.trim();
-    await setServerUrl(url);
-    apiClient.updateBaseUrl(resolvedApiBaseUrl);
-    final authed = await refreshDeviceAuth();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(authed
-              ? '서버 주소가 저장되었습니다'
-              : '서버 주소는 저장됐지만 인증에 실패했어요. 연결 테스트를 해 보세요.'),
-        ),
-      );
-    }
-  }
-
-  Future<void> _testServerConnection() async {
-    setState(() {
-      _testingServer = true;
-      _serverTestResult = null;
-    });
-    try {
-      final authed = await refreshDeviceAuth();
-      if (!authed) {
-        await apiClient.getUserProfile();
-      }
-      if (mounted) setState(() => _serverTestResult = '연결 성공');
-    } catch (e) {
-      if (mounted) {
-        setState(() => _serverTestResult = e.toString().replaceFirst('Exception: ', ''));
-      }
-    } finally {
-      if (mounted) setState(() => _testingServer = false);
     }
   }
 
@@ -338,57 +290,6 @@ final rawLangs = profile['target_languages'];
                 ),
                 const SizedBox(height: AppSpacing.lg),
 
-                _SectionCard(
-                  title: '서버 주소',
-                  subtitle: '백엔드 API URL',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      TextField(
-                        controller: _serverUrlController,
-                        decoration: const InputDecoration(
-                          hintText: 'http://localhost:8000',
-                          border: OutlineInputBorder(),
-                        ),
-                        keyboardType: TextInputType.url,
-                      ),
-                      const SizedBox(height: AppSpacing.sm),
-                      Row(
-                        children: [
-                          FilledButton.tonal(
-                            onPressed: _testingServer ? null : _testServerConnection,
-                            child: _testingServer
-                                ? const SizedBox(
-                                    height: 18,
-                                    width: 18,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
-                                  )
-                                : const Text('연결 테스트'),
-                          ),
-                          const SizedBox(width: 8),
-                          FilledButton(
-                            onPressed: _saveServerUrl,
-                            child: const Text('저장'),
-                          ),
-                        ],
-                      ),
-                      if (_serverTestResult != null) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          _serverTestResult!,
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: _serverTestResult == '연결 성공'
-                                ? Colors.green.shade700
-                                : Theme.of(context).colorScheme.error,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.lg),
-
                 // ── Dev ──────────────────────────────────────────────────────
                 Card(
                   child: Column(children: [
@@ -396,9 +297,7 @@ final rawLangs = profile['target_languages'];
                       leading: Icon(Icons.developer_mode,
                           color: Theme.of(context).colorScheme.primary),
                       title: const Text('Dev Mode'),
-                      subtitle: const Text(
-                        '기기 익명 ID로 자동 로그인합니다. 개발 시 서버 폴백 유저도 지원합니다.',
-                      ),
+                      subtitle: const Text('로그인 없이 dev@local 사용자로 동작합니다.'),
                     ),
                     const Divider(height: 1),
                     const ListTile(

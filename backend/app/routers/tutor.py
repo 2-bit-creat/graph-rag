@@ -1,4 +1,15 @@
-"""Composition tutor API."""
+"""Composition tutor API.
+
+Flow:
+  1. POST /tutor/chat      ??free follow-up Q&A about the drill
+  2. POST /tutor/vocab     ??save a confused expression to the tutor vocabulary
+  3. GET  /tutor/vocab     ??browse saved expressions (also feeds 'review' drills)
+
+Drills are ONLY pre-generated: they live in the canonical ``quizzes`` table
+(``quiz_type=composition``), created via ``POST /quiz/generate``. Attempts are
+graded against those references on ``POST /quiz/{id}/submit`` ??there is no
+on-demand evaluate endpoint, and an empty queue is surfaced as an empty session.
+"""
 
 from __future__ import annotations
 
@@ -50,6 +61,7 @@ async def get_vocab(
     language: str | None = None,
     user: User = Depends(request_user_dep),
 ) -> dict:
+    """Saved tutor expressions; ``language`` filters to one target language."""
     items = await list_tutor_expressions(user.id, language=language)
     return {"items": items, "total": len(items)}
 
@@ -77,6 +89,7 @@ async def save_vocab_batch(
     payload: TutorVocabBatchRequest,
     user: User = Depends(request_user_dep),
 ) -> dict:
+    """Save several expressions at once (e.g. '?´ë²ˆ ?¼ìš´???µì§¸ë¡??´ê¸°')."""
     saved = 0
     for item in payload.items:
         if not item.expression.strip():

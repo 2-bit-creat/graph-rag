@@ -4,7 +4,7 @@ import '../api/client.dart';
 import '../chat/chat_mode_cards.dart';
 import '../chat/chat_session_controller.dart';
 import '../chat/journal_task_controller.dart';
-import '../compose/journal_phase.dart';
+import '../compose/compose_session_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart';
 import '../utils/statement_display.dart';
@@ -141,6 +141,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   ChatMode _lastChatMode = ChatMode.normal;
   bool _lastDistillLoading = false;
   ComposePhase? _prevJournalPhase;
+  ComposePhase? _prevComposePhase;
   String? _prevJournalGraphStatus;
   bool _graphReloadScheduled = false;
 
@@ -252,8 +253,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     }
     _load();
     _prevJournalPhase = journalTask.phase;
+    _prevComposePhase = composeSession.phase;
     _prevJournalGraphStatus =
         journalTask.entry?['graph_status']?.toString();
+    composeSession.entriesChanged.addListener(_onEntriesChanged);
     chatSession.onReferencedNodes = _onReferencedNodes;
     chatSession.addListener(_onChatChanged);
     chatSession.errors.addListener(_onChatError);
@@ -266,6 +269,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     chatSession.removeListener(_onChatChanged);
     chatSession.errors.removeListener(_onChatError);
     journalTask.removeListener(_onJournalTaskChanged);
+    composeSession.entriesChanged.removeListener(_onEntriesChanged);
     if (chatSession.onReferencedNodes == _onReferencedNodes) {
       chatSession.onReferencedNodes = null;
     }
@@ -303,6 +307,11 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     _prevJournalPhase = journalTask.phase;
     _prevJournalGraphStatus = graphStatus;
     if (mounted) setState(() {});
+  }
+
+  void _onEntriesChanged() {
+    _maybeReloadGraph(_prevComposePhase, composeSession.phase);
+    _prevComposePhase = composeSession.phase;
   }
 
   void _maybeReloadGraph(ComposePhase? prev, ComposePhase next) {
@@ -503,9 +512,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
         break;
       case 'composition':
         chatSession.startQuiz('composition');
-        break;
-      case 'word':
-        chatSession.startQuiz('cloze');
         break;
     }
   }
@@ -1172,7 +1178,6 @@ class _ChatPanelResizeHandleState extends State<_ChatPanelResizeHandle> {
 
   @override
   Widget build(BuildContext context) {
-    final shell = context.shell;
     final active = _hovering || _dragging;
     return MouseRegion(
       cursor: SystemMouseCursors.resizeColumn,
@@ -1187,7 +1192,7 @@ class _ChatPanelResizeHandleState extends State<_ChatPanelResizeHandle> {
         child: Container(
           width: 10,
           color: active
-              ? AppColors.hubGraph.withValues(alpha: 0.10)
+              ? AppColors.hubGraph.withValues(alpha: 0.12)
               : Colors.transparent,
           child: Center(
             child: AnimatedContainer(
@@ -1196,7 +1201,7 @@ class _ChatPanelResizeHandleState extends State<_ChatPanelResizeHandle> {
               height: double.infinity,
               color: active
                   ? AppColors.hubGraph.withValues(alpha: 0.65)
-                  : shell.panelBorder,
+                  : const Color(0xFF3A3A48),
             ),
           ),
         ),
@@ -1739,9 +1744,8 @@ class _EmptyGraphHint extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               compact
-                  ? '+ 버튼으로 첫 일기를 써보세요'
-                  : '+ 버튼으로 첫 일기를 써보세요.\n'
-                      '받아쓰기 → 화자 확인 → 그래프 검토 후 지식그래프가 채워집니다.',
+                  ? '개발자 도구 → 파이프라인에서 GraphRAG 수동 배치'
+                  : '일기 작성 후 파이프라인(Dev)에서 GraphRAG 배치 실행',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey[600]),
             ),

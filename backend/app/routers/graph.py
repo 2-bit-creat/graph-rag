@@ -12,11 +12,11 @@ from .. import crud
 
 from ..agent import tools as agent_tools
 
-from ..deps import request_user_dep
+from ..dev_user import dev_user_dep
 
 from ..db import get_session
 
-from ..models import Edge, User
+from ..models import User
 
 from ..schemas import (
 
@@ -253,7 +253,7 @@ async def speaker_recommend(
 
     speaker_label: str = Query(..., min_length=1),
 
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
 
     session: AsyncSession = Depends(get_session),
 
@@ -275,7 +275,7 @@ async def speaker_confirm(
 
     payload: SpeakerConfirmRequest,
 
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
 
     session: AsyncSession = Depends(get_session),
 
@@ -295,7 +295,7 @@ async def speaker_recommend_v1(
 
     speaker_label: str = Query(..., min_length=1),
 
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
 
     session: AsyncSession = Depends(get_session),
 
@@ -317,7 +317,7 @@ async def speaker_confirm_v1(
 
     payload: SpeakerConfirmRequest,
 
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
 
     session: AsyncSession = Depends(get_session),
 
@@ -331,7 +331,7 @@ async def speaker_confirm_v1(
 
 @router.get("/node-types")
 async def graph_node_types(
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     """Dynamic node types from DB (GROUP BY) for open-domain UI filters."""
@@ -340,7 +340,7 @@ async def graph_node_types(
 
 @v1_router.get("/node-types")
 async def graph_node_types_v1(
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     return await crud.get_dynamic_node_types(session, user.id)
@@ -348,7 +348,7 @@ async def graph_node_types_v1(
 
 @router.get("", response_model=GraphOut)
 async def read_graph(
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> GraphOut:
     nodes = await crud.list_nodes_out(session, user.id)
@@ -363,7 +363,7 @@ async def read_graph(
 @router.get("/nodes/{node_id}", response_model=NodeOut)
 async def read_node(
     node_id: uuid.UUID,
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> NodeOut:
     node = await crud.get_node_out(session, node_id, user.id)
@@ -374,7 +374,7 @@ async def read_node(
 
 @router.delete("", status_code=status.HTTP_200_OK)
 async def clear_graph(
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Wipe the user's entire knowledge graph (nodes, edges, chunks, links)."""
@@ -388,7 +388,7 @@ async def clear_graph(
 
 @v1_router.delete("", status_code=status.HTTP_200_OK)
 async def clear_graph_v1(
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     return await clear_graph(user=user, session=session)
@@ -431,63 +431,77 @@ async def apply(
 
 
 @router.post("/edges", response_model=EdgeOut, status_code=status.HTTP_201_CREATED)
+
 async def add_edge(
-    payload: EdgeCreate,
-    user: User = Depends(request_user_dep),
-    session: AsyncSession = Depends(get_session),
+
+    payload: EdgeCreate, session: AsyncSession = Depends(get_session)
+
 ) -> EdgeOut:
+
     edge = await crud.create_edge(
-        session,
-        payload.source_id,
-        payload.target_id,
-        payload.relation,
-        user_id=user.id,
+
+        session, payload.source_id, payload.target_id, payload.relation
+
     )
 
     if edge is None:
+
         raise HTTPException(status_code=404, detail="source or target node not found")
 
     return edge
 
 
+
+
+
 @router.patch("/edges/{edge_id}", response_model=EdgeOut)
+
 async def edit_edge(
+
     edge_id: uuid.UUID,
+
     payload: EdgeUpdate,
-    user: User = Depends(request_user_dep),
+
     session: AsyncSession = Depends(get_session),
+
 ) -> EdgeOut:
-    edge = await session.get(Edge, edge_id)
-    if edge is None or edge.user_id != user.id:
-        raise HTTPException(status_code=404, detail="edge not found")
 
     edge = await crud.update_edge(
+
         session,
+
         edge_id,
+
         relation=payload.relation,
+
         source_id=payload.source_id,
+
         target_id=payload.target_id,
+
     )
 
     if edge is None:
+
         raise HTTPException(status_code=404, detail="edge not found")
 
     return edge
 
 
+
+
+
 @router.delete("/edges/{edge_id}", status_code=status.HTTP_204_NO_CONTENT)
+
 async def remove_edge(
-    edge_id: uuid.UUID,
-    user: User = Depends(request_user_dep),
-    session: AsyncSession = Depends(get_session),
+
+    edge_id: uuid.UUID, session: AsyncSession = Depends(get_session)
+
 ) -> None:
-    edge = await session.get(Edge, edge_id)
-    if edge is None or edge.user_id != user.id:
-        raise HTTPException(status_code=404, detail="edge not found")
 
     deleted = await crud.delete_edge(session, edge_id)
 
     if not deleted:
+
         raise HTTPException(status_code=404, detail="edge not found")
 
 
@@ -497,7 +511,7 @@ async def remove_edge(
 @router.post("/nodes", response_model=NodeOut, status_code=status.HTTP_201_CREATED)
 async def add_node(
     payload: NodeCreate,
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> NodeOut:
     """Manually add a node from the KG edit surface (dedupes by name+type).
@@ -527,7 +541,7 @@ async def edit_node(
 
     payload: NodeUpdate,
 
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
 
     session: AsyncSession = Depends(get_session),
 
@@ -564,7 +578,7 @@ async def remove_node(
 @router.get("/nodes/{node_id}/deletion-impact")
 async def get_deletion_impact(
     node_id: uuid.UUID,
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Preview counts of what will be deleted when this node is removed."""
@@ -632,7 +646,7 @@ async def get_deletion_impact(
 @router.delete("/nodes/{node_id}/cascade")
 async def remove_node_cascade(
     node_id: uuid.UUID,
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Soft-delete a Statement node and cascade to orphaned neighbors, quizzes, and expressions."""
@@ -644,7 +658,7 @@ async def remove_node_cascade(
 
 @router.get("/trash")
 async def list_trash(
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Return all soft-deleted Statement nodes (trash bin)."""
@@ -656,7 +670,7 @@ async def list_trash(
 @router.post("/trash/{node_id}/restore")
 async def restore_from_trash(
     node_id: uuid.UUID,
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Restore a soft-deleted Statement node from trash."""
@@ -669,7 +683,7 @@ async def restore_from_trash(
 @router.delete("/trash/{node_id}/purge", status_code=status.HTTP_204_NO_CONTENT)
 async def purge_from_trash(
     node_id: uuid.UUID,
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Permanently delete a node from trash."""
@@ -681,7 +695,7 @@ async def purge_from_trash(
 @router.get("/nodes/{node_id}/expressions")
 async def get_node_expressions(
     node_id: uuid.UUID,
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
 ) -> dict:
     """Return all extracted language expressions for a Statement node, grouped by language."""
     from ..node_expression_store import get_node_expressions_all_languages
@@ -691,7 +705,7 @@ async def get_node_expressions(
 
 @router.post("/admin/backfill-journal-links")
 async def backfill_journal_links(
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """One-time backfill: create JournalGraphLink entries for nodes that lack them,
@@ -718,7 +732,7 @@ async def backfill_journal_links(
 
 @router.post("/admin/cleanup-orphan-speaker-profiles")
 async def cleanup_orphan_speaker_profiles(
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Clear display_name on SpeakerProfiles whose linked node was deleted."""
@@ -744,7 +758,7 @@ async def cleanup_orphan_speaker_profiles(
 @router.delete("/nodes/{node_id}/voice-link", response_model=NodeOut)
 async def unlink_node_voice(
     node_id: uuid.UUID,
-    user: User = Depends(request_user_dep),
+    user: User = Depends(dev_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> NodeOut:
     """Remove voice embedding link from a Speaker graph node."""

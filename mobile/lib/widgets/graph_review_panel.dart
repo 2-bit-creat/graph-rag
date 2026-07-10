@@ -5,25 +5,34 @@ import '../chat/journal_task_controller.dart';
 import '../compose/compose_session_controller.dart';
 import '../theme/app_theme.dart';
 import 'app_ui.dart';
+import 'entity_identity_sheet.dart';
 
 /// Inline or full-screen graph draft review — edit claims, then confirm.
+enum GraphReviewPresentation { full, chat }
+
 class GraphReviewPanel extends StatefulWidget {
   const GraphReviewPanel({
     super.key,
     required this.entryId,
     required this.staging,
+    this.presentation = GraphReviewPresentation.full,
     this.maxBodyHeight = 440,
     this.onApplied,
+    this.onReopenSpeakers,
   });
 
   final String entryId;
   final Map<String, dynamic> staging;
+  final GraphReviewPresentation presentation;
 
   /// Scroll area cap when embedded in chat cards.
   final double maxBodyHeight;
 
   /// Called after a successful apply (optional — e.g. pop a route).
   final VoidCallback? onApplied;
+
+  /// When set, user can go back to speaker confirmation instead of editing here.
+  final VoidCallback? onReopenSpeakers;
 
   @override
   State<GraphReviewPanel> createState() => _GraphReviewPanelState();
@@ -269,8 +278,43 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
     }
   }
 
+  int get _conceptCount =>
+      _claims.fold<int>(0, (n, c) => n + c.concepts.length);
+
+  bool get _isChat => widget.presentation == GraphReviewPresentation.chat;
+
+  Future<void> _handleReopenSpeakers() async {
+    if (widget.onReopenSpeakers == null) return;
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('화자 설정으로 돌아갈까요?'),
+        content: const Text(
+          '화자는 그래프의 핵심 입력이라 여기서는 바꿀 수 없습니다.\n'
+          '화자 설정으로 돌아가 수정한 뒤, 그래프 초안을 다시 만들어야 합니다.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('화자 다시 설정'),
+          ),
+        ],
+      ),
+    );
+    if (proceed == true) widget.onReopenSpeakers!();
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_isChat) return _buildChat(context);
+    return _buildFull(context);
+  }
+
+  Widget _buildFull(BuildContext context) {
     final claimsList = ConstrainedBox(
       constraints: BoxConstraints(maxHeight: widget.maxBodyHeight),
       child: ListView(
@@ -301,9 +345,13 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
           for (var i = 0; i < _claims.length; i++) ...[
             _ClaimCard(
               claim: _claims[i],
+              index: i + 1,
               personCandidates: _personCandidates,
+              chatStyle: false,
               onDelete: () => _deleteClaim(i),
               onConceptsChanged: () => setState(() {}),
+              onReopenSpeakers:
+                  widget.onReopenSpeakers == null ? null : _handleReopenSpeakers,
             ),
             const SizedBox(height: AppSpacing.md),
           ],
@@ -326,18 +374,167 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
       children: [
         claimsList,
         const SizedBox(height: AppSpacing.sm),
-        FilledButton.icon(
+        _confirmButton(context),
+      ],
+    );
+  }
+
+  Widget _buildChat(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: AppColors.hubGraph.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.hub_outlined,
+                      size: 13, color: AppColors.hubGraph.withValues(alpha: 0.9)),
+                  const SizedBox(width: 4),
+                  Text(
+                    '${_claims.length}개 발언',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.hubGraph.withValues(alpha: 0.95),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: AppColors.accent.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                '$_conceptCount개 개념',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.accent.withValues(alpha: 0.95),
+                ),
+              ),
+            ),
+            const Spacer(),
+            Text(
+              '확정 후 수정 불가',
+              style: TextStyle(
+                fontSize: 10,
+                color: context.shell.mutedText,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        if (widget.onReopenSpeakers != null) ...[
+          _SpeakerLockBanner(onReopen: _handleReopenSpeakers),
+          const SizedBox(height: 8),
+        ],
+        ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: widget.maxBodyHeight),
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: _claims.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 8),
+            itemBuilder: (context, i) => _ClaimCard(
+              claim: _claims[i],
+              index: i + 1,
+              personCandidates: _personCandidates,
+              chatStyle: true,
+              onDelete: () => _deleteClaim(i),
+              onConceptsChanged: () => setState(() {}),
+              onReopenSpeakers:
+                  widget.onReopenSpeakers == null ? null : _handleReopenSpeakers,
+            ),
+          ),
+        ),
+        if (_claims.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Text(
+              '검토할 항목이 없습니다.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12,
+                color: context.shell.mutedText,
+              ),
+            ),
+          ),
+        const SizedBox(height: 8),
+        Text(
+          '개념 탭 → 중요도 · 길게 → 정체성 · 👤 탭 → 연결',
+          style: TextStyle(
+            fontSize: 10,
+            color: context.shell.mutedText,
+          ),
+        ),
+        const SizedBox(height: 10),
+        _confirmButton(context, chatStyle: true),
+      ],
+    );
+  }
+
+  Widget _confirmButton(BuildContext context, {bool chatStyle = false}) {
+    if (chatStyle) {
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              AppColors.hubGraph,
+              AppColors.hubGraph.withValues(alpha: 0.82),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.hubGraph.withValues(alpha: 0.28),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: FilledButton.icon(
+          style: FilledButton.styleFrom(
+            backgroundColor: Colors.transparent,
+            shadowColor: Colors.transparent,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 13),
+          ),
           onPressed: _submitting ? null : _confirm,
           icon: _submitting
               ? const SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
                 )
-              : const Icon(Icons.check_circle_outline),
-          label: Text(_submitting ? '확정 중…' : '확정하고 지식그래프에 추가'),
+              : const Icon(Icons.check_circle_outline_rounded, size: 18),
+          label: Text(_submitting ? '확정 중…' : '지식그래프에 확정'),
         ),
-      ],
+      );
+    }
+    return FilledButton.icon(
+      onPressed: _submitting ? null : _confirm,
+      icon: _submitting
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.check_circle_outline),
+      label: Text(_submitting ? '확정 중…' : '확정하고 지식그래프에 추가'),
     );
   }
 }
@@ -345,116 +542,105 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
 class _ClaimCard extends StatelessWidget {
   const _ClaimCard({
     required this.claim,
+    required this.index,
     required this.personCandidates,
+    required this.chatStyle,
     required this.onDelete,
     required this.onConceptsChanged,
+    this.onReopenSpeakers,
   });
 
   final _ClaimDraft claim;
+  final int index;
   final List<_PersonCandidate> personCandidates;
+  final bool chatStyle;
   final VoidCallback onDelete;
   final VoidCallback onConceptsChanged;
+  final VoidCallback? onReopenSpeakers;
+
+  List<EntityPersonCandidate> get _entityCandidates => personCandidates
+      .map((p) => EntityPersonCandidate(id: p.id, name: p.name, isSelf: p.isSelf))
+      .toList();
 
   Future<void> _resolvePerson(BuildContext context, _ConceptDraft c) async {
-    await showModalBottomSheet<void>(
+    final result = await showEntityIdentitySheet(
       context: context,
-      showDragHandle: true,
-      builder: (ctx) {
-        return SafeArea(
-          child: ListView(
-            shrinkWrap: true,
-            padding: const EdgeInsets.only(bottom: AppSpacing.md),
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.md, AppSpacing.xs, AppSpacing.md, AppSpacing.sm),
-                child: Text(
-                  "'${c.name}' 은(는) 누구/무엇인가요?",
-                  style: Theme.of(ctx).textTheme.titleSmall,
-                ),
+      entityName: c.name,
+      candidates: _entityCandidates,
+      suggestedNodeId: c.resAction == 'suggest' ? c.resNodeId : null,
+      suggestedName: c.resAction == 'suggest' ? c.resName : null,
+      currentAction: c.resAction,
+      currentNodeId: c.resNodeId,
+    );
+    if (result == null) return;
+    if (result.action == 'concept') {
+      c.kind = 'concept';
+      c.resAction = 'concept';
+      c.resNodeId = null;
+      c.resName = null;
+      c.resIsSelf = false;
+    } else if (result.action == 'link') {
+      c.kind = 'person';
+      c.resAction = 'link';
+      c.resNodeId = result.nodeId;
+      c.resName = result.linkedName;
+      c.resIsSelf = result.isSelf;
+    } else {
+      c.kind = 'person';
+      c.resAction = 'new_person';
+      c.resNodeId = null;
+      c.resName = null;
+      c.resIsSelf = false;
+    }
+    onConceptsChanged();
+  }
+
+  Widget _speakerBadge(BuildContext context, String name, {required bool chatStyle}) {
+    final badge = Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: chatStyle ? 8 : 10,
+        vertical: chatStyle ? 4 : 6,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.hubVoice.withValues(alpha: chatStyle ? 0.16 : 0.12),
+        borderRadius: BorderRadius.circular(chatStyle ? 6 : 8),
+        border: Border.all(color: AppColors.hubVoice.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.person_rounded,
+              size: chatStyle ? 13 : 15, color: AppColors.hubVoice),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              name.isEmpty ? '화자' : name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: chatStyle ? 12 : 13.5,
+                fontWeight: FontWeight.w700,
+                color: AppColors.hubVoice,
               ),
-              if (c.resAction == 'suggest' && c.resNodeId != null) ...[
-                Container(
-                  margin: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.md, vertical: AppSpacing.xs),
-                  decoration: BoxDecoration(
-                    color: const Color(0x22FFB020),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0x55FFB020)),
-                  ),
-                  child: ListTile(
-                    leading: const Icon(Icons.auto_awesome,
-                        color: Color(0xFFFFB020)),
-                    title: Text('추천: ${c.resName ?? ''} 맞아요'),
-                    subtitle: const Text('이름은 다르지만 같은 대상 같아요 — 확인하면 학습합니다.'),
-                    onTap: () {
-                      c.resAction = 'link';
-                      Navigator.pop(ctx);
-                      onConceptsChanged();
-                    },
-                  ),
-                ),
-              ],
-              ListTile(
-                leading: const Icon(Icons.person_add_alt_1),
-                title: const Text('새 정체성으로 추가'),
-                subtitle: const Text('사람·반려동물·단체 등 개체 노드를 새로 만듭니다.'),
-                selected: c.resAction == null || c.resAction == 'new_person',
-                onTap: () {
-                  c.resAction = 'new_person';
-                  c.resNodeId = null;
-                  c.resName = null;
-                  c.resIsSelf = false;
-                  Navigator.pop(ctx);
-                  onConceptsChanged();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.lightbulb_outline),
-                title: const Text('개체가 아니라 개념으로'),
-                subtitle: const Text('정체성이 아니라 일반 개념(Concept)으로 저장합니다.'),
-                selected: c.resAction == 'concept',
-                onTap: () {
-                  c.kind = 'concept';
-                  c.resAction = 'concept';
-                  c.resNodeId = null;
-                  c.resName = null;
-                  c.resIsSelf = false;
-                  Navigator.pop(ctx);
-                  onConceptsChanged();
-                },
-              ),
-              if (personCandidates.isNotEmpty) ...[
-                const Divider(height: AppSpacing.lg),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                      AppSpacing.md, 0, AppSpacing.md, AppSpacing.xs),
-                  child: Text('기존 정체성에 연결',
-                      style: Theme.of(ctx).textTheme.bodySmall),
-                ),
-                for (final p in personCandidates)
-                  ListTile(
-                    leading: Icon(
-                        p.isSelf ? Icons.account_circle : Icons.person_outline),
-                    title: Text(p.isSelf ? '${p.name} (본인)' : p.name),
-                    selected: c.resAction == 'link' && c.resNodeId == p.id,
-                    trailing: (c.resAction == 'link' && c.resNodeId == p.id)
-                        ? const Icon(Icons.check, color: AppColors.accent)
-                        : null,
-                    onTap: () {
-                      c.resAction = 'link';
-                      c.resNodeId = p.id;
-                      c.resName = p.name;
-                      c.resIsSelf = p.isSelf;
-                      Navigator.pop(ctx);
-                      onConceptsChanged();
-                    },
-                  ),
-              ],
-            ],
+            ),
           ),
-        );
-      },
+          if (onReopenSpeakers != null) ...[
+            const SizedBox(width: 2),
+            Icon(Icons.lock_outline_rounded,
+                size: chatStyle ? 11 : 12,
+                color: AppColors.hubVoice.withValues(alpha: 0.55)),
+          ],
+        ],
+      ),
+    );
+    if (onReopenSpeakers == null) return badge;
+    return Tooltip(
+      message: '화자는 여기서 수정할 수 없습니다',
+      child: InkWell(
+        onTap: onReopenSpeakers,
+        borderRadius: BorderRadius.circular(chatStyle ? 6 : 8),
+        child: badge,
+      ),
     );
   }
 
@@ -521,22 +707,278 @@ class _ClaimCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (chatStyle) return _buildChatCard(context);
+    return _buildFullCard(context);
+  }
+
+  Widget _buildChatCard(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF12121A),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF2A2A36)),
+      ),
+      padding: const EdgeInsets.fromLTRB(10, 8, 6, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 20,
+                height: 20,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: AppColors.hubGraph.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(5),
+                ),
+                child: Text(
+                  '$index',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.hubGraph.withValues(alpha: 0.95),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _speakerBadge(
+                  context,
+                  claim.speaker.text,
+                  chatStyle: true,
+                ),
+              ),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                tooltip: '삭제',
+                onPressed: onDelete,
+                icon: Icon(Icons.close_rounded,
+                    size: 16, color: context.shell.mutedText),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: claim.statement,
+            minLines: 1,
+            maxLines: 4,
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.45,
+              color: context.shell.primaryText,
+            ),
+            decoration: InputDecoration(
+              isDense: true,
+              filled: true,
+              fillColor: context.shell.subtleSurface,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: context.shell.panelBorder),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: context.shell.panelBorder),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: AppColors.hubGraph.withValues(alpha: 0.45)),
+              ),
+            ),
+          ),
+          if (claim.concepts.isEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              '개념 없음 — 고립 노드가 될 수 있어요',
+              style: TextStyle(
+                fontSize: 10,
+                color: AppColors.accentWarm.withValues(alpha: 0.85),
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 5,
+            runSpacing: 5,
+            children: [
+              for (final c in claim.concepts)
+                if (c.isPerson)
+                  _chatPersonChip(context, c)
+                else
+                  _chatConceptChip(context, c),
+              _chatAddChip(context),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _chatConceptChip(BuildContext context, _ConceptDraft c) {
+    return GestureDetector(
+      onLongPress: () {
+        c.kind = 'person';
+        c.resAction = null;
+        onConceptsChanged();
+        _resolvePerson(context, c);
+      },
+      child: Material(
+        color: AppColors.accent.withValues(alpha: 0.12 + 0.04 * c.importance),
+        borderRadius: BorderRadius.circular(7),
+        child: InkWell(
+          onTap: () {
+            c.importance = c.importance >= 5 ? 1 : c.importance + 1;
+            onConceptsChanged();
+          },
+          borderRadius: BorderRadius.circular(7),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(6, 4, 4, 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 16,
+                  height: 16,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: AppColors.accent.withValues(alpha: 0.25),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    '${c.importance}',
+                    style: const TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.accent,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  c.name,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.accent,
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () {
+                    claim.concepts.remove(c);
+                    onConceptsChanged();
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 2),
+                    child: Icon(Icons.close,
+                        size: 12, color: AppColors.accent.withValues(alpha: 0.7)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _chatPersonChip(BuildContext context, _ConceptDraft c) {
+    final linked = c.resAction == 'link';
+    final suggested = c.resAction == 'suggest';
+    final color = linked
+        ? (c.resIsSelf ? const Color(0xFF4C8DFF) : const Color(0xFF35C08A))
+        : suggested
+            ? const Color(0xFFB07BFF)
+            : AppColors.accentWarm;
+    final suffix = linked
+        ? '→ ${c.resIsSelf ? '${c.resName ?? c.name}(본인)' : (c.resName ?? c.name)}'
+        : suggested
+            ? '≈ ${c.resName ?? ''}?'
+            : '· 새 개체';
+    return Material(
+      color: color.withValues(alpha: 0.14),
+      borderRadius: BorderRadius.circular(7),
+      child: InkWell(
+        onTap: () => _resolvePerson(context, c),
+        borderRadius: BorderRadius.circular(7),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(6, 4, 4, 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                suggested ? Icons.auto_awesome : Icons.person_rounded,
+                size: 12,
+                color: color,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                '${c.name} $suffix',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                ),
+              ),
+              GestureDetector(
+                onTap: () {
+                  claim.concepts.remove(c);
+                  onConceptsChanged();
+                },
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 2),
+                  child: Icon(Icons.close, size: 12, color: color.withValues(alpha: 0.7)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _chatAddChip(BuildContext context) {
+    final onSurface = context.shell.primaryText;
+    return Material(
+      color: context.shell.subtleSurface,
+      borderRadius: BorderRadius.circular(7),
+      child: InkWell(
+        onTap: () => _addConcept(context),
+        borderRadius: BorderRadius.circular(7),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.add, size: 13, color: onSurface),
+              const SizedBox(width: 2),
+              Text(
+                '추가',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: onSurface,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFullCard(BuildContext context) {
     return AppSurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
-              Expanded(
-                child: TextField(
-                  controller: claim.speaker,
-                  style: Theme.of(context).textTheme.titleSmall,
-                  decoration: const InputDecoration(
-                    labelText: '화자',
-                    isDense: true,
-                  ),
-                ),
-              ),
+              Expanded(child: _speakerBadge(context, claim.speaker.text, chatStyle: false)),
               IconButton(
                 tooltip: '이 항목 삭제',
                 onPressed: onDelete,
@@ -635,6 +1077,49 @@ class _ClaimCard extends StatelessWidget {
                 onPressed: () => _addConcept(context),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SpeakerLockBanner extends StatelessWidget {
+  const _SpeakerLockBanner({required this.onReopen});
+
+  final VoidCallback onReopen;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.hubVoice.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.hubVoice.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.lock_outline_rounded,
+              size: 14, color: AppColors.hubVoice.withValues(alpha: 0.85)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '화자는 여기서 수정할 수 없습니다. 잘못 지정했다면 화자 설정으로 돌아가세요.',
+              style: TextStyle(
+                fontSize: 10.5,
+                height: 1.35,
+                color: context.shell.primaryText.withValues(alpha: 0.85),
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: onReopen,
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+            ),
+            child: const Text('화자 다시 설정', style: TextStyle(fontSize: 11)),
           ),
         ],
       ),

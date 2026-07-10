@@ -54,7 +54,7 @@ async def _apply(db_session, user, entry, concepts):
         }],
         context_type="개인일기",
     )
-    return await apply_entry_graph(entry.id, payload, user, db_session, background_tasks=BackgroundTasks())
+    return await apply_entry_graph(entry.id, payload, user, db_session)
 
 
 async def _nodes_by_name(db_session, user_id):
@@ -251,7 +251,7 @@ async def test_merge_repoints_journal_provenance(db_session, iso_user):
 
 @pytest.mark.asyncio
 async def test_reclassify_refuses_merging_self_as_source(db_session, iso_user):
-    from fastapi import BackgroundTasks, HTTPException
+    from fastapi import HTTPException
     from app.routers.kg_build import ReclassifyNodeRequest, kg_reclassify_node
 
     self_node = await crud.get_or_create_self_node(db_session, iso_user.id)

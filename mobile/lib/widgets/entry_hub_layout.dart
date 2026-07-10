@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../api/client.dart';
+import '../app_route_observer.dart';
+import '../compose/compose_session_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 
@@ -119,7 +121,7 @@ class EntryHubLayout extends StatefulWidget {
   State<EntryHubLayout> createState() => EntryHubLayoutState();
 }
 
-class EntryHubLayoutState extends State<EntryHubLayout> {
+class EntryHubLayoutState extends State<EntryHubLayout> with RouteAware {
   List<dynamic> _entries = [];
   Map<String, dynamic>? _selected;
   bool _loading = true;
@@ -133,6 +135,34 @@ class EntryHubLayoutState extends State<EntryHubLayout> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) appRouteObserver.subscribe(this, route);
+  }
+
+  @override
+  void dispose() {
+    appRouteObserver.unsubscribe(this);
+    super.dispose();
+  }
+
+  /// Returned from a pushed screen (e.g. graph review). Refresh both the list
+  /// and the open detail quietly, without blanking the master–detail view.
+  @override
+  void didPopNext() {
+    _silentReload();
+  }
+
+  Future<void> _silentReload() async {
+    try {
+      final entries = await apiClient.listEntries();
+      if (mounted) setState(() => _entries = entries);
+    } catch (_) {}
+    await _refreshSelected(silent: true);
   }
 
   Future<void> _load() async {
@@ -236,10 +266,16 @@ class EntryHubLayoutState extends State<EntryHubLayout> {
       ),
       floatingActionButton: widget.onNewEntry == null
           ? null
-          : FloatingActionButton.extended(
-              onPressed: widget.onNewEntry,
-              icon: const Icon(Icons.edit_note_rounded),
-              label: const Text('새 기록'),
+          // 작성 세션이 살아 있는 동안은 우하단 미니 창이 이 자리를 쓴다.
+          : ListenableBuilder(
+              listenable: composeSession,
+              builder: (context, _) => composeSession.isActive
+                  ? const SizedBox.shrink()
+                  : FloatingActionButton.extended(
+                      onPressed: widget.onNewEntry,
+                      icon: const Icon(Icons.edit_note_rounded),
+                      label: const Text('새 기록'),
+                    ),
             ),
       body: _loading
           ? const AppLoadingScreen()
@@ -453,7 +489,7 @@ class EntryHubNavigator extends StatefulWidget {
   State<EntryHubNavigator> createState() => _EntryHubNavigatorState();
 }
 
-class _EntryHubNavigatorState extends State<EntryHubNavigator> {
+class _EntryHubNavigatorState extends State<EntryHubNavigator> with RouteAware {
   List<dynamic> _entries = [];
   bool _loading = true;
 
@@ -468,8 +504,26 @@ class _EntryHubNavigatorState extends State<EntryHubNavigator> {
     }
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) appRouteObserver.subscribe(this, route);
+  }
+
+  @override
+  void dispose() {
+    appRouteObserver.unsubscribe(this);
+    super.dispose();
+  }
+
+  /// Returned from the pushed entry detail — refresh the list silently so status
+  /// (graph / speakers) reflects any changes made in detail.
+  @override
+  void didPopNext() => _load(silent: true);
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) setState(() => _loading = true);
     try {
       final entries = await apiClient.listEntries();
       if (mounted) {
@@ -479,11 +533,12 @@ class _EntryHubNavigatorState extends State<EntryHubNavigator> {
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && !silent) setState(() => _loading = false);
     }
   }
 
   Future<void> _open(String entryId) async {
+    // The list refreshes on return via didPopNext.
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -495,7 +550,6 @@ class _EntryHubNavigatorState extends State<EntryHubNavigator> {
         ),
       ),
     );
-    _load();
   }
 
   Future<void> _deleteAll() async {
@@ -543,10 +597,16 @@ class _EntryHubNavigatorState extends State<EntryHubNavigator> {
       ),
       floatingActionButton: widget.onNewEntry == null
           ? null
-          : FloatingActionButton.extended(
-              onPressed: widget.onNewEntry,
-              icon: const Icon(Icons.edit_note_rounded),
-              label: const Text('새 기록'),
+          // 작성 세션이 살아 있는 동안은 우하단 미니 창이 이 자리를 쓴다.
+          : ListenableBuilder(
+              listenable: composeSession,
+              builder: (context, _) => composeSession.isActive
+                  ? const SizedBox.shrink()
+                  : FloatingActionButton.extended(
+                      onPressed: widget.onNewEntry,
+                      icon: const Icon(Icons.edit_note_rounded),
+                      label: const Text('새 기록'),
+                    ),
             ),
       body: _loading
           ? const AppLoadingScreen()
@@ -605,7 +665,7 @@ class _EntryDetailPage extends StatefulWidget {
   State<_EntryDetailPage> createState() => _EntryDetailPageState();
 }
 
-class _EntryDetailPageState extends State<_EntryDetailPage> {
+class _EntryDetailPageState extends State<_EntryDetailPage> with RouteAware {
   Map<String, dynamic>? _entry;
   bool _loading = true;
 
@@ -614,6 +674,24 @@ class _EntryDetailPageState extends State<_EntryDetailPage> {
     super.initState();
     _load();
   }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) appRouteObserver.subscribe(this, route);
+  }
+
+  @override
+  void dispose() {
+    appRouteObserver.unsubscribe(this);
+    super.dispose();
+  }
+
+  /// Returned from a pushed screen (graph review / knowledge graph) — refresh
+  /// silently so speaker/graph updates show without a loading flash.
+  @override
+  void didPopNext() => _load(silent: true);
 
   Future<void> _load({bool silent = false}) async {
     if (!silent) setState(() => _loading = true);

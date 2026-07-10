@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../api/client.dart';
 import '../theme/app_theme.dart';
-import '../widgets/mention_editor_core.dart' show colorForSpeaker;
 import '../widgets/quiz/cloze_quiz_card.dart';
 import '../widgets/quiz/mcq_quiz_card.dart';
 import '../widgets/quiz/scramble_quiz_card.dart';
@@ -10,11 +9,7 @@ import '../widgets/quiz/scramble_quiz_card.dart';
 /// Light "sheet" wrapper so the light-themed quiz/draft cards stay legible
 /// inside the dark chat panel.
 class _CardShell extends StatelessWidget {
-  const _CardShell({
-    required this.child,
-    this.title,
-    this.onClose,
-  });
+  const _CardShell({required this.child, this.title, this.onClose});
 
   final Widget child;
   final String? title;
@@ -60,7 +55,7 @@ class _CardShell extends StatelessWidget {
   }
 }
 
-// ?�?� ?�?????�기 ?�제 ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+// ── 대화 → 일기 정제 ──────────────────────────────────────────────────────────
 
 class DistillDraftCard extends StatelessWidget {
   const DistillDraftCard({
@@ -108,12 +103,6 @@ class DistillDraftCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            '내가 채팅에서 한 말만 정리해요 (AI 답변은 제외). 체크 후 저장하거나 아래 입력창으로 수정.',
-            style: TextStyle(
-                fontSize: 11.5, color: context.mutedText, height: 1.35),
-          ),
-          const SizedBox(height: 10),
           if (sentences.isEmpty)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 8),
@@ -126,6 +115,11 @@ class DistillDraftCard extends StatelessWidget {
                 data: sentences[i],
                 onChanged: (v) => onToggle(i, v),
               ),
+          const SizedBox(height: 6),
+          Text(
+            '빼거나 고칠 부분은 아래 입력창에 말해보세요. 예) "첫 문장 빼줘"',
+            style: TextStyle(fontSize: 11.5, color: AppColors.textMuted),
+          ),
           const SizedBox(height: 10),
           Row(
             children: [
@@ -163,9 +157,6 @@ class _SentenceRow extends StatelessWidget {
     final included = data['included'] == true;
     final duplicate = data['duplicate'] == true;
     final matched = (data['matched_statement'] ?? '').toString();
-    final speaker = (data['speaker'] ?? '나').toString().trim();
-    final showSpeaker = speaker.isNotEmpty && speaker != '나';
-    final speakerColor = colorForSpeaker(speaker, ['나', if (showSpeaker) speaker]);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
@@ -183,26 +174,6 @@ class _SentenceRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (showSpeaker)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 3),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 7, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: speakerColor,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        '@$speaker',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
                 Text((data['text'] ?? '').toString(),
                     style: const TextStyle(fontSize: 13.5, height: 1.35)),
                 if (duplicate) ...[
@@ -210,7 +181,7 @@ class _SentenceRow extends StatelessWidget {
                   Row(
                     children: [
                       Icon(Icons.info_outline_rounded,
-                          size: 12, color: context.mutedText),
+                          size: 12, color: AppColors.textMuted),
                       const SizedBox(width: 4),
                       Flexible(
                         child: Text(
@@ -220,7 +191,7 @@ class _SentenceRow extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                              fontSize: 11, color: context.mutedText),
+                              fontSize: 11, color: AppColors.textMuted),
                         ),
                       ),
                     ],
@@ -235,7 +206,7 @@ class _SentenceRow extends StatelessWidget {
   }
 }
 
-// ?�?� ?�문 ?�즈 (composition drill) ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+// ── 작문 퀴즈 (composition drill) ─────────────────────────────────────────────
 
 class CompositionDrillCard extends StatefulWidget {
   const CompositionDrillCard({
@@ -270,7 +241,7 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('복습 단어장에 저장했어요.')),
+          const SnackBar(content: Text('복습 단어장에 담았어요.')),
         );
       }
     } catch (e) {
@@ -332,9 +303,9 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
                   const Text('채점 중…', style: TextStyle(fontSize: 12.5)),
                 ] else
                   Expanded(
-                    child: Text('아래 입력창에 영어 문장을 써서 보내보세요.',
+                    child: Text('아래 입력창에 영어로 작문해서 보내보세요.',
                         style: TextStyle(
-                            fontSize: 12.5, color: context.mutedText)),
+                            fontSize: 12.5, color: AppColors.textMuted)),
                   ),
               ],
             )
@@ -393,7 +364,7 @@ class _FeedbackBody extends StatelessWidget {
         if (naturalVersions.isNotEmpty) ...[
           const SizedBox(height: 8),
           Text('이렇게도 말할 수 있어요',
-              style: TextStyle(fontSize: 11.5, color: context.mutedText)),
+              style: TextStyle(fontSize: 11.5, color: AppColors.textMuted)),
           const SizedBox(height: 4),
           for (final v in naturalVersions)
             _NaturalRow(
@@ -440,7 +411,7 @@ class _NaturalRow extends StatelessWidget {
   }
 }
 
-// ?�?� ?�어 ?�즈 (self-contained cloze / scramble / mcq cards) ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+// ── 단어 퀴즈 (self-contained cloze / scramble / mcq cards) ───────────────────
 
 class WordQuizCard extends StatefulWidget {
   const WordQuizCard({

@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
-import '../app_navigator.dart';
+import '../compose/compose_session_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import 'tutor_screen.dart' show tutorLangLabel;
 
-/// 문제 ?�성 ?�이지 ???�문(composition) 문제�??�동?�로 만들�??��??��? 관리한??
+/// 문제 생성 페이지 — 작문(composition) 문제를 수동으로 만들고 대기 큐를 관리한다.
 ///
-/// ?�성?� ?�기 기반(journal)�? 만들?�진 문제???�성???�서(FIFO)?��??�문
-/// ?�즈?�서 출제?�다. ?�기가 ?�으�?409(no_seed)�??�패?�고 ?�기 ?�성???�내.
+/// 생성은 일기 기반(journal)만. 만들어진 문제는 생성된 순서(FIFO)대로 작문
+/// 퀴즈에서 출제된다. 일기가 없으면 409(no_seed)로 실패하고 일기 작성을 안내.
 class QuizGenerationScreen extends StatefulWidget {
   const QuizGenerationScreen({super.key});
 
@@ -89,7 +89,7 @@ class _QuizGenerationScreenState extends State<QuizGenerationScreen> {
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('샘플 문제 $_count개를 만들었어요')),
+        SnackBar(content: Text('작문 문제 $_count개를 만들었어요')),
       );
       await _load();
     } catch (e) {
@@ -109,7 +109,7 @@ class _QuizGenerationScreenState extends State<QuizGenerationScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('일기가 필요해요'),
-        content: const Text('샘플 문제는 일기 문장으로 만들어요.\n먼저 일기를 작성해 주세요.'),
+        content: const Text('작문 문제는 내 일기 문장으로 만들어요.\n먼저 일기를 한 편 작성해 주세요.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -118,7 +118,7 @@ class _QuizGenerationScreenState extends State<QuizGenerationScreen> {
           FilledButton.icon(
             onPressed: () {
               Navigator.pop(ctx);
-              openInlineJournalCompose();
+              composeSession.open(startNew: true);
             },
             icon: const Icon(Icons.edit_rounded, size: 18),
             label: const Text('일기 쓰기'),
@@ -132,7 +132,7 @@ class _QuizGenerationScreenState extends State<QuizGenerationScreen> {
     final id = item['id']?.toString();
     if (id == null) return;
     try {
-      await apiClient.deleteQuizItem(id, permanent: true);
+      await apiClient.deleteCompositionQuiz(id);
       if (!mounted) return;
       setState(() => _queue.removeWhere((q) => q['id']?.toString() == id));
     } catch (e) {
@@ -152,7 +152,7 @@ class _QuizGenerationScreenState extends State<QuizGenerationScreen> {
     return Scaffold(
       appBar: const AppHubAppBar(
         title: '문제 생성',
-        subtitle: '내 일기 문장으로 샘플 문제 만들기',
+        subtitle: '내 일기 문장으로 작문 문제 만들기',
       ),
       body: _loading
           ? const AppLoadingScreen(message: '불러오는 중…')
@@ -182,14 +182,14 @@ class _QuizGenerationScreenState extends State<QuizGenerationScreen> {
               const Icon(Icons.auto_fix_high_rounded,
                   size: 18, color: AppColors.hubQuiz),
               const SizedBox(width: 6),
-              Text('샘플 문제',
+              Text('새 작문 문제',
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(
                         fontWeight: FontWeight.w700,
                       )),
               const Spacer(),
               Text('일기 기반',
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: context.mutedText,
+                        color: AppColors.textMuted,
                       )),
             ],
           ),
@@ -270,7 +270,7 @@ class _QuizGenerationScreenState extends State<QuizGenerationScreen> {
   Widget _chipRowLabel(String text) {
     return Text(text,
         style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: context.mutedText,
+              color: AppColors.textMuted,
               fontWeight: FontWeight.w700,
             ));
   }
@@ -280,23 +280,23 @@ class _QuizGenerationScreenState extends State<QuizGenerationScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         AppSectionHeader(
-          title: '대기중인 문제 (${_queue.length})',
+          title: '대기 중인 문제 (${_queue.length})',
           subtitle: _reviewDue > 0
               ? '생성된 순서대로 출제 · 복습 예정 $_reviewDue개'
-              : '생성된 순서대로 출제해요',
+              : '생성된 순서대로 출제돼요',
         ),
         const SizedBox(height: AppSpacing.md),
         if (_queue.isEmpty)
           AppSurfaceCard(
             child: Row(
               children: [
-                Icon(Icons.inbox_rounded,
-                    size: 20, color: context.mutedText),
+                const Icon(Icons.inbox_rounded,
+                    size: 20, color: AppColors.textMuted),
                 const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Text('생성된 문제가 없어요. 위에서 만들어 보세요.',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: context.mutedText,
+                            color: AppColors.textMuted,
                           )),
                 ),
               ],
@@ -316,7 +316,7 @@ class _QuizGenerationScreenState extends State<QuizGenerationScreen> {
   }
 }
 
-// ?�?� Queue item card ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+// ── Queue item card ───────────────────────────────────────────────────────────
 
 class _QueueItemCard extends StatelessWidget {
   const _QueueItemCard({
@@ -385,7 +385,7 @@ class _QueueItemCard extends StatelessWidget {
                   runSpacing: 4,
                   children: [
                     if (lang.isNotEmpty) _miniBadge(lang, AppColors.hubGraph),
-                    if (cefr.isNotEmpty) _miniBadge(cefr, context.mutedText),
+                    if (cefr.isNotEmpty) _miniBadge(cefr, AppColors.textMuted),
                     if (focusKo.isNotEmpty) _miniBadge(focusKo, AppColors.hubQuiz),
                     if (difficulty.isNotEmpty)
                       _miniBadge(difficulty, AppColors.accentWarm),
@@ -398,7 +398,7 @@ class _QueueItemCard extends StatelessWidget {
             onPressed: onDelete,
             visualDensity: VisualDensity.compact,
             iconSize: 18,
-            color: context.mutedText,
+            color: AppColors.textMuted,
             tooltip: '삭제',
             icon: const Icon(Icons.delete_outline_rounded),
           ),

@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../app_route_observer.dart';
+import '../compose/compose_session_controller.dart';
 import '../widgets/app_ui.dart';
 import '../widgets/entry_hub_layout.dart';
 import '../widgets/journal_user_detail_panel.dart';
-import 'journal_compose_screen.dart';
 
 /// 사용자용 일기 목록 — 번역·내용 확인 (파이프라인 trace 없음).
 class JournalHubScreen extends StatelessWidget {
@@ -12,11 +13,10 @@ class JournalHubScreen extends StatelessWidget {
 
   final String? initialEntryId;
 
+  /// 작성 창 오버레이 열기 — 페이지 이동 없이 현재 화면 위에 창이 뜬다.
   static Future<void> openCompose(BuildContext context) {
-    return Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const JournalComposeScreen()),
-    );
+    composeSession.open(startNew: true);
+    return Future.value();
   }
 
   /// Open a single entry's detail directly (e.g. from the Timeline), so pressing
@@ -32,6 +32,9 @@ class JournalHubScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (initialEntryId != null) {
+      return JournalEntryDetailScreen(entryId: initialEntryId!);
+    }
     return EntryHubNavigator(
       title: '내 일기',
       initialEntryId: initialEntryId,
@@ -62,7 +65,8 @@ class JournalEntryDetailScreen extends StatefulWidget {
       _JournalEntryDetailScreenState();
 }
 
-class _JournalEntryDetailScreenState extends State<JournalEntryDetailScreen> {
+class _JournalEntryDetailScreenState extends State<JournalEntryDetailScreen>
+    with RouteAware {
   Map<String, dynamic>? _entry;
   bool _loading = true;
 
@@ -71,6 +75,24 @@ class _JournalEntryDetailScreenState extends State<JournalEntryDetailScreen> {
     super.initState();
     _load();
   }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) appRouteObserver.subscribe(this, route);
+  }
+
+  @override
+  void dispose() {
+    appRouteObserver.unsubscribe(this);
+    super.dispose();
+  }
+
+  /// Returned from a pushed screen (graph review / knowledge graph) — refresh
+  /// silently so speaker/graph updates show without a loading flash.
+  @override
+  void didPopNext() => _load(silent: true);
 
   Future<void> _load({bool silent = false}) async {
     if (!silent) setState(() => _loading = true);

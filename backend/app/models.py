@@ -27,7 +27,6 @@ class User(Base):
     target_language: Mapped[str] = mapped_column(String, nullable=False, default="english")
     target_languages: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     native_language: Mapped[str] = mapped_column(String, nullable=False, default="korean")
-    device_id: Mapped[str | None] = mapped_column(String, nullable=True, unique=True, index=True)
     language_levels: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

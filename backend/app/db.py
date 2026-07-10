@@ -174,8 +174,6 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_alias_embeddings_embedding ON node_alias_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50)",
     "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS occurred_at DATE",
     "CREATE INDEX IF NOT EXISTS idx_nodes_user_occurred ON nodes (user_id, occurred_at)",
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS device_id TEXT",
-    "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_device_id ON users (device_id) WHERE device_id IS NOT NULL",
 ]
 
 

@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 
-import '../chat/journal_task_controller.dart';
+import '../compose/compose_session_controller.dart';
 import '../screens/kg_timeline_screen.dart';
 import '../screens/menu_screen.dart';
 import '../theme/app_theme.dart';
 import 'chat_session_controller.dart';
-import '../compose/journal_phase.dart';
+import 'journal_task_controller.dart';
 
 /// Claude-style left rail: new chat, recent rooms, and shortcuts to 기록/메뉴.
 ///
@@ -95,7 +95,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
       MaterialPageRoute(
         builder: (_) => KgTimelineScreen(
           sharedDate: _sharedDate,
-          refreshSignal: journalTask.entriesChanged,
+          refreshSignal: composeSession.entriesChanged,
         ),
       ),
     );
@@ -153,7 +153,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
               ),
               const SizedBox(width: 8),
               const Expanded(
-                child: Text('MyLife English',
+                child: Text('MyLife',
                     style:
                         TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
               ),
@@ -278,7 +278,7 @@ class _ChatSidebarRailState extends State<ChatSidebarRail> {
               MaterialPageRoute(
                 builder: (_) => KgTimelineScreen(
                   sharedDate: _sharedDate,
-                  refreshSignal: journalTask.entriesChanged,
+                  refreshSignal: composeSession.entriesChanged,
                 ),
               ),
             );

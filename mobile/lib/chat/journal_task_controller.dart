@@ -4,12 +4,12 @@ import 'package:flutter/foundation.dart';
 
 import '../api/client.dart';
 import '../compose/compose_session_controller.dart';
+import '../compose/journal_phase.dart';
 
 /// Headless journal pipeline for inline chat compose.
 ///
-/// Unlike [ComposeSessionController], this has no window state — it only
-/// creates/uploads an entry, polls [getEntry], derives phase, and auto-triggers
-/// [buildGraph] once when text entries reach "ready" without a graph yet.
+/// PiP와 동일한 게이트: 정제 후 화자 스크립트 확인 → 그래프 초안 → 검토·확정.
+/// (자동 그래프 빌드는 화자 확인 완료 후에만.)
 class JournalTaskController extends ChangeNotifier {
   String? _entryId;
   Map<String, dynamic>? _entry;
@@ -18,24 +18,23 @@ class JournalTaskController extends ChangeNotifier {
   Timer? _pollTimer;
   int _workSerial = 0;
   bool _graphBuildStarted = false;
+  bool _speakersAcknowledged = false;
+  bool _speakerReviewOverride = false;
   String? _lastStatusKey;
-
-  /// 일기 생성/상태 변화 시 증가 — 타임라인·목록 화면의 갱신 트리거.
-  final ValueNotifier<int> entriesChanged = ValueNotifier<int>(0);
-
-  bool _recording = false;
-  bool get recording => _recording;
-
-  void setRecording(bool value) {
-    if (_recording == value) return;
-    _recording = value;
-    notifyListeners();
-  }
 
   String? get entryId => _entryId;
   Map<String, dynamic>? get entry => _entry;
   ComposePhase get phase => _phase;
   String get stageLabel => _stageLabel;
+  bool get speakersAcknowledged => _speakersAcknowledged;
+
+  /// True when user went back from graph review to re-check speakers.
+  bool get speakerReviewOverride => _speakerReviewOverride;
+  bool get awaitingSpeakerAck =>
+      _entry != null &&
+      !_speakersAcknowledged &&
+      deriveChatJournalPhase(_entry, speakersAcknowledged: false)
+          .awaitingSpeakerAck;
 
   /// True while pipeline needs user attention or AI is working — blocks new saves.
   bool get isBusy =>
@@ -52,14 +51,16 @@ class JournalTaskController extends ChangeNotifier {
       _phase != ComposePhase.composing &&
       !(_phase == ComposePhase.done || _phase == ComposePhase.error);
 
-  /// Graph draft not started yet (graph_pending or empty after ready).
-  bool _graphBuildEligible(Map<String, dynamic>? entry) {
-    if (entry == null) return false;
+  bool _graphBuildEligible(Map<String, dynamic>? entry, {bool force = false}) {
+    if (entry == null || !_speakersAcknowledged) return false;
     final status = entry['status']?.toString() ?? '';
-    if (status != 'ready') return false;
-    if (speakersPending(entry)) return false;
     final graphStatus = entry['graph_status']?.toString() ?? '';
+    final restaging = force &&
+        (status == 'graph_staging_ready' || graphStatus == 'graph_staging_ready');
+    if (status != 'ready' && !restaging) return false;
+    if (speakersPending(entry)) return false;
     if (graphStatus == 'graph_pending' || graphStatus.isEmpty) return true;
+    if (restaging) return true;
     return false;
   }
 
@@ -117,6 +118,8 @@ class JournalTaskController extends ChangeNotifier {
     _entryId = null;
     _entry = null;
     _graphBuildStarted = false;
+    _speakersAcknowledged = false;
+    _speakerReviewOverride = false;
     _lastStatusKey = null;
     _phase = ComposePhase.working;
     _stageLabel = label;
@@ -161,18 +164,45 @@ class JournalTaskController extends ChangeNotifier {
     }
   }
 
+  void _recomputePhase() {
+    if (_speakerReviewOverride && _entry != null) {
+      _phase = ComposePhase.needsInput;
+      _stageLabel = speakersPending(_entry)
+          ? '화자 확인 필요'
+          : '화자 매칭 확인';
+      return;
+    }
+    final derived = deriveChatJournalPhase(
+      _entry,
+      speakersAcknowledged: _speakersAcknowledged,
+    );
+    _phase = derived.phase;
+    _stageLabel = derived.label;
+  }
+
+  /// 그래프 검토 중 화자가 틀렸을 때 — 화자 확인 단계로 되돌린다.
+  void reopenSpeakerConfirm() {
+    if (_entryId == null || _entry == null) return;
+    _speakerReviewOverride = true;
+    _speakersAcknowledged = false;
+    _graphBuildStarted = false;
+    _recomputePhase();
+    notifyListeners();
+  }
+
   void _adoptEntry(Map<String, dynamic> entry, {bool bumpEntries = false}) {
     _entryId = entry['id']?.toString() ?? _entryId;
     _entry = entry;
-    final derived = deriveJournalPhase(entry);
-    _phase = derived.phase;
-    _stageLabel = derived.label;
+    if (!hasSpeakerScript(entry)) {
+      _speakersAcknowledged = true;
+    }
+    _recomputePhase();
 
     final statusKey =
-        '${entry['status']}/${entry['graph_status']}/${_phase.name}';
+        '${entry['status']}/${entry['graph_status']}/${_phase.name}/$_speakersAcknowledged';
     if (bumpEntries ||
         (_lastStatusKey != null && _lastStatusKey != statusKey)) {
-      entriesChanged.value++;
+      composeSession.entriesChanged.value++;
     }
     _lastStatusKey = statusKey;
 
@@ -181,7 +211,19 @@ class JournalTaskController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Text/audio ready → kick off graph draft once (graph_pending 포함).
+  /// 화자 스크립트 확인 완료 → PiP의 '지식그래프 만들기' 직전 단계.
+  Future<void> confirmSpeakers() async {
+    if (_entryId == null || _entry == null) return;
+    if (speakersPending(_entry)) return;
+    final rebuild = _speakerReviewOverride;
+    _speakerReviewOverride = false;
+    _speakersAcknowledged = true;
+    _recomputePhase();
+    _graphBuildStarted = false;
+    _maybeAutoBuildGraph(force: rebuild);
+    notifyListeners();
+  }
+
   void _maybeAutoBuildGraph({bool force = false}) {
     if (_graphBuildStarted) return;
     if (_entryId == null || !_graphBuildEligible(_entry, force: force)) return;
@@ -202,6 +244,7 @@ class JournalTaskController extends ChangeNotifier {
       await apiClient.buildGraph(id, force: force);
     } catch (_) {
       if (serial != _workSerial || _entryId != id) return;
+      _graphBuildStarted = false;
       _phase = ComposePhase.error;
       _stageLabel = '그래프 생성 실패';
       notifyListeners();
@@ -211,11 +254,42 @@ class JournalTaskController extends ChangeNotifier {
     await refresh();
   }
 
-  /// Progress card fallback when auto-build did not run.
   Future<void> retryGraphBuild() async {
     if (_entryId == null || !_graphBuildEligible(_entry, force: true)) return;
     _graphBuildStarted = false;
     _maybeAutoBuildGraph();
+  }
+
+  /// 그래프 검토 화면에서 확정 — PiP [ComposeSessionController.applyGraph]와 동일.
+  Future<void> applyGraph(
+    String entryId, {
+    required List<Map<String, dynamic>> claims,
+    required String contextType,
+  }) async {
+    if (_entryId != entryId) return;
+    final serial = ++_workSerial;
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    _phase = ComposePhase.working;
+    _stageLabel = '지식그래프 확정 중';
+    notifyListeners();
+
+    try {
+      await apiClient.applyEntryGraph(
+        entryId,
+        claims: claims,
+        contextType: contextType,
+      );
+    } catch (_) {
+      if (serial != _workSerial || _entryId != entryId) return;
+      _phase = ComposePhase.error;
+      _stageLabel = '지식그래프 확정 실패';
+      notifyListeners();
+      return;
+    }
+    if (serial != _workSerial || _entryId != entryId) return;
+    await refresh();
+    composeSession.entriesChanged.value++;
   }
 
   void _syncPolling() {
@@ -236,7 +310,6 @@ class JournalTaskController extends ChangeNotifier {
     }
   }
 
-  /// Clear done/error so a new save is allowed.
   void dismiss() {
     if (_phase != ComposePhase.done && _phase != ComposePhase.error) return;
     _workSerial++;
@@ -247,6 +320,8 @@ class JournalTaskController extends ChangeNotifier {
     _phase = ComposePhase.composing;
     _stageLabel = '';
     _graphBuildStarted = false;
+    _speakersAcknowledged = false;
+    _speakerReviewOverride = false;
     _lastStatusKey = null;
     notifyListeners();
   }
@@ -254,7 +329,6 @@ class JournalTaskController extends ChangeNotifier {
   @override
   void dispose() {
     _pollTimer?.cancel();
-    entriesChanged.dispose();
     super.dispose();
   }
 }

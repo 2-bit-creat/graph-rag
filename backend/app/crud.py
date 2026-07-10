@@ -562,35 +562,6 @@ async def create_user(session: AsyncSession, email: str, password_hash: str) -> 
     return user
 
 
-async def get_user_by_device_id(session: AsyncSession, device_id: str) -> User | None:
-    result = await session.execute(select(User).where(User.device_id == device_id))
-    return result.scalar_one_or_none()
-
-
-async def get_or_create_device_user(session: AsyncSession, device_id: str) -> User:
-    device_id = device_id.strip()
-    existing = await get_user_by_device_id(session, device_id)
-    if existing is not None:
-        if existing.subscription_tier != "premium":
-            existing.subscription_tier = "premium"
-            await session.commit()
-            await session.refresh(existing)
-        return existing
-
-    from .auth_utils import hash_password
-
-    user = User(
-        email=f"device-{uuid.uuid4().hex[:12]}@anon.local",
-        password_hash=hash_password(uuid.uuid4().hex),
-        device_id=device_id,
-        subscription_tier="premium",
-    )
-    session.add(user)
-    await session.commit()
-    await session.refresh(user)
-    return user
-
-
 async def _get_or_create_node(
     session: AsyncSession,
     name: str,
@@ -3575,14 +3546,7 @@ async def _journal_sidebar_preview(
     if entry is None:
         return content
     status = (entry.status or "").strip()
-    trace = entry.pipeline_trace if isinstance(entry.pipeline_trace, dict) else {}
-    graph_status = (trace.get("graph_status") or "").strip()
-    if not graph_status and status in (
-        "graph_processing",
-        "graph_ready",
-        "graph_failed",
-    ):
-        graph_status = status
+    graph_status = (entry.graph_status or "").strip()
     if status in ("graph_ready", "completed") or graph_status == "graph_ready":
         return "📔 지식그래프 완성"
     if status in ("failed", "graph_failed") or graph_status == "graph_failed":

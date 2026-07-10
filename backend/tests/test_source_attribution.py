@@ -10,7 +10,6 @@ Source 노드가 된다.
 from __future__ import annotations
 
 import pytest
-from fastapi import BackgroundTasks
 
 from app import crud
 from app.entity_types import is_person_like_type, is_source_like_type
@@ -123,7 +122,7 @@ async def test_source_attributed_apply_creates_source_head(db_session, iso_user)
         }],
     )
 
-    out = await apply_entry_graph(entry.id, None, iso_user, db_session, background_tasks=BackgroundTasks())
+    out = await apply_entry_graph(entry.id, None, iso_user, db_session)
     assert out.status == "graph_ready"
 
     nodes = await crud.get_all_nodes(db_session, iso_user.id)
@@ -160,7 +159,7 @@ async def test_speaker_type_restored_when_client_drops_it(db_session, iso_user):
         context_type="뉴스",
     )
 
-    out = await apply_entry_graph(entry.id, payload, iso_user, db_session, background_tasks=BackgroundTasks())
+    out = await apply_entry_graph(entry.id, payload, iso_user, db_session)
     assert out.status == "graph_ready"
 
     nodes = await crud.get_all_nodes(db_session, iso_user.id)

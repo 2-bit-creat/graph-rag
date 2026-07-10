@@ -6,9 +6,9 @@ import '../utils/graph_layout.dart';
 import 'chat_rich_text.dart';
 import 'journal_progress_card.dart';
 
-/// ě§?ęˇ¸?í ?ëŠ´ ?¤ëĽ¸ěŞ˝ě ëśë ????¨ë.
+/// 지식그래프 화면 오른쪽에 붙는 대화 패널.
 ///
-/// ęˇ¸ë???ě ???ë ?Źě´???¨ë ?í ???ěźëŠ?ęˇ¸ë?ë§ ?ě˛´ ?ëšëĄ?ëł´ě¸??
+/// 그래프 위에 떠 있는 사이드 패널 형태 — 접으면 그래프만 전체 너비로 보인다.
 class GraphChatPanel extends StatelessWidget {
   const GraphChatPanel({
     super.key,
@@ -29,7 +29,7 @@ class GraphChatPanel extends StatelessWidget {
     this.onExitMode,
     this.onModeSelected,
     this.inputEnabled = true,
-    this.inputHint = '?ëŹ´ ?ę¸°???´ëł´?¸ě??,
+    this.inputHint = '아무 얘기나 해보세요…',
     this.inputBarOverride,
     this.pipelineLocked = false,
     this.pipelineLockLabel,
@@ -67,11 +67,11 @@ class GraphChatPanel extends StatelessWidget {
   /// When non-null, replaces the default [_InputBar] (e.g. journal compose).
   final Widget? inputBarOverride;
 
-  /// ?źę¸° ?ě´?ëź??ě˛ëŚŹÂˇ?ě¸ ě¤????źë° ????ë Ľ ? ę¸.
+  /// 일기 파이프라인 처리·확인 중 — 일반 대화 입력 잠금.
   final bool pipelineLocked;
   final String? pipelineLockLabel;
 
-  /// User-review step (speaker confirm / graph review) ??no spinner.
+  /// User-review step (speaker confirm / graph review) — no spinner.
   final String? pipelineReviewLabel;
 
   @override
@@ -99,7 +99,7 @@ class GraphChatPanel extends StatelessWidget {
                 onExit: pipelineLocked ? null : onExitMode,
               ),
             if (pipelineLocked && inputBarOverride == null)
-              _PipelineLockBar(label: pipelineLockLabel ?? '?źę¸° ě˛ëŚŹ ě¤?),
+              _PipelineLockBar(label: pipelineLockLabel ?? '일기 처리 중'),
             if (!pipelineLocked &&
                 pipelineReviewLabel != null &&
                 inputBarOverride == null)
@@ -109,7 +109,7 @@ class GraphChatPanel extends StatelessWidget {
                   controller: inputController,
                   busy: busy,
                   enabled: inputEnabled && !pipelineLocked,
-                  hint: pipelineLocked ? '?źę¸° ě˛ëŚŹę° ?ë  ?ęšě§ ?ę¸°â? : inputHint,
+                  hint: pipelineLocked ? '일기 처리가 끝날 때까지 대기…' : inputHint,
                   onSend: onSend,
                   onModeSelected:
                       pipelineLocked ? null : onModeSelected,
@@ -135,7 +135,7 @@ class GraphChatPanel extends StatelessWidget {
                   color: shell.mutedText.withValues(alpha: 0.6)),
               const SizedBox(height: AppSpacing.sm),
               Text(
-                'ęˇ¸ë?ë? ëł´ëŠ´??ë°ëĄ ëŹźě´ëł´ě¸??\nAIę° ???źę¸°ëĽ?ę¸°ěľ?ęł  ?ľí´??',
+                '그래프를 보면서 바로 물어보세요.\nAI가 내 일기를 기억하고 답해요.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: shell.mutedText,
@@ -209,7 +209,7 @@ class GraphChatMessage {
   final String? id;
   final String role;
 
-  /// text | quiz_prompt | quiz_result | distill_draft ??drives which bubble/card
+  /// text | quiz_prompt | quiz_result | distill_draft — drives which bubble/card
   /// renders in the feed. Non-text kinds carry their payload in [meta].
   final String kind;
   final String content;
@@ -230,7 +230,7 @@ class GraphChatMessage {
       );
 }
 
-// ?? Header & collapsed tab ????????????????????????????????????????????????????
+// ── Header & collapsed tab ────────────────────────────────────────────────────
 
 class _PanelHeader extends StatelessWidget {
   const _PanelHeader({
@@ -272,12 +272,12 @@ class _PanelHeader extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('ęˇ¸ë?????,
+                Text('그래프 대화',
                     style: TextStyle(
                         color: shell.primaryText,
                         fontWeight: FontWeight.w700,
                         fontSize: 13.5)),
-                Text('?źę¸° ę¸°ěľ ę¸°ë°',
+                Text('일기 기억 기반',
                     style: TextStyle(
                         color: shell.mutedText,
                         fontSize: 10.5)),
@@ -285,7 +285,7 @@ class _PanelHeader extends StatelessWidget {
             ),
           ),
           IconButton(
-            tooltip: '???ę¸°ëĄ ?? ',
+            tooltip: '대화 기록 삭제',
             visualDensity: VisualDensity.compact,
             iconSize: 18,
             color: shell.primaryText.withValues(alpha: 0.55),
@@ -293,7 +293,7 @@ class _PanelHeader extends StatelessWidget {
             icon: const Icon(Icons.delete_sweep_outlined),
           ),
           IconButton(
-            tooltip: '????¨ë ?ę¸°',
+            tooltip: '대화 패널 접기',
             visualDensity: VisualDensity.compact,
             iconSize: 18,
             color: shell.primaryText.withValues(alpha: 0.7),
@@ -306,7 +306,7 @@ class _PanelHeader extends StatelessWidget {
   }
 }
 
-/// ?¨ë???í?????¤ëĽ¸ěŞ?ę°?ĽěëŚŹě ëł´ě´????
+/// 패널이 접혔을 때 오른쪽 가장자리에 보이는 탭.
 class GraphChatCollapsedTab extends StatelessWidget {
   const GraphChatCollapsedTab({super.key, required this.onExpand});
 
@@ -336,7 +336,7 @@ class GraphChatCollapsedTab extends StatelessWidget {
               const SizedBox(height: 6),
               RotatedBox(
                 quarterTurns: 3,
-                child: Text('???,
+                child: Text('대화',
                     style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
@@ -354,7 +354,7 @@ class GraphChatCollapsedTab extends StatelessWidget {
   }
 }
 
-// ?? Input & bubbles ???????????????????????????????????????????????????????????
+// ── Input & bubbles ───────────────────────────────────────────────────────────
 
 class _InputBar extends StatefulWidget {
   const _InputBar({
@@ -436,7 +436,7 @@ class _InputBarState extends State<_InputBar> {
             children: [
               if (widget.onModeSelected != null)
                 PopupMenuButton<String>(
-                  tooltip: 'ëŞ¨ë',
+                  tooltip: '모드',
                   icon: Icon(Icons.add_circle_outline_rounded,
                       color: shell.primaryText.withValues(alpha: 0.75)),
                   color: shell.barBackground,
@@ -445,23 +445,18 @@ class _InputBarState extends State<_InputBar> {
                     PopupMenuItem(
                       value: 'journal',
                       child: _ModeMenuRow(
-                          icon: Icons.auto_stories_rounded, label: '?źę¸° ?°ę¸°'),
+                          icon: Icons.auto_stories_rounded, label: '일기 쓰기'),
                     ),
                     PopupMenuItem(
                       value: 'distill',
                       child: _ModeMenuRow(
                           icon: Icons.playlist_add_check_rounded,
-                          label: '??????źę¸°ëĄ??ëŚŹ'),
+                          label: '이 대화 일기로 정리'),
                     ),
                     PopupMenuItem(
                       value: 'composition',
                       child: _ModeMenuRow(
-                          icon: Icons.edit_note_rounded, label: '?ëŹ¸ ?´ěŚ'),
-                    ),
-                    PopupMenuItem(
-                      value: 'word',
-                      child: _ModeMenuRow(
-                          icon: Icons.spellcheck_rounded, label: '?¨ě´ ?´ěŚ'),
+                          icon: Icons.edit_note_rounded, label: '작문 퀴즈'),
                     ),
                   ],
                 ),
@@ -759,7 +754,7 @@ class _ThinkingRow extends StatelessWidget {
             child: CircularProgressIndicator(strokeWidth: 2),
           ),
           const SizedBox(width: AppSpacing.sm),
-          Text('ę¸°ěľ???¤ě ?´ë ě¤â?,
+          Text('기억을 뒤적이는 중…',
               style: TextStyle(
                   color: context.shell.mutedText,
                   fontSize: 11.5)),
@@ -844,7 +839,7 @@ class _JournalSubmitBubble extends StatelessWidget {
                       color: AppColors.hubVoice.withValues(alpha: 0.95)),
                   const SizedBox(width: 4),
                   Text(
-                    '?źę¸° ???,
+                    '일기 저장',
                     style: TextStyle(
                       fontSize: 10.5,
                       fontWeight: FontWeight.w700,

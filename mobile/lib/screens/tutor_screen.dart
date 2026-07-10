@@ -3,14 +3,14 @@ import 'package:flutter/material.dart';
 import '../api/client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
-import '../widgets/target_language_button.dart';
-import 'quiz_generation_screen.dart';
 
-/// ?�문 ?�터 ?�션 ???�이브아카데미式 ?�문 ?�릴.
+/// 영어식 사고 튜터 세션 — 라이브아카데미式 작문 드릴.
 ///
-/// ?�전 ?�성??composition ?�즈 ?�에???�성???�서?��?문제�?꺼내 출제?�고,
-/// ?��? ?�에???�?�된 모범?�안??기�??�로 경량 첨삭�??�행?�다. ?��? 비면
-/// 즉석 ?�성 ?�이 '문제 ?�성' ?�이지�??�내?�다.
+/// 튜터가 (내 일기에서 뽑은) 모국어 문장을 주면 사용자가 목표 언어로 옮기고,
+/// 그 시도를 첨삭·자연스러운 표현·영어식 사고 포인트로 코칭한다. 헷갈린 표현은
+/// 지식그래프가 아니라 '튜터 단어장'에 쌓이고, 복습 드릴로 다시 출제된다.
+///
+/// 언어·소스 모드는 허브(TutorHubScreen)에서 골라 넘어온다.
 class TutorScreen extends StatefulWidget {
   const TutorScreen({
     super.key,
@@ -25,7 +25,7 @@ class TutorScreen extends StatefulWidget {
   State<TutorScreen> createState() => _TutorScreenState();
 }
 
-/// ?�릴 출제 ?�스. ?�브?� ?�션??공유.
+/// 드릴 출제 소스. 허브와 세션이 공유.
 enum TutorSourceMode { journal, review }
 
 extension TutorSourceModeX on TutorSourceMode {
@@ -38,8 +38,8 @@ extension TutorSourceModeX on TutorSourceMode {
         TutorSourceMode.review => '복습 표현',
       };
   String get blurb => switch (this) {
-        TutorSourceMode.journal => '내 일기 문장으로 출제',
-        TutorSourceMode.review => '아까 배운 표현 다시 출제',
+        TutorSourceMode.journal => '내가 쓴 일기 문장으로 출제',
+        TutorSourceMode.review => '헷갈렸던 표현을 다시 출제',
       };
   IconData get icon => switch (this) {
         TutorSourceMode.journal => Icons.auto_stories_rounded,
@@ -57,7 +57,7 @@ String tutorLangLabel(String code) => switch (code) {
       _ => code,
     };
 
-// ?�???�드 ?�이??-------------------------------------------------------------
+// 대화 피드 아이템 -------------------------------------------------------------
 
 sealed class _Item {}
 
@@ -88,7 +88,7 @@ class _PendingItem extends _Item {
   final String label;
 }
 
-/// ?��? 비었???�의 종료 카드 ??문제 ?�성 ?�이지�??�내.
+/// 큐가 비었을 때의 종료 카드 — 문제 생성 페이지로 안내.
 class _EmptyQueueItem extends _Item {}
 
 class _TutorScreenState extends State<TutorScreen> {
@@ -99,38 +99,15 @@ class _TutorScreenState extends State<TutorScreen> {
   late String _language;
   late TutorSourceMode _sourceMode;
 
-  bool _busy = false; // ?�릴 ?�성/첨삭/?�??�??�력 ?�금
-  bool _sessionLoading = true;
-  Map<String, dynamic>? _currentDrill; // ?��? ?��?중인 ?�릴 (null?�면 ?�??모드)
-
-  List<Map<String, dynamic>> _queue = [];
-  int _queueIndex = 0;
-  List<String> _languages = ['english'];
+  bool _busy = false; // 드릴 생성/첨삭/대화 중 입력 잠금
+  Map<String, dynamic>? _currentDrill; // 답변 대기 중인 드릴 (null이면 대화 모드)
 
   @override
   void initState() {
     super.initState();
     _language = widget.language;
     _sourceMode = widget.sourceMode;
-    _loadLanguages();
-    _initSession();
-  }
-
-  Future<void> _loadLanguages() async {
-    try {
-      final profile = await apiClient.getQuizProfile();
-      final rawLangs = profile['target_languages'];
-      final langs = (rawLangs is List && rawLangs.isNotEmpty)
-          ? rawLangs.map((e) => e.toString()).toList()
-          : [profile['target_language']?.toString() ?? _language];
-      if (!mounted) return;
-      setState(() {
-        _languages = langs;
-        if (!_languages.contains(_language)) {
-          _language = _languages.first;
-        }
-      });
-    } catch (_) {}
+    _nextDrill();
   }
 
   @override
@@ -152,83 +129,34 @@ class _TutorScreenState extends State<TutorScreen> {
     });
   }
 
-  Map<String, dynamic> _drillFromQuiz(Map<String, dynamic> quiz) {
-    final qd = Map<String, dynamic>.from(
-      (quiz['quiz_data'] as Map?)?.cast<String, dynamic>() ?? {},
-    );
-    return {
-      'quiz_id': quiz['id']?.toString(),
-      'prompt': quiz['question_ko']?.toString() ?? '',
-      'source_label': qd['source_label']?.toString() ?? '',
-      'source_mode': qd['source_mode']?.toString() ?? '',
-      'target_expressions': qd['target_expressions'] ?? [],
-      'glossary': qd['glossary'] ?? [],
-      'hints': qd['hints'] ?? [],
-      'language': qd['language']?.toString() ?? _language,
-      'cefr': qd['cefr']?.toString() ?? '',
-      'difficulty': qd['difficulty']?.toString() ?? '',
-      'style': qd['style'] is Map
-          ? Map<String, dynamic>.from(qd['style'] as Map)
-          : const <String, dynamic>{},
-    };
-  }
-
-  Future<void> _initSession() async {
-    setState(() => _sessionLoading = true);
-    try {
-      final session = await apiClient.startQuizSession(
-        quizType: 'composition',
-        language: _language,
-        size: 10,
-      );
-      final items = (session['items'] as List?) ?? [];
-      if (!mounted) return;
-      setState(() {
-        _queue = items.map((e) => Map<String, dynamic>.from(e as Map)).toList();
-        _queueIndex = 0;
-        _sessionLoading = false;
-      });
-      await _nextDrill();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _sessionLoading = false);
-      _showError(e);
-    }
-  }
-
   Future<void> _nextDrill() async {
-    if (_queueIndex < _queue.length) {
-      final quiz = _queue[_queueIndex++];
-      final drill = _drillFromQuiz(quiz);
+    setState(() {
+      _busy = true;
+      _currentDrill = null;
+      _items.add(_PendingItem('튜터가 문장을 고르는 중…'));
+    });
+    _scrollToBottom();
+    try {
+      final drill = await apiClient.getTutorDrill(
+        language: _language,
+        sourceMode: _sourceMode.api,
+      );
+      if (!mounted) return;
       setState(() {
-        _currentDrill = drill;
+        _items.removeWhere((i) => i is _PendingItem);
         _items.add(_DrillItem(drill));
+        _currentDrill = drill;
         _busy = false;
       });
       _scrollToBottom();
-      return;
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _items.removeWhere((i) => i is _PendingItem);
+        _busy = false;
+      });
+      _showError(e);
     }
-
-    // ???�진 ??즉석 ?�성 ?�이 문제 ?�성 ?�이지�??�내?�다.
-    setState(() {
-      _currentDrill = null;
-      _busy = false;
-      if (_items.whereType<_EmptyQueueItem>().isEmpty) {
-        _items.add(_EmptyQueueItem());
-      }
-    });
-    _scrollToBottom();
-  }
-
-  Future<void> _openGeneration() async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const QuizGenerationScreen()),
-    );
-    // ?�성 ?�이지?�서 ?�아?�면 ?��? ?�시 채워본다.
-    if (!mounted) return;
-    setState(() => _items.removeWhere((i) => i is _EmptyQueueItem));
-    _restart();
   }
 
   Future<void> _submitAttempt(String text) async {
@@ -239,19 +167,19 @@ class _TutorScreenState extends State<TutorScreen> {
       _busy = true;
       _items.add(_AttemptItem(text.trim()));
       _items.add(_PendingItem('첨삭하는 중…'));
-      _currentDrill = null; // 첨삭 ?�엔 ?�??모드�??�환
+      _currentDrill = null; // 첨삭 후엔 대화 모드로 전환
     });
     _scrollToBottom();
     try {
-      // Drills only ever come from the queue, so each carries a quiz_id and is
-      // graded against its pre-generated reference answers.
-      final quizId = drill['quiz_id']?.toString() ?? '';
-      final result = await apiClient.submitQuizAnswer(
-        quizId: quizId,
-        answer: text.trim(),
-      );
-      final data = Map<String, dynamic>.from(
-        (result['tutor_feedback'] as Map?)?.cast<String, dynamic>() ?? {},
+      final data = await apiClient.evaluateTutorAttempt(
+        prompt: drill['prompt']?.toString() ?? '',
+        userAnswer: text.trim(),
+        language: _language,
+        targetExpressions: ((drill['target_expressions'] as List?) ?? [])
+            .map((e) => e.toString())
+            .toList(),
+        sourceLabel: drill['source_label']?.toString() ?? '',
+        sourceMode: drill['source_mode']?.toString() ?? _sourceMode.api,
       );
       if (!mounted) return;
       setState(() {
@@ -280,7 +208,7 @@ class _TutorScreenState extends State<TutorScreen> {
     });
     _scrollToBottom();
 
-    // 최근 ?�???�스?�리(첨삭 ?�후??질문·?��?)�?추려???�달.
+    // 최근 대화 히스토리(첨삭 이후의 질문·답변)만 추려서 전달.
     final history = <Map<String, String>>[];
     for (final it in _items) {
       if (it is _ChatItem) history.add({'role': it.role, 'content': it.text});
@@ -323,41 +251,12 @@ class _TutorScreenState extends State<TutorScreen> {
     );
   }
 
-  void _restart() {
-    setState(() {
-      _items.clear();
-      _queueIndex = 0;
-    });
-    _initSession();
-  }
-
   @override
   Widget build(BuildContext context) {
-    final langAction = TargetLanguageButton(
-      languages: _languages,
-      selected: _language,
-      enabled: !_busy && !_sessionLoading,
-      onChanged: (lang) {
-        setState(() => _language = lang);
-        _restart();
-      },
-    );
-
-    if (_sessionLoading) {
-      return Scaffold(
-        appBar: AppHubAppBar(
-          title: '샘플 튜터',
-          subtitle: '${tutorLangLabel(_language)} · ${_sourceMode.label}',
-          actions: [langAction],
-        ),
-        body: const AppLoadingScreen(message: '문제 불러오는 중…'),
-      );
-    }
     return Scaffold(
       appBar: AppHubAppBar(
-        title: '샘플 튜터',
+        title: '영어식 사고 튜터',
         subtitle: '${tutorLangLabel(_language)} · ${_sourceMode.label}',
-        actions: [langAction],
       ),
       body: Column(
         children: [
@@ -395,6 +294,14 @@ class _TutorScreenState extends State<TutorScreen> {
     );
   }
 
+  void _restart() {
+    setState(() {
+      _items.clear();
+      _currentDrill = null;
+    });
+    _nextDrill();
+  }
+
   Widget _buildItem(_Item item) {
     return switch (item) {
       _DrillItem(:final drill) => _DrillPromptCard(drill: drill),
@@ -412,7 +319,7 @@ class _TutorScreenState extends State<TutorScreen> {
   }
 }
 
-// ?�?� Source-mode selector ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+// ── Source-mode selector ──────────────────────────────────────────────────────
 
 class _SourceModeBar extends StatelessWidget {
   const _SourceModeBar({required this.selected, required this.onChanged});
@@ -467,14 +374,14 @@ class _ModeChip extends StatelessWidget {
             children: [
               Icon(mode.icon,
                   size: 18,
-                  color: selected ? AppColors.hubQuiz : context.mutedText),
+                  color: selected ? AppColors.hubQuiz : AppColors.textMuted),
               const SizedBox(height: 3),
               Text(
                 mode.label,
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  color: selected ? AppColors.hubQuiz : context.mutedText,
+                  color: selected ? AppColors.hubQuiz : AppColors.textMuted,
                 ),
               ),
             ],
@@ -485,7 +392,7 @@ class _ModeChip extends StatelessWidget {
   }
 }
 
-// ?�?� Drill prompt card (glossary + progressive hints) ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+// ── Drill prompt card (glossary + progressive hints) ──────────────────────────
 
 class _DrillPromptCard extends StatefulWidget {
   const _DrillPromptCard({required this.drill});
@@ -537,27 +444,11 @@ class _DrillPromptCardState extends State<_DrillPromptCard> {
                   _Badge(
                       icon: Icons.bar_chart_rounded,
                       text: cefr,
-                      color: context.mutedText),
-                if (_styleFocus(drill).isNotEmpty) ...[
-                  const SizedBox(width: 6),
-                  _Badge(
-                    icon: Icons.category_rounded,
-                    text: _styleFocus(drill),
-                    color: AppColors.hubGraph,
-                  ),
-                ],
-                if (_difficultyLabel(drill).isNotEmpty) ...[
-                  const SizedBox(width: 6),
-                  _Badge(
-                    icon: Icons.local_fire_department_rounded,
-                    text: _difficultyLabel(drill),
-                    color: AppColors.accentWarm,
-                  ),
-                ],
+                      color: AppColors.textMuted),
                 const Spacer(),
-                Text('한 문장 · ${tutorLangLabel(drill['language']?.toString() ?? '')}',
+                Text('이 문장을 ${tutorLangLabel(drill['language']?.toString() ?? '')}(으)로',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: context.mutedText,
+                          color: AppColors.textMuted,
                         )),
               ],
             ),
@@ -570,13 +461,13 @@ class _DrillPromptCardState extends State<_DrillPromptCard> {
                   ),
             ),
 
-            // 고유명사·?�문?�어 미리보기 ???�습?��? 막히지 ?�게 ??�� ?�출.
+            // 고유명사·전문용어 미리보기 — 학습자가 막히지 않게 항상 노출.
             if (glossary.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.md),
               _GlossaryBlock(items: glossary),
             ],
 
-            // ?�진???�트.
+            // 점진적 힌트.
             if (hints.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.sm),
               for (var i = 0; i < _hintsShown && i < hints.length; i++)
@@ -659,14 +550,14 @@ class _DrillPromptCardState extends State<_DrillPromptCard> {
   }
 }
 
-/// quiz_data.style.focus_ko ???��???로테?�션 배�? (?? 과거 ?�상, 감정 묘사).
+/// quiz_data.style.focus_ko — 스타일 로테이션 배지 (예: 과거 회상, 감정 묘사).
 String _styleFocus(Map<String, dynamic> drill) {
   final style = drill['style'];
   if (style is Map) return style['focus_ko']?.toString() ?? '';
   return '';
 }
 
-/// quiz_data.difficulty ??normal?� 배�? ?�략.
+/// quiz_data.difficulty — normal은 배지 생략.
 String _difficultyLabel(Map<String, dynamic> drill) {
   return switch (drill['difficulty']?.toString() ?? '') {
     'easy' => '쉽게',
@@ -694,7 +585,7 @@ class _GlossaryBlock extends StatelessWidget {
             children: [
               const Icon(Icons.translate_rounded, size: 14, color: AppColors.hubGraph),
               const SizedBox(width: 4),
-              Text('이름·단어',
+              Text('이름·용어',
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: AppColors.hubGraph,
                         fontWeight: FontWeight.w700,
@@ -740,8 +631,8 @@ class _GlossaryChip extends StatelessWidget {
         text: TextSpan(
           style: Theme.of(context).textTheme.bodySmall,
           children: [
-            TextSpan(text: term, style: TextStyle(color: context.mutedText)),
-            const TextSpan(text: '  → ', style: TextStyle(color: AppColors.hubGraph)),
+            TextSpan(text: term, style: TextStyle(color: AppColors.textMuted)),
+            const TextSpan(text: '  →  ', style: TextStyle(color: AppColors.hubGraph)),
             TextSpan(
                 text: target,
                 style: TextStyle(
@@ -753,7 +644,7 @@ class _GlossaryChip extends StatelessWidget {
   }
 }
 
-// ?�?� User attempt bubble ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+// ── User attempt bubble ───────────────────────────────────────────────────────
 
 class _AttemptBubble extends StatelessWidget {
   const _AttemptBubble({required this.text});
@@ -786,7 +677,7 @@ class _AttemptBubble extends StatelessWidget {
   }
 }
 
-// ?�?� Tutor chat bubble ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+// ── Tutor chat bubble ─────────────────────────────────────────────────────────
 
 class _ChatBubble extends StatelessWidget {
   const _ChatBubble({required this.text});
@@ -811,7 +702,7 @@ class _ChatBubble extends StatelessWidget {
   }
 }
 
-// ?�?� Feedback card ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+// ── Feedback card ─────────────────────────────────────────────────────────────
 
 class _FeedbackCard extends StatefulWidget {
   const _FeedbackCard({
@@ -828,51 +719,8 @@ class _FeedbackCard extends StatefulWidget {
 }
 
 class _FeedbackCardState extends State<_FeedbackCard> {
-  /// Session saves + expressions already in the tutor vocab (lowercase keys).
   final _saved = <String>{};
   bool _savingAll = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadExistingVocab();
-  }
-
-  String _norm(String? s) => (s ?? '').trim().toLowerCase();
-
-  Future<void> _loadExistingVocab() async {
-    try {
-      final vocab = await apiClient.getTutorVocab(language: widget.language);
-      final items = (vocab['items'] as List?) ?? [];
-      if (!mounted) return;
-      setState(() {
-        for (final raw in items) {
-          if (raw is! Map) continue;
-          final word = _norm(raw['expression']?.toString());
-          if (word.isNotEmpty) _saved.add(word);
-        }
-      });
-    } catch (_) {}
-  }
-
-  List<Map<String, dynamic>> _asMaps(List raw) =>
-      raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
-
-  /// save_suggestions?�도 ?�으�??�심 ?�현 ?�션?�서 빼서 중복???�앤??
-  ({List<Map<String, dynamic>> learn, List<Map<String, dynamic>> review})
-      _splitExpressions(
-    List<Map<String, dynamic>> keyExprs,
-    List<Map<String, dynamic>> saveSuggestions,
-  ) {
-    final reviewKeys = {
-      for (final s in saveSuggestions) _norm(s['expression']),
-    }..remove('');
-    final learn = [
-      for (final e in keyExprs)
-        if (!reviewKeys.contains(_norm(e['expression']))) e,
-    ];
-    return (learn: learn, review: saveSuggestions);
-  }
 
   ({Color color, IconData icon}) _verdictStyle(String verdict) {
     return switch (verdict) {
@@ -885,9 +733,8 @@ class _FeedbackCardState extends State<_FeedbackCard> {
 
   Future<void> _save(Map<String, dynamic> expr) async {
     final word = expr['expression']?.toString() ?? '';
-    final key = _norm(word);
-    if (key.isEmpty || _saved.contains(key)) return;
-    setState(() => _saved.add(key));
+    if (word.isEmpty) return;
+    setState(() => _saved.add(word));
     try {
       await apiClient.saveTutorExpression(
         expression: word,
@@ -900,14 +747,14 @@ class _FeedbackCardState extends State<_FeedbackCard> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('"$word"를 튜터 단어장에 저장'),
+            content: Text('“$word” 튜터 단어장에 저장'),
             duration: const Duration(seconds: 1),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _saved.remove(key));
+        setState(() => _saved.remove(word));
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
         );
@@ -915,15 +762,15 @@ class _FeedbackCardState extends State<_FeedbackCard> {
     }
   }
 
-  /// Save every unsaved review suggestion from this round.
-  Future<void> _saveAllReview(List<Map<String, dynamic>> reviewExprs) async {
+  /// Save every key expression + save-suggestion from this round in one shot.
+  Future<void> _saveAll(List keyExprs, List saveSuggestions) async {
     final items = <Map<String, dynamic>>[];
     final words = <String>[];
-    for (final raw in reviewExprs) {
+    for (final raw in [...keyExprs, ...saveSuggestions]) {
+      if (raw is! Map) continue;
       final word = raw['expression']?.toString() ?? '';
-      final key = _norm(word);
-      if (key.isEmpty || _saved.contains(key)) continue;
-      words.add(key);
+      if (word.isEmpty || _saved.contains(word)) continue;
+      words.add(word);
       items.add({
         'expression': word,
         'meaning': raw['meaning']?.toString() ?? '',
@@ -944,7 +791,7 @@ class _FeedbackCardState extends State<_FeedbackCard> {
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('$saved개 표현을 단어장에 저장했어요'),
+            content: Text('$saved개 표현을 단어장에 담았어요'),
             duration: const Duration(seconds: 1),
           ),
         );
@@ -965,14 +812,8 @@ class _FeedbackCardState extends State<_FeedbackCard> {
     final verdict = d['verdict']?.toString() ?? 'understandable';
     final style = _verdictStyle(verdict);
     final naturalVersions = (d['natural_versions'] as List?) ?? [];
-    final keyExprs = _asMaps((d['key_expressions'] as List?) ?? []);
-    final saveSuggestions = _asMaps((d['save_suggestions'] as List?) ?? []);
-    final split = _splitExpressions(keyExprs, saveSuggestions);
-    final learnExprs = split.learn;
-    final reviewExprs = split.review;
-    final unsavedReview = reviewExprs
-        .where((e) => !_saved.contains(_norm(e['expression'])))
-        .length;
+    final keyExprs = (d['key_expressions'] as List?) ?? [];
+    final saveSuggestions = (d['save_suggestions'] as List?) ?? [];
     final tip = d['thinking_tip']?.toString() ?? '';
     final encouragement = d['encouragement']?.toString() ?? '';
     final verdictLabel = d['verdict_label']?.toString() ?? '';
@@ -988,7 +829,7 @@ class _FeedbackCardState extends State<_FeedbackCard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ?�정 ?�더
+            // 판정 헤더
             Row(
               children: [
                 Icon(style.icon, color: style.color, size: 20),
@@ -1008,12 +849,12 @@ class _FeedbackCardState extends State<_FeedbackCard> {
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(height: 1.4)),
             ],
 
-            // ???��? 첨삭 ???�제 ?�출??문장???�???�답 기반 교정 (가???�에 배치)
+            // 내 답변 첨삭 — 실제 제출한 문장에 대한 정답 기반 교정 (가장 위에 배치)
             if (attemptNote.isNotEmpty || corrections.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.md),
               _SectionLabel(
                 icon: Icons.build_rounded,
-                text: '내 답 첨삭',
+                text: '내 답변 첨삭',
                 color: AppColors.hubRecord,
               ),
               if (attemptNote.isNotEmpty) ...[
@@ -1031,7 +872,7 @@ class _FeedbackCardState extends State<_FeedbackCard> {
               for (final c in corrections) _CorrectionRow(data: c),
             ],
 
-            // ?�연?�러???�현
+            // 자연스러운 표현
             if (naturalVersions.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.md),
               _SectionLabel(icon: Icons.auto_awesome_rounded, text: '이렇게 말하면 자연스러워요'),
@@ -1040,7 +881,7 @@ class _FeedbackCardState extends State<_FeedbackCard> {
                 _NaturalVersionRow(data: Map<String, dynamic>.from(v as Map)),
             ],
 
-            // 사고 전환 팁
+            // 영어식 사고 포인트
             if (tip.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.md),
               Container(
@@ -1067,61 +908,44 @@ class _FeedbackCardState extends State<_FeedbackCard> {
               ),
             ],
 
-            // ?�번 문제?�서 배운 ?�현 (참고?????�기 버튼 ?�음)
-            if (learnExprs.isNotEmpty) ...[
+            // 핵심 표현 (각각 담기 가능)
+            if (keyExprs.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.md),
-              _SectionLabel(
-                icon: Icons.style_rounded,
-                text: '이번에 배운 표현',
-              ),
-              Padding(
-                padding: const EdgeInsets.only(left: 20, top: 2, bottom: 4),
-                child: Text(
-                  '모범 답에서 확인한 핵심 어휘·요 · 참고만 하세요',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: context.mutedText,
-                        fontSize: 11.5,
-                      ),
-                ),
-              ),
+              _SectionLabel(icon: Icons.style_rounded, text: '핵심 표현'),
               const SizedBox(height: AppSpacing.xs),
-              for (final e in learnExprs) _LearnExpressionRow(data: e),
+              for (final e in keyExprs)
+                _ExpressionRow(
+                  data: Map<String, dynamic>.from(e as Map),
+                  saved: _saved.contains((e)['expression']?.toString()),
+                  onSave: () => _save(Map<String, dynamic>.from(e)),
+                ),
             ],
 
-            // 아까 배운 표현 → 복습 단어장
-            if (reviewExprs.isNotEmpty) ...[
+            // 저장 추천 (헷갈린 표현 → 튜터 단어장)
+            if (saveSuggestions.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.md),
               _SectionLabel(
                 icon: Icons.bookmark_add_rounded,
-                text: '복습 단어장에 담기',
+                text: '단어장에 담아둘까요?',
                 color: AppColors.accentWarm,
               ),
-              Padding(
-                padding: const EdgeInsets.only(left: 20, top: 2, bottom: 4),
-                child: Text(
-                  '이번에 아까 배운 표현을 추천해요 · 붙이면 복습 출제에 넣여요',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AppColors.accentWarm.withValues(alpha: 0.75),
-                        fontSize: 11.5,
-                      ),
-                ),
-              ),
               const SizedBox(height: AppSpacing.xs),
-              for (final s in reviewExprs)
-                _ReviewExpressionRow(
-                  data: s,
-                  saved: _saved.contains(_norm(s['expression']?.toString())),
-                  onSave: () => _save(s),
+              for (final s in saveSuggestions)
+                _SaveSuggestionRow(
+                  data: Map<String, dynamic>.from(s as Map),
+                  saved: _saved.contains(s['expression']?.toString()),
+                  onSave: () => _save(Map<String, dynamic>.from(s)),
                 ),
             ],
 
-            if (unsavedReview > 0) ...[
+            // 이번 라운드 통째로 담기 (핵심 표현 + 저장 추천을 한 번에)
+            if (_hasSavable(keyExprs, saveSuggestions)) ...[
               const SizedBox(height: AppSpacing.md),
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
                   onPressed:
-                      _savingAll ? null : () => _saveAllReview(reviewExprs),
+                      _savingAll ? null : () => _saveAll(keyExprs, saveSuggestions),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppColors.accentWarm,
                     side: BorderSide(
@@ -1134,7 +958,7 @@ class _FeedbackCardState extends State<_FeedbackCard> {
                           height: 14,
                           child: CircularProgressIndicator(strokeWidth: 2))
                       : const Icon(Icons.library_add_rounded, size: 17),
-                  label: Text('추천 표현 $unsavedReview개 모두 담기'),
+                  label: const Text('이번 표현 통째로 담기'),
                 ),
               ),
             ],
@@ -1144,245 +968,22 @@ class _FeedbackCardState extends State<_FeedbackCard> {
     );
   }
 
+  bool _hasSavable(List keyExprs, List saveSuggestions) {
+    for (final raw in [...keyExprs, ...saveSuggestions]) {
+      if (raw is Map) {
+        final w = raw['expression']?.toString() ?? '';
+        if (w.isNotEmpty && !_saved.contains(w)) return true;
+      }
+    }
+    return false;
+  }
+
   String _defaultVerdictLabel(String v) => switch (v) {
         'natural' => '자연스러워요',
-        'understandable' => '이미 잘 이해해',
+        'understandable' => '뜻은 잘 통해요',
         'awkward' => '조금 어색해요',
         _ => '다시 생각해봐요',
       };
-}
-
-/// ???��?????지?�에 ?�??구체??교정: 무엇???�색?��? ???�렇�?????
-class _CorrectionRow extends StatelessWidget {
-  const _CorrectionRow({required this.data});
-  final Map<String, dynamic> data;
-
-  @override
-  Widget build(BuildContext context) {
-    final issue = data['issue']?.toString() ?? '';
-    final suggestion = data['suggestion']?.toString() ?? '';
-    final note = data['note']?.toString() ?? '';
-    if (issue.isEmpty && suggestion.isEmpty && note.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-      child: Container(
-        padding: const EdgeInsets.all(AppSpacing.sm),
-        decoration: BoxDecoration(
-          color: AppColors.hubRecord.withValues(alpha: 0.06),
-          borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-          border: Border.all(color: AppColors.hubRecord.withValues(alpha: 0.2)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (issue.isNotEmpty)
-              Text(issue,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: context.mutedText,
-                        height: 1.35,
-                      )),
-            if (suggestion.isNotEmpty)
-              Padding(
-                padding: EdgeInsets.only(top: issue.isEmpty ? 0 : 3),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.only(top: 2),
-                      child: Icon(Icons.arrow_right_rounded,
-                          size: 18, color: AppColors.hubRecord),
-                    ),
-                    Expanded(
-                      child: SelectableText(suggestion,
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                fontWeight: FontWeight.w700,
-                                height: 1.35,
-                              )),
-                    ),
-                  ],
-                ),
-              ),
-            if (note.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(left: 18, top: 2),
-                child: Text('· $note',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: context.mutedText,
-                          height: 1.35,
-                        )),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// 참고???�현 ???�??버튼 ?�음.
-class _LearnExpressionRow extends StatelessWidget {
-  const _LearnExpressionRow({required this.data});
-  final Map<String, dynamic> data;
-
-  @override
-  Widget build(BuildContext context) {
-    final expr = data['expression']?.toString() ?? '';
-    final meaning = data['meaning']?.toString() ?? '';
-    final example = data['example']?.toString() ?? '';
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          RichText(
-            text: TextSpan(
-              style: Theme.of(context).textTheme.bodyMedium,
-              children: [
-                TextSpan(
-                    text: expr,
-                    style: const TextStyle(fontWeight: FontWeight.w700)),
-                if (meaning.isNotEmpty)
-                  TextSpan(
-                      text: '  $meaning',
-                      style: TextStyle(color: context.mutedText)),
-              ],
-            ),
-          ),
-          if (example.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 1),
-              child: Text('예: $example',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        fontStyle: FontStyle.italic,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.6),
-                      )),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 복습 추천 ?�현 ???�기 / ?��? ?�태 ?�시.
-class _ReviewExpressionRow extends StatelessWidget {
-  const _ReviewExpressionRow({
-    required this.data,
-    required this.saved,
-    required this.onSave,
-  });
-
-  final Map<String, dynamic> data;
-  final bool saved;
-  final VoidCallback onSave;
-
-  @override
-  Widget build(BuildContext context) {
-    final expr = data['expression']?.toString() ?? '';
-    final meaning = data['meaning']?.toString() ?? '';
-    final reason = data['reason']?.toString() ?? '';
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-      child: Container(
-        padding: const EdgeInsets.all(AppSpacing.sm),
-        decoration: BoxDecoration(
-          color: AppColors.accentWarm.withValues(alpha: saved ? 0.04 : 0.07),
-          borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-          border: Border.all(
-            color: AppColors.accentWarm.withValues(alpha: saved ? 0.15 : 0.22),
-          ),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  RichText(
-                    text: TextSpan(
-                      style: Theme.of(context).textTheme.bodyMedium,
-                      children: [
-                        TextSpan(
-                            text: expr,
-                            style: const TextStyle(fontWeight: FontWeight.w700)),
-                        if (meaning.isNotEmpty)
-                          TextSpan(
-                              text: '  $meaning',
-                              style: TextStyle(
-                                  color: context.mutedText, fontSize: 13)),
-                      ],
-                    ),
-                  ),
-                  if (reason.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 3),
-                      child: Text(reason,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: AppColors.accentWarm.withValues(alpha: 0.85),
-                                height: 1.35,
-                              )),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            saved ? const _SavedBadge() : _SaveButton(onTap: onSave),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SavedBadge extends StatelessWidget {
-  const _SavedBadge();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: AppColors.accent.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: const Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.check_circle_rounded, size: 14, color: AppColors.accent),
-          SizedBox(width: 4),
-          Text('담김',
-              style: TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.accent)),
-        ],
-      ),
-    );
-  }
-}
-
-class _SaveButton extends StatelessWidget {
-  const _SaveButton({required this.onTap});
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return OutlinedButton.icon(
-      onPressed: onTap,
-      style: OutlinedButton.styleFrom(
-        foregroundColor: AppColors.accentWarm,
-        side: BorderSide(color: AppColors.accentWarm.withValues(alpha: 0.5)),
-        visualDensity: VisualDensity.compact,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-      ),
-      icon: const Icon(Icons.add_rounded, size: 16),
-      label: const Text('담기', style: TextStyle(fontSize: 12)),
-    );
-  }
 }
 
 class _NaturalVersionRow extends StatelessWidget {
@@ -1418,7 +1019,7 @@ class _NaturalVersionRow extends StatelessWidget {
               if (tone.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(left: 6, top: 2),
-                  child: _Badge(text: tone, color: context.mutedText),
+                  child: _Badge(text: tone, color: AppColors.textMuted),
                 ),
             ],
           ),
@@ -1427,7 +1028,7 @@ class _NaturalVersionRow extends StatelessWidget {
               padding: const EdgeInsets.only(left: 18, top: 2),
               child: Text('· $note',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: context.mutedText,
+                        color: AppColors.textMuted,
                       )),
             ),
         ],
@@ -1436,7 +1037,137 @@ class _NaturalVersionRow extends StatelessWidget {
   }
 }
 
-// ?�?� Small shared widgets ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+class _ExpressionRow extends StatelessWidget {
+  const _ExpressionRow({required this.data, this.saved = false, this.onSave});
+  final Map<String, dynamic> data;
+  final bool saved;
+  final VoidCallback? onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    final expr = data['expression']?.toString() ?? '';
+    final meaning = data['meaning']?.toString() ?? '';
+    final example = data['example']?.toString() ?? '';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                RichText(
+                  text: TextSpan(
+                    style: Theme.of(context).textTheme.bodyMedium,
+                    children: [
+                      TextSpan(
+                          text: expr,
+                          style: const TextStyle(fontWeight: FontWeight.w700)),
+                      if (meaning.isNotEmpty)
+                        TextSpan(
+                            text: '  $meaning',
+                            style: TextStyle(color: AppColors.textMuted)),
+                    ],
+                  ),
+                ),
+                if (example.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 1),
+                    child: Text('“$example”',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              fontStyle: FontStyle.italic,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurface
+                                  .withValues(alpha: 0.6),
+                            )),
+                  ),
+              ],
+            ),
+          ),
+          if (onSave != null) ...[
+            const SizedBox(width: AppSpacing.sm),
+            saved
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    child: Icon(Icons.check_circle_rounded,
+                        size: 20, color: AppColors.accent),
+                  )
+                : IconButton(
+                    onPressed: onSave,
+                    visualDensity: VisualDensity.compact,
+                    iconSize: 20,
+                    color: AppColors.accentWarm,
+                    tooltip: '단어장에 담기',
+                    icon: const Icon(Icons.add_circle_outline_rounded),
+                  ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SaveSuggestionRow extends StatelessWidget {
+  const _SaveSuggestionRow({
+    required this.data,
+    required this.saved,
+    required this.onSave,
+  });
+  final Map<String, dynamic> data;
+  final bool saved;
+  final VoidCallback onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    final expr = data['expression']?.toString() ?? '';
+    final meaning = data['meaning']?.toString() ?? '';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+      child: Row(
+        children: [
+          Expanded(
+            child: RichText(
+              text: TextSpan(
+                style: Theme.of(context).textTheme.bodyMedium,
+                children: [
+                  TextSpan(
+                      text: expr,
+                      style: const TextStyle(fontWeight: FontWeight.w700)),
+                  if (meaning.isNotEmpty)
+                    TextSpan(
+                        text: '  $meaning',
+                        style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          saved
+              ? const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8),
+                  child: Icon(Icons.check_circle_rounded,
+                      size: 22, color: AppColors.accent),
+                )
+              : OutlinedButton.icon(
+                  onPressed: onSave,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.accentWarm,
+                    side: BorderSide(color: AppColors.accentWarm.withValues(alpha: 0.5)),
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                  ),
+                  icon: const Icon(Icons.add_rounded, size: 16),
+                  label: const Text('담기', style: TextStyle(fontSize: 12)),
+                ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Small shared widgets ──────────────────────────────────────────────────────
 
 class _SectionLabel extends StatelessWidget {
   const _SectionLabel({required this.icon, required this.text, this.color});
@@ -1446,7 +1177,7 @@ class _SectionLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = color ?? context.mutedText;
+    final c = color ?? AppColors.textMuted;
     return Row(
       children: [
         Icon(icon, size: 15, color: c),
@@ -1531,7 +1262,7 @@ class _PendingRow extends StatelessWidget {
           const SizedBox(width: AppSpacing.sm),
           Text(label,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: context.mutedText,
+                    color: AppColors.textMuted,
                   )),
         ],
       ),
@@ -1539,7 +1270,7 @@ class _PendingRow extends StatelessWidget {
   }
 }
 
-// ?�?� Empty-queue card ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+// ── Empty-queue card ──────────────────────────────────────────────────────────
 
 class _EmptyQueueCard extends StatelessWidget {
   const _EmptyQueueCard({required this.onGenerate});
@@ -1550,24 +1281,24 @@ class _EmptyQueueCard extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: AppSurfaceCard(
-        tint: context.mutedText,
+        tint: AppColors.textMuted,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(Icons.inbox_rounded, size: 20, color: context.mutedText),
+                const Icon(Icons.inbox_rounded, size: 20, color: AppColors.textMuted),
                 const SizedBox(width: 8),
-                Text('이 언어에는 문제가 없어요',
+                Text('풀 수 있는 문제가 없어요',
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w700,
                         )),
               ],
             ),
             const SizedBox(height: 6),
-            Text('문제 생성에서 일기 문장으로 샘플 문제를 만들 수 있어요',
+            Text('문제 생성에서 내 일기 문장으로 새 작문 문제를 만들 수 있어요.',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: context.mutedText,
+                      color: AppColors.textMuted,
                       height: 1.4,
                     )),
             const SizedBox(height: AppSpacing.md),
@@ -1587,7 +1318,7 @@ class _EmptyQueueCard extends StatelessWidget {
   }
 }
 
-// ?�?� Bottom input bar ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+// ── Bottom input bar ──────────────────────────────────────────────────────────
 
 class _InputBar extends StatelessWidget {
   const _InputBar({
@@ -1600,7 +1331,7 @@ class _InputBar extends StatelessWidget {
   });
 
   final TextEditingController controller;
-  final bool answering; // true = ?��? ?��? false = ?�??모드
+  final bool answering; // true = 답변 대기, false = 대화 모드
   final bool busy;
   final String language;
   final ValueChanged<String> onSend;
@@ -1625,7 +1356,7 @@ class _InputBar extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // ?�??모드?�서??"?�음 문장" ?�션??강조 ?�출.
+              // 대화 모드에서는 "다음 문장" 액션을 강조 노출.
               if (!answering)
                 Padding(
                   padding: const EdgeInsets.only(bottom: AppSpacing.sm),
@@ -1703,7 +1434,7 @@ class _SendButton extends StatelessWidget {
           child: Icon(
             answering ? Icons.check_rounded : Icons.send_rounded,
             size: 20,
-            color: busy ? context.mutedText : Colors.white,
+            color: busy ? AppColors.textMuted : Colors.white,
           ),
         ),
       ),

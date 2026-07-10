@@ -7,7 +7,6 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth_utils import decode_access_token
-from .config import get_settings
 from .db import get_session
 from .models import User
 
@@ -68,35 +67,3 @@ def require_premium(user: User) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Premium subscription required",
         )
-
-
-async def get_request_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
-    session: AsyncSession = Depends(get_session),
-) -> User:
-    """JWT user when a valid Bearer token is present; else dev fallback if enabled."""
-    if credentials is not None and credentials.credentials:
-        payload = decode_access_token(credentials.credentials)
-        if payload is not None and "sub" in payload:
-            try:
-                user_id = uuid.UUID(payload["sub"])
-            except ValueError:
-                user_id = None
-            else:
-                user = await session.get(User, user_id)
-                if user is not None:
-                    return user
-
-    settings = get_settings()
-    if settings.dev_auth_fallback:
-        from .dev_user import get_dev_user
-
-        return await get_dev_user(session)
-
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Not authenticated",
-    )
-
-
-request_user_dep = get_request_user

@@ -16,11 +16,13 @@ class QuizSessionScreen extends StatefulWidget {
     required this.quizType,
     this.entryId,
     this.quizIds,
+    this.vocabSource,
   });
 
   final String quizType;
   final String? entryId;
   final List<String>? quizIds;
+  final String? vocabSource;
 
   @override
   State<QuizSessionScreen> createState() => _QuizSessionScreenState();
@@ -56,6 +58,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
         size: widget.quizIds?.length ?? 10,
         entryId: widget.entryId,
         quizIds: widget.quizIds,
+        vocabSource: widget.vocabSource,
       );
       final items = (session['items'] as List<dynamic>? ?? [])
           .cast<Map<String, dynamic>>();
@@ -104,9 +107,10 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
       }
     });
 
-    if (correct) {
-      unawaited(_audioKey.currentState?.play(showError: false));
-    }
+    // Submitting exposes the answer, so play the audio now (whether right or
+    // wrong). Before answering the speaker button is hidden entirely, so this
+    // is the earliest point audio should ever be heard.
+    unawaited(_audioKey.currentState?.play(showError: false));
   }
 
   void _goNext() {
@@ -235,7 +239,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
                     Text(
                       questionKo,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: context.mutedText,
+                            color: AppColors.textMuted,
                           ),
                     ),
                   if (audioUrl == null || audioUrl.isEmpty)
@@ -243,7 +247,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
                       padding: const EdgeInsets.only(top: 8),
                       child: Text(
                         '이 문제에는 음성이 없습니다. 새로 생성한 문제만 재생됩니다.',
-                        style: TextStyle(fontSize: 12, color: context.mutedText),
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                       ),
                     ),
                   const SizedBox(height: AppSpacing.lg),

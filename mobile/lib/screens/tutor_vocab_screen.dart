@@ -5,13 +5,10 @@ import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import 'tutor_screen.dart' show tutorLangLabel;
 
-/// ?�터?� 배운 ?�현 ?�체 목록 ???�릴?�서 ?��? ?�현???�·예문�??�제 ?�갈?�는지"?�
-/// ?�께 ?�시 본다. ?�어�???���?구분?�서 보고, 롱프?�스�???��.
+/// 튜터와 배운 표현 전체 목록 — 드릴에서 담은 표현을 뜻·예문·"언제 헷갈렸는지"와
+/// 함께 다시 본다. 표현마다 언어 배지가 붙는다. 롱프레스로 삭제.
 class TutorVocabScreen extends StatefulWidget {
-  const TutorVocabScreen({super.key, this.initialLanguage});
-
-  /// 진입 ???�택???�어 ?�터 (null = ?�체).
-  final String? initialLanguage;
+  const TutorVocabScreen({super.key});
 
   @override
   State<TutorVocabScreen> createState() => _TutorVocabScreenState();
@@ -21,29 +18,9 @@ class _TutorVocabScreenState extends State<TutorVocabScreen> {
   bool _loading = true;
   List<Map<String, dynamic>> _items = [];
 
-  /// null = ?�체 보기.
-  String? _langFilter;
-
-  /// ?�?�된 ?�현?�에 ?�제�?존재?�는 ?�어 목록 (?�렬 고정).
-  List<String> get _languages {
-    final langs = _items
-        .map((e) => (e['language']?.toString() ?? 'english'))
-        .toSet()
-        .toList()
-      ..sort();
-    return langs;
-  }
-
-  List<Map<String, dynamic>> get _visibleItems => _langFilter == null
-      ? _items
-      : _items
-          .where((e) => (e['language']?.toString() ?? 'english') == _langFilter)
-          .toList();
-
   @override
   void initState() {
     super.initState();
-    _langFilter = widget.initialLanguage;
     _load();
   }
 
@@ -73,7 +50,7 @@ class _TutorVocabScreenState extends State<TutorVocabScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('표현 삭제'),
-        content: Text('"$word"을(를) 단어장에서 지울까요?'),
+        content: Text('“$word”을(를) 단어장에서 지울까요?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
           FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('삭제')),
@@ -95,15 +72,10 @@ class _TutorVocabScreenState extends State<TutorVocabScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final visible = _visibleItems;
     return Scaffold(
       appBar: AppHubAppBar(
-        title: '튜터에 배운 표현',
-        subtitle: _loading
-            ? null
-            : _langFilter == null
-                ? '${_items.length}개 · 길게 눌러 삭제'
-                : '${tutorLangLabel(_langFilter!)} ${visible.length}개 · 길게 눌러 삭제',
+        title: '튜터와 배운 표현',
+        subtitle: _loading ? null : '${_items.length}개 · 길게 눌러 삭제',
       ),
       body: _loading
           ? const AppLoadingScreen()
@@ -111,60 +83,16 @@ class _TutorVocabScreenState extends State<TutorVocabScreen> {
               ? const AppEmptyState(
                   icon: Icons.style_outlined,
                   title: '아직 담은 표현이 없어요',
-                  subtitle: '튜터 첨삭에서 아까운 표현을 담으면 여기 모여요',
+                  subtitle: '드릴 첨삭에서 헷갈린 표현을 담으면 여기 쌓여요.',
                 )
-              : Column(
-                  children: [
-                    if (_languages.length > 1) _buildLanguageFilter(),
-                    Expanded(
-                      child: visible.isEmpty
-                          ? const AppEmptyState(
-                              icon: Icons.style_outlined,
-                              title: '이 언어에 담은 표현이 없어요',
-                              subtitle: '다른 언어 탭을 확인해 보세요',
-                            )
-                          : ListView.separated(
-                              padding: const EdgeInsets.fromLTRB(AppSpacing.pageH,
-                                  AppSpacing.md, AppSpacing.pageH, AppSpacing.xxl),
-                              itemCount: visible.length,
-                              separatorBuilder: (_, __) =>
-                                  const SizedBox(height: AppSpacing.sm),
-                              itemBuilder: (context, i) => _VocabTile(
-                                  item: visible[i],
-                                  onLongPress: () => _delete(visible[i])),
-                            ),
-                    ),
-                  ],
+              : ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(AppSpacing.pageH,
+                      AppSpacing.md, AppSpacing.pageH, AppSpacing.xxl),
+                  itemCount: _items.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
+                  itemBuilder: (context, i) =>
+                      _VocabTile(item: _items[i], onLongPress: () => _delete(_items[i])),
                 ),
-    );
-  }
-
-  /// ?�어�?보기 ???�?�된 ?�현??2�??�상 ?�어??걸쳐 ?�을 ?�만 ?�출.
-  Widget _buildLanguageFilter() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-          AppSpacing.pageH, AppSpacing.sm, AppSpacing.pageH, 0),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            ChoiceChip(
-              label: Text('전체 ${_items.length}'),
-              selected: _langFilter == null,
-              onSelected: (_) => setState(() => _langFilter = null),
-            ),
-            for (final lang in _languages) ...[
-              const SizedBox(width: AppSpacing.xs),
-              ChoiceChip(
-                label: Text(
-                    '${tutorLangLabel(lang)} ${_items.where((e) => (e['language']?.toString() ?? 'english') == lang).length}'),
-                selected: _langFilter == lang,
-                onSelected: (_) => setState(() => _langFilter = lang),
-              ),
-            ],
-          ],
-        ),
-      ),
     );
   }
 }
@@ -206,13 +134,13 @@ class _VocabTile extends StatelessWidget {
                 padding: const EdgeInsets.only(top: 2),
                 child: Text(meaning,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: context.mutedText,
+                          color: AppColors.textMuted,
                         )),
               ),
             if (example.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
-                child: Text('예: $example',
+                child: Text('“$example”',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           fontStyle: FontStyle.italic,
                           color: Theme.of(context)
@@ -230,7 +158,7 @@ class _VocabTile extends StatelessWidget {
                       size: 14, color: AppColors.hubQuiz),
                   const SizedBox(width: 4),
                   Expanded(
-                    child: Text('이 문장에서 아까웠어요: $promptKo',
+                    child: Text('이 문장에서 헷갈렸어요: $promptKo',
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
                               color: AppColors.hubQuiz,
                             )),

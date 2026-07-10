@@ -9,6 +9,7 @@ from ..db import get_session
 from ..deps import request_user_dep
 from ..journal_pipeline import (
     generate_example_sentences,
+    generate_quiz_cards,
 )
 from ..models import User
 from ..pipeline_runner import (
@@ -19,9 +20,8 @@ from ..pipeline_runner import (
     run_journal_text_pipeline,
 )
 from ..pipeline_trace import PipelineTracer
-from ..workers.quiz_refill import refill_user_quizzes
 from ..quiz_pipeline import run_quiz_generate_pipeline
-from ..quiz_types import ENABLED_QUIZ_TYPES, validate_quiz_type
+from ..quiz_types import validate_quiz_type
 from ..rag import hybrid_retrieve
 from ..speaker_confirmation import (
     build_speaker_summaries_for_entry,
@@ -39,8 +39,10 @@ from ..schemas import (
     SourceTypeUpdate,
     SpeakerRemapRequest,
     SpeakerSummaryOut,
+    QuizCard,
     QuizGenerateOut,
     QuizGenerateRequest,
+    QuizResponse,
     ReviewItemOut,
     ReviewResultRequest,
     JournalTextEntryRequest,
@@ -86,7 +88,7 @@ async def _entry_out(
     ):
         graph_status = entry.status
     # Authoritative override: if graph nodes are actually committed for this entry,
-    # the graph IS ready — self-heal a stuck 'graph_processing'/'graph_failed'.
+    # the graph IS ready â€” self-heal a stuck 'graph_processing'/'graph_failed'.
     if graph_status != "graph_ready":
         if await crud.entry_has_graph_nodes(session, entry.id):
             graph_status = "graph_ready"
@@ -150,13 +152,13 @@ async def _entry_out(
 @router.post("/upload", response_model=JournalEntryOut, status_code=status.HTTP_201_CREATED)
 async def upload_journal(
     file: UploadFile = File(...),
-    # The client sends source_type as a multipart form field — must be Form(), not
-    # a query param, or FastAPI silently drops it (timeline → 미분류).
+    # The client sends source_type as a multipart form field â€” must be Form(), not
+    # a query param, or FastAPI silently drops it (timeline â†’ ë¯¸ë¶„ë¥˜).
     source_type: str | None = Form(None),
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> JournalEntryOut:
-    """Fast Path only: STT → cleanup/translate. GraphRAG is manual per entry."""
+    """Fast Path only: STT â†’ cleanup/translate. GraphRAG is manual per entry."""
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
@@ -241,7 +243,7 @@ async def delete_journal_entry(
 
 async def _reject_if_graph_locked(session: AsyncSession, entry) -> None:
     """Block edits to graph inputs (source type, speaker grouping/identity) once a
-    knowledge graph has been committed for the entry — they'd silently desync the
+    knowledge graph has been committed for the entry â€” they'd silently desync the
     already-built graph. The user must delete the graph and rebuild to change them.
     """
     if await crud.entry_has_graph_nodes(session, entry.id):
@@ -249,8 +251,8 @@ async def _reject_if_graph_locked(session: AsyncSession, entry) -> None:
             status_code=409,
             detail={
                 "code": "graph_locked",
-                "message": "지식그래프가 생성되어 유형·화자는 잠겼습니다. "
-                "수정하려면 그래프를 삭제 후 다시 생성하세요.",
+                "message": "ì§€ì‹ê·¸ëž˜í”„ê°€ ìƒì„±ë˜ì–´ ìœ í˜•Â·í™”ìžëŠ” ìž ê²¼ìŠµë‹ˆë‹¤. "
+                "ìˆ˜ì •í•˜ë ¤ë©´ ê·¸ëž˜í”„ë¥¼ ì‚­ì œ í›„ ë‹¤ì‹œ ìƒì„±í•˜ì„¸ìš”.",
             },
         )
 
@@ -282,7 +284,7 @@ async def set_attribution(
 ) -> JournalEntryOut:
     """Change who the entry's statements are attributed to (self/person/source).
 
-    Locked once a graph is committed — the head node is already immutable.
+    Locked once a graph is committed â€” the head node is already immutable.
     """
     entry = await crud.get_journal_entry(session, entry_id, user.id)
     if entry is None:
@@ -292,7 +294,7 @@ async def set_attribution(
     if payload.attribution_kind == "source" and not name:
         from datetime import UTC as _UTC, datetime as _dt
 
-        name = f"출처 미상 {_dt.now(_UTC):%Y-%m-%d %H:%M}"
+        name = f"ì¶œì²˜ ë¯¸ìƒ {_dt.now(_UTC):%Y-%m-%d %H:%M}"
     await crud.update_journal_entry(
         session,
         entry,
@@ -309,7 +311,7 @@ async def remap_speakers(
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Reversibly fix diarization over-split: merge speakers, collapse all to '나',
+    """Reversibly fix diarization over-split: merge speakers, collapse all to 'ë‚˜',
     or reset to the original diarization. Returns the resulting speaker summaries."""
     entry = await crud.get_journal_entry(session, entry_id, user.id)
     if entry is None:
@@ -357,14 +359,14 @@ async def build_entry_graph(
     entry = await crud.get_journal_entry(session, entry_id, user.id)
     if entry is None:
         raise HTTPException(status_code=404, detail="Entry not found")
-    # GraphRAG는 한국어 정제 텍스트로 추출한다(번역 불필요) — 쓰기는 정제만 하고
-    # 번역은 온디맨드이므로, 여기서는 정제 텍스트 유무만 확인한다.
+    # GraphRAGëŠ” í•œêµ­ì–´ ì •ì œ í…ìŠ¤íŠ¸ë¡œ ì¶”ì¶œí•œë‹¤(ë²ˆì—­ ë¶ˆí•„ìš”) â€” ì“°ê¸°ëŠ” ì •ì œë§Œ í•˜ê³ 
+    # ë²ˆì—­ì€ ì˜¨ë””ë§¨ë“œì´ë¯€ë¡œ, ì—¬ê¸°ì„œëŠ” ì •ì œ í…ìŠ¤íŠ¸ ìœ ë¬´ë§Œ í™•ì¸í•œë‹¤.
     if not ((entry.transcript_clean_ko or "").strip() or (entry.transcript_ko or "").strip()):
-        raise HTTPException(status_code=400, detail="정제된 텍스트가 아직 없습니다")
+        raise HTTPException(status_code=400, detail="ì •ì œëœ í…ìŠ¤íŠ¸ê°€ ì•„ì§ ì—†ìŠµë‹ˆë‹¤")
 
-    # 화자 확인 게이트 — 텍스트도 음성과 동일하게 적용(사후 귀속 통일 흐름).
-    # 단, 엔트리 귀속이 이미 명시된 경우(self / source·person+이름)는 head가
-    # 확정돼 있으므로 미확정 화자 라벨이 남아 있어도 막지 않는다(레거시 경로 보호).
+    # í™”ìž í™•ì¸ ê²Œì´íŠ¸ â€” í…ìŠ¤íŠ¸ë„ ìŒì„±ê³¼ ë™ì¼í•˜ê²Œ ì ìš©(ì‚¬í›„ ê·€ì† í†µì¼ íë¦„).
+    # ë‹¨, ì—”íŠ¸ë¦¬ ê·€ì†ì´ ì´ë¯¸ ëª…ì‹œëœ ê²½ìš°(self / sourceÂ·person+ì´ë¦„)ëŠ” headê°€
+    # í™•ì •ë¼ ìžˆìœ¼ë¯€ë¡œ ë¯¸í™•ì • í™”ìž ë¼ë²¨ì´ ë‚¨ì•„ ìžˆì–´ë„ ë§‰ì§€ ì•ŠëŠ”ë‹¤(ë ˆê±°ì‹œ ê²½ë¡œ ë³´í˜¸).
     _attr_kind = (entry.attribution_kind or "").strip().lower()
     _attr_name = (entry.attribution_name or "").strip()
     attribution_resolved = _attr_kind == "self" or (
@@ -377,7 +379,7 @@ async def build_entry_graph(
                 status_code=409,
                 detail={
                     "code": "speakers_unconfirmed",
-                    "message": "화자 확인 후 GraphRAG를 실행할 수 있습니다.",
+                    "message": "í™”ìž í™•ì¸ í›„ GraphRAGë¥¼ ì‹¤í–‰í•  ìˆ˜ ìžˆìŠµë‹ˆë‹¤.",
                     "pending_labels": pending,
                 },
             )
@@ -387,7 +389,7 @@ async def build_entry_graph(
             status_code=409,
             detail={
                 "code": "graph_locked",
-                "message": "이미 확정된 지식그래프가 있습니다. 수정하려면 삭제 후 다시 생성하세요.",
+                "message": "ì´ë¯¸ í™•ì •ëœ ì§€ì‹ê·¸ëž˜í”„ê°€ ìžˆìŠµë‹ˆë‹¤. ìˆ˜ì •í•˜ë ¤ë©´ ì‚­ì œ í›„ ë‹¤ì‹œ ìƒì„±í•˜ì„¸ìš”.",
             },
         )
 
@@ -411,7 +413,7 @@ async def build_entry_graph(
     return GraphBuildOut(
         entry_id=entry_id,
         status="graph_processing",
-        message="그래프 드래프트 생성 시작 (검토 후 확정)",
+        message="ê·¸ëž˜í”„ ë“œëž˜í”„íŠ¸ ìƒì„± ì‹œìž‘ (ê²€í†  í›„ í™•ì •)",
     )
 
 
@@ -421,8 +423,6 @@ async def apply_entry_graph(
     payload: GraphApplyRequest | None = None,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
-    *,
-    background_tasks: BackgroundTasks,
 ) -> GraphBuildOut:
     """Commit a reviewed graph draft into immutable graph nodes.
 
@@ -441,7 +441,7 @@ async def apply_entry_graph(
             status_code=409,
             detail={
                 "code": "graph_locked",
-                "message": "이미 확정된 지식그래프가 있습니다.",
+                "message": "ì´ë¯¸ í™•ì •ëœ ì§€ì‹ê·¸ëž˜í”„ê°€ ìžˆìŠµë‹ˆë‹¤.",
             },
         )
 
@@ -451,16 +451,16 @@ async def apply_entry_graph(
         (payload.context_type if payload else None)
         or staging.get("context_type")
         or (entry.source_type or "").strip()
-        or "대화"
+        or "ëŒ€í™”"
     )
     if not claims:
         raise HTTPException(
             status_code=400,
-            detail="검토할 그래프 드래프트가 없습니다. 먼저 그래프를 생성하세요.",
+            detail="ê²€í† í•  ê·¸ëž˜í”„ ë“œëž˜í”„íŠ¸ê°€ ì—†ìŠµë‹ˆë‹¤. ë¨¼ì € ê·¸ëž˜í”„ë¥¼ ìƒì„±í•˜ì„¸ìš”.",
         )
 
     # Trace the commit step so the pipeline flow view shows the full
-    # draft(LLM) → apply(commit) picture, not just the draft half.
+    # draft(LLM) â†’ apply(commit) picture, not just the draft half.
     tracer = PipelineTracer.resume(entry_id, entry.pipeline_trace)
     tracer.run.current_phase = "slow_path"
     step = tracer.begin_step(
@@ -504,12 +504,10 @@ async def apply_entry_graph(
     # Extract expressions from the CONFIRMED nodes only (cost + accuracy).
     await enqueue_entry_expression_extraction(session, user.id)
 
-    background_tasks.add_task(refill_user_quizzes, user.id)
-
     return GraphBuildOut(
         entry_id=entry_id,
         status="graph_ready",
-        message="지식그래프 확정 완료",
+        message="ì§€ì‹ê·¸ëž˜í”„ í™•ì • ì™„ë£Œ",
     )
 
 
@@ -573,9 +571,7 @@ async def generate_quiz_item(
     session: AsyncSession = Depends(get_session),
 ) -> QuizGenerateOut:
     try:
-        quiz_type = validate_quiz_type(quiz_type)
-        if quiz_type not in ENABLED_QUIZ_TYPES:
-            raise HTTPException(status_code=410, detail="이 퀴즈 유형은 비활성화되었습니다.")
+        validate_quiz_type(quiz_type)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
@@ -595,6 +591,29 @@ async def generate_quiz_item(
         difficulty_level=quiz.difficulty_level,
         trace_step_count=len(trace.get("steps") or []),
     )
+
+
+@router.post("/entries/{entry_id}/quiz", response_model=QuizResponse)
+async def generate_quiz(
+    entry_id: uuid.UUID,
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> QuizResponse:
+    entry = await crud.get_journal_entry(session, entry_id, user.id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    if not entry.translation_en:
+        raise HTTPException(status_code=400, detail="Entry not yet translated")
+
+    query = entry.translation_en[:200]
+    rc = await hybrid_retrieve(session, query, user.id)
+    cards_raw = await generate_quiz_cards(
+        entry.translation_en,
+        rc.context,
+        premium=True,
+    )
+    cards = [QuizCard(**c) for c in cards_raw]
+    return QuizResponse(cards=cards)
 
 
 @router.get("/reviews", response_model=list[ReviewItemOut])
@@ -652,6 +671,6 @@ async def list_speaker_profiles(
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> list[SpeakerProfileOut]:
-    """Voice memory profiles — linked to Person nodes after GraphRAG."""
+    """Voice memory profiles â€” linked to Person nodes after GraphRAG."""
     profiles = await crud.list_speaker_profiles(session, user.id)
     return profiles

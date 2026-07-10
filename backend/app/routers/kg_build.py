@@ -23,7 +23,7 @@ from datetime import datetime, timezone, timedelta
 from functools import lru_cache
 from typing import Any, Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -241,12 +241,7 @@ def _content_type_guidance_block(content_type: str) -> str:
     )
 
 
-def _build_extraction_system_prompt(
-    *, content_type: str, fixed_speaker: str | None, native_language: str = "korean"
-) -> str:
-    from ..tutor import _lang_label
-
-    native_label = _lang_label(native_language)
+def _build_extraction_system_prompt(*, content_type: str, fixed_speaker: str | None) -> str:
     if fixed_speaker:
         speaker_rule = (
             f'- speaker: every claim\'s "speaker" MUST be exactly "{fixed_speaker}" — the '
@@ -258,8 +253,8 @@ def _build_extraction_system_prompt(
             "- speaker: the person or media source who made this claim. Match "
             "existing_nodes if semantically identical."
         )
-    return f"""You are a knowledge graph assistant for a {native_label} language learning app.
-Extract speaker-attributed statements from the {native_label} source text below.
+    return f"""You are a knowledge graph assistant for a Korean language learning app.
+Extract speaker-attributed statements from the Korean source text below.
 
 Return ONLY valid JSON in this exact shape (no markdown, no commentary):
 {{
@@ -622,18 +617,17 @@ async def kg_extract(
     the LLM responds, so hallucinated matches are always corrected.
     """
     settings = get_settings()
-    native_language = getattr(user, "native_language", "korean") or "korean"
 
     if body.mode == "diary":
         speaker = (body.fixed_speaker or "").strip() or "나"
         system_prompt = _build_extraction_system_prompt(
-            content_type="개인일기", fixed_speaker=speaker, native_language=native_language
+            content_type="개인일기", fixed_speaker=speaker
         )
         user_prompt = _diary_user_prompt(body.text, speaker, body.existing_nodes)
     else:
         category = (body.source_category or "텍스트").strip()
         system_prompt = _build_extraction_system_prompt(
-            content_type=category, fixed_speaker=None, native_language=native_language
+            content_type=category, fixed_speaker=None
         )
         user_prompt = _external_user_prompt(body.text, category, body.existing_nodes)
 
@@ -705,7 +699,6 @@ async def kg_extract(
 @router.post("/commit", response_model=KgCommitOut)
 async def kg_commit(
     body: KgCommitRequest,
-    background_tasks: BackgroundTasks,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> KgCommitOut:
@@ -801,10 +794,6 @@ async def kg_commit(
         await enqueue_bulk(user.id, all_stmts, langs)
     except Exception as _eq_exc:
         logger.warning("kg_commit: failed to enqueue expression extraction: %s", _eq_exc)
-
-    from ..workers.quiz_refill import refill_user_quizzes
-
-    background_tasks.add_task(refill_user_quizzes, user.id)
 
     return KgCommitOut(
         ok=True,
@@ -1237,9 +1226,6 @@ async def extract_statement_graph_draft(
     if entry is None:
         raise ValueError("entry not found")
 
-    user = await session.get(User, user_id)
-    native_language = getattr(user, "native_language", "korean") or "korean" if user else "korean"
-
     segments = entry.transcript_segments if isinstance(entry.transcript_segments, list) else []
     speakers: list[str] = []
     for seg in segments:
@@ -1300,7 +1286,7 @@ async def extract_statement_graph_draft(
         )
         is_diary = False
         system_prompt = _build_extraction_system_prompt(
-            content_type=context_type, fixed_speaker=speaker_name, native_language=native_language
+            content_type=context_type, fixed_speaker=speaker_name
         )
         user_prompt = _diary_user_prompt(
             diary_text or labeled_text,
@@ -1325,13 +1311,13 @@ async def extract_statement_graph_draft(
             speaker_name = self_node.name
         context_type = "개인일기"
         system_prompt = _build_extraction_system_prompt(
-            content_type=context_type, fixed_speaker=speaker_name, native_language=native_language
+            content_type=context_type, fixed_speaker=speaker_name
         )
         user_prompt = _diary_user_prompt(diary_text or labeled_text, speaker_name, existing_names)
     else:
         context_type = source_category
         system_prompt = _build_extraction_system_prompt(
-            content_type=context_type, fixed_speaker=None, native_language=native_language
+            content_type=context_type, fixed_speaker=None
         )
         user_prompt = _external_user_prompt(
             labeled_text, source_category, existing_names, corrected_text=clean_text

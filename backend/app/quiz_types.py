@@ -5,8 +5,9 @@ from __future__ import annotations
 QUIZ_TYPES = frozenset({"cloze", "scramble", "mcq_nuance", "composition"})
 QUEUE_KINDS = frozenset({"new", "review", "archived"})
 
-# All quiz types are servable.
-ENABLED_QUIZ_TYPES = frozenset(QUIZ_TYPES)
+# Only composition is currently servable; the other types stay in QUIZ_TYPES so
+# existing rows, queue counts, and schemas keep working while their UI is hidden.
+ENABLED_QUIZ_TYPES = frozenset({"composition"})
 
 
 def validate_quiz_type(quiz_type: str) -> str:

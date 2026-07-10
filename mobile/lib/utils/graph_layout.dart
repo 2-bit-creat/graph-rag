@@ -9,6 +9,11 @@ const kMinLinkDistance = 180.0;
 const kGraphMinHitDiameter = 24.0;
 
 /// Force layout with category clustering + strict collide.
+///
+/// The constructor produces a settled batch layout (warm start). After that
+/// the engine doubles as a live d3-style simulation: [tick] advances it one
+/// frame, [reheat] injects energy, [pinnedId] pins the dragged node so the
+/// springs pull its neighbors along.
 class GraphLayoutEngine {
   GraphLayoutEngine({
     required this.nodeIds,
@@ -16,16 +21,37 @@ class GraphLayoutEngine {
     required Map<String, double> nodeRadii,
     Map<String, String>? nodeTypes,
     Offset? center,
+    Map<String, Offset>? initialPositions,
   })  : center = center ?? const Offset(500, 500),
         nodeRadii = Map<String, double>.from(nodeRadii),
         nodeTypes = nodeTypes ?? {} {
-    _initCategoryClusters();
-    _computeLayers();
-    runSimulation(
-      iterations: nodeIds.length > 40 ? 340 : nodeIds.length > 15 ? 280 : 240,
-    );
-    enforceNonOverlap(maxPasses: 240);
-    _normalizeToOrigin();
+    final carried = <String>{};
+    if (initialPositions != null) {
+      for (final id in nodeIds) {
+        final p = initialPositions[id];
+        if (p != null) {
+          positions[id] = p;
+          carried.add(id);
+        }
+      }
+    }
+    // Incremental mode: most nodes survive a data refresh (e.g. an inspector
+    // edit), so keep their positions and let the caller reheat the live sim
+    // instead of scrambling the whole map with a fresh batch layout.
+    seededIncrementally = carried.isNotEmpty && carried.length * 2 >= nodeIds.length;
+    if (seededIncrementally) {
+      _computeLayers();
+      _seedIncremental(carried);
+    } else {
+      positions.clear();
+      _initCategoryClusters();
+      _computeLayers();
+      runSimulation(
+        iterations: nodeIds.length > 40 ? 170 : nodeIds.length > 15 ? 140 : 120,
+      );
+      enforceNonOverlap(maxPasses: 240);
+      _normalizeToOrigin();
+    }
   }
 
   final List<String> nodeIds;
@@ -36,6 +62,17 @@ class GraphLayoutEngine {
 
   final positions = <String, Offset>{};
   final layerByNodeId = <String, int>{};
+
+  /// True when the constructor kept caller-provided positions instead of
+  /// running a full batch layout.
+  late final bool seededIncrementally;
+
+  // Live simulation state (d3-force style).
+  static const kAlphaMin = 0.015;
+  final velocities = <String, Offset>{};
+  double alpha = 0.0;
+  double alphaTarget = 0.0;
+  String? pinnedId;
 
   double _layoutRadius(String id) => nodeRadii[id] ?? kGraphNodeRadius;
   double _collideRadius(String id) => _layoutRadius(id) + kCollidePadding;
@@ -137,6 +174,40 @@ class GraphLayoutEngine {
     return raw.toLowerCase().trim();
   }
 
+  /// Place nodes missing from [carried] near their first already-placed
+  /// neighbor (falling back to the carried centroid) so a data refresh only
+  /// introduces motion where the graph actually changed.
+  void _seedIncremental(Set<String> carried) {
+    final adj = _adjacency;
+    final rnd = math.Random(nodeIds.length);
+    var cx = 0.0;
+    var cy = 0.0;
+    for (final id in carried) {
+      cx += positions[id]!.dx;
+      cy += positions[id]!.dy;
+    }
+    final centroid = carried.isEmpty
+        ? center
+        : Offset(cx / carried.length, cy / carried.length);
+    for (final id in nodeIds) {
+      if (positions.containsKey(id)) continue;
+      Offset? anchor;
+      for (final n in adj[id] ?? const <String>{}) {
+        if (positions.containsKey(n)) {
+          anchor = positions[n];
+          break;
+        }
+      }
+      final base = anchor ?? centroid;
+      final angle = rnd.nextDouble() * 2 * math.pi;
+      final dist = anchor != null
+          ? _collideRadius(id) * 2.4
+          : 200.0 + rnd.nextDouble() * 120.0;
+      positions[id] = base + Offset.fromDirection(angle, dist);
+    }
+    enforceNonOverlap(maxPasses: 12);
+  }
+
   void _computeLayers() {
     if (nodeIds.isEmpty) return;
     final adj = _adjacency;
@@ -194,9 +265,17 @@ class GraphLayoutEngine {
 
         if (dist >= minDist) continue;
 
+        // The pinned (dragged) node must stay under the pointer, so its
+        // overlap partner absorbs the full separation.
         final overlap = ((minDist - dist) / dist) * strength * 0.5;
-        positions[a] = Offset(pa.dx - delta.dx * overlap, pa.dy - delta.dy * overlap);
-        positions[b] = Offset(pb.dx + delta.dx * overlap, pb.dy + delta.dy * overlap);
+        if (a == pinnedId) {
+          positions[b] = Offset(pb.dx + delta.dx * overlap * 2, pb.dy + delta.dy * overlap * 2);
+        } else if (b == pinnedId) {
+          positions[a] = Offset(pa.dx - delta.dx * overlap * 2, pa.dy - delta.dy * overlap * 2);
+        } else {
+          positions[a] = Offset(pa.dx - delta.dx * overlap, pa.dy - delta.dy * overlap);
+          positions[b] = Offset(pb.dx + delta.dx * overlap, pb.dy + delta.dy * overlap);
+        }
       }
     }
   }
@@ -281,6 +360,103 @@ class GraphLayoutEngine {
         _applyCollide(strength: 1.0);
       }
     }
+  }
+
+  /// Injects energy into the live simulation (drag, release, data refresh).
+  void reheat([double a = 0.3]) {
+    alpha = math.max(alpha, a);
+  }
+
+  /// Advances the live simulation by [dt] seconds.
+  ///
+  /// Returns false once the graph has settled (low energy AND negligible
+  /// velocity) so the caller can stop its ticker. Forces mirror the batch
+  /// pass but are alpha-scaled the d3 way: alpha eases toward [alphaTarget]
+  /// (held up while dragging), and a released node keeps its velocity and
+  /// coasts under damping — that decay is the visible inertia.
+  bool tick(double dt) {
+    if (nodeIds.length < 2) {
+      alpha = 0.0;
+      return false;
+    }
+
+    alpha += (alphaTarget - alpha) * 0.06;
+    if (pinnedId == null && alphaTarget < kAlphaMin && alpha < kAlphaMin) {
+      var maxSq = 0.0;
+      for (final v in velocities.values) {
+        maxSq = math.max(maxSq, v.distanceSquared);
+      }
+      if (maxSq < 0.0016) {
+        alpha = 0.0;
+        for (final id in velocities.keys.toList()) {
+          velocities[id] = Offset.zero;
+        }
+        return false;
+      }
+    }
+
+    // Normalize to 60fps frames so a slow frame doesn't slow the physics.
+    final step = (dt * 60.0).clamp(0.5, 2.0);
+    const linkStrength = 0.12;
+    const repulsion = 12000.0;
+    const damping = 0.85;
+    const centerPull = 0.0012;
+
+    final forces = {for (final id in nodeIds) id: Offset.zero};
+
+    for (final e in edges) {
+      if (!positions.containsKey(e.source) || !positions.containsKey(e.target)) {
+        continue;
+      }
+      final delta = positions[e.target]! - positions[e.source]!;
+      final dist = math.max(delta.distance, 1.0);
+      final ideal = math.max(
+        kMinLinkDistance,
+        _collideRadius(e.source) + _collideRadius(e.target) + 50,
+      );
+      final force = delta / dist * ((dist - ideal) * linkStrength * alpha);
+      forces[e.source] = forces[e.source]! + force;
+      forces[e.target] = forces[e.target]! - force;
+    }
+
+    if (alpha > 0.002) {
+      for (var i = 0; i < nodeIds.length; i++) {
+        for (var j = i + 1; j < nodeIds.length; j++) {
+          final a = nodeIds[i];
+          final b = nodeIds[j];
+          final delta = positions[a]! - positions[b]!;
+          final dist = math.max(delta.distance, 1.0);
+          final force = repulsion * alpha / (dist * dist);
+          final dir = delta / dist;
+          forces[a] = forces[a]! + dir * force;
+          forces[b] = forces[b]! - dir * force;
+        }
+      }
+      for (final id in nodeIds) {
+        forces[id] = forces[id]! + (center - positions[id]!) * (centerPull * alpha);
+      }
+    }
+
+    final dampingStep = math.pow(damping, step).toDouble();
+    for (final id in nodeIds) {
+      if (id == pinnedId) {
+        velocities[id] = Offset.zero;
+        continue;
+      }
+      var v = ((velocities[id] ?? Offset.zero) + forces[id]! * step) * dampingStep;
+      final speed = v.distance;
+      if (speed > 60) v = v * (60 / speed);
+      velocities[id] = v;
+      positions[id] = positions[id]! + v * step;
+    }
+
+    if (alpha > 0.002) {
+      _applyClusterForce(alpha: alpha, strength: 0.008 * alpha);
+    }
+    // Soft positional collide instead of hard projection: hard projection
+    // every frame looks jittery while the sim is in motion.
+    _applyCollide(strength: 0.35);
+    return true;
   }
 
   void enforceNonOverlap({int maxPasses = 240}) {
@@ -381,8 +557,19 @@ double graphLayoutRadiusForNode({
   required int maxDegree,
   required String name,
   int totalNodes = 20,
+  String? type,
 }) {
-  return graphNodeRadiusForDegree(degree, maxDegree, totalNodes: totalNodes);
+  return graphNodeRadiusForDegree(degree, maxDegree, totalNodes: totalNodes) *
+      graphTierRadiusMultiplier(type);
+}
+
+/// Speaker → Statement → Concept 3-tier size bias: speakers are few and
+/// anchor-like, statements are plentiful connective tissue.
+double graphTierRadiusMultiplier(String? type) {
+  if (isStatementHeadType(type)) return 1.2;
+  final t = canonicalEntityType(type ?? '').toLowerCase();
+  if (t == 'statement') return 0.85;
+  return 1.0;
 }
 
 /// Hub nodes larger; small graphs use smaller radii to reduce world crowding.
@@ -393,6 +580,20 @@ double graphNodeRadiusForDegree(int degree, int maxDegree, {int totalNodes = 20}
   if (degree <= 1 || maxDegree <= 1) return compact ? 15.0 : 22.0;
   final t = math.sqrt((degree / maxDegree).clamp(0.0, 1.0));
   return minR + (maxR - minR) * t;
+}
+
+/// Bolder label for nodes with a higher cumulative LLM-assigned importance
+/// (Node.importance_score — see backend crud._get_or_create_node). Independent
+/// of degree-based sizing: a concept can be small (few mentions) but weighty
+/// (each mention scored high), or vice versa.
+FontWeight fontWeightForImportance(int score, int maxScore) {
+  if (maxScore <= 0 || score <= 0) return FontWeight.w500;
+  final t = (score / maxScore).clamp(0.0, 1.0);
+  if (t >= 0.8) return FontWeight.w900;
+  if (t >= 0.55) return FontWeight.w800;
+  if (t >= 0.3) return FontWeight.w700;
+  if (t >= 0.1) return FontWeight.w600;
+  return FontWeight.w500;
 }
 
 double _smoothstep(double x, double lo, double hi) {
@@ -408,6 +609,15 @@ double graphScreenRadius(double worldRadius, double zoom, {double adaptiveScale 
 
 double graphNameTextOpacity(double zoom) => _smoothstep(zoom, 0.15, 0.38);
 
+/// Degree-priority label LOD: hub labels survive further zoom-out, leaf
+/// labels fade first (Obsidian behavior). [degreeNorm] ∈ [0, 1].
+double graphLabelLodOpacity(double zoom, double degreeNorm) {
+  final t = degreeNorm.clamp(0.0, 1.0);
+  final lo = 0.18 - 0.10 * t;
+  final hi = 0.42 - 0.20 * t;
+  return _smoothstep(zoom, lo, hi);
+}
+
 double graphTypeTextOpacity(double zoom) => _smoothstep(zoom, 0.9, 1.2);
 
 double graphNodeFillOpacity({
@@ -422,12 +632,12 @@ double graphNodeFillOpacity({
   return opacity;
 }
 
-String graphShortLabel(String name, double screenRadius, {double zoom = 1.0}) {
+/// Truncates by the node's WORLD radius (zoom-independent) so cached label
+/// layouts never thrash while zooming.
+String graphShortLabel(String name, double worldRadius) {
   final n = name.trim();
   if (n.isEmpty) return '?';
-  final maxChars = zoom >= 0.8
-      ? (screenRadius * 0.55).round().clamp(6, 20)
-      : (screenRadius * 0.4).round().clamp(4, 10);
+  final maxChars = (worldRadius * 0.55).round().clamp(6, 20);
   if (n.length <= maxChars) return n;
   return '${n.substring(0, maxChars - 1)}…';
 }
@@ -492,9 +702,19 @@ const _semanticTypeColors = <String, Color>{
   'chunk': Color(0xFF6366F1),
   'speaker': Color(0xFFFF8C42),
   'vocab': Color(0xFF3DD6C3),
+  // 3-노드 구조 핵심 색상: Person=주황 / Statement=보라 / Concept=파랑.
+  // statement 키가 없으면 fallback 팔레트의 파랑(0xFF5B9DFF)으로 떨어져 concept과
+  // 색이 겹쳐 보이므로 반드시 명시적으로 구분된 색을 지정한다.
+  'statement': Color(0xFFB07BFF),
   'concept': Color(0xFF5B9DFF),
   'person': Color(0xFFFF8C42),
   'individual': Color(0xFFFF8C42),
+  // Source(외부 출처) head: person과 같은 warm 계열이되 구분되는 골드 —
+  // "귀속처 계층은 따뜻한 색" 규칙 유지, 사람/출처는 색으로 구분.
+  'source': Color(0xFFFFC53D),
+  // Identity(정체성): 사람인지 확정되지 않은 개체(반려동물·단체 등). 정체성
+  // 계층이라 warm 계열(살구/코랄)로 person·source와 묶되 구분되는 톤.
+  'identity': Color(0xFFF07B5B),
   'organization': Color(0xFF5BABFF),
   'company': Color(0xFF5BABFF),
   'topic': Color(0xFF5B9DFF),
@@ -606,6 +826,56 @@ Set<String> neighborIds(String nodeId, List<Map<String, dynamic>> edges) {
   return ids;
 }
 
+/// Focus tier of a node within the Speaker → Statement → Concept chain.
+String graphFocusTier(String? type) {
+  // Source(외부 출처) heads sit in the speaker tier: 2-hop 포커스가
+  // Source → Statement → Concept 체인으로 똑같이 동작해야 한다.
+  if (isStatementHeadType(type)) return 'speaker';
+  final t = canonicalEntityType(type ?? '').toLowerCase();
+  if (t == 'statement') return 'statement';
+  if (t == 'concept' || t == 'topic') return 'concept';
+  return 'other';
+}
+
+/// Tier-aware focus set exploiting the Speaker → Statement → Concept chain:
+/// - Concept: its Statements (1 hop) + those Statements' Speakers (2nd hop)
+/// - Speaker: their Statements + those Statements' Concepts
+/// - Statement / other: plain 1-hop neighbors
+Set<String> tierFocusIds(
+  String nodeId,
+  Map<String, String> typeById,
+  List<Map<String, dynamic>> edges,
+) {
+  final tier = graphFocusTier(typeById[nodeId]);
+  if (tier != 'speaker' && tier != 'concept') {
+    return neighborIds(nodeId, edges);
+  }
+  final farTier = tier == 'concept' ? 'speaker' : 'concept';
+  final result = <String>{nodeId};
+  final statements = <String>{};
+  for (final e in edges) {
+    final s = e['source_id'].toString();
+    final t = e['target_id'].toString();
+    String? other;
+    if (s == nodeId) other = t;
+    if (t == nodeId) other = s;
+    if (other == null) continue;
+    result.add(other);
+    if (graphFocusTier(typeById[other]) == 'statement') statements.add(other);
+  }
+  for (final e in edges) {
+    final s = e['source_id'].toString();
+    final t = e['target_id'].toString();
+    if (statements.contains(s) && graphFocusTier(typeById[t]) == farTier) {
+      result.add(t);
+    }
+    if (statements.contains(t) && graphFocusTier(typeById[s]) == farTier) {
+      result.add(s);
+    }
+  }
+  return result;
+}
+
 enum RelationSentiment { positive, negative, neutral }
 
 final _positiveRelationPattern = RegExp(
@@ -650,6 +920,130 @@ bool isPersonLikeType(String? raw) => isSpeakerLikeType(raw);
 bool isSpeakerLikeType(String? raw) {
   final t = canonicalEntityType(raw ?? '').toLowerCase();
   return t == 'speaker' || t == 'person' || t == 'individual';
+}
+
+/// Statement head-node types (Speaker → Statement → Concept 체인의 최상위 계층).
+/// Source(외부 출처: 매체·기관·AI)는 head지만 사람이 아니므로 화자 피커에는
+/// 절대 노출되지 않는다 — isSpeakerLikeType에 포함하지 말 것.
+bool isStatementHeadType(String? raw) {
+  if (isSpeakerLikeType(raw)) return true;
+  return canonicalEntityType(raw ?? '').toLowerCase() == 'source';
+}
+
+// ---------------------------------------------------------------------------
+// 화자 숨김(Speaker-to-Color) 모드
+//
+// head(화자·출처) 노드를 물리 데이터에서 제거하면 Statement가 귀속 정보를
+// 잃으므로, 그 공백을 Statement 노드 색상으로 인코딩한다. 색은 head id 기반으로
+// 결정적이어야 한다 — 세션·재빌드가 바뀌어도 같은 화자는 항상 같은 색.
+// ---------------------------------------------------------------------------
+
+/// '나'(self) head 고정 색. concept 기본색과 겹치지 않도록 숨김 모드에서
+/// concept은 [kConceptNeutralColor]로 강등된다.
+const kSelfHeadColor = Color(0xFF4D9DFF);
+
+/// 숨김 모드의 Concept 중립색: Statement의 화자색이 유일한 색 채널이 되도록
+/// 채도를 뺀 회색 계열.
+const kConceptNeutralColor = Color(0xFF9AA3B2);
+
+/// self 이외 head에 배정되는 팔레트 (파랑 계열은 self 전용이라 제외).
+const kHeadColorPalette = <Color>[
+  Color(0xFF5CD97A), // green
+  Color(0xFFFF6B9D), // pink
+  Color(0xFFFF8C42), // orange
+  Color(0xFF3DD6C3), // teal
+  Color(0xFFB07BFF), // purple
+  Color(0xFFFFC53D), // gold
+  Color(0xFFFF7A7A), // coral
+  Color(0xFF5CE0A0), // mint
+];
+
+bool isSelfNode(Map<String, dynamic> node) {
+  if (node['is_self'] == true) return true;
+  // 구버전 백엔드 fallback: is_self 미노출 시 이름으로 판별.
+  return isSpeakerLikeType(node['type']?.toString()) &&
+      node['name']?.toString().trim() == '나';
+}
+
+/// FNV-1a — String.hashCode는 플랫폼별로 달라질 수 있어 직접 구현.
+int _stableStringHash(String s) {
+  var h = 0x811C9DC5;
+  for (final c in s.codeUnits) {
+    h ^= c;
+    h = (h * 0x01000193) & 0x7FFFFFFF;
+  }
+  return h;
+}
+
+/// headId → 인코딩 색. self는 고정 파랑, 나머지는 id 해시로 팔레트에서 배정.
+/// 해시 충돌은 id 정렬 순서(불변)로 선형 탐사해 해소하므로 배정이 안정적이다.
+Map<String, Color> headColorById(List<Map<String, dynamic>> nodes) {
+  final heads = [
+    for (final n in nodes)
+      if (isStatementHeadType(n['type']?.toString())) n,
+  ]..sort((a, b) => a['id'].toString().compareTo(b['id'].toString()));
+
+  final map = <String, Color>{};
+  final used = <int>{};
+  for (final n in heads) {
+    final id = n['id'].toString();
+    if (isSelfNode(n)) {
+      map[id] = kSelfHeadColor;
+      continue;
+    }
+    var idx = _stableStringHash(id) % kHeadColorPalette.length;
+    if (used.length < kHeadColorPalette.length) {
+      while (used.contains(idx)) {
+        idx = (idx + 1) % kHeadColorPalette.length;
+      }
+    }
+    used.add(idx);
+    map[id] = kHeadColorPalette[idx];
+  }
+  return map;
+}
+
+/// statementId → 귀속 head(화자/출처) id. 숨김 모드에서 head 엣지는 물리
+/// 데이터에서 빠지므로 반드시 필터링 전 full 엣지 목록으로 만들어야 한다.
+Map<String, String> statementHeadIndex(
+  List<Map<String, dynamic>> nodes,
+  List<Map<String, dynamic>> edges,
+) {
+  final typeById = {
+    for (final n in nodes) n['id'].toString(): n['type']?.toString() ?? '',
+  };
+  bool isStmt(String? t) =>
+      canonicalEntityType(t ?? '').toLowerCase() == 'statement';
+  final map = <String, String>{};
+  for (final e in edges) {
+    final s = e['source_id'].toString();
+    final t = e['target_id'].toString();
+    if (isStatementHeadType(typeById[s]) && isStmt(typeById[t])) {
+      map[t] = s;
+    } else if (isStatementHeadType(typeById[t]) && isStmt(typeById[s])) {
+      map[s] = t;
+    }
+  }
+  return map;
+}
+
+/// [statementId]에 연결된 head 노드 (없으면 null).
+Map<String, dynamic>? statementHeadNode(
+  String statementId,
+  List<Map<String, dynamic>> edges,
+  Map<String, Map<String, dynamic>> nodeById,
+) {
+  for (final e in edges) {
+    final s = e['source_id'].toString();
+    final t = e['target_id'].toString();
+    String? other;
+    if (s == statementId) other = t;
+    if (t == statementId) other = s;
+    if (other == null) continue;
+    final n = nodeById[other];
+    if (n != null && isStatementHeadType(n['type']?.toString())) return n;
+  }
+  return null;
 }
 
 /// Display label for graph nodes (Chunk uses display_title when available).

@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
 
-import 'api/client.dart';
-import 'api/config.dart';
 import 'app_navigator.dart';
 import 'app_route_observer.dart';
-import 'auth/device_auth.dart';
 import 'chat/chat_session_controller.dart';
 import 'chat/chat_sidebar.dart';
+import 'compose/compose_window_host.dart';
 import 'screens/knowledge_graph_screen.dart';
 import 'theme/app_theme.dart';
 import 'theme/app_theme_controller.dart';
@@ -14,10 +12,7 @@ import 'widgets/app_theme_toggle_button.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await initApiConfig();
-  apiClient.updateBaseUrl(resolvedApiBaseUrl);
   await appThemeController.load();
-  await ensureDeviceAuth();
   runApp(const GraphRagApp());
 }
 
@@ -37,6 +32,12 @@ class GraphRagApp extends StatelessWidget {
           themeMode: appThemeController.mode,
           navigatorKey: appNavigatorKey,
           navigatorObservers: [appRouteObserver],
+          builder: (context, child) => Stack(
+            children: [
+              if (child != null) child,
+              const ComposeWindowHost(),
+            ],
+          ),
           home: const ChatHomeShell(),
         );
       },

@@ -67,8 +67,9 @@ class Settings(BaseSettings):
     free_tier_quiz_limit: int = 3
     free_tier_review_days: int = 7
 
-    # Statement-bank expression extraction during KG build (LLM cost).
-    expression_extraction_enabled: bool = True
+    # Statement-bank expression extraction during KG build (LLM cost). Off while
+    # the app is focused on composition-only learning; flip on to re-enable.
+    expression_extraction_enabled: bool = False
 
     # Graph chat: cosine-distance cutoff for retrieving Statement/Concept nodes.
     # Looser than the 0.35 identity-matching threshold — sentence-level similarity.
@@ -101,12 +102,8 @@ class Settings(BaseSettings):
     # chat-retrieval cutoff — dedup must be confident before dropping user content.
     chat_distill_dup_max_distance: float = 0.25
 
-    dev_auth_fallback: bool = True
-
-    # Quiz auto-refill keeps per-type new queues topped up.
-    quiz_auto_enabled: bool = True
-    quiz_queue_target_per_type: int = 10
-    quiz_refill_max_per_run: int = 5
+    # Quiz MVP v2 — manual generation only when False
+    quiz_auto_enabled: bool = False
     quiz_session_size: int = 10
     quiz_review_ratio: float = 0.7
     quiz_level_window: int = 3

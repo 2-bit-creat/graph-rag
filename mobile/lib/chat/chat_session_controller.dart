@@ -3,12 +3,11 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../api/client.dart';
-import '../auth/device_auth.dart';
 import '../compose/journal_phase.dart';
 import '../widgets/graph_chat_panel.dart' show GraphChatMessage;
 import 'journal_task_controller.dart';
 
-/// Input mode of the chat composer ??the "+" button switches between them.
+/// Input mode of the chat composer — the "+" button switches between them.
 ///
 /// In [normal] the input is a chat message. In [distill] it becomes a refine
 /// instruction for the diary draft. Quiz modes host inline quiz cards whose
@@ -40,7 +39,7 @@ class ChatSessionController extends ChangeNotifier {
   String _quizType = 'composition';
   Map<String, dynamic>? _quizFeedback; // composition tutor feedback for current item
 
-  // Distill (chat ??journal) draft state.
+  // Distill (chat → journal) draft state.
   final List<Map<String, dynamic>> _distillSentences = [];
   bool _distillLoading = false;
 
@@ -76,16 +75,13 @@ class ChatSessionController extends ChangeNotifier {
     return null;
   }
 
-  // ?�?� Session lifecycle ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+  // ── Session lifecycle ────────────────────────────────────────────────────
 
   /// Load rooms once and open the most recent (or create one if none exist).
   Future<void> init() async {
     if (_initialized) return;
     _initialized = true;
     _attachJournalListener();
-    if (!deviceAuthReady) {
-      await ensureDeviceAuth();
-    }
     await loadSessions();
     if (_sessions.isNotEmpty) {
       await selectSession(_sessions.first['id'].toString());
@@ -106,7 +102,7 @@ class ChatSessionController extends ChangeNotifier {
     } else if (journalTask.phase == ComposePhase.error) {
       unawaited(_recordJournalFailure(entryId));
     }
-    // NOTE: no loadSessions() while busy ??the sidebar preview for the active
+    // NOTE: no loadSessions() while busy — the sidebar preview for the active
     // room is derived client-side from journalTask (see _resolvedPreview), which
     // the sidebar already listens to. Refetching the room list on every 4s poll
     // tick was a pure network round-trip with no visible effect.
@@ -145,7 +141,6 @@ class ChatSessionController extends ChangeNotifier {
     final key = 'fail:$entryId';
     if (_journalCompleteNotified.contains(key)) return;
     _journalCompleteNotified.add(key);
-    errors.value = '일기 처리에 실패했어요. 다시 시도해 주세요.';
     await _ensureSession();
     if (_activeId == null) return;
     const content = '📔 일기 처리 실패';
@@ -160,15 +155,12 @@ class ChatSessionController extends ChangeNotifier {
       await loadSessions();
     } catch (e) {
       _journalCompleteNotified.remove(key);
-      errors.value = _clean(e);
     }
   }
 
   Future<void> loadSessions() async {
     try {
-      _sessions = (await apiClient.listChatSessions())
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .toList();
+      _sessions = await apiClient.listChatSessions();
       notifyListeners();
     } catch (e) {
       errors.value = _clean(e);
@@ -265,7 +257,7 @@ class ChatSessionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// ?�기 ?�기 모드 진입 ???�?�창??모드 경계 ?�시.
+  /// 일기 쓰기 모드 진입 — 대화창에 모드 경계 표시.
   void enterJournalMode() {
     if (journalTask.isBusy) {
       errors.value = '진행 중인 일기 처리를 먼저 마쳐 주세요.';
@@ -283,7 +275,7 @@ class ChatSessionController extends ChangeNotifier {
       kind: 'journal_mode',
       content:
           '📔 일기 쓰기 모드\n'
-          '@화자명으로 작성한 뒤 저장하면, 받아쓰기 → 화자 확인 → 그래프 검토 순으로 '
+          '@화자로 작성한 뒤 저장하면, 받아쓰기 → 화자 확인 → 그래프 검토 순으로 '
           '아래에서 진행 상황을 확인할 수 있어요.',
     );
     _messages.add(msg);
@@ -300,7 +292,7 @@ class ChatSessionController extends ChangeNotifier {
   /// Return to plain conversation, discarding any active quiz/distill card.
   void exitMode() => setMode(ChatMode.normal);
 
-  // ?�?� Sending ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+  // ── Sending ──────────────────────────────────────────────────────────────
 
   /// Handle input from the composer according to the current [mode].
   /// - normal / quizWord: a chat message (word-quiz answers come from the card).
@@ -329,7 +321,7 @@ class ChatSessionController extends ChangeNotifier {
   /// Persist user echo + journal_progress card and hand work to [journalTask].
   Future<void> saveJournalText(String labeledText, {String? displayText}) async {
     if (journalTask.isBusy) {
-      errors.value = '진행 중인 일기 처리를 먼저 마쳐 주세요.';
+      errors.value = '이미 일기 처리가 진행 중이에요. 완료된 뒤 다시 저장해 주세요.';
       return;
     }
     await _ensureSession();
@@ -355,7 +347,7 @@ class ChatSessionController extends ChangeNotifier {
     String mimeType = 'audio/wav',
   }) async {
     if (journalTask.isBusy) {
-      errors.value = '진행 중인 일기 처리를 먼저 마쳐 주세요.';
+      errors.value = '이미 일기 처리가 진행 중이에요. 완료된 뒤 다시 저장해 주세요.';
       return;
     }
     await _ensureSession();
@@ -371,7 +363,7 @@ class ChatSessionController extends ChangeNotifier {
       } else if (path != null) {
         entry = await journalTask.uploadAudio(path, filename: filename);
       } else {
-        errors.value = '다음 아이템이 없어요.';
+        errors.value = '녹음 데이터가 없어요.';
         return;
       }
       final id = entry['id']?.toString();
@@ -460,7 +452,7 @@ class ChatSessionController extends ChangeNotifier {
     }
   }
 
-  // ?�?� Inline quiz ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+  // ── Inline quiz ──────────────────────────────────────────────────────────
 
   /// Enter a quiz mode and pull a small session of items into the feed.
   /// [quizType]: 'composition' (typed drill) | 'cloze' | 'scramble' | 'mcq_nuance'.
@@ -482,7 +474,7 @@ class ChatSessionController extends ChangeNotifier {
           .toList();
       _quizItems.addAll(items);
       if (items.isEmpty) {
-        errors.value = '풀 문제가 없어요. 메뉴 → 문제 생성에서 만들어 주세요.';
+        errors.value = '풀 수 있는 문제가 없어요. 메뉴 → 문제 생성에서 만들어 주세요.';
         _mode = ChatMode.normal;
       }
     } catch (e) {
@@ -564,11 +556,11 @@ class ChatSessionController extends ChangeNotifier {
         meta: {'quiz_id': quiz['id'], 'quiz_type': _quizType},
       );
     } catch (_) {
-      // History persistence is best-effort ??never block the quiz on it.
+      // History persistence is best-effort — never block the quiz on it.
     }
   }
 
-  // ?�?� Chat ??journal distillation ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+  // ── Chat → journal distillation ──────────────────────────────────────────
 
   /// Enter distill mode and ask the server for a draft of the conversation.
   Future<void> startDistill() async {
@@ -630,7 +622,7 @@ class ChatSessionController extends ChangeNotifier {
   /// Hand the confirmed draft to the inline journal pipeline (same card as chat save).
   Future<void> saveDistillAsJournal() async {
     if (journalTask.isBusy) {
-      errors.value = '진행 중인 일기 처리를 먼저 마쳐 주세요.';
+      errors.value = '이미 일기 처리가 진행 중이에요. 완료된 뒤 다시 저장해 주세요.';
       return;
     }
     final included = _distillSentences
@@ -644,7 +636,7 @@ class ChatSessionController extends ChangeNotifier {
         .where((s) => s.text.isNotEmpty)
         .toList();
     if (included.isEmpty) {
-      errors.value = '일기에 넣을 문장을 하나 이상 선택해 주세요.';
+      errors.value = '일기에 담을 문장을 하나 이상 선택해 주세요.';
       return;
     }
 
@@ -678,5 +670,5 @@ class ChatSessionController extends ChangeNotifier {
   String _clean(Object e) => e.toString().replaceFirst('Exception: ', '');
 }
 
-/// App-wide singleton ??imported directly, like [journalTask].
+/// App-wide singleton — imported directly, like [composeSession].
 final chatSession = ChatSessionController();
