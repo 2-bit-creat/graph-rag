@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'speaker_identity_sheet.dart';
-import '../theme/app_theme.dart';
+import ../theme/app_theme.dart
 
 /// STT segments with tappable speaker chips — opens identity confirmation sheet.
 class TranscriptSpeakerView extends StatelessWidget {

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/client.dart';
 import '../utils/graph_layout.dart';
-import '../theme/app_theme.dart';
+import ../theme/app_theme.dart
 
 class OntologySettingsSheet extends StatefulWidget {
   const OntologySettingsSheet({super.key, this.onApplied});

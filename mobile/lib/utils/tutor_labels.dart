@@ -1,9 +1,11 @@
 /// Shared tutor language labels (extracted from the legacy tutor screen).
-
 String tutorLangLabel(String code) => switch (code) {
       'english' => 'English',
-      'korean' => '한국어',
       'german' => 'Deutsch',
+      'japanese' => '?ĽćŹčŞ?,
+      'chinese' => 'ä¸?',
+      'spanish' => 'EspaĂąol',
+      'french' => 'FranĂ§ais',
       _ => code,
     };
 
@@ -15,7 +17,7 @@ extension TutorSourceModeX on TutorSourceMode {
         TutorSourceMode.review => 'review',
       };
   String get label => switch (this) {
-        TutorSourceMode.journal => '일기 기반',
-        TutorSourceMode.review => '복습 추천',
+        TutorSourceMode.journal => '???źę¸°?ě',
+        TutorSourceMode.review => 'ëłľěľ ?í',
       };
 }

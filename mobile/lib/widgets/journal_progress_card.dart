@@ -4,9 +4,10 @@ import '../api/client.dart';
 import '../app_navigator.dart';
 import '../chat/journal_task_controller.dart';
 import '../compose/journal_phase.dart';
-import '../screens/graph_review_screen.dart';
 import '../screens/journal_hub_screen.dart';
 import '../theme/app_theme.dart';
+import 'graph_review_panel.dart';
+import 'transcript_speaker_view.dart';
 
 /// Inline journal pipeline card in the chat message stream.
 ///
@@ -71,37 +72,8 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
     if (!_isLive && mounted) await _loadStatic();
   }
 
-  Future<void> _openGraphReview() async {
-    final navCtx = appNavigatorKey.currentContext;
-    if (navCtx == null) return;
-    Map<String, dynamic> fresh;
-    try {
-      fresh = await apiClient.getEntry(widget.entryId);
-    } catch (_) {
-      return;
-    }
-    final staging = fresh['graph_staging'];
-    if (staging is! Map) return;
-    final committed = await Navigator.of(navCtx).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => GraphReviewScreen(
-          entryId: widget.entryId,
-          staging: Map<String, dynamic>.from(staging),
-        ),
-      ),
-    );
-    if (_isLive) {
-      if (journalTask.phase != ComposePhase.working) {
-        await journalTask.refresh();
-      }
-    } else if (mounted) {
-      await _loadStatic();
-    }
-    if (committed == true && navCtx.mounted) {
-      ScaffoldMessenger.of(navCtx).showSnackBar(
-        const SnackBar(content: Text('????? ?? ??')),
-      );
-    }
+  Future<void> _confirmSpeakersInline() async {
+    await journalTask.confirmSpeakers();
   }
 
   void _dismiss() {
@@ -114,12 +86,18 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
       return AnimatedBuilder(
         animation: journalTask,
         builder: (context, _) => _CardBody(
+          entryId: widget.entryId,
           phase: journalTask.phase,
           label: journalTask.stageLabel,
           entry: journalTask.entry,
-          onSpeakerConfirm: _openSpeakerConfirm,
-          onGraphReview: _openGraphReview,
+          awaitingSpeakerAck: journalTask.awaitingSpeakerAck,
+          speakerReviewOverride: journalTask.speakerReviewOverride,
+          onConfirmSpeakers: _confirmSpeakersInline,
+          onReopenSpeakers: journalTask.reopenSpeakerConfirm,
+          onRefreshEntry: journalTask.refresh,
           onDismiss: _dismiss,
+          onRetryGraph: journalTask.retryGraphBuild,
+          onOpenFullDetail: _openSpeakerConfirm,
         ),
       );
     }
@@ -141,19 +119,28 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
     if (_staticError != null || _staticEntry == null) {
       return _Shell(
         child: Text(
-          _staticError ?? '?? ??? ???? ????.',
-          style: Theme.of(context).textTheme.bodySmall,
+          _staticError ?? '?źę¸° ?íëĽ?ëśëŹ?¤ě? ëŞťí?´ě.',
+          style: const TextStyle(fontSize: 12.5, color: context.mutedText),
         ),
       );
     }
-    final derived = deriveJournalPhase(_staticEntry);
+    final derived = deriveChatJournalPhase(
+      _staticEntry,
+      speakersAcknowledged: true,
+    );
     return _CardBody(
+      entryId: widget.entryId,
       phase: derived.phase,
       label: derived.label,
       entry: _staticEntry,
-      onSpeakerConfirm: _openSpeakerConfirm,
-      onGraphReview: _openGraphReview,
+      awaitingSpeakerAck: false,
+      speakerReviewOverride: false,
+      onConfirmSpeakers: null,
+      onReopenSpeakers: null,
+      onRefreshEntry: null,
       onDismiss: null,
+      onRetryGraph: null,
+      onOpenFullDetail: _openSpeakerConfirm,
     );
   }
 }
@@ -164,13 +151,14 @@ class _Shell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final shell = context.shell;
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.06),
+        color: shell.subtleSurface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF2D2D38)),
+        border: Border.all(color: shell.panelBorder),
       ),
       child: child,
     );
@@ -179,26 +167,38 @@ class _Shell extends StatelessWidget {
 
 class _CardBody extends StatelessWidget {
   const _CardBody({
+    required this.entryId,
     required this.phase,
     required this.label,
     required this.entry,
-    required this.onSpeakerConfirm,
-    required this.onGraphReview,
-    required this.onDismiss,
+    required this.awaitingSpeakerAck,
+    required this.speakerReviewOverride,
+    required this.onConfirmSpeakers,
+    this.onReopenSpeakers,
+    required this.onRefreshEntry,
+    this.onDismiss,
+    this.onRetryGraph,
+    this.onOpenFullDetail,
   });
 
+  final String entryId;
   final ComposePhase phase;
   final String label;
   final Map<String, dynamic>? entry;
-  final VoidCallback onSpeakerConfirm;
-  final VoidCallback onGraphReview;
+  final bool awaitingSpeakerAck;
+  final bool speakerReviewOverride;
+  final Future<void> Function()? onConfirmSpeakers;
+  final VoidCallback? onReopenSpeakers;
+  final Future<void> Function()? onRefreshEntry;
   final VoidCallback? onDismiss;
+  final VoidCallback? onRetryGraph;
+  final VoidCallback? onOpenFullDetail;
 
   static const _steps = [
-    '????',
-    '?? ??',
-    '??? ??',
-    '??',
+    'ë°ě?°ę¸°',
+    '?ě ?ě¸',
+    'ęˇ¸ë???ěą',
+    '?ëŁ',
   ];
 
   int get _activeStep {
@@ -206,14 +206,18 @@ class _CardBody extends StatelessWidget {
       case ComposePhase.working:
         final status = entry?['status']?.toString() ?? '';
         final graphStatus = entry?['graph_status']?.toString() ?? '';
+        if (status == 'processing') return 0;
         if (status == 'graph_processing' ||
             graphStatus == 'graph_processing' ||
-            label.contains('???')) {
+            label.contains('ęˇ¸ë??) ||
+            label.contains('?ě ')) {
           return 2;
         }
         return 0;
       case ComposePhase.needsInput:
+        if (speakerReviewOverride) return 1;
         if (isGraphReviewPending(entry)) return 2;
+        if (awaitingSpeakerAck || speakersPending(entry)) return 1;
         return 1;
       case ComposePhase.done:
         return 3;
@@ -224,6 +228,41 @@ class _CardBody extends StatelessWidget {
     }
   }
 
+  String? get _hint {
+    switch (phase) {
+      case ComposePhase.working:
+        final status = entry?['status']?.toString() ?? '';
+        if (status == 'processing') {
+          return 'ë°ě?°ę¸°Âˇ?ě ę° ?ë  ?ęšě§ ? ěë§?ę¸°ë¤??ěŁźě¸??';
+        }
+        if (label.contains('?ě ')) {
+          return 'ęˇ¸ë?ë? ?ě ?ęł  ?ě´?? ? ěë§?ę¸°ë¤??ěŁźě¸??';
+        }
+        return 'ęˇ¸ë??ě´ě??ë§ë¤ęł??ě´?? ?ëŁ?ëŠ´ ?ë??ę˛???ëŠ´???í??Šë??';
+      case ComposePhase.needsInput:
+        if (isGraphReviewPending(entry)) {
+          return '?ěą??ęˇ¸ë??ě´ě???ě¸Âˇ?ě ?????ě ??ěŁźě¸??';
+        }
+        if (speakersPending(entry)) {
+          return '?ě ěšŠě ??´ ë§¤ěš­???ě ???? ?ě¸ ?ëŁëĽ??ëŹ ěŁźě¸??';
+        }
+        return '?ě ???¤íŹëŚ˝í¸? ?ě ë§¤ěš­???ě¸???? ?ě¸ ?ëŁëĽ??ëŹ ěŁźě¸??';
+      case ComposePhase.done:
+        return 'ëŞ¨ë  ?¨ęłę° ?ëŹ?´ě. ?Ťę¸°ëĄ?ěš´ëëĽ??ëŚŹ?????ě´??';
+      case ComposePhase.error:
+        return 'ě˛ëŚŹ???¤í¨?ě´?? ?Ťě? ???¤ě ?ë??ěŁźě¸??';
+      case ComposePhase.composing:
+        return null;
+    }
+  }
+
+  bool get _needsGraphKick {
+    if (phase != ComposePhase.error) return false;
+    final graphStatus = entry?['graph_status']?.toString() ?? '';
+    final status = entry?['status']?.toString() ?? '';
+    return status == 'graph_failed' || graphStatus == 'graph_failed';
+  }
+
   int _inferErrorStep() {
     final status = entry?['status']?.toString() ?? '';
     final graphStatus = entry?['graph_status']?.toString() ?? '';
@@ -231,16 +270,86 @@ class _CardBody extends StatelessWidget {
     return 0;
   }
 
+  Widget _graphReviewPanel(BuildContext context) {
+    final staging = entry?['graph_staging'];
+    if (staging is! Map) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 10),
+        child: Text(
+          'ęˇ¸ë??ě´ě??ëśëŹ?¤ë ě¤â?,
+          style: TextStyle(
+            fontSize: 12,
+            color: context.shell.mutedText,
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: GraphReviewPanel(
+        entryId: entryId,
+        staging: Map<String, dynamic>.from(staging),
+        presentation: GraphReviewPresentation.chat,
+        maxBodyHeight: 360,
+        onReopenSpeakers: onReopenSpeakers,
+        onApplied: () {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('ě§?ęˇ¸?í ?ě  ?ëŁ')),
+            );
+          }
+        },
+      ),
+    );
+  }
+
+  Widget _speakerScriptPanel(BuildContext context) {
+    final segments = entry?['transcript_segments'] as List<dynamic>? ?? [];
+    final summaries = entry?['speaker_summaries'] as List<dynamic>? ?? [];
+    if (segments.isEmpty) return const SizedBox.shrink();
+
+    return Theme(
+      data: ThemeData.light(useMaterial3: true),
+      child: Container(
+        margin: const EdgeInsets.only(top: 10),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.94),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.black12),
+        ),
+        child: TranscriptSpeakerView(
+          entryId: entryId,
+          segments: segments,
+          speakerSummaries: summaries,
+          showHeader: true,
+          wrapInCard: false,
+          onConfirmed: onRefreshEntry,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final shell = context.shell;
     final step = _activeStep;
-    final needsSpeaker =
-        phase == ComposePhase.needsInput && !isGraphReviewPending(entry);
+    final showSpeakerPanel =
+        speakerReviewOverride ||
+        awaitingSpeakerAck ||
+        (phase == ComposePhase.needsInput && !isGraphReviewPending(entry));
+    final speakersStillPending = speakersPending(entry);
     final needsGraph =
-        phase == ComposePhase.needsInput && isGraphReviewPending(entry);
+        !speakerReviewOverride &&
+        phase == ComposePhase.needsInput &&
+        isGraphReviewPending(entry);
     final showDismiss =
         onDismiss != null &&
         (phase == ComposePhase.done || phase == ComposePhase.error);
+    final hint = _hint;
+    final canConfirmSpeakers =
+        onConfirmSpeakers != null && !speakersStillPending;
 
     return _Shell(
       child: Column(
@@ -253,21 +362,21 @@ class _CardBody extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  label.isEmpty ? '?? ??' : label,
-                  style: const TextStyle(
+                  label.isEmpty ? '?źę¸° ě˛ëŚŹ' : label,
+                  style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
-                    color: AppColors.graphLabelLight,
+                    color: shell.primaryText,
                   ),
                 ),
               ),
               if (showDismiss)
                 InkWell(
                   onTap: onDismiss,
-                  child: const Padding(
-                    padding: EdgeInsets.all(2),
+                  child: Padding(
+                    padding: const EdgeInsets.all(2),
                     child: Icon(Icons.close_rounded,
-                        size: 16, color: AppColors.graphLabelLight),
+                        size: 16, color: shell.primaryText),
                   ),
                 ),
             ],
@@ -282,47 +391,81 @@ class _CardBody extends StatelessWidget {
                       height: 1.5,
                       color: i <= step
                           ? AppColors.hubVoice.withValues(alpha: 0.7)
-                          : Colors.white.withValues(alpha: 0.12),
+                          : shell.panelBorder,
                     ),
                   ),
                 _StepDot(
                   label: _steps[i],
-                  state: i < step
-                      ? _StepState.done
-                      : i == step
-                          ? (phase == ComposePhase.working
-                              ? _StepState.busy
-                              : phase == ComposePhase.error && i == step
-                                  ? _StepState.error
-                                  : _StepState.active)
-                          : _StepState.todo,
+                  state: _stepState(i, step),
                 ),
               ],
             ],
           ),
-          if (needsSpeaker || needsGraph) ...[
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton.tonal(
-                onPressed: needsGraph ? onGraphReview : onSpeakerConfirm,
-                child: Text(needsGraph ? '??? ??' : '?? ??'),
+          if (hint != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              hint,
+              style: TextStyle(
+                fontSize: 11.5,
+                height: 1.35,
+                color: shell.mutedText,
               ),
             ),
           ],
-          if (phase == ComposePhase.error) ...[
-            const SizedBox(height: 8),
-            Text(
-              '??? ?????. ?? ? ?? ??? ???.',
-              style: TextStyle(
-                fontSize: 11.5,
-                color: Colors.red.shade300,
+          if (showSpeakerPanel) _speakerScriptPanel(context),
+          if (showSpeakerPanel && onConfirmSpeakers != null) ...[
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: canConfirmSpeakers ? () => onConfirmSpeakers!() : null,
+                icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
+                label: Text(
+                  speakersStillPending
+                      ? 'ëŻ¸í???ěę° ?ě´??
+                      : '?ě ?ě¸ ?ëŁ Âˇ ęˇ¸ë??ë§ë¤ę¸?,
+                ),
               ),
+            ),
+            if (onOpenFullDetail != null)
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: onOpenFullDetail,
+                  child: const Text('?ě˛´ ?ëŠ´?ě ëł´ę¸°'),
+                ),
+              ),
+          ],
+          if (needsGraph) _graphReviewPanel(context),
+          if (_needsGraphKick && onRetryGraph != null) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.tonalIcon(
+                onPressed: onRetryGraph,
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('ęˇ¸ë???¤ě ë§ë¤ę¸?),
+              ),
+            ),
+          ],
+          if (phase == ComposePhase.done && onDismiss != null) ...[
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(onPressed: onDismiss, child: const Text('?Ťę¸°')),
             ),
           ],
         ],
       ),
     );
+  }
+
+  _StepState _stepState(int i, int step) {
+    if (i < step) return _StepState.done;
+    if (i > step) return _StepState.todo;
+    if (phase == ComposePhase.working) return _StepState.busy;
+    if (phase == ComposePhase.error) return _StepState.error;
+    return _StepState.active;
   }
 }
 
@@ -366,11 +509,12 @@ class _StepDot extends StatelessWidget {
           height: 8,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: Colors.white.withValues(alpha: 0.25),
+            color: context.shell.mutedText.withValues(alpha: 0.5),
           ),
         );
         break;
     }
+    final shell = context.shell;
     return Column(
       children: [
         SizedBox(width: 18, height: 18, child: Center(child: icon)),
@@ -380,8 +524,8 @@ class _StepDot extends StatelessWidget {
           style: TextStyle(
             fontSize: 9.5,
             color: state == _StepState.todo
-                ? AppColors.graphLabelLight.withValues(alpha: 0.4)
-                : AppColors.graphLabelLight.withValues(alpha: 0.85),
+                ? shell.mutedText
+                : shell.primaryText.withValues(alpha: 0.85),
           ),
         ),
       ],

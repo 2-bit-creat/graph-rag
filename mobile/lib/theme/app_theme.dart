@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// 기억 그래프 — polished mobile-first design tokens.
+/// MyLife English — polished mobile-first design tokens.
 class AppColors {
   static const primary = Color(0xFF5B5FEF);
   static const primaryDark = Color(0xFF4347D4);
@@ -9,11 +9,11 @@ class AppColors {
   static const accentWarm = Color(0xFFF59E0B);
   static const surfaceLight = Color(0xFFF8F9FC);
   static const surfaceCard = Color(0xFFFFFFFF);
-  /// Light-mode fallback only — prefer [BuildContext.mutedText] in widgets.
   static const textMuted = Color(0xFF64748B);
-  static const textMutedDark = Color(0xFFC4CEDE);
   static const graphBg = Color(0xFFF5F7FA);
   static const graphBgDark = Color(0xFF08080C);
+  // Subtle radial "nebula" glow at the viewport center of the graph canvas.
+  static const graphNebulaCore = Color(0xFF0D0D16);
   static const graphSurface = Color(0xFFFFFFFF);
   static const graphLabelLight = Color(0xFFF0F0F5);
   static const graphLabelDark = Color(0xFF1E293B);
@@ -39,90 +39,140 @@ class AppSpacing {
   static const radiusXl = 22.0;
 }
 
-/// Theme-aware text colors — use instead of hardcoded [AppColors.textMuted].
-extension AppThemeContext on BuildContext {
-  bool get isDarkTheme => Theme.of(this).brightness == Brightness.dark;
+/// Graph-home shell palette — sidebar, app bar, chat panel, canvas chrome.
+@immutable
+class AppShellTheme extends ThemeExtension<AppShellTheme> {
+  const AppShellTheme({
+    required this.graphBackground,
+    required this.appBarBackground,
+    required this.appBarForeground,
+    required this.sidebarBackground,
+    required this.panelBackground,
+    required this.panelBorder,
+    required this.primaryText,
+    required this.mutedText,
+    required this.toolbarBackground,
+    required this.toolbarBorder,
+    required this.subtleSurface,
+    required this.barBackground,
+  });
 
-  Color get mutedText => Theme.of(this).colorScheme.onSurfaceVariant;
+  final Color graphBackground;
+  final Color appBarBackground;
+  final Color appBarForeground;
+  final Color sidebarBackground;
+  final Color panelBackground;
+  final Color panelBorder;
+  final Color primaryText;
+  final Color mutedText;
+  final Color toolbarBackground;
+  final Color toolbarBorder;
 
-  Color get subtleText =>
-      Theme.of(this).colorScheme.onSurface.withValues(alpha: isDarkTheme ? 0.62 : 0.55);
+  /// Faint filled surface for input fields, inline cards, math blocks — sits a
+  /// step off [panelBackground] in both themes.
+  final Color subtleSurface;
 
-  /// Chat / graph panel chrome derived from the active [ThemeData].
-  AppShellTheme get shell => AppShellTheme(this);
+  /// Slightly recessed bar background (pipeline lock/review strips, mode menus).
+  final Color barBackground;
+
+  static const dark = AppShellTheme(
+    graphBackground: AppColors.graphBgDark,
+    appBarBackground: Color(0xFF101018),
+    appBarForeground: AppColors.graphLabelLight,
+    sidebarBackground: Color(0xFF12151C),
+    panelBackground: Color(0xE6101018),
+    panelBorder: Color(0xFF2D2D38),
+    primaryText: AppColors.graphLabelLight,
+    mutedText: Color(0x8CF0F0F5),
+    toolbarBackground: Color(0xFF101018),
+    toolbarBorder: Color(0xFF2D2D38),
+    subtleSurface: Color(0x14FFFFFF),
+    barBackground: Color(0xFF1A1A24),
+  );
+
+  static const light = AppShellTheme(
+    graphBackground: Color(0xFFEEF1F7),
+    appBarBackground: Color(0xFFF8F9FC),
+    appBarForeground: AppColors.graphLabelDark,
+    sidebarBackground: Color(0xFFF8F9FC),
+    panelBackground: Color(0xF5FFFFFF),
+    panelBorder: Color(0xFFD8DEE9),
+    primaryText: AppColors.graphLabelDark,
+    mutedText: AppColors.textMuted,
+    toolbarBackground: Color(0xFFF8F9FC),
+    toolbarBorder: Color(0xFFD8DEE9),
+    subtleSurface: Color(0x0A0F172A),
+    barBackground: Color(0xFFEEF1F7),
+  );
+
+  @override
+  AppShellTheme copyWith({
+    Color? graphBackground,
+    Color? appBarBackground,
+    Color? appBarForeground,
+    Color? sidebarBackground,
+    Color? panelBackground,
+    Color? panelBorder,
+    Color? primaryText,
+    Color? mutedText,
+    Color? toolbarBackground,
+    Color? toolbarBorder,
+    Color? subtleSurface,
+    Color? barBackground,
+  }) {
+    return AppShellTheme(
+      graphBackground: graphBackground ?? this.graphBackground,
+      appBarBackground: appBarBackground ?? this.appBarBackground,
+      appBarForeground: appBarForeground ?? this.appBarForeground,
+      sidebarBackground: sidebarBackground ?? this.sidebarBackground,
+      panelBackground: panelBackground ?? this.panelBackground,
+      panelBorder: panelBorder ?? this.panelBorder,
+      primaryText: primaryText ?? this.primaryText,
+      mutedText: mutedText ?? this.mutedText,
+      toolbarBackground: toolbarBackground ?? this.toolbarBackground,
+      toolbarBorder: toolbarBorder ?? this.toolbarBorder,
+      subtleSurface: subtleSurface ?? this.subtleSurface,
+      barBackground: barBackground ?? this.barBackground,
+    );
+  }
+
+  @override
+  AppShellTheme lerp(ThemeExtension<AppShellTheme>? other, double t) {
+    if (other is! AppShellTheme) return this;
+    Color l(Color a, Color b) => Color.lerp(a, b, t)!;
+    return AppShellTheme(
+      graphBackground: l(graphBackground, other.graphBackground),
+      appBarBackground: l(appBarBackground, other.appBarBackground),
+      appBarForeground: l(appBarForeground, other.appBarForeground),
+      sidebarBackground: l(sidebarBackground, other.sidebarBackground),
+      panelBackground: l(panelBackground, other.panelBackground),
+      panelBorder: l(panelBorder, other.panelBorder),
+      primaryText: l(primaryText, other.primaryText),
+      mutedText: l(mutedText, other.mutedText),
+      toolbarBackground: l(toolbarBackground, other.toolbarBackground),
+      toolbarBorder: l(toolbarBorder, other.toolbarBorder),
+      subtleSurface: l(subtleSurface, other.subtleSurface),
+      barBackground: l(barBackground, other.barBackground),
+    );
+  }
 }
 
-/// Shared colors for chat sidebar, graph panels, and compose bars.
-class AppShellTheme {
-  AppShellTheme(this._context);
-
-  final BuildContext _context;
-
-  bool get _isDark => Theme.of(_context).brightness == Brightness.dark;
-  ColorScheme get _scheme => Theme.of(_context).colorScheme;
-
-  Color get primaryText => _scheme.onSurface;
-
-  Color get mutedText => _scheme.onSurfaceVariant;
-
-  Color get panelBackground =>
-      _isDark ? const Color(0xFF151820) : AppColors.surfaceCard;
-
-  Color get panelBorder =>
-      _scheme.outlineVariant.withValues(alpha: _isDark ? 0.45 : 0.55);
-
-  Color get subtleSurface => _scheme.surfaceContainerHighest.withValues(
-        alpha: _isDark ? 0.55 : 0.45,
-      );
-
-  Color get barBackground =>
-      _isDark ? const Color(0xFF12151C) : AppColors.surfaceLight;
-
-  Color get graphBackground =>
-      _isDark ? AppColors.graphBgDark : AppColors.graphBg;
-
-  Color get toolbarBackground =>
-      _isDark ? const Color(0xFF101018) : const Color(0xFFEEF1F7);
-
-  Color get graphLabel =>
-      _isDark ? AppColors.graphLabelLight : AppColors.graphLabelDark;
-
-  Color get graphInputFill =>
-      _isDark ? const Color(0xFF1A1A22) : const Color(0xFFFFFFFF);
-
-  Color get graphBorder =>
-      _isDark ? const Color(0xFF2D2D38) : const Color(0xFFD8DEE9);
-
-  Color get graphMuted =>
-      _isDark ? const Color(0xFF9CA3AF) : const Color(0xFF64748B);
+extension AppShellThemeX on BuildContext {
+  AppShellTheme get shell =>
+      Theme.of(this).extension<AppShellTheme>() ?? AppShellTheme.dark;
 }
 
 ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
   final isDark = brightness == Brightness.dark;
-  final baseScheme = ColorScheme.fromSeed(
+  final scheme = ColorScheme.fromSeed(
     seedColor: AppColors.primary,
     brightness: brightness,
     primary: AppColors.primary,
     secondary: AppColors.accent,
     surface: isDark ? const Color(0xFF12151C) : AppColors.surfaceLight,
   );
-  final scheme = baseScheme.copyWith(
-    onSurfaceVariant: isDark ? AppColors.textMutedDark : AppColors.textMuted,
-    onPrimaryContainer: isDark ? const Color(0xFFE8EAFF) : const Color(0xFF1E1B4B),
-    primaryContainer: isDark ? const Color(0xFF3A3D72) : baseScheme.primaryContainer,
-    outlineVariant: isDark ? const Color(0xFF3A4254) : const Color(0xFFD8DEE9),
-  );
 
-  final chipLabelUnselected = TextStyle(
-    fontSize: 12,
-    fontWeight: FontWeight.w500,
-    color: isDark ? AppColors.textMutedDark : scheme.onSurfaceVariant,
-  );
-  final chipLabelSelected = TextStyle(
-    fontSize: 12,
-    fontWeight: FontWeight.w600,
-    color: isDark ? const Color(0xFFEEF2FF) : scheme.onPrimaryContainer,
-  );
+  final shell = isDark ? AppShellTheme.dark : AppShellTheme.light;
 
   final textTheme = TextTheme(
     headlineMedium: TextStyle(
@@ -160,13 +210,12 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
     bodySmall: TextStyle(
       fontSize: 12,
       height: 1.35,
-      color: scheme.onSurfaceVariant,
+      color: AppColors.textMuted,
     ),
     labelLarge: TextStyle(
       fontSize: 14,
       fontWeight: FontWeight.w600,
       letterSpacing: 0.1,
-      color: scheme.onSurface,
     ),
   );
 
@@ -217,22 +266,10 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: scheme.surfaceContainerHighest.withValues(alpha: isDark ? 0.55 : 0.45),
-      hintStyle: TextStyle(color: scheme.onSurfaceVariant.withValues(alpha: 0.85)),
-      labelStyle: TextStyle(color: scheme.onSurfaceVariant),
+      fillColor: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
         borderSide: BorderSide.none,
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-        borderSide: BorderSide(
-          color: scheme.outlineVariant.withValues(alpha: isDark ? 0.45 : 0.35),
-        ),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-        borderSide: BorderSide(color: scheme.primary, width: 1.5),
       ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
     ),
@@ -247,8 +284,6 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
       thickness: 1,
     ),
     listTileTheme: ListTileThemeData(
-      iconColor: scheme.onSurfaceVariant,
-      textColor: scheme.onSurface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
       ),
@@ -258,39 +293,12 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(20),
       ),
-      labelStyle: chipLabelUnselected,
-      secondaryLabelStyle: chipLabelSelected,
-      side: BorderSide(
-        color: scheme.outlineVariant.withValues(alpha: isDark ? 0.55 : 0.75),
-      ),
-      backgroundColor:
-          isDark ? scheme.surfaceContainerHighest : scheme.surfaceContainerLow,
-      selectedColor: isDark
-          ? scheme.primary.withValues(alpha: 0.38)
-          : scheme.primaryContainer.withValues(alpha: 0.88),
-      disabledColor: scheme.onSurface.withValues(alpha: 0.08),
-      checkmarkColor: isDark ? const Color(0xFFEEF2FF) : scheme.primary,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-    ),
-    sliderTheme: SliderThemeData(
-      trackHeight: 3,
-      activeTrackColor: scheme.primary,
-      inactiveTrackColor: scheme.onSurface.withValues(alpha: isDark ? 0.22 : 0.15),
-      thumbColor: scheme.primary,
-      overlayColor: scheme.primary.withValues(alpha: 0.12),
+      labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
     ),
     progressIndicatorTheme: ProgressIndicatorThemeData(
       color: scheme.primary,
       linearTrackColor: scheme.primaryContainer.withValues(alpha: 0.4),
     ),
-    dialogTheme: DialogThemeData(
-      backgroundColor: isDark ? const Color(0xFF1A1F2B) : AppColors.surfaceCard,
-      titleTextStyle: textTheme.titleMedium,
-      contentTextStyle: textTheme.bodyMedium,
-    ),
-    bottomSheetTheme: BottomSheetThemeData(
-      backgroundColor: isDark ? const Color(0xFF1A1F2B) : AppColors.surfaceCard,
-      modalBackgroundColor: isDark ? const Color(0xFF1A1F2B) : AppColors.surfaceCard,
-    ),
+    extensions: [shell],
   );
 }

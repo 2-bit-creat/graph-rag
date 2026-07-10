@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
-import '../theme/app_theme.dart';
+import ../theme/app_theme.dart
 
 /// LangChain-style node → edge → node flow graph with tap-to-inspect.
 class PipelineFlowGraph extends StatelessWidget {

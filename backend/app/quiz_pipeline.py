@@ -91,10 +91,6 @@ async def _run_vocab_node_quiz_pipeline(
     tracer.run.status = "quiz_path"
     target_level = user.current_level
     effective_freedom = is_freedom_on if is_freedom_on is not None else user.is_freedom_on
-    native_language = getattr(user, "native_language", None) or "korean"
-    from .crud import get_effective_target_languages
-
-    target_lang = (get_effective_target_languages(user) or ["english"])[0]
 
     step = tracer.begin_step(
         "graph_context_resolve",
@@ -129,8 +125,6 @@ async def _run_vocab_node_quiz_pipeline(
         ctx,
         target_level=target_level,
         freedom_off=not effective_freedom,
-        native_language=native_language,
-        target_language=target_lang,
     )
     model = generated.pop("_model", None)
     system_prompt = generated.pop("_system_prompt", None)
@@ -143,12 +137,7 @@ async def _run_vocab_node_quiz_pipeline(
         quiz_type,
         {**generated, "quiz_data": generated["quiz_data"]},
         target_level=target_level,
-        target_language=target_lang,
-        native_language=native_language,
     )
-    qd = dict(validated["quiz_data"])
-    qd["language"] = target_lang
-    validated["quiz_data"] = qd
 
     quiz = await crud.create_quiz(
         session,
@@ -164,7 +153,7 @@ async def _run_vocab_node_quiz_pipeline(
     )
 
     tts_text = resolve_quiz_tts_text(quiz_type, validated)
-    audio_url, tts_error = await synthesize_quiz_audio(quiz.id, tts_text, language=target_lang)
+    audio_url, tts_error = await synthesize_quiz_audio(quiz.id, tts_text, language="english")
     if audio_url:
         qd = dict(validated["quiz_data"])
         qd["audio_url"] = audio_url
@@ -464,7 +453,6 @@ async def run_quiz_generate_pipeline(
         ),
         target_level=target_level,
         target_language=lang,
-        native_language=getattr(user, "native_language", None) or "korean",
     )
     tracer.finish_step(
         step,
@@ -494,7 +482,6 @@ async def run_quiz_generate_pipeline(
         source_meta["cefr"] = vocab_seed.get("cefr")
     quiz_data_out = dict(validated["quiz_data"])
     quiz_data_out["_source"] = source_meta
-    quiz_data_out["language"] = lang
     validated["quiz_data"] = quiz_data_out
 
     step = tracer.begin_step(

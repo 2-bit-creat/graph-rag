@@ -17,7 +17,7 @@ class GraphReviewScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('그래프 검토')),
+      appBar: AppBar(title: const Text('그래??검??)),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(

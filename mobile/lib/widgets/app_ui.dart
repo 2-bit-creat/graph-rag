@@ -78,7 +78,7 @@ class AppHeroHeader extends StatelessWidget {
         Text(title, style: Theme.of(context).textTheme.headlineMedium),
         const SizedBox(height: AppSpacing.xs),
         Text(subtitle, style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: context.mutedText,
+              color: AppColors.textMuted,
             )),
       ],
     );
@@ -504,7 +504,7 @@ class _PhaseDot extends StatelessWidget {
             fontSize: 10,
             fontWeight: state == _PhaseState.active ? FontWeight.w600 : FontWeight.w500,
             color: state == _PhaseState.pending
-                ? context.mutedText
+                ? AppColors.textMuted
                 : scheme.onSurface,
           ),
         ),

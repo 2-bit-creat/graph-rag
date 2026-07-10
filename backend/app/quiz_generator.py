@@ -11,7 +11,6 @@ from typing import Literal
 from openai import AsyncOpenAI
 
 from .config import get_settings
-from .language_config import LANG_DISPLAY_NAMES, LANG_KO_DISPLAY, lang_label
 from .level_guidelines import clamp_level, level_prompt_context
 from .quiz_audio_engine import build_complete_cloze_sentence
 from .quiz_types import validate_quiz_type
@@ -24,28 +23,16 @@ _DEFAULT_QUESTION_KO_TEMPLATE = {
     "mcq_nuance": "문맥에 맞는 {lang} 표현을 고르세요.",
 }
 
-_DEFAULT_QUESTION_EN_TEMPLATE = {
-    "cloze": "Type the missing {lang} word in the blank.",
-    "scramble": "Arrange the {lang} words in the correct order.",
-    "mcq_nuance": "Choose the most natural {lang} expression for the context.",
+_LANG_KO_DISPLAY = {
+    "english": "영어", "german": "독일어", "japanese": "일본어",
+    "chinese": "중국어", "spanish": "스페인어", "french": "프랑스어",
+    "portuguese": "포르투갈어", "italian": "이탈리아어",
+    "arabic": "아랍어", "russian": "러시아어",
 }
 
-_LANG_KO_DISPLAY = dict(LANG_KO_DISPLAY)
 
-
-def _default_question_ko(
-    quiz_type: str,
-    target_language: str = "english",
-    *,
-    native_language: str = "korean",
-) -> str:
+def _default_question_ko(quiz_type: str, target_language: str = "english") -> str:
     lang_ko = _LANG_KO_DISPLAY.get(target_language.lower(), target_language.title())
-    if native_language.lower() == "english":
-        template = _DEFAULT_QUESTION_EN_TEMPLATE.get(
-            quiz_type, "Complete this {lang} exercise."
-        )
-        lang_name = lang_label(target_language)
-        return template.format(lang=lang_name)
     template = _DEFAULT_QUESTION_KO_TEMPLATE.get(quiz_type, "{lang} 문제를 풀어보세요.")
     return template.format(lang=lang_ko)
 
@@ -64,23 +51,27 @@ _MCQ_EN_STOPWORDS = frozenset({
     "with", "would", "your",
 })
 
-def _mcq_nuance_distractor_rules(*, target_label: str = "English") -> str:
-    return f"""\
+_MCQ_NUANCE_DISTRACTOR_RULES = """\
 [MCQ NUANCE — CONTEXT & DISTRACTOR DESIGN (MANDATORY)]
-1. DYNAMIC CONTEXT CONSISTENCY:
-   - prompt_ko sets ONE specific topic, situation, or theme.
-   - ALL four {target_label} options MUST stay inside that exact same topic/situation.
-   - FORBIDDEN: pulling unrelated graph facts as distractors when the theme is different.
-     Every option must read as an attempt to express THE SAME scenario.
+1. DYNAMIC CONTEXT CONSISTENCY (동일 맥락 유지):
+   - prompt_ko sets ONE specific topic, situation, or theme (e.g. "컨설팅 업계의 복잡한 관계망에 대해 이야기할 때").
+   - ALL four English options MUST stay inside that exact same topic/situation.
+   - FORBIDDEN: pulling unrelated graph facts as distractors (e.g. gym workouts, matcha, travel, random people) \
+when the theme is corporate networking. Every option must read as an attempt to express THE SAME scenario.
 
-2. TRUE NUANCE-BASED DISTRACTORS — assign each WRONG option a distinct linguistic failure mode:
-   • CORRECT (correct_index): Most natural, idiomatic, level-appropriate {target_label} for the theme.
-   • AWKWARD/LITERAL distractor: Grammatically fine but stiff or overly literal wording.
-   • REGISTER distractor: Grammatically correct but wrong tone for the context.
-   • MEANING-SHIFT distractor: Plausible words but subtly misses the core nuance of prompt_ko.
+2. TRUE NUANCE-BASED DISTRACTORS — assign each WRONG option a distinct linguistic failure mode \
+(the correct_index option is the natural winner; the other three each embody ONE flaw):
+   • CORRECT (correct_index): Most natural, idiomatic, level-appropriate English for the prompt_ko theme.
+   • AWKWARD/LITERAL distractor: Grammatically fine but stiff, overly literal, or Konglish-style wording \
+an American would not naturally say in this context \
+(e.g. "The consulting industry's human relationship net is very twisted.").
+   • REGISTER distractor: Grammatically correct but wrong tone — too slangy, rude, or casual for the context \
+(e.g. "Consulting networking is super messy and crazy.").
+   • MEANING-SHIFT distractor: Uses plausible words but subtly misses the core nuance of prompt_ko \
+(e.g. "There are many consultants talking to each other in the industry.").
 
-3. Each distractor must be tempting — the learner must judge NATURALNESS and NUANCE.
-4. Do NOT label options A/B/C/D in the text. correct_index is 0–3.
+3. Each distractor must be tempting enough that the learner must judge NATURALNESS and NUANCE — not keyword matching.
+4. Do NOT label options A/B/C/D in the text. correct_index is 0–3 (position in the options array).
 5. Set sentence_en to the exact text of the correct option."""
 
 _MALHEOBOCA_SPAN_RE = re.compile(
@@ -232,24 +223,16 @@ def _prepare_scramble_chunks(
     return chunks, correct_order
 
 
-def _mcq_content_words(text: str, *, target_language: str = "english") -> set[str]:
-    """Significant content words for thematic overlap checks."""
-    lang = target_language.lower()
-    if lang == "korean":
-        words = {w for w in re.findall(r"[\uac00-\ud7a3]+", text or "") if len(w) >= 2}
-        return words or {w for w in re.findall(r"\S+", text or "") if len(w) >= 2}
+def _mcq_content_words(text: str) -> set[str]:
+    """Significant English content words for thematic overlap checks."""
     words = {
         w.lower()
-        for w in re.findall(r"[a-zA-Z\u00c0-\u024f\u1e00-\u1eff']+", text or "")
+        for w in re.findall(r"[a-zA-Z']+", text or "")
         if len(w) >= 4 and w.lower() not in _MCQ_EN_STOPWORDS
     }
     if words:
         return words
-    return {
-        w.lower()
-        for w in re.findall(r"[a-zA-Z\u00c0-\u024f\u1e00-\u1eff']+", text or "")
-        if len(w) >= 3
-    }
+    return {w.lower() for w in re.findall(r"[a-zA-Z']+", text or "") if len(w) >= 3}
 
 
 def _validate_mcq_nuance_coherence(
@@ -257,13 +240,12 @@ def _validate_mcq_nuance_coherence(
     correct_index: int,
     *,
     prompt_ko: str = "",
-    target_language: str = "english",
 ) -> None:
     """Reject distractors that jump to unrelated graph topics."""
     correct = str(options[int(correct_index)]).strip()
     if not correct:
         raise ValueError("mcq_nuance correct option must be non-empty")
-    correct_words = _mcq_content_words(correct, target_language=target_language)
+    correct_words = _mcq_content_words(correct)
     min_overlap = 1
     for i, opt in enumerate(options):
         if i == int(correct_index):
@@ -271,7 +253,7 @@ def _validate_mcq_nuance_coherence(
         text = str(opt).strip()
         if not text:
             raise ValueError(f"mcq_nuance option {i} must be non-empty")
-        overlap = correct_words & _mcq_content_words(text, target_language=target_language)
+        overlap = correct_words & _mcq_content_words(text)
         if len(overlap) < min_overlap:
             raise ValueError(
                 f"mcq_nuance option {i} is contextually disconnected from the quiz theme "
@@ -378,16 +360,10 @@ def _looks_like_personal_trivia(question_ko: str) -> bool:
     return bool(_PERSONAL_TRIVIA_RE.search(question_ko or ""))
 
 
-def _normalize_question_ko(
-    question_ko: str,
-    quiz_type: str,
-    target_language: str = "english",
-    *,
-    native_language: str = "korean",
-) -> str:
+def _normalize_question_ko(question_ko: str, quiz_type: str, target_language: str = "english") -> str:
     q = (question_ko or "").strip()
     if not q or _looks_like_personal_trivia(q):
-        return _default_question_ko(quiz_type, target_language, native_language=native_language)
+        return _default_question_ko(quiz_type, target_language)
     return q
 
 
@@ -459,17 +435,13 @@ def _apply_freedom_seed(
 
 
 def _is_valid_blank(text: str, *, target_language: str = "english") -> bool:
-    """Accept blanks appropriate to the target language script."""
+    """Accept blanks in any language — Latin-only check only for English."""
     cleaned = text.strip()
     if not cleaned:
         return False
-    lang = target_language.lower()
-    if lang == "english":
+    if target_language.lower() == "english":
         return _is_english_blank(cleaned)
-    if lang == "korean":
-        return bool(re.search(r"[\uac00-\ud7a3]", cleaned))
-    if lang == "german":
-        return bool(re.search(r"[a-zA-Z\u00c4\u00d6\u00dc\u00e4\u00f6\u00fc\u00df]", cleaned))
+    # For non-English allow any non-whitespace word/phrase
     return bool(cleaned)
 
 
@@ -480,7 +452,6 @@ def validate_quiz_payload(
     freedom_seed: str | None = None,
     target_level: int | None = None,
     target_language: str = "english",
-    native_language: str = "korean",
 ) -> dict:
     quiz_type = validate_quiz_type(quiz_type)
     quiz_data = payload.get("quiz_data") or {}
@@ -585,17 +556,10 @@ def validate_quiz_payload(
                 f"mcq_nuance freedom mode requires target vocabulary '{freedom_seed}' "
                 "in the correct option"
             )
-        _validate_mcq_nuance_coherence(
-            options, int(idx), prompt_ko=prompt_ko, target_language=target_language
-        )
+        _validate_mcq_nuance_coherence(options, int(idx), prompt_ko=prompt_ko)
         quiz_data["sentence_en"] = correct_option
 
-    question_ko = _normalize_question_ko(
-        payload.get("question_ko") or "",
-        quiz_type,
-        target_language,
-        native_language=native_language,
-    )
+    question_ko = _normalize_question_ko(payload.get("question_ko") or "", quiz_type, target_language)
     sentence_en = payload.get("sentence_en") or quiz_data.get("sentence_en") or ""
     if quiz_type == "mcq_nuance" and quiz_data.get("sentence_en"):
         sentence_en = str(quiz_data["sentence_en"])
@@ -618,17 +582,15 @@ def _freedom_seed_prompt(
     *,
     cefr: str = "",
     target_language: str = "english",
-    native_language: str = "korean",
 ) -> str:
     cefr_note = f" (CEFR {cefr})" if cefr else ""
-    lang = lang_label(target_language)
-    native_label = lang_label(native_language)
+    lang = _LANG_DISPLAY_NAMES.get(target_language.lower(), target_language.title())
     if quiz_type == "cloze":
         return (
             "[FREEDOM MODE — SEED LOCK]\n"
             f"Your absolute rule is to generate a {lang} sentence where the missing blank is "
             f"exactly '{target_seed}'{cefr_note}.\n"
-            f"You MUST wrap the exact {native_label} translation of '{target_seed}' inside "
+            f"You MUST wrap the exact Korean translation of '{target_seed}' inside "
             "<span color='#FFA500'>...</span> within the 'context_ko' field. Do not test anything else.\n"
             "Use characters or places from the knowledge graph ONLY as background settings "
             "to weave a highly natural narrative scene — never as the blank itself."
@@ -657,11 +619,8 @@ def _freedom_seed_prompt(
     return ""
 
 
-def _statement_expression_prompt(
-    quiz_type: str, expr: dict, *, native_language: str = "korean"
-) -> str:
+def _statement_expression_prompt(quiz_type: str, expr: dict) -> str:
     """Freedom OFF + statement expression anchor: use the expression as the quiz target."""
-    native_label = lang_label(native_language)
     expression = expr.get("expression", "")
     meaning = expr.get("meaning", "")
     example = expr.get("example", "")
@@ -679,9 +638,9 @@ def _statement_expression_prompt(
             base
             + f"4. The blank MUST be the exact expression '{expression}' "
             f"(or a natural inflected form).\n"
-            "5. context_ko must wrap the {native_label} equivalent of the expression in "
+            "5. context_ko must wrap the Korean equivalent of the expression in "
             "<span color='#FFA500'>...</span>."
-        ).format(native_label=native_label)
+        )
     if quiz_type == "scramble":
         return (
             base
@@ -698,8 +657,7 @@ def _statement_expression_prompt(
     return base
 
 
-def _strict_fact_based_prompt(quiz_type: str, *, target_language: str = "english") -> str:
-    target_label = lang_label(target_language)
+def _strict_fact_based_prompt(quiz_type: str) -> str:
     base = (
         "[STRICT FACT-BASED RULES for Freedom OFF]\n"
         "1. Use the graph context as background. If a TARGET EXPRESSION is provided, "
@@ -717,7 +675,7 @@ def _strict_fact_based_prompt(quiz_type: str, *, target_language: str = "english
     if quiz_type == "scramble":
         return (
             base
-            + f"4. sentence_en MUST be a literal {target_label} translation of ONE node-edge-node fact "
+            + "4. sentence_en MUST be a literal English translation of ONE node-edge-node fact "
             "from graph_context — use only graph entity names and stated relations.\n"
             "5. No adjectives, adverbs, or narrative padding not present in the graph slice."
         )
@@ -727,25 +685,47 @@ def _strict_fact_based_prompt(quiz_type: str, *, target_language: str = "english
             + "4. Pick ONE theme/concept from graph_context for prompt_ko. ALL four options must "
             "paraphrase THAT SAME theme with different linguistic quality — NEVER use unrelated "
             "graph nodes (gym, food, travel, other people) as distractors.\n"
-            + f"5. The correct option is the most natural {target_label} for the theme; distractors are "
+            "5. The correct option is the most natural English for the theme; distractors are "
             "on-theme but awkward, wrong-register, or meaning-shifted."
         )
     return base
 
 
-_LANG_DISPLAY_NAMES: dict[str, str] = dict(LANG_DISPLAY_NAMES)
+_LANG_DISPLAY_NAMES: dict[str, str] = {
+    "korean": "Korean (한국어)", "english": "English", "german": "German (Deutsch)",
+    "japanese": "Japanese (日本語)", "chinese": "Chinese (中文)", "spanish": "Spanish (Español)",
+    "french": "French (Français)", "portuguese": "Portuguese (Português)",
+    "italian": "Italian (Italiano)", "arabic": "Arabic (عربي)", "russian": "Russian (Русский)",
+}
 
 _LANG_GRAMMAR_NOTES: dict[str, str] = {
-    "english": (
-        "For English: note register (formal/informal), phrasal verbs, and collocations where relevant."
-    ),
-    "korean": (
-        "For Korean: note honorific level (해요/합니다), particles (은/는, 이/가, 을/를), "
-        "and verb endings where relevant."
-    ),
     "german": (
         "For German nouns: always note grammatical gender as (m), (f), or (n) after the word. "
         "For verbs: note any separable prefix or strong conjugation pattern if relevant."
+    ),
+    "japanese": (
+        "For Japanese words: note the reading (hiragana/katakana) and kanji if applicable. "
+        "Note politeness register (casual/polite/formal) where relevant."
+    ),
+    "chinese": (
+        "For Chinese words: note the pinyin and tone marks. "
+        "Note measure word (量词) for nouns where relevant."
+    ),
+    "french": (
+        "For French nouns: note gender (m/f). "
+        "For verbs: note être/avoir auxiliary and any irregularities."
+    ),
+    "spanish": (
+        "For Spanish nouns: note gender (m/f). "
+        "For verbs: note any stem-change or irregular conjugation patterns."
+    ),
+    "arabic": (
+        "For Arabic words: note the root (جذر) if informative. "
+        "Note whether the word is formal/standard (MSA) or colloquial."
+    ),
+    "russian": (
+        "For Russian nouns: note grammatical gender (m/f/n) and declension class if unusual. "
+        "For verbs: note aspect (imperfective/perfective)."
     ),
 }
 
@@ -761,17 +741,17 @@ def _build_system_prompt(
     native_language: str = "korean",
     target_language: str = "english",
 ) -> str:
-    level_ctx = level_prompt_context(target_level, target_language=target_language)
+    level_ctx = level_prompt_context(target_level)
     type_prompt = _TYPE_PROMPTS[quiz_type][source]
 
-    native_label = lang_label(native_language)
-    target_label = lang_label(target_language)
+    native_label = _LANG_DISPLAY_NAMES.get(native_language, native_language.title())
+    target_label = _LANG_DISPLAY_NAMES.get(target_language, target_language.title())
     grammar_note = _LANG_GRAMMAR_NOTES.get(target_language, "")
 
     lang_ctx = (
-        f"NATIVE LANGUAGE: {native_label} — use this for question_ko, context_ko, "
-        f"hint_ko, explanation, and all native-language gloss fields.\n"
-        f"TARGET LANGUAGE: {target_label} — all quiz sentences, blanks, and options "
+        f"NATIVE LANGUAGE (모국어): {native_label} — use this for question_ko, context_ko, "
+        f"hint_ko, explanation, and all Korean-field instructions.\n"
+        f"TARGET LANGUAGE (학습 언어): {target_label} — all quiz sentences, blanks, and options "
         f"must be in this language.\n"
         f"EXPLANATION RULE: explanation field must be in {native_label}, concise (max 60 words), "
         f"covering why the answer is correct + one useful {target_label}-specific insight. "
@@ -813,26 +793,18 @@ def _build_system_prompt(
                 vocab_seed["word"],
                 cefr=vocab_seed.get("cefr", ""),
                 target_language=target_language,
-                native_language=native_language,
             )
             + "\n"
         )
     elif not is_freedom_on and source == "graph":
         if statement_expression:
-            fact_block = (
-                _statement_expression_prompt(
-                    quiz_type, statement_expression, native_language=native_language
-                )
-                + "\n"
-            )
+            fact_block = _statement_expression_prompt(quiz_type, statement_expression) + "\n"
         else:
-            fact_block = _strict_fact_based_prompt(
-                quiz_type, target_language=target_language
-            ) + "\n"
+            fact_block = _strict_fact_based_prompt(quiz_type) + "\n"
 
     nuance_block = ""
     if quiz_type == "mcq_nuance":
-        nuance_block = _mcq_nuance_distractor_rules(target_label=target_label) + "\n"
+        nuance_block = _MCQ_NUANCE_DISTRACTOR_RULES + "\n"
 
     return (
         f"{role} {level_ctx}\n{lang_ctx}{freedom_block}{fact_block}{nuance_block}{type_prompt}\n{rules}\n"
@@ -853,7 +825,7 @@ def _build_user_content(
     target_language: str = "english",
 ) -> str:
     seed_note = ""
-    lang_label_uc = lang_label(target_language)
+    lang_label_uc = target_language.title() if target_language else "English"
     if is_freedom_on and vocab_seed:
         seed_note = (
             f"\nMandatory target vocabulary (CEFR {vocab_seed.get('cefr', '?')}): "
@@ -866,9 +838,8 @@ def _build_user_content(
             seed_note = (
                 "\nFreedom OFF — FACT CHECK MODE:\n"
                 "- Use ONLY facts explicitly present in the graph_context below.\n"
-                "- Pick ONE node-edge-node triple and translate it literally into "
-                f"{lang_label_uc}.\n"
-                f"- The cloze blank MUST be a {lang_label_uc} name of a graph entity node from that triple.\n"
+                "- Pick ONE node-edge-node triple and translate it literally into English.\n"
+                "- The cloze blank MUST be the English name of a graph entity node from that triple.\n"
                 "- Do NOT invent roles, events, or people not listed in the graph.\n"
             )
         elif quiz_type == "scramble":
@@ -882,19 +853,19 @@ def _build_user_content(
             seed_note = (
                 "\nFreedom OFF — FACT CHECK MODE:\n"
                 "- Pick ONE theme from graph_context for prompt_ko.\n"
-                f"- ALL four {lang_label_uc} options must express THAT SAME theme with different nuance failures.\n"
+                "- ALL four English options must express THAT SAME theme with different nuance failures.\n"
                 "- Do NOT use unrelated graph facts (gym, matcha, travel, other people) as distractors.\n"
             )
-    lang_label_out = lang_label(target_language)
+    lang_label = target_language.title() if target_language else "English"
     if source == "graph":
         return (
             "Knowledge graph (entities, types, relationships — the ONLY allowed facts):\n"
             f"{graph_context or '(empty — output a minimal placeholder using any single node if present)'}\n\n"
             f"Quiz type: {quiz_type}\n"
             f"Target level: {target_level}\n"
-            f"Target language: {lang_label_out}\n"
+            f"Target language: {lang_label}\n"
             f"{seed_note}\n"
-            f"All answers and blanks must be in {lang_label_out}. "
+            f"All answers and blanks must be in {lang_label}. "
             "When Freedom OFF, every word in the sentence must trace to the graph slice above."
         )
     return (
@@ -1066,7 +1037,6 @@ async def generate_one(
                 freedom_seed=freedom_seed,
                 target_level=target_level,
                 target_language=target_language,
-                native_language=native_language,
             )
         except ValueError as exc:
             validated = None
@@ -1126,33 +1096,22 @@ async def generate_one(
     return validated
 
 
-_VOCAB_CONTEXT_CLOZE_PROMPT_TEMPLATE = """Create ONE vocabulary cloze quiz from a real dialogue context.
+_VOCAB_CONTEXT_CLOZE_PROMPT = """Create ONE IELTS-level English vocabulary cloze quiz from a real dialogue context.
 
 Rules:
-- prompt_en: one natural {target_label} sentence with exactly ONE blank shown as ___
-- blank: the missing {target_label} phrase (lowercase for Latin scripts) — may be multi-word
+- prompt_en: one natural English sentence with exactly ONE blank shown as ___
+- blank: the missing ENGLISH phrase (lowercase) — may be multi-word (e.g. "wrap up", "look forward to")
 - accepted_answers: 1–3 valid spellings of the full phrase
 - sentence_en: full sentence with blank filled
-- question_ko: short instruction in {native_label}
-- context_ko: one {native_label} sentence; wrap the target phrase in <span color='#FFA500'>...</span>
+- question_ko: short Korean instruction
+- context_ko: one Korean sentence; wrap the target phrase in <span color='#FFA500'>...</span>
 - Use the dialogue context — who spoke to whom matters
 - The blank MUST be the complete target vocabulary PHRASE (never a token fragment)
 - NEVER ask diary trivia
 
-JSON: {{"difficulty_level": int, "question_ko": str, "sentence_en": str,
-"quiz_data": {{"prompt_en": str, "blank": str, "accepted_answers": [str], "context_ko": str, "hint_ko": str?}}}}
+JSON: {"difficulty_level": int, "question_ko": str, "sentence_en": str,
+"quiz_data": {"prompt_en": str, "blank": str, "accepted_answers": [str], "context_ko": str, "hint_ko": str?}}
 """
-
-
-def _vocab_context_cloze_prompt(
-    *,
-    native_language: str = "korean",
-    target_language: str = "english",
-) -> str:
-    return _VOCAB_CONTEXT_CLOZE_PROMPT_TEMPLATE.format(
-        target_label=lang_label(target_language),
-        native_label=lang_label(native_language),
-    )
 
 
 async def generate_vocab_cloze_from_context(
@@ -1160,16 +1119,10 @@ async def generate_vocab_cloze_from_context(
     *,
     target_level: int,
     freedom_off: bool = True,
-    native_language: str = "korean",
-    target_language: str = "english",
 ) -> dict:
     settings = get_settings()
     model = settings.openai_premium_model if settings.openai_premium_model else settings.openai_model
     client = AsyncOpenAI(api_key=settings.openai_api_key)
-    system_prompt = _vocab_context_cloze_prompt(
-        native_language=native_language,
-        target_language=target_language,
-    )
 
     user_content = (
         f"Target vocabulary phrase: {context.vocab_lemma}\n"
@@ -1177,13 +1130,12 @@ async def generate_vocab_cloze_from_context(
         f"Anchor utterance: {context.anchor_text}\n"
         f"Dialogue context (timeline):\n{context.formatted_dialogue}\n\n"
         f"Target level: {target_level}\n"
-        f"Target language: {lang_label(target_language)}\n"
         f"Freedom OFF: {freedom_off}"
     )
     resp = await client.chat.completions.create(
         model=model,
         messages=[
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": _VOCAB_CONTEXT_CLOZE_PROMPT},
             {"role": "user", "content": user_content},
         ],
         temperature=0.35,
@@ -1196,10 +1148,8 @@ async def generate_vocab_cloze_from_context(
         data,
         freedom_seed=context.vocab_lemma if not freedom_off else None,
         target_level=target_level,
-        target_language=target_language,
-        native_language=native_language,
     )
     validated["_model"] = model
-    validated["_system_prompt"] = system_prompt
+    validated["_system_prompt"] = _VOCAB_CONTEXT_CLOZE_PROMPT
     validated["_raw_llm"] = data
     return validated

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../theme/app_theme.dart';
 import 'quiz_audio_button.dart';
 
 class ClozeQuizCard extends StatefulWidget {
@@ -92,14 +91,14 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
     );
     final match = spanRe.firstMatch(raw);
     if (match == null) {
-      return Text(raw, style: TextStyle(fontSize: 14, color: context.subtleText));
+      return Text(raw, style: TextStyle(fontSize: 14, color: Colors.grey[800]));
     }
     final before = raw.substring(0, match.start);
     final highlight = match.group(1) ?? '';
     final after = raw.substring(match.end);
     return RichText(
       text: TextSpan(
-        style: TextStyle(fontSize: 14, color: context.subtleText),
+        style: TextStyle(fontSize: 14, color: Colors.grey[800]),
         children: [
           TextSpan(text: before),
           TextSpan(

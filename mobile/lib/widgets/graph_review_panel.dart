@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/client.dart';
 import '../chat/journal_task_controller.dart';
+import '../compose/compose_session_controller.dart';
 import '../theme/app_theme.dart';
 import 'app_ui.dart';
 
@@ -230,6 +231,15 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
       if (proceed != true || !mounted) return;
     }
 
+    if (composeSession.isActive && composeSession.entryId == widget.entryId) {
+      composeSession.applyGraph(
+        widget.entryId,
+        claims: claims,
+        contextType: _contextType,
+      );
+      widget.onApplied?.call();
+      return;
+    }
     if (journalTask.entryId == widget.entryId && journalTask.isActive) {
       journalTask.applyGraph(
         widget.entryId,

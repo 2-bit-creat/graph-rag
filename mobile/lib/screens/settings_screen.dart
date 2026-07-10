@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
-import '../l10n/app_localizations.dart';
-import '../locale/native_language_controller.dart';
+import '../api/config.dart';
+import '../auth/device_auth.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import 'quiz_queue_screen.dart';
@@ -10,14 +10,23 @@ import 'quiz_queue_screen.dart';
 // ─── Static data ──────────────────────────────────────────────────────────────
 
 const _kLanguages = [
-  (key: 'english', label: '영어',      flag: '🇺🇸'),
-  (key: 'korean',  label: '한국어',    flag: '🇰🇷'),
-  (key: 'german',  label: '독일어',    flag: '🇩🇪'),
+  (key: 'english',    label: '영어',      flag: '🇺🇸'),
+  (key: 'japanese',   label: '일본어',    flag: '🇯🇵'),
+  (key: 'chinese',    label: '중국어',    flag: '🇨🇳'),
+  (key: 'spanish',    label: '스페인어',  flag: '🇪🇸'),
+  (key: 'french',     label: '프랑스어',  flag: '🇫🇷'),
+  (key: 'german',     label: '독일어',    flag: '🇩🇪'),
+  (key: 'portuguese', label: '포르투갈어',flag: '🇧🇷'),
+  (key: 'italian',    label: '이탈리아어',flag: '🇮🇹'),
 ];
 
 const _kNativeLanguages = [
-  (key: 'korean',  label: '한국어 🇰🇷'),
-  (key: 'english', label: '영어 🇺🇸'),
+  (key: 'korean',   label: '한국어 🇰🇷'),
+  (key: 'english',  label: '영어 🇺🇸'),
+  (key: 'japanese', label: '일본어 🇯🇵'),
+  (key: 'chinese',  label: '중국어 🇨🇳'),
+  (key: 'spanish',  label: '스페인어 🇪🇸'),
+  (key: 'french',   label: '프랑스어 🇫🇷'),
 ];
 
 String _cefrLabel(int level) {
@@ -29,18 +38,15 @@ String _cefrLabel(int level) {
   return 'C2';
 }
 
-Color _cefrColor(String cefr, Brightness brightness) {
-  final isDark = brightness == Brightness.dark;
+Color _cefrColor(String cefr) {
   switch (cefr) {
-    case 'Pre-A1~A1':
-      return isDark ? const Color(0xFF9CA3AF) : Colors.grey;
+    case 'Pre-A1~A1': return Colors.grey;
     case 'A2':        return Colors.green.shade600;
     case 'B1':        return Colors.teal.shade600;
     case 'B2':        return Colors.blue.shade600;
     case 'C1':        return Colors.purple.shade600;
     case 'C2':        return Colors.red.shade700;
-    default:
-      return isDark ? const Color(0xFF9CA3AF) : Colors.grey;
+    default:          return Colors.grey;
   }
 }
 
@@ -60,11 +66,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Map<String, double> _langLevels = {'english': 10};
   bool _loading = true;
   bool _saving = false;
+  final _serverUrlController = TextEditingController();
+  bool _testingServer = false;
+  String? _serverTestResult;
 
   @override
   void initState() {
     super.initState();
+    _serverUrlController.text = resolvedApiBaseUrl;
     _load();
+  }
+
+  @override
+  void dispose() {
+    _serverUrlController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -99,11 +115,46 @@ final rawLangs = profile['target_languages'];
     }
   }
 
+  Future<void> _saveServerUrl() async {
+    final url = _serverUrlController.text.trim();
+    await setServerUrl(url);
+    apiClient.updateBaseUrl(resolvedApiBaseUrl);
+    final authed = await refreshDeviceAuth();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(authed
+              ? '서버 주소가 저장되었습니다'
+              : '서버 주소는 저장됐지만 인증에 실패했어요. 연결 테스트를 해 보세요.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _testServerConnection() async {
+    setState(() {
+      _testingServer = true;
+      _serverTestResult = null;
+    });
+    try {
+      final authed = await refreshDeviceAuth();
+      if (!authed) {
+        await apiClient.getUserProfile();
+      }
+      if (mounted) setState(() => _serverTestResult = '연결 성공');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _serverTestResult = e.toString().replaceFirst('Exception: ', ''));
+      }
+    } finally {
+      if (mounted) setState(() => _testingServer = false);
+    }
+  }
+
   Future<void> _save() async {
-    final l10n = AppLocalizations.of(context)!;
     if (_targetLanguages.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.selectAtLeastOneLanguage)),
+        const SnackBar(content: Text('언어를 최소 하나 선택해 주세요')),
       );
       return;
     }
@@ -119,16 +170,15 @@ final rawLangs = profile['target_languages'];
       ]);
 
       if (mounted) {
-        NativeLanguageScope.of(context).setNativeLanguage(_nativeLanguage);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.profileSaved)),
+          const SnackBar(content: Text('프로필이 저장되었습니다')),
         );
         _showReprocessDialogIfNeeded(langs);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.saveFailed(e.toString()))),
+          SnackBar(content: Text('저장 실패: $e')),
         );
       }
     } finally {
@@ -158,11 +208,11 @@ final rawLangs = profile['target_languages'];
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('미처리 $pending개(노드×언어)에 대해 표현을 추출합니다.\n'),
-            Text(breakdown, style: Theme.of(context).textTheme.bodySmall),
+            Text(breakdown, style: const TextStyle(fontSize: 13)),
             const SizedBox(height: 12),
-            Text(
+            const Text(
               '노드당 1번의 API 호출로 모든 언어를 처리합니다.',
-              style: Theme.of(context).textTheme.bodySmall,
+              style: TextStyle(fontSize: 12),
             ),
           ],
         ),
@@ -187,19 +237,8 @@ final rawLangs = profile['target_languages'];
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final isDark = context.isDarkTheme;
-    final chipSelectedLabel = isDark
-        ? const Color(0xFFEEF2FF)
-        : Theme.of(context).colorScheme.onPrimaryContainer;
-    final chipUnselectedLabel = context.mutedText;
-    TextStyle chipLabelStyle({required bool selected}) => TextStyle(
-          fontSize: 12,
-          fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-          color: selected ? chipSelectedLabel : chipUnselectedLabel,
-        );
     return Scaffold(
-      appBar: AppHubAppBar(title: l10n.settingsTitle, subtitle: l10n.settingsSubtitle),
+      appBar: AppHubAppBar(title: '내 프로필', subtitle: '언어 · 레벨'),
       body: _loading
           ? const AppLoadingScreen()
           : ListView(
@@ -209,30 +248,26 @@ final rawLangs = profile['target_languages'];
               children: [
                 // ── 모국어 ──────────────────────────────────────────────────
                 _SectionCard(
-                  title: l10n.nativeLanguage,
-                  subtitle: l10n.nativeLanguageHint,
+                  title: '모국어',
+                  subtitle: '힌트·설명이 이 언어로 생성됩니다',
                   child: Wrap(
                     spacing: AppSpacing.sm,
                     runSpacing: AppSpacing.xs,
-                    children: _kNativeLanguages.map((lang) {
-                      final selected = _nativeLanguage == lang.key;
-                      return ChoiceChip(
+                    children: _kNativeLanguages.map((lang) => ChoiceChip(
                       label: Text(lang.label),
-                      labelStyle: chipLabelStyle(selected: selected),
-                      selected: selected,
+                      selected: _nativeLanguage == lang.key,
                       onSelected: _saving
                           ? null
                           : (_) => setState(() => _nativeLanguage = lang.key),
-                    );
-                    }).toList(),
+                    )).toList(),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.md),
 
                 // ── 학습 언어 + 레벨 ────────────────────────────────────────
                 _SectionCard(
-                  title: l10n.targetLanguages,
-                  subtitle: '복수 선택 가능 · 언어마다 레벨을 따로 설정하세요',
+                  title: '학습 언어 및 레벨',
+                  subtitle: '연습할 언어를 등록하고 레벨을 설정하세요 · 세션별 전환은 튜터에서',
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -243,7 +278,6 @@ final rawLangs = profile['target_languages'];
                           final selected = _targetLanguages.contains(lang.key);
                           return FilterChip(
                             label: Text('${lang.flag} ${lang.label}'),
-                            labelStyle: chipLabelStyle(selected: selected),
                             selected: selected,
                             onSelected: _saving
                                 ? null
@@ -271,7 +305,7 @@ final rawLangs = profile['target_languages'];
                           label: langInfo.label,
                           level: level,
                           cefr: cefr,
-                          cefrColor: _cefrColor(cefr, Theme.of(context).brightness),
+                          cefrColor: _cefrColor(cefr),
                           disabled: _saving,
                           onChanged: (v) => setState(() => _langLevels[lang] = v),
                         );
@@ -290,7 +324,7 @@ final rawLangs = profile['target_languages'];
                           height: 20, width: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : Text(l10n.saveProfile),
+                      : const Text('프로필 저장'),
                 ),
                 const SizedBox(height: AppSpacing.md),
 
@@ -304,6 +338,57 @@ final rawLangs = profile['target_languages'];
                 ),
                 const SizedBox(height: AppSpacing.lg),
 
+                _SectionCard(
+                  title: '서버 주소',
+                  subtitle: '백엔드 API URL',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextField(
+                        controller: _serverUrlController,
+                        decoration: const InputDecoration(
+                          hintText: 'http://localhost:8000',
+                          border: OutlineInputBorder(),
+                        ),
+                        keyboardType: TextInputType.url,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      Row(
+                        children: [
+                          FilledButton.tonal(
+                            onPressed: _testingServer ? null : _testServerConnection,
+                            child: _testingServer
+                                ? const SizedBox(
+                                    height: 18,
+                                    width: 18,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Text('연결 테스트'),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton(
+                            onPressed: _saveServerUrl,
+                            child: const Text('저장'),
+                          ),
+                        ],
+                      ),
+                      if (_serverTestResult != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          _serverTestResult!,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: _serverTestResult == '연결 성공'
+                                ? Colors.green.shade700
+                                : Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.lg),
+
                 // ── Dev ──────────────────────────────────────────────────────
                 Card(
                   child: Column(children: [
@@ -311,7 +396,9 @@ final rawLangs = profile['target_languages'];
                       leading: Icon(Icons.developer_mode,
                           color: Theme.of(context).colorScheme.primary),
                       title: const Text('Dev Mode'),
-                      subtitle: const Text('로그인 없이 dev@local 사용자로 동작합니다.'),
+                      subtitle: const Text(
+                        '기기 익명 ID로 자동 로그인합니다. 개발 시 서버 폴백 유저도 지원합니다.',
+                      ),
                     ),
                     const Divider(height: 1),
                     const ListTile(
@@ -392,8 +479,6 @@ class _LangLevelSlider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Column(
@@ -403,10 +488,7 @@ class _LangLevelSlider extends StatelessWidget {
             children: [
               Text(flag, style: const TextStyle(fontSize: 18)),
               const SizedBox(width: 6),
-              Text(
-                label,
-                style: theme.textTheme.titleSmall?.copyWith(fontSize: 13),
-              ),
+              Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
               const Spacer(),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -429,7 +511,7 @@ class _LangLevelSlider extends StatelessWidget {
                 width: 36,
                 child: Text(
                   'Lv.${level.round()}',
-                  style: theme.textTheme.bodySmall,
+                  style: const TextStyle(fontSize: 12),
                   textAlign: TextAlign.right,
                 ),
               ),
@@ -441,9 +523,6 @@ class _LangLevelSlider extends StatelessWidget {
               thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
               overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
               activeTrackColor: cefrColor,
-              inactiveTrackColor: scheme.onSurface.withValues(
-                alpha: context.isDarkTheme ? 0.22 : 0.15,
-              ),
               thumbColor: cefrColor,
               overlayColor: cefrColor.withValues(alpha: 0.15),
             ),

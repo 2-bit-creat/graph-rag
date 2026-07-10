@@ -29,7 +29,6 @@ from .crud import (
     user_has_alias_embeddings,
 )
 from .entity_types import is_identity_type
-from .language_config import normalize_native
 from .llm_usage import log_usage
 from .models import Edge, Node, User
 from .rag import _get_client, embed_text, ensure_statement_embeddings
@@ -138,20 +137,6 @@ async def _retrieve_seeds(
     return [node for node, _dist in sorted(best.values(), key=lambda x: x[1])][:10]
 
 
-def _empty_time_window_context(
-    time_window_label: str | None, *, native_language: str = "korean"
-) -> str:
-    if not time_window_label:
-        return ""
-    native = normalize_native(native_language)
-    empty = (
-        "(No diary records for this time period.)"
-        if native == "english"
-        else "(해당 기간의 일기 기록이 없습니다.)"
-    )
-    return f"{time_window_label}\n{empty}"
-
-
 async def _build_context(
     session: AsyncSession,
     user_id: uuid.UUID,
@@ -159,12 +144,9 @@ async def _build_context(
     *,
     time_window: tuple[date, date] | None = None,
     time_window_label: str | None = None,
-    native_language: str = "korean",
 ) -> str:
     if not seeds:
-        return _empty_time_window_context(
-            time_window_label, native_language=native_language
-        )
+        return ""
     settings = get_settings()
     seed_limit = (
         settings.graph_chat_temporal_seed_limit
@@ -247,61 +229,28 @@ async def _build_context(
     parts = []
     if time_window_label:
         parts.append(time_window_label)
-    memory_header = _memory_header(native_language)
-    graph_header = _graph_facts_header(native_language)
     if memory_lines:
-        parts.append(f"{memory_header}\n" + "\n".join(memory_lines))
+        parts.append("사용자의 일기 기억:\n" + "\n".join(memory_lines))
     if triple_lines:
-        parts.append(f"{graph_header}\n" + "\n".join(triple_lines))
+        parts.append("지식그래프 사실:\n" + "\n".join(triple_lines))
     return "\n\n".join(parts)
 
 
-def _memory_header(native_language: str) -> str:
-    if normalize_native(native_language) == "english":
-        return "User diary memories:"
-    return "사용자의 일기 기억:"
-
-
-def _graph_facts_header(native_language: str) -> str:
-    if normalize_native(native_language) == "english":
-        return "Knowledge graph facts:"
-    return "지식그래프 사실:"
-
-
-def build_graph_chat_system_prompt(*, native_language: str = "korean") -> str:
-    native = normalize_native(native_language)
-    if native == "english":
-        return (
-            "You are a friendly conversational partner who remembers the user's diary. "
-            "This is a casual space to chat when they're bored. Speak in warm, natural English "
-            "(match the user's language if they write in another language). "
-            "The 'diary memories' and 'knowledge graph facts' below come from the user's actual "
-            "journal entries. Mention them naturally when relevant — never invent facts not in "
-            "the memories. If nothing is relevant, say so lightly and ask a follow-up. "
-            "'Conversation summary so far' compresses prior chat in this room — do NOT treat it "
-            "as diary memory. Each [date] prefix on a memory line is when the event happened "
-            "(or was recorded) — use it for 'when did I…?' questions. "
-            "If a time range was requested and no records exist, say so — do not invent. "
-            "Keep replies short and chatty — no lecturing."
-        )
-    return (
-        "당신은 사용자의 일기를 기억하는 친근한 대화 상대입니다. 사용자가 심심할 때 "
-        "편하게 수다를 떨러 오는 공간이에요. 따뜻하고 자연스러운 한국어로 대화하세요 "
-        "(사용자가 다른 언어를 쓰면 맞춰주세요). "
-        "아래에 제공되는 '일기 기억'과 '지식그래프 사실'은 사용자가 실제로 쓴 일기에서 "
-        "나온 것입니다. 관련이 있을 때 자연스럽게 언급하며 대화하되, 기억에 없는 내용을 "
-        "지어내지 마세요. 관련 기억이 없으면 솔직하게 모른다고 하고 가볍게 되물어보세요. "
-        "'지금까지의 대화 요약'은 이 채팅방의 이전 대화를 압축한 것이지 일기 기억이 "
-        "아닙니다 — 요약을 일기 기억처럼 인용하지 마세요. "
-        "일기 기억 각 줄 앞의 [날짜]는 사건이 일어난 날(있으면) 또는 일기에 기록된 "
-        "날입니다 — '언제 …했지?' 같은 질문에는 이 날짜로 답하세요. "
-        "요청 기간이 명시되어 있고 그 기간의 기록이 없으면 지어내지 말고 "
-        "그 기간의 기록이 없다고 말하세요. "
-        "답변은 수다 톤으로 짧고 편하게 — 강의하지 마세요."
-    )
-
-
-_SYSTEM_PROMPT = build_graph_chat_system_prompt(native_language="korean")
+_SYSTEM_PROMPT = (
+    "당신은 사용자의 일기를 기억하는 친근한 대화 상대입니다. 사용자가 심심할 때 "
+    "편하게 수다를 떨러 오는 공간이에요. 따뜻하고 자연스러운 한국어로 대화하세요 "
+    "(사용자가 다른 언어를 쓰면 맞춰주세요). "
+    "아래에 제공되는 '일기 기억'과 '지식그래프 사실'은 사용자가 실제로 쓴 일기에서 "
+    "나온 것입니다. 관련이 있을 때 자연스럽게 언급하며 대화하되, 기억에 없는 내용을 "
+    "지어내지 마세요. 관련 기억이 없으면 솔직하게 모른다고 하고 가볍게 되물어보세요. "
+    "'지금까지의 대화 요약'은 이 채팅방의 이전 대화를 압축한 것이지 일기 기억이 "
+    "아닙니다 — 요약을 일기 기억처럼 인용하지 마세요. "
+    "일기 기억 각 줄 앞의 [날짜]는 사건이 일어난 날(있으면) 또는 일기에 기록된 "
+    "날입니다 — '언제 …했지?' 같은 질문에는 이 날짜로 답하세요. "
+    "요청 기간이 명시되어 있고 그 기간의 기록이 없으면 지어내지 말고 "
+    "그 기간의 기록이 없다고 말하세요. "
+    "답변은 수다 톤으로 짧고 편하게 — 강의하지 마세요."
+)
 
 
 def build_graph_chat_messages(
@@ -310,27 +259,15 @@ def build_graph_chat_messages(
     history: list[dict[str, Any]],
     context: str,
     summary: str | None = None,
-    native_language: str = "korean",
 ) -> list[dict[str, str]]:
     """Assemble the LLM message list (persona → summary → history → RAG → user)."""
     settings = get_settings()
-    native = normalize_native(native_language)
-    summary_prefix = (
-        "Conversation summary so far:\n"
-        if native == "english"
-        else "지금까지의 대화 요약:\n"
-    )
-    empty_context = (
-        "(No diary memories related to this message.)"
-        if native == "english"
-        else "(이번 메시지와 관련된 일기 기억이 없습니다.)"
-    )
     messages: list[dict[str, str]] = [
-        {"role": "system", "content": build_graph_chat_system_prompt(native_language=native)},
+        {"role": "system", "content": _SYSTEM_PROMPT},
     ]
     if summary:
         messages.append(
-            {"role": "system", "content": f"{summary_prefix}{summary}"}
+            {"role": "system", "content": f"지금까지의 대화 요약:\n{summary}"}
         )
     max_history = settings.graph_chat_history_turns + settings.graph_chat_summary_batch
     for m in history[-max_history:]:
@@ -341,7 +278,7 @@ def build_graph_chat_messages(
     messages.append(
         {
             "role": "system",
-            "content": context or empty_context,
+            "content": context or "(이번 메시지와 관련된 일기 기억이 없습니다.)",
         }
     )
     messages.append({"role": "user", "content": message})
@@ -358,8 +295,6 @@ async def graph_chat_answer(
     settings = get_settings()
     tz = ZoneInfo(settings.chat_timezone)
     now = datetime.now(tz)
-
-    native_language = normalize_native(getattr(user, "native_language", None))
 
     time_window = parse_time_window(message, tz, now)
     time_window_label: str | None = None
@@ -390,17 +325,13 @@ async def graph_chat_answer(
 
     embedding_seeds = await _retrieve_seeds(session, user.id, message)
 
-    if time_window is not None:
-        # Date-scoped questions should use diary records from that window only.
-        seeds = list(temporal_seeds)
-    else:
-        seen: set[uuid.UUID] = set()
-        seeds = []
-        for node in embedding_seeds:
-            if node.id in seen:
-                continue
-            seen.add(node.id)
-            seeds.append(node)
+    seen: set[uuid.UUID] = set()
+    seeds: list[Node] = []
+    for node in temporal_seeds + embedding_seeds:
+        if node.id in seen:
+            continue
+        seen.add(node.id)
+        seeds.append(node)
 
     try:
         context = await _build_context(
@@ -409,7 +340,6 @@ async def graph_chat_answer(
             seeds,
             time_window=time_window,
             time_window_label=time_window_label,
-            native_language=native_language,
         )
     except Exception as exc:  # noqa: BLE001 — degrade to a memory-less answer, never 500
         logger.warning("graph_chat: context build failed for user %s: %s", user.id, exc)
@@ -422,7 +352,6 @@ async def graph_chat_answer(
         history=history,
         context=context,
         summary=summary,
-        native_language=native_language,
     )
 
     resp = await _get_client().chat.completions.create(

@@ -34,12 +34,6 @@ async def run_journal_fast_pipeline(
     source_type: str | None = None,
 ) -> tuple[object, dict]:
     """Audio → STT → translate. Returns quickly with status=ready."""
-    from .language_config import normalize_native
-    from .models import User as _User
-
-    user = await session.get(_User, user_id)
-    native_language = normalize_native(getattr(user, "native_language", None) if user else None)
-
     entry = await crud.create_journal_entry(session, user_id, audio_url=None)
     if source_type:
         # Dedicated column — the tracer overwrites pipeline_trace later.
@@ -266,7 +260,7 @@ async def run_journal_fast_pipeline(
             },
         )
         try:
-            transcript_ko = await transcribe_audio(stt_path, native_language=native_language)
+            transcript_ko = await transcribe_audio(stt_path)
             llm_transcript_ko = transcript_ko
             tracer.finish_step(
                 step,
@@ -291,7 +285,7 @@ async def run_journal_fast_pipeline(
     # 번역 제거(2026-07-04): 쓰기 경로는 정제만 — 번역은 학습 파이프라인(표현 추출)
     # 쪽에서 문장 단위로 다루고, 일기 자체를 통번역하는 기능은 사용하지 않기로 결정.
     gpt_input = llm_transcript_ko or transcript_ko
-    _active_prompt = build_cleanup_only_system_prompt(native_language=native_language)
+    _active_prompt = build_cleanup_only_system_prompt()
     step = tracer.begin_step(
         "gpt_cleanup",
         "llm",
@@ -301,7 +295,7 @@ async def run_journal_fast_pipeline(
         input_data={"user_message": gpt_input, "translate": False},
     )
     try:
-        cleaned = await cleanup_only(gpt_input, native_language=native_language)
+        cleaned = await cleanup_only(gpt_input)
         tracer.finish_step(
             step,
             output=cleaned,
@@ -357,9 +351,7 @@ async def run_journal_fast_pipeline(
     }
     effective_single = bool(cleaned.get("single_speaker")) or len(distinct) <= 1
     gated_source_type = gate_source_type(
-        cleaned.get("content_type"),
-        single_speaker=effective_single,
-        native_language=native_language,
+        cleaned.get("content_type"), single_speaker=effective_single
     )
 
     entry = await crud.update_journal_entry(
@@ -607,18 +599,13 @@ async def run_journal_text_pipeline(
     import re as _re
     from datetime import UTC, datetime
 
-    from .language_config import normalize_native
     from .journal_pipeline import build_cleanup_only_system_prompt, cleanup_only
-    from .models import User as _User
     from .precision_text import (
         dialogue_to_transcript,
         normalize_dialogue,
         pre_slice_by_speaker_lines,
         segments_from_dialogue,
     )
-
-    user = await session.get(_User, user_id)
-    native_language = normalize_native(getattr(user, "native_language", None) if user else None)
 
     # Resolve the attribution head label before slicing: with an attribution the
     # whole text belongs to one asserter, so unlabeled paste needs no [화자]: lines.
@@ -683,7 +670,7 @@ async def run_journal_text_pipeline(
     # 쓰기 = 정제만(빠름). 번역은 학습 시 온디맨드(POST .../translate)로 분리 —
     # 긴 글을 다국어로 동기 번역하면 지연이 과도하고, 정작 먼저 보고 싶은 건 정제된
     # 일기이기 때문. 그래프 빌드는 한국어 정제 텍스트를 쓰므로 영향 없음.
-    _active_prompt2 = build_cleanup_only_system_prompt(native_language=native_language)
+    _active_prompt2 = build_cleanup_only_system_prompt()
 
     step = tracer.begin_step(
         "gpt_cleanup",
@@ -694,7 +681,7 @@ async def run_journal_text_pipeline(
         input_data={"transcript_ko": labeled, "translate": False},
     )
     try:
-        cleaned = await cleanup_only(labeled, native_language=native_language)
+        cleaned = await cleanup_only(labeled)
         tracer.finish_step(
             step,
             output=cleaned,
@@ -753,7 +740,6 @@ async def run_journal_text_pipeline(
             cleaned.get("content_type"),
             single_speaker=effective_single,
             source_attributed=attribution_kind == "source",
-            native_language=native_language,
         )
     )
 

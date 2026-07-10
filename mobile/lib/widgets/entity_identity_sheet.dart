@@ -213,7 +213,7 @@ class _EntityPiPHeader extends StatelessWidget {
                 Text(
                   '정체성 확인',
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: context.mutedText,
+                        color: AppColors.textMuted,
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0.3,
                       ),
@@ -315,7 +315,7 @@ class _EntityIdentityPanelState extends State<_EntityIdentityPanel> {
         Text(
           '「${widget.entityName}」은(는) 어떻게 저장할까요?',
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: context.mutedText,
+                color: AppColors.textMuted,
                 height: 1.35,
               ),
         ),
@@ -352,7 +352,7 @@ class _EntityIdentityPanelState extends State<_EntityIdentityPanel> {
           const SizedBox(height: AppSpacing.md),
           Text(
             '기존 정체성',
-            style: Theme.of(context).textTheme.bodySmall,
+            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
           ),
           const SizedBox(height: AppSpacing.sm),
           TextField(
@@ -421,9 +421,7 @@ class _EntityIdentityPanelState extends State<_EntityIdentityPanel> {
       children: [
         Text(
           '기존 정체성을 고르세요.',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: context.mutedText,
-              ),
+          style: TextStyle(fontSize: 13, color: Colors.grey[700]),
         ),
         const SizedBox(height: AppSpacing.md),
         TextField(
@@ -465,7 +463,7 @@ class _EntityIdentityPanelState extends State<_EntityIdentityPanel> {
           const SizedBox(height: AppSpacing.md),
           Text(
             '검색 결과가 없습니다.',
-            style: Theme.of(context).textTheme.bodySmall,
+            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
           ),
         ],
         const SizedBox(height: AppSpacing.sm),
@@ -598,15 +596,14 @@ class _OrDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final divider = Theme.of(context).dividerColor;
     return Row(
       children: [
-        Expanded(child: Divider(color: divider)),
+        Expanded(child: Divider(color: Colors.grey.withValues(alpha: 0.35))),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-          child: Text('또는', style: Theme.of(context).textTheme.bodySmall),
+          child: Text('또는', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
         ),
-        Expanded(child: Divider(color: divider)),
+        Expanded(child: Divider(color: Colors.grey.withValues(alpha: 0.35))),
       ],
     );
   }
@@ -627,13 +624,9 @@ class _BackRow extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.arrow_back_rounded,
-                size: 20, color: context.mutedText),
+            Icon(Icons.arrow_back_rounded, size: 20, color: Colors.grey[700]),
             const SizedBox(width: 4),
-            Text('뒤로',
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      color: context.mutedText,
-                    )),
+            Text('뒤로', style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey[700])),
           ],
         ),
       ),

@@ -12,32 +12,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import get_settings
 from .crud import get_chat_session, set_chat_session_summary_state
 from .db import async_session_factory
-from .language_config import normalize_native
 from .llm_usage import log_usage
-from .models import ChatMessage, ChatSession, User
+from .models import ChatMessage, ChatSession
 from .rag import _get_client
 
 logger = logging.getLogger(__name__)
 
-
-def _summary_system_prompt(*, native_language: str = "korean") -> str:
-    native = normalize_native(native_language)
-    if native == "english":
-        return (
-            "You are a conversation summarizer. Merge [Existing summary] and [New dialogue] "
-            "into one updated summary. Preserve: new facts about the user, emotional state "
-            "and reasons, ongoing topics, plans or commitments they mentioned. Skip greetings "
-            "and small talk. Write in English bullet points ('-'), max 800 characters total."
-        )
-    return (
-        "당신은 대화 요약 도우미입니다. [기존 요약]과 [새 대화]를 합쳐 하나의 최신 요약으로 "
-        "갱신하세요. 다음을 우선 보존하세요: 사용자에 대해 새로 드러난 사실, 감정 상태와 그 "
-        "이유, 진행 중인 대화 주제, 사용자가 언급한 계획·약속. 인사말과 단순 잡담은 "
-        "생략하세요. 한국어 개조식(불릿 '-')으로, 전체 800자 이내로 쓰세요."
-    )
-
-
-_SUMMARY_SYSTEM = _summary_system_prompt(native_language="korean")
+_SUMMARY_SYSTEM = (
+    "당신은 대화 요약 도우미입니다. [기존 요약]과 [새 대화]를 합쳐 하나의 최신 요약으로 "
+    "갱신하세요. 다음을 우선 보존하세요: 사용자에 대해 새로 드러난 사실, 감정 상태와 그 "
+    "이유, 진행 중인 대화 주제, 사용자가 언급한 계획·약속. 인사말과 단순 잡담은 "
+    "생략하세요. 한국어 개조식(불릿 '-')으로, 전체 800자 이내로 쓰세요."
+)
 
 
 def needs_summary_update(
@@ -91,8 +77,6 @@ def _format_dialogue(messages: list[ChatMessage]) -> str:
 async def apply_summary_update(
     session: AsyncSession,
     row: ChatSession,
-    *,
-    native_language: str = "korean",
 ) -> bool:
     """Absorb one summary batch when needed. Returns True if summary_state changed."""
     settings = get_settings()
@@ -116,24 +100,18 @@ async def apply_summary_update(
     if current_state.get("upto_message_id") != expected_watermark_id:
         return False
 
-    native = normalize_native(native_language)
-    old_label = "(none)" if native == "english" else "(없음)"
-    new_label = "[New dialogue]" if native == "english" else "[새 대화]"
-    existing_label = "[Existing summary]" if native == "english" else "[기존 요약]"
-    updated_label = "Updated summary:" if native == "english" else "갱신된 요약:"
-
     old_summary = (state.get("text") or "").strip()
     user_prompt = (
-        f"{existing_label}\n{old_summary or old_label}\n\n"
-        f"{new_label}\n{_format_dialogue(to_summarize)}\n\n"
-        f"{updated_label}"
+        f"[기존 요약]\n{old_summary or '(없음)'}\n\n"
+        f"[새 대화]\n{_format_dialogue(to_summarize)}\n\n"
+        "갱신된 요약:"
     )
 
     try:
         resp = await _get_client().chat.completions.create(
             model=settings.openai_model,
             messages=[
-                {"role": "system", "content": _summary_system_prompt(native_language=native)},
+                {"role": "system", "content": _SUMMARY_SYSTEM},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.2,
@@ -175,11 +153,7 @@ async def update_session_summary(session_id: uuid.UUID, user_id: uuid.UUID) -> N
             row = await get_chat_session(session, user_id, session_id)
             if row is None:
                 return
-            user = await session.get(User, user_id)
-            native_language = normalize_native(
-                getattr(user, "native_language", None) if user else None
-            )
-            if await apply_summary_update(session, row, native_language=native_language):
+            if await apply_summary_update(session, row):
                 await session.commit()
         except Exception as exc:  # noqa: BLE001 — background task must not escape
             logger.warning(

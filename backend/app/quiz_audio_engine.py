@@ -14,9 +14,16 @@ DEFAULT_VOICE = "en-US-JennyNeural"
 MIN_AUDIO_BYTES = 512
 
 _LANGUAGE_VOICES: dict[str, str] = {
-    "english": "en-US-JennyNeural",
-    "korean": "ko-KR-SunHiNeural",
-    "german": "de-DE-KatjaNeural",
+    "english":    "en-US-JennyNeural",
+    "german":     "de-DE-KatjaNeural",
+    "japanese":   "ja-JP-NanamiNeural",
+    "chinese":    "zh-CN-XiaoxiaoNeural",
+    "french":     "fr-FR-DeniseNeural",
+    "spanish":    "es-ES-ElviraNeural",
+    "portuguese": "pt-BR-FranciscaNeural",
+    "italian":    "it-IT-ElsaNeural",
+    "arabic":     "ar-EG-SalmaNeural",
+    "russian":    "ru-RU-SvetlanaNeural",
 }
 
 

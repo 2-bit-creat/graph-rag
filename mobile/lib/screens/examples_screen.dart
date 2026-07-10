@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
-import '../theme/app_theme.dart';
+import ../theme/app_theme.dart
 
 class ExamplesScreen extends StatefulWidget {
   const ExamplesScreen({super.key, required this.entryId});

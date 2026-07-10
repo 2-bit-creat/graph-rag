@@ -50,7 +50,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
     final title = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('이름 변경'),
+        title: const Text('채팅방 이름 변경'),
         content: TextField(
           controller: ctrl,
           autofocus: true,
@@ -132,7 +132,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // ?�?� Brand + new chat ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+        // ── Brand + new chat ─────────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
           child: Row(
@@ -153,7 +153,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
               ),
               const SizedBox(width: 8),
               const Expanded(
-                child: Text('기억 그래프',
+                child: Text('MyLife English',
                     style:
                         TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
               ),
@@ -182,7 +182,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
         ),
         const SizedBox(height: 6),
 
-        // ?�?� Recent rooms ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+        // ── Recent rooms ─────────────────────────────────────────────────
         Expanded(
           child: ListenableBuilder(
             listenable: Listenable.merge([chatSession, journalTask]),
@@ -333,7 +333,7 @@ class _RoomTile extends StatelessWidget {
             children: [
               Icon(Icons.chat_bubble_outline_rounded,
                   size: 16,
-                  color: active ? cs.primary : context.mutedText),
+                  color: active ? cs.primary : AppColors.textMuted),
               const SizedBox(width: 8),
               Expanded(
                 child: Column(

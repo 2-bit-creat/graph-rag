@@ -87,7 +87,7 @@ class _SpeakerMergeSheetState extends State<_SpeakerMergeSheet> {
       if (!mounted) return;
       setState(() => _submitting = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('??: ${e.toString().replaceFirst('Exception: ', '')}')),
+        SnackBar(content: Text('?¤í¨: ${e.toString().replaceFirst('Exception: ', '')}')),
       );
     }
   }
@@ -102,16 +102,14 @@ class _SpeakerMergeSheetState extends State<_SpeakerMergeSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('?? ??? / ??', style: theme.textTheme.titleMedium),
+          Text('?ě ?Šěšę¸?/ ëśëŚŹ', style: theme.textTheme.titleMedium),
           const SizedBox(height: 4),
           Text(
-            '?? ???? ??? ?? ?? ?? ?? ?? ??? ????. '
-            '?? ???? ?? ????? ?? ?? ? ???.',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: context.mutedText,
-                ),
+            'ę°ě? ?Źë?´ëŠ´ ěš´ëëĽ?ę¸¸ę˛ ?ëŹ ?¤ëĽ¸ ?ě ?ëĄ ?ě´???Šěš?¸ě. '
+            '?ëŞť ?Šěł¤?źëŠ´ ëśëŚŹ ?ě´ě˝ěźëĄ??¤ě ?ë ???ě´??',
+            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
           ),
-                    const SizedBox(height: 14),
+          const SizedBox(height: 14),
           Flexible(
             child: SingleChildScrollView(
               child: Column(
@@ -127,7 +125,7 @@ class _SpeakerMergeSheetState extends State<_SpeakerMergeSheet> {
               Expanded(
                 child: OutlinedButton(
                   onPressed: _submitting ? null : () => Navigator.of(context).pop(false),
-                  child: const Text('??'),
+                  child: const Text('ěˇ¨ě'),
                 ),
               ),
               const SizedBox(width: 10),
@@ -136,7 +134,7 @@ class _SpeakerMergeSheetState extends State<_SpeakerMergeSheet> {
                   onPressed: _submitting ? null : _apply,
                   child: _submitting
                       ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Text('??'),
+                      : const Text('?ěŠ'),
                 ),
               ),
             ],
@@ -185,7 +183,7 @@ class _SpeakerMergeSheetState extends State<_SpeakerMergeSheet> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    members.map((m) => _sample[m] ?? '').where((t) => t.isNotEmpty).join(' ? '),
+                    members.map((m) => _sample[m] ?? '').where((t) => t.isNotEmpty).join(' Âˇ '),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
@@ -195,7 +193,7 @@ class _SpeakerMergeSheetState extends State<_SpeakerMergeSheet> {
             ),
             if (merged)
               IconButton(
-                tooltip: '??',
+                tooltip: 'ëśëŚŹ',
                 icon: const Icon(Icons.call_split_rounded, size: 18),
                 onPressed: _submitting ? null : () => _splitGroup(idx),
               ),

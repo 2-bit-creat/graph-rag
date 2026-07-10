@@ -968,9 +968,16 @@ class _NodeExpressionButtonState extends State<_NodeExpressionButton> {
 }
 
 const _kLangLabelMap = {
-  'english': '영어',
-  'korean':  '한국어',
-  'german':  '독일어',
+  'english':    '영어',
+  'japanese':   '일본어',
+  'chinese':    '중국어',
+  'spanish':    '스페인어',
+  'french':     '프랑스어',
+  'german':     '독일어',
+  'portuguese': '포르투갈어',
+  'italian':    '이탈리아어',
+  'arabic':     '아랍어',
+  'russian':    '러시아어',
 };
 
 class _ExpressionsBottomSheet extends StatefulWidget {
@@ -1014,7 +1021,7 @@ class _ExpressionsBottomSheetState extends State<_ExpressionsBottomSheet>
             Container(
               width: 40, height: 4,
               decoration: BoxDecoration(
-                color: context.mutedText.withValues(alpha: 0.55),
+                color: Colors.grey[400],
                 borderRadius: BorderRadius.circular(2),
               ),
             ),

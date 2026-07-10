@@ -5,9 +5,10 @@ import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 
 const _kLangDisplay = {
-  'english': '영어',
-  'korean': '한국어',
-  'german': '독일어',
+  'english': '영어', 'german': '독일어', 'japanese': '일본어',
+  'chinese': '중국어', 'spanish': '스페인어', 'french': '프랑스어',
+  'portuguese': '포르투갈어', 'italian': '이탈리아어',
+  'arabic': '아랍어', 'russian': '러시아어',
 };
 
 class StatementBankScreen extends StatefulWidget {

@@ -105,17 +105,8 @@ async def enqueue_bulk(
 
 
 async def _process_one(job: ExtractionJob) -> None:
-    from .db import async_session_factory
-    from .language_config import normalize_native
-    from .models import User
     from .node_expression_store import is_extracted, save_node_expressions
     from .statement_vocab_extractor import extract_multilang
-
-    native_language = "korean"
-    async with async_session_factory() as session:
-        user = await session.get(User, job.user_id)
-        if user:
-            native_language = normalize_native(getattr(user, "native_language", None))
 
     # Filter out already-done languages
     pending_langs = [
@@ -131,7 +122,6 @@ async def _process_one(job: ExtractionJob) -> None:
             content_ko=job.content_ko,
             translation_en=job.translation_en,
             languages=pending_langs,
-            native_language=native_language,
         )
         for lang, expressions in results.items():
             await save_node_expressions(job.user_id, job.node_id, lang, expressions, node_name=job.node_name)

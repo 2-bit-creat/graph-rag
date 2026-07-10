@@ -1,13 +1,12 @@
-﻿import 'package:flutter/material.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter/material.dart';
 
+import 'api/client.dart';
+import 'api/config.dart';
 import 'app_navigator.dart';
 import 'app_route_observer.dart';
 import 'auth/device_auth.dart';
 import 'chat/chat_session_controller.dart';
 import 'chat/chat_sidebar.dart';
-import 'l10n/app_localizations.dart';
-import 'locale/native_language_controller.dart';
 import 'screens/knowledge_graph_screen.dart';
 import 'theme/app_theme.dart';
 import 'theme/app_theme_controller.dart';
@@ -15,61 +14,42 @@ import 'widgets/app_theme_toggle_button.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await initApiConfig();
+  apiClient.updateBaseUrl(resolvedApiBaseUrl);
   await appThemeController.load();
-  final localeController = NativeLanguageController();
-  runApp(GraphRagApp(controller: localeController));
+  await ensureDeviceAuth();
+  runApp(const GraphRagApp());
 }
 
-class GraphRagApp extends StatefulWidget {
-  const GraphRagApp({super.key, required this.controller});
-
-  final NativeLanguageController controller;
-
-  @override
-  State<GraphRagApp> createState() => _GraphRagAppState();
-}
-
-class _GraphRagAppState extends State<GraphRagApp> {
-  @override
-  void initState() {
-    super.initState();
-    widget.controller.loadFromProfile();
-    ensureDeviceAuth();
-  }
+class GraphRagApp extends StatelessWidget {
+  const GraphRagApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge([widget.controller, appThemeController]),
+      listenable: appThemeController,
       builder: (context, _) {
-        return NativeLanguageScope(
-          controller: widget.controller,
-          child: MaterialApp(
-            title: 'MyLife English',
-            debugShowCheckedModeBanner: false,
-            locale: widget.controller.locale,
-            localizationsDelegates: const [
-              AppLocalizations.delegate,
-              GlobalMaterialLocalizations.delegate,
-              GlobalWidgetsLocalizations.delegate,
-              GlobalCupertinoLocalizations.delegate,
-            ],
-            supportedLocales: AppLocalizations.supportedLocales,
-            theme: buildAppTheme(brightness: Brightness.light),
-            darkTheme: buildAppTheme(brightness: Brightness.dark),
-            themeMode: appThemeController.mode,
-            navigatorKey: appNavigatorKey,
-            navigatorObservers: [appRouteObserver],
-            home: const ChatHomeShell(),
-          ),
+        return MaterialApp(
+          title: 'MyLife English',
+          debugShowCheckedModeBanner: false,
+          theme: buildAppTheme(brightness: Brightness.light),
+          darkTheme: buildAppTheme(brightness: Brightness.dark),
+          themeMode: appThemeController.mode,
+          navigatorKey: appNavigatorKey,
+          navigatorObservers: [appRouteObserver],
+          home: const ChatHomeShell(),
         );
       },
     );
   }
 }
 
-// ─── Chat-centric home: graph canvas + conversation panel + room sidebar ───────
+// ─── Chat-centric home shell (Claude-style sidebar + graph conversation) ──────
 
+/// The app's single home. The knowledge-graph conversation is the default view;
+/// a left sidebar (rail on wide, drawer on narrow) lists chat rooms and links to
+/// 기록/메뉴. Journal, quiz, and distillation all launch from inside the chat feed
+/// (Phase 4), so there's no bottom navigation anymore.
 class ChatHomeShell extends StatefulWidget {
   const ChatHomeShell({super.key});
 
@@ -101,21 +81,14 @@ class _ChatHomeShellState extends State<ChatHomeShell> {
     final graph = Scaffold(
       backgroundColor: shell.graphBackground,
       appBar: AppBar(
-        backgroundColor: shell.toolbarBackground,
-        foregroundColor: shell.graphLabel,
+        backgroundColor: shell.appBarBackground,
+        foregroundColor: shell.appBarForeground,
         elevation: 0,
         scrolledUnderElevation: 0.5,
         surfaceTintColor: Colors.transparent,
+        automaticallyImplyLeading: !wide,
         leading: wide
-            ? IconButton(
-                icon: Icon(
-                  _sidebarOpen
-                      ? Icons.menu_open_rounded
-                      : Icons.menu_rounded,
-                ),
-                tooltip: _sidebarOpen ? '사이드바 접기' : '사이드바 펼치기',
-                onPressed: _toggleSidebar,
-              )
+            ? null
             : Builder(
                 builder: (ctx) => IconButton(
                   icon: const Icon(Icons.menu_rounded),
@@ -139,7 +112,7 @@ class _ChatHomeShellState extends State<ChatHomeShell> {
               _chatOpen
                   ? Icons.chat_bubble_rounded
                   : Icons.chat_bubble_outline_rounded,
-              color: _chatOpen ? AppColors.hubGraph : shell.graphLabel,
+              color: _chatOpen ? AppColors.hubGraph : null,
             ),
             onPressed: () => setState(() => _chatOpen = !_chatOpen),
           ),
@@ -172,7 +145,7 @@ class _ChatHomeShellState extends State<ChatHomeShell> {
             curve: Curves.easeOutCubic,
             width: sidebarW,
             child: Material(
-              color: shell.barBackground,
+              color: shell.sidebarBackground,
               child: SafeArea(
                 child: _sidebarOpen
                     ? ChatSidebar(onCollapse: _toggleSidebar)

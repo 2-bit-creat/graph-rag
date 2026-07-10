@@ -244,76 +244,9 @@ def _content_type_guidance_block(content_type: str) -> str:
 def _build_extraction_system_prompt(
     *, content_type: str, fixed_speaker: str | None, native_language: str = "korean"
 ) -> str:
-    from ..language_config import lang_label, normalize_native
+    from ..tutor import _lang_label
 
-    native = normalize_native(native_language)
-    native_label = lang_label(native)
-
-    if native == "english":
-        json_example = """{
-  "contextTypeOptions": ["diary", "conversation"],
-  "claims": [
-    {
-      "speaker": "Speaker name or source",
-      "title": "5-7 word English title capturing the essence",
-      "statement": "1-2 clean English sentences with full meaning",
-      "concepts": [{"name": "concept1", "importance": 4, "kind": "concept"}, {"name": "Jenny", "importance": 3, "kind": "person"}],
-      "speaker_matched": false,
-      "concepts_matched": [false, false]
-    }
-  ]
-}"""
-        title_rule = "- title: 5–7 English words capturing the essence of this claim. Used as the graph node label."
-        statement_rule = "- statement: 1–2 clean English sentences (remove filler, preserve full meaning)."
-        concept_example = (
-            'e.g. "I felt bad thinking about the interview" → concepts: interview; '
-            '"Business is not going well" → concepts: business'
-        )
-        person_examples = (
-            "a person (Jenny, James), a relational term (mom, grandma, boss), "
-            "a named pet (Maya), a company (Acme Corp), a service/AI (Gemini), "
-            "or a named event/product/place (CES2025, iPhone)"
-        )
-        concept_nouns = "ideas, emotions, activities, objects, generic categories (interview, headache, basketball, meeting, business)"
-        person_in_statement = (
-            'e.g. "I designed the taxonomy with Jane" → concepts MUST include '
-            '{"name": "Jane", "kind": "person"} alongside taxonomy'
-        )
-        context_types = "[diary, conversation, meeting_notes, book, paper, news, lecture, magazine, reference]"
-        context_hint = "For casual multi-person talk with no clear medium, use conversation. Use reference for AI summaries or curated notes."
-    else:
-        json_example = """{
-  "contextTypeOptions": ["추천매체1", "추천매체2"],
-  "claims": [
-    {
-      "speaker": "화자명 또는 출처명",
-      "title": "핵심 내용을 담은 5-7단어 한국어 제목",
-      "statement": "정제된 핵심 한국어 진술 (1-2문장 전체 내용)",
-      "concepts": [{"name": "개념1", "importance": 4, "kind": "concept"}, {"name": "제니", "importance": 3, "kind": "person"}],
-      "speaker_matched": false,
-      "concepts_matched": [false, false]
-    }
-  ]
-}"""
-        title_rule = "- title: 5–7 Korean words capturing the essence of this claim. Used as the graph node label."
-        statement_rule = "- statement: 1–2 clean Korean sentences (remove filler, preserve full meaning)."
-        concept_example = (
-            'e.g. "면접이 생각나 기분이 안 좋았다" → concepts: 면접; '
-            '"사업이 잘 안 된다" → concepts: 사업'
-        )
-        person_examples = (
-            "a person (제니, 재석), a relational term (엄마, 할머니, 사장님), "
-            "a named pet (마야), a company/organization (앤톡, 기업은행), "
-            "a service/AI (Gemini), or a named event/product/place (CES2025, 아이폰)"
-        )
-        concept_nouns = "ideas, emotions, activities, objects, generic categories (면접, 두통, 농구, 회의, 사업)"
-        person_in_statement = (
-            'e.g. "장세영 전임과 함께 대분류를 설계했다" → concepts MUST include '
-            '{"name": "장세영", "kind": "person"} alongside 대분류'
-        )
-        context_types = "[일기, 대화, 회의록, 책, 논문, 뉴스, 강연, 잡지, 자료]"
-        context_hint = "For casual multi-person talk with no clear medium, use 대화. Use 자료 for AI summaries or curated notes."
-
+    native_label = _lang_label(native_language)
     if fixed_speaker:
         speaker_rule = (
             f'- speaker: every claim\'s "speaker" MUST be exactly "{fixed_speaker}" — the '
@@ -329,7 +262,19 @@ def _build_extraction_system_prompt(
 Extract speaker-attributed statements from the {native_label} source text below.
 
 Return ONLY valid JSON in this exact shape (no markdown, no commentary):
-{json_example}
+{{
+  "contextTypeOptions": ["추천매체1", "추천매체2"],
+  "claims": [
+    {{
+      "speaker": "화자명 또는 출처명",
+      "title": "핵심 내용을 담은 5-7단어 한국어 제목",
+      "statement": "정제된 핵심 한국어 진술 (1-2문장 전체 내용)",
+      "concepts": [{{"name": "개념1", "importance": 4, "kind": "concept"}}, {{"name": "제니", "importance": 3, "kind": "person"}}],
+      "speaker_matched": false,
+      "concepts_matched": [false, false]
+    }}
+  ]
+}}
 
 [HOW MANY CLAIMS]
 - Split on speaker change OR semantic topic shift within the same speaker.
@@ -343,29 +288,37 @@ Return ONLY valid JSON in this exact shape (no markdown, no commentary):
 
 [FIELDS]
 {speaker_rule}
-{title_rule}
-{statement_rule}
+- title: 5–7 Korean words capturing the essence of this claim. Used as the graph node label.
+- statement: 1–2 clean Korean sentences (remove filler, preserve full meaning).
 - concepts: 1–5 concrete nouns per claim — NEVER an empty array. Every claim has
   at least one concept: for emotional/reflective claims, extract the TARGET or
-  CAUSE of the feeling ({concept_example}), not just the emotion word. Each concept
+  CAUSE of the feeling (e.g. "면접이 생각나 기분이 안 좋았다" → concepts: 면접;
+  "사업이 잘 안 된다" → concepts: 사업), not just the emotion word. Each concept
   is an object:
   - name: the concept/entity name.
   - importance: 1-5 — how central this concept is to THIS statement (5 = the
     statement is essentially about this concept, 1 = mentioned only in passing).
   - kind: "person" if the name is a PROPER NOUN denoting a specific named entity —
-    {person_examples}. Use
-    "concept" for COMMON NOUNS: {concept_nouns}. When unsure, use "concept".
+    a person (제니, 재석), a relational term for one real person (엄마, 할머니,
+    사장님), a named pet (마야), a company/organization (앤톡, 기업은행), a
+    service/AI (Gemini), or a named event/product/place (CES2025, 아이폰). Use
+    "concept" for COMMON NOUNS: ideas, emotions, activities, objects, generic
+    categories (면접, 두통, 농구, 회의, 사업). When unsure, use "concept".
   - MANDATORY: every person or named entity MENTIONED inside the statement MUST
     appear in concepts with kind "person", IN ADDITION TO the topical nouns —
     never drop a mentioned name because the statement is mainly about something
-    else ({person_in_statement}). Strip titles/honorifics from the name.
+    else (e.g. "장세영 전임과 함께 대분류를 설계했다" → concepts MUST include
+    {{"name": "장세영", "kind": "person"}} alongside 대분류). Strip titles/
+    honorifics from the name (장세영 전임 → 장세영, 김 부장님 → 김 부장 is NOT ok,
+    use the bare name when one exists).
     The ONLY exception: do NOT tag the statement's own speaker; only OTHER
     entities referred to inside the statement.
 - speaker_matched: true only when speaker name was reused from existing_nodes.
 - concepts_matched: per-concept boolean (same order as concepts), true if reused
   from existing_nodes.
-- contextTypeOptions: top 2 guesses from {context_types}.
-  {context_hint}
+- contextTypeOptions: top 2 guesses from [일기, 대화, 회의록, 책, 논문, 뉴스, 강연, 잡지, 자료].
+  For casual multi-person talk with no clear medium, use 대화. Use 자료 for AI-generated
+  summaries, curated notes, or knowledge compiled from mixed sources.
 - Do NOT create Vocab nodes or Subject nodes."""
 
 

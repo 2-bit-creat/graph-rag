@@ -3246,15 +3246,13 @@ async def update_user_profile_settings(
     if target_language is not None:
         user.target_language = target_language
     if target_languages is not None:
-        from .language_config import validate_target_list
-
-        langs = validate_target_list(target_languages)
+        langs = [l.strip().lower() for l in target_languages if isinstance(l, str) and l.strip()]
+        if not langs:
+            raise ValueError("target_languages must be a non-empty list")
         user.target_languages = langs
         user.target_language = langs[0]
     if native_language is not None:
-        from .language_config import validate_native
-
-        user.native_language = validate_native(native_language)
+        user.native_language = native_language.strip().lower()
     if language_levels is not None:
         merged = dict(user.language_levels or {})
         for lang, lv in language_levels.items():
@@ -3282,13 +3280,11 @@ def get_language_level(user: "User", language: str) -> int:
 
 def get_effective_target_languages(user: "User") -> list[str]:
     """Return the user's active target languages (always at least one)."""
-    from .language_config import filter_target_languages
-
     langs = getattr(user, "target_languages", None)
     if langs and isinstance(langs, list):
-        return filter_target_languages(langs)
+        return [l for l in langs if isinstance(l, str)]
     legacy = getattr(user, "target_language", None) or "english"
-    return filter_target_languages([legacy])
+    return [legacy]
 
 
 async def get_all_statement_nodes(

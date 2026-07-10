@@ -58,16 +58,13 @@ ParsedStatement parseStatementFromNode(Map<String, dynamic> node) {
 String buildStatementDescription(String contextType, String content) =>
     jsonEncode({'context_type': contextType, 'content': content});
 
-Color contextTypeColor(String? type, {Brightness brightness = Brightness.light}) {
-  final fallback = brightness == Brightness.dark
-      ? AppColors.textMutedDark
-      : AppColors.textMuted;
+Color contextTypeColor(String? type) {
   return switch (type) {
     '대화' => AppColors.hubGraph,
     '회의록' => const Color(0xFF6366F1),
     '독백' => AppColors.accentWarm,
     '자료' => AppColors.hubVoice,
-    _ => fallback,
+    _ => AppColors.textMuted,
   };
 }
 
@@ -80,10 +77,7 @@ class StatementContextBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = contextTypeColor(
-      label,
-      brightness: Theme.of(context).brightness,
-    );
+    final color = contextTypeColor(label);
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 7 : 9,

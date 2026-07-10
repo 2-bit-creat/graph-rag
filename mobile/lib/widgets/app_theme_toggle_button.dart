@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../theme/app_theme_controller.dart';
+import 'app_theme_controller.dart';
 
 /// Top-right light / dark mode switch for the graph home shell.
 class AppThemeToggleButton extends StatelessWidget {

@@ -30,77 +30,42 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from . import crud
 from .config import get_settings
 from .graph_chat import _statement_content
-from .language_config import normalize_native
 from .models import ChatSession, User
 from .rag import _get_client, embed_texts
 
 logger = logging.getLogger(__name__)
 
-def _extract_system_prompt(*, native_language: str = "korean") -> str:
-    native = normalize_native(native_language)
-    me = "me" if native == "english" else "나"
-    if native == "english":
-        return (
-            "You help turn a user's AI chat into diary sentences. "
-            "Input is ONLY the user's own utterances in chronological order. "
-            "Extract new facts, experiences, emotions, and plans as first-person English diary sentences. "
-            "Rules:\n"
-            "- Never include AI replies, general knowledge, or encyclopedic info — only what the user said.\n"
-            "- Drop greetings, questions, and chit-chat with no factual content.\n"
-            "- Each sentence is independent and concise — one fact per sentence.\n"
-            "- Do not invent or guess missing content.\n"
-            f'- Default speaker is "{me}". When the user describes or reports what someone else said '
-            f'(e.g. "Mom said 10 o\'clock"), keep speaker "{me}" and write from the user\'s perspective '
-            f'(e.g. "Mom told me to come by 10"). Never rewrite into the other person\'s first person.\n'
-            f'- Use another speaker only when that person\'s own first-person words are recorded verbatim.\n'
-            f'Return JSON only: {{"sentences": [{{"text": "sentence", "speaker": "{me}"}}, ...]}}'
-        )
-    return (
-        "당신은 사용자가 AI와 나눈 대화를 일기로 정리해 주는 도우미입니다. "
-        "입력으로는 '사용자 본인이 한 발화'만 시간순으로 주어집니다. "
-        "사용자가 새롭게 밝힌 사실·경험·감정·계획을 1인칭 한국어 일기 문장으로 정리하세요. "
-        "규칙:\n"
-        "- AI의 답변이나 일반 상식·백과사전적 정보는 절대 넣지 마세요. 오직 사용자가 말한 것만.\n"
-        "- 질문·인사·잡담처럼 기록할 사실이 없는 발화는 버리세요.\n"
-        "- 각 문장은 독립적이고 간결하게, 한 문장에 하나의 사실만.\n"
-        "- 추측하거나 없는 내용을 지어내지 마세요.\n"
-        "- 기본 speaker는 \"나\"입니다. 사용자가 타인의 말·행동을 묘사·전달·간접인용한 경우"
-        "(예: \"엄마가 10시래\", \"친구가 바쁘대\")도 speaker는 \"나\"이고, "
-        "text는 사용자 시점의 일기 문장으로 남기세요"
-        '(예: "엄마가 10시까지 오라고 했다"). '
-        "그 내용을 타인 일인칭으로 바꾸거나 speaker를 그 사람으로 바꾸지 마세요.\n"
-        "- speaker를 타인으로 두는 것은, 그 사람이 실제로 일인칭으로 말한 발화가 "
-        "그대로 기록된 경우뿐입니다(직접 화법·대화 스크립트처럼 그 사람의 '나/저' 발화). "
-        "간접 화법·요약·전달은 절대 해당하지 않습니다.\n"
-        '반드시 {"sentences": [{"text": "문장", "speaker": "나"}, ...]} 형식의 JSON으로만 답하세요.'
-    )
+_EXTRACT_SYSTEM = (
+    "당신은 사용자가 AI와 나눈 대화를 일기로 정리해 주는 도우미입니다. "
+    "입력으로는 '사용자 본인이 한 발화'만 시간순으로 주어집니다. "
+    "사용자가 새롭게 밝힌 사실·경험·감정·계획을 1인칭 한국어 일기 문장으로 정리하세요. "
+    "규칙:\n"
+    "- AI의 답변이나 일반 상식·백과사전적 정보는 절대 넣지 마세요. 오직 사용자가 말한 것만.\n"
+    "- 질문·인사·잡담처럼 기록할 사실이 없는 발화는 버리세요.\n"
+    "- 각 문장은 독립적이고 간결하게, 한 문장에 하나의 사실만.\n"
+    "- 추측하거나 없는 내용을 지어내지 마세요.\n"
+    "- 기본 speaker는 \"나\"입니다. 사용자가 타인의 말·행동을 묘사·전달·간접인용한 경우"
+    "(예: \"엄마가 10시래\", \"친구가 바쁘대\")도 speaker는 \"나\"이고, "
+    "text는 사용자 시점의 일기 문장으로 남기세요"
+    '(예: "엄마가 10시까지 오라고 했다"). '
+    "그 내용을 타인 일인칭으로 바꾸거나 speaker를 그 사람으로 바꾸지 마세요.\n"
+    "- speaker를 타인으로 두는 것은, 그 사람이 실제로 일인칭으로 말한 발화가 "
+    "그대로 기록된 경우뿐입니다(직접 화법·대화 스크립트처럼 그 사람의 '나/저' 발화). "
+    "간접 화법·요약·전달은 절대 해당하지 않습니다.\n"
+    '반드시 {"sentences": [{"text": "문장", "speaker": "나"}, ...]} 형식의 JSON으로만 답하세요.'
+)
 
-
-def _refine_system_prompt(*, native_language: str = "korean") -> str:
-    native = normalize_native(native_language)
-    if native == "english":
-        return (
-            "You refine a user's diary draft. Input is a '- [speaker] sentence' list and edit instructions. "
-            "Delete, edit, merge, or add sentences per the instruction — never invent facts the user did not say. "
-            "Keep speaker tags; follow speaker changes only when instructed. "
-            "Do not rewrite reported speech into another person's first person. "
-            'Return JSON only: {"sentences": [{"text": "sentence", "speaker": "me"}, ...]}'
-        )
-    return (
-        "당신은 사용자의 일기 초안을 다듬어 주는 도우미입니다. "
-        "현재 초안은 '- [화자] 문장' 목록과 사용자의 수정 지시가 주어집니다. "
-        "지시에 따라 문장을 삭제·수정·병합·추가하세요. 사용자가 말하지 않은 새 사실을 "
-        "지어내지 마세요. "
-        "화자 태그는 유지하되, 지시가 화자를 바꾸면 따르세요. "
-        "타인의 말을 묘사·전달한 문장을 그 사람 일인칭으로 바꾸거나 speaker를 "
-        "그 사람으로 바꾸지 마세요 — speaker가 타인인 것은 그 사람의 실제 일인칭 "
-        "발화일 때만 허용됩니다. "
-        '반드시 {"sentences": [{"text": "문장", "speaker": "나"}, ...]} 형식의 JSON으로만 답하세요.'
-    )
-
-
-_EXTRACT_SYSTEM = _extract_system_prompt(native_language="korean")
-_REFINE_SYSTEM = _refine_system_prompt(native_language="korean")
+_REFINE_SYSTEM = (
+    "당신은 사용자의 일기 초안을 다듬어 주는 도우미입니다. "
+    "현재 초안은 '- [화자] 문장' 목록과 사용자의 수정 지시가 주어집니다. "
+    "지시에 따라 문장을 삭제·수정·병합·추가하세요. 사용자가 말하지 않은 새 사실을 "
+    "지어내지 마세요. "
+    "화자 태그는 유지하되, 지시가 화자를 바꾸면 따르세요. "
+    "타인의 말을 묘사·전달한 문장을 그 사람 일인칭으로 바꾸거나 speaker를 "
+    "그 사람으로 바꾸지 마세요 — speaker가 타인인 것은 그 사람의 실제 일인칭 "
+    "발화일 때만 허용됩니다. "
+    '반드시 {"sentences": [{"text": "문장", "speaker": "나"}, ...]} 형식의 JSON으로만 답하세요.'
+)
 
 
 def _normalize_sentence_item(raw) -> dict | None:
@@ -219,14 +184,10 @@ async def build_distill_draft(
         if m.role == "assistant":
             referenced_ids.update(str(x) for x in (m.referenced_node_ids or []))
 
-    native = normalize_native(getattr(user, "native_language", None))
-
     sentences: list[dict] = []
     if user_lines:
-        user_label = "User utterances:" if native == "english" else "사용자 발화:"
         sentences = await _extract_sentences(
-            _extract_system_prompt(native_language=native),
-            user_label + "\n" + "\n".join(f"- {l}" for l in user_lines),
+            _EXTRACT_SYSTEM, "사용자 발화:\n" + "\n".join(f"- {l}" for l in user_lines)
         )
 
     flagged = await _flag_duplicates(session, user.id, sentences, referenced_ids)
@@ -254,14 +215,12 @@ async def refine_distill_draft(
         if m.role == "assistant":
             referenced_ids.update(str(x) for x in (m.referenced_node_ids or []))
 
-    native = normalize_native(getattr(user, "native_language", None))
-
     user_content = (
-        ("Current draft:\n" if native == "english" else "현재 초안:\n")
+        "현재 초안:\n"
         + "\n".join(f"- [{s['speaker']}] {s['text']}" for s in current)
-        + (f"\n\nEdit instruction: {instruction}" if native == "english" else f"\n\n수정 지시: {instruction}")
+        + f"\n\n수정 지시: {instruction}"
     )
-    sentences = await _extract_sentences(_refine_system_prompt(native_language=native), user_content)
+    sentences = await _extract_sentences(_REFINE_SYSTEM, user_content)
     if not sentences:
         # LLM returned nothing usable — keep the current draft rather than wiping it.
         sentences = current

@@ -336,7 +336,6 @@ class MentionAutocompleteField extends StatefulWidget {
     this.decoration,
     this.focusNode,
     this.onSubmitted,
-    this.onChanged,
     this.onDirtyChanged,
     this.initialText = '',
     this.enabled = true,
@@ -348,7 +347,6 @@ class MentionAutocompleteField extends StatefulWidget {
   final InputDecoration? decoration;
   final FocusNode? focusNode;
   final ValueChanged<String>? onSubmitted;
-  final ValueChanged<String>? onChanged;
   final ValueChanged<bool>? onDirtyChanged;
   final String initialText;
   final bool enabled;
@@ -411,7 +409,6 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
   }
 
   void _onTextChanged() {
-    widget.onChanged?.call(_controller.text);
     final dirty = _controller.text.trim().isNotEmpty;
     if (dirty != _lastDirty) {
       _lastDirty = dirty;
@@ -633,7 +630,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
                   Text(
                     trailing,
                     style: theme.textTheme.labelSmall
-                        ?.copyWith(color: context.mutedText),
+                        ?.copyWith(color: AppColors.textMuted),
                   ),
               ],
             ),

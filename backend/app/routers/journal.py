@@ -568,7 +568,6 @@ async def generate_examples(
 async def generate_quiz_item(
     entry_id: uuid.UUID,
     quiz_type: str = Query(..., description="cloze | scramble | mcq_nuance"),
-    language: str | None = Query(None, description="Target language override"),
     body: QuizGenerateRequest | None = None,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
@@ -587,7 +586,6 @@ async def generate_quiz_item(
             entry_id=entry_id,
             is_freedom_on=body.is_freedom_on if body else None,
             selected_vocab_id=body.selected_vocab_id if body else None,
-            target_language=language,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
-import '../utils/tutor_labels.dart';
+import '../screens/tutor_screen.dart' show tutorLangLabel;
 import '../theme/app_theme.dart';
 
-/// Toolbar chip to switch the active target language for quizzes/tutor.
+/// ?¸ěëł??ę˛??¸ě´ ?í ???ëĄ?ě???ąëĄ???ěľ ?¸ě´ ě¤??ëëĽ?? í?ë¤.
+///
+/// ? í ???ë˛ `target_language`??ę°ąě ???ÂˇëŹ¸???ěą ???¤ëĽ¸ ?ëŠ´ęł?ë§ěś??
 class TargetLanguageButton extends StatelessWidget {
   const TargetLanguageButton({
     super.key,
@@ -20,9 +22,14 @@ class TargetLanguageButton extends StatelessWidget {
   final bool enabled;
 
   static const _flags = {
-    'english': '🇺🇸',
-    'korean': '🇰🇷',
-    'german': '🇩🇪',
+    'english': '?ş?¸',
+    'japanese': '?Ż?ľ',
+    'chinese': '?¨?ł',
+    'spanish': '?Ş?¸',
+    'french': '?Ť?ˇ',
+    'german': '?Š?Ş',
+    'portuguese': '?§?ˇ',
+    'italian': '?Ž?š',
   };
 
   Future<void> _pick(BuildContext context) async {
@@ -38,12 +45,12 @@ class TargetLanguageButton extends StatelessWidget {
             const Padding(
               padding: EdgeInsets.fromLTRB(
                   AppSpacing.pageH, 0, AppSpacing.pageH, AppSpacing.sm),
-              child: Text('학습 언어',
+              child: Text('?°ěľ ?¸ě´',
                   style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
             ),
             for (final lang in languages)
               ListTile(
-                leading: Text(_flags[lang] ?? '🌐', style: const TextStyle(fontSize: 22)),
+                leading: Text(_flags[lang] ?? '?', style: const TextStyle(fontSize: 22)),
                 title: Text(tutorLangLabel(lang)),
                 trailing: lang == selected
                     ? Icon(Icons.check_rounded, color: Theme.of(ctx).colorScheme.primary)
@@ -70,7 +77,7 @@ class TargetLanguageButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final flag = _flags[selected] ?? '🌐';
+    final flag = _flags[selected] ?? '?';
     final label = tutorLangLabel(selected);
     return TextButton.icon(
       onPressed: enabled && languages.length > 1 ? () => _pick(context) : null,

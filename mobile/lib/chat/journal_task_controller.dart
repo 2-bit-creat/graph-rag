@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../api/client.dart';
-import '../compose/journal_phase.dart';
+import '../compose/compose_session_controller.dart';
 
 /// Headless journal pipeline for inline chat compose.
 ///
@@ -52,16 +52,13 @@ class JournalTaskController extends ChangeNotifier {
       _phase != ComposePhase.composing &&
       !(_phase == ComposePhase.done || _phase == ComposePhase.error);
 
-  bool _graphBuildEligible(Map<String, dynamic>? entry, {bool force = false}) {
+  /// Graph draft not started yet (graph_pending or empty after ready).
+  bool _graphBuildEligible(Map<String, dynamic>? entry) {
     if (entry == null) return false;
     final status = entry['status']?.toString() ?? '';
-    final graphStatus = entry['graph_status']?.toString() ?? '';
-    if (force &&
-        (status == 'graph_staging_ready' || graphStatus == 'graph_staging_ready')) {
-      return true;
-    }
     if (status != 'ready') return false;
     if (speakersPending(entry)) return false;
+    final graphStatus = entry['graph_status']?.toString() ?? '';
     if (graphStatus == 'graph_pending' || graphStatus.isEmpty) return true;
     return false;
   }
@@ -218,33 +215,7 @@ class JournalTaskController extends ChangeNotifier {
   Future<void> retryGraphBuild() async {
     if (_entryId == null || !_graphBuildEligible(_entry, force: true)) return;
     _graphBuildStarted = false;
-    _maybeAutoBuildGraph(force: true);
-  }
-
-  Future<void> applyGraph(
-    String entryId, {
-    required List<Map<String, dynamic>> claims,
-    required String contextType,
-  }) async {
-    final serial = _workSerial;
-    _phase = ComposePhase.working;
-    _stageLabel = '지식그래프 확정 중';
-    notifyListeners();
-    try {
-      await apiClient.applyEntryGraph(
-        entryId,
-        claims: claims,
-        contextType: contextType,
-      );
-      if (serial != _workSerial || _entryId != entryId) return;
-      await refresh();
-    } catch (e) {
-      if (serial != _workSerial || _entryId != entryId) rethrow;
-      _phase = ComposePhase.error;
-      _stageLabel = '지식그래프 확정 실패';
-      notifyListeners();
-      rethrow;
-    }
+    _maybeAutoBuildGraph();
   }
 
   void _syncPolling() {
