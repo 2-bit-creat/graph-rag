@@ -58,7 +58,7 @@ def _message_out(m: ChatMessage) -> GraphChatMessageOut:
 
 
 async def _session_out(session: AsyncSession, row: ChatSession) -> ChatSessionOut:
-    preview = await crud.last_message_preview(session, row.id, user_id=user.id)
+    preview = await crud.last_message_preview(session, row.id, user_id=row.user_id)
     return ChatSessionOut(
         id=str(row.id),
         title=row.title,

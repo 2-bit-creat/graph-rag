@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import get_settings
 from .crud import get_chat_session, set_chat_session_summary_state
 from .db import async_session_factory
-from .llm_usage import log_usage
 from .models import ChatMessage, ChatSession
 from .rag import _get_client
 
@@ -121,7 +120,6 @@ async def apply_summary_update(
     except Exception as exc:  # noqa: BLE001 — keep prior summary on LLM failure
         logger.warning("chat_summary: LLM failed for session %s: %s", row.id, exc)
         return False
-    log_usage("chat_summary", resp)
     new_summary = (resp.choices[0].message.content or "").strip()
     if not new_summary:
         logger.warning(

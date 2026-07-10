@@ -29,7 +29,6 @@ from .crud import (
     user_has_alias_embeddings,
 )
 from .entity_types import is_identity_type
-from .llm_usage import log_usage
 from .models import Edge, Node, User
 from .rag import _get_client, embed_text, ensure_statement_embeddings
 from .temporal import format_time_window_label, parse_time_window
@@ -361,7 +360,6 @@ async def graph_chat_answer(
         max_tokens=settings.graph_chat_max_completion_tokens,
         timeout=settings.openai_timeout_sec,
     )
-    log_usage("graph_chat", resp)
     answer = (resp.choices[0].message.content or "").strip()
 
     return GraphChatResult(
