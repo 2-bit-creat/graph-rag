@@ -373,6 +373,17 @@ async def list_nodes_out(
             if nid is not None and nid not in entry_by_node:
                 entry_by_node[nid] = eid
 
+    # entry_id → created_at, so the graph list can show "기록일" without a
+    # per-node round trip (mirrors get_node_out's single-node lookup).
+    entry_created_at_by_entry: dict[uuid.UUID, datetime] = {}
+    entry_ids = set(entry_by_node.values())
+    if entry_ids:
+        entry_rows = await session.execute(
+            select(JournalEntry.id, JournalEntry.created_at)
+            .where(JournalEntry.id.in_(entry_ids))
+        )
+        entry_created_at_by_entry = dict(entry_rows.all())
+
     alias_emb_counts = await _alias_embedding_counts(session, node_ids)
 
     return [
@@ -381,6 +392,7 @@ async def list_nodes_out(
             profiles.get(n.id),
             speaker_name=speaker_by_chunk.get(n.id),
             source_entry_id=entry_by_node.get(n.id),
+            entry_created_at=entry_created_at_by_entry.get(entry_by_node.get(n.id)),
             alias_embedding_count=alias_emb_counts.get(n.id, 0),
         )
         for n in nodes
@@ -598,6 +610,7 @@ async def _get_or_create_node(
     description: str | None = None,
     user_id: uuid.UUID | None = None,
     importance_delta: int = 0,
+    occurred_at: date | None = None,
 ) -> Node:
     name = (name or "").strip()
     type_ = normalize_entity_type(type_)
@@ -621,6 +634,7 @@ async def _get_or_create_node(
             description=description,
             user_id=user_id,
             importance_score=importance_delta,
+            occurred_at=occurred_at,
         )
         session.add(node)
         await session.flush()
@@ -632,6 +646,9 @@ async def _get_or_create_node(
         # so recurring themes naturally outweigh one-off mentions.
         if importance_delta:
             node.importance_score = (node.importance_score or 0) + importance_delta
+        # Backfill only — never overwrite an already-recorded occurrence date.
+        if occurred_at and not node.occurred_at:
+            node.occurred_at = occurred_at
     return node
 
 

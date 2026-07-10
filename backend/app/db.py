@@ -174,6 +174,19 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_alias_embeddings_embedding ON node_alias_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50)",
     "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS occurred_at DATE",
     "CREATE INDEX IF NOT EXISTS idx_nodes_user_occurred ON nodes (user_id, occurred_at)",
+    # Backfill occurred_at for Statement nodes created before this column was
+    # populated at write time — derives the date from the earliest linked
+    # journal entry. Idempotent (only touches NULL rows); safe to re-run.
+    """
+    UPDATE nodes n SET occurred_at = sub.d FROM (
+        SELECT jgl.node_id, MIN(je.created_at::date) AS d
+        FROM journal_graph_links jgl
+        JOIN journal_entries je ON je.id = jgl.journal_entry_id
+        WHERE jgl.node_id IS NOT NULL
+        GROUP BY jgl.node_id
+    ) sub
+    WHERE n.id = sub.node_id AND n.type = 'Statement' AND n.occurred_at IS NULL
+    """,
 ]
 
 

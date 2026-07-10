@@ -19,7 +19,7 @@ import re
 import time
 import uuid as _uuid
 from collections import deque
-from datetime import datetime, timezone, timedelta
+from datetime import date as _date, datetime, timezone, timedelta
 from functools import lru_cache
 from typing import Any, Literal
 
@@ -717,6 +717,12 @@ async def kg_commit(
     node_ids: set[str] = set()
     edge_ids: set[str] = set()
 
+    occurred_at = _date.today()
+    if body.journal_entry_id is not None:
+        source_entry = await crud.get_journal_entry(session, body.journal_entry_id, user.id)
+        if source_entry is not None and source_entry.created_at:
+            occurred_at = source_entry.created_at.date()
+
     for claim in body.claims:
         speaker_name = (claim.speaker or "").strip()
         statement_text = (claim.statement or "").strip()
@@ -741,6 +747,7 @@ async def kg_commit(
             type_="Statement",
             description=stmt_description,
             user_id=user.id,
+            occurred_at=occurred_at,
         )
         node_ids.add(str(stmt_node.id))
 
@@ -1168,6 +1175,7 @@ async def _persist_claims(
     user_id: _uuid.UUID,
     claims: list[dict],
     context_type: str,
+    occurred_at: _date | None = None,
 ) -> tuple[set[str], set[str]]:
     """Persist claims as (Person|Source)-SPOKE_OR_PUBLISHED->(Statement)-CONTEXT->(Concept).
 
@@ -1175,6 +1183,8 @@ async def _persist_claims(
     외부 출처 (매체·기관·AI) attribution — claim["speaker_type"] decides.
     Returns (node_ids, edge_ids) as string sets. Shared by /kg/commit and the
     journal-entry graph builder. NEVER creates Vocab nodes (architecture rule #1).
+    ``occurred_at`` stamps new Statement nodes with the source entry's date so
+    the graph can answer "언제…?" queries (see [[temporal.py]]).
     """
     node_ids: set[str] = set()
     edge_ids: set[str] = set()
@@ -1195,6 +1205,7 @@ async def _persist_claims(
         stmt_node = await crud._get_or_create_node(
             session, name=title, type_="Statement",
             description=stmt_description, user_id=user_id,
+            occurred_at=occurred_at,
         )
         node_ids.add(str(stmt_node.id))
 
@@ -1424,7 +1435,10 @@ async def persist_entry_claims(
         for c in claims:
             c.setdefault("speaker_type", "Source")
 
-    node_ids, edge_ids = await _persist_claims(session, user_id, claims, context_type)
+    entry_date = entry.created_at.date() if entry is not None and entry.created_at else None
+    node_ids, edge_ids = await _persist_claims(
+        session, user_id, claims, context_type, occurred_at=entry_date
+    )
     await _link_confirmed_voices_to_nodes(session, user_id, entry_id)
     await session.commit()
 

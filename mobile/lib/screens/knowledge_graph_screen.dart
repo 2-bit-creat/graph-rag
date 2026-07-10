@@ -12,7 +12,6 @@ import '../widgets/chat_journal_compose_bar.dart';
 import '../widgets/graph_chat_panel.dart';
 import '../widgets/graph_inspector_panel.dart';
 import '../widgets/knowledge_graph_canvas.dart';
-import '../widgets/ontology_rules_panel.dart';
 import '../widgets/ontology_settings_sheet.dart';
 import 'graph_trash_screen.dart';
 
@@ -127,7 +126,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   Map<String, dynamic>? _selectedNode;
   Map<String, dynamic>? _selectedEdge;
   final _canvasKey = GlobalKey<KnowledgeGraphCanvasState>();
-  bool _showOntologyRules = false;
   // 화자 숨김(Speaker-to-Color) 모드: head 노드를 물리에서 제거하고
   // Statement를 화자색으로 인코딩 — 슈퍼노드(성게) 뭉침 해소용.
   bool _hideHeads = false;
@@ -1135,20 +1133,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
               onTypeSelected: (t) => setState(() => _typeFilter = t),
             ),
           ),
-          OntologyRulesPanel(
-            ontologyName:
-                _ontology?['name']?.toString() ?? 'DailyLife_English',
-            entityTypes: entityTypes,
-            relationTypes: relationTypes,
-            typeColors: typeColors,
-            expanded: _showOntologyRules,
-            onToggle: () {
-              setState(() => _showOntologyRules = !_showOntologyRules);
-              _canvasKey.currentState?.refit();
-            },
-            onEdit: () =>
-                OntologySettingsSheet.show(context, onApplied: _load),
-          ),
           Expanded(
             child: _canvasWithCard(
               nodes: nodes,
@@ -1503,6 +1487,14 @@ class _SelectionInfoCard extends StatelessWidget {
   final VoidCallback onDetail;
   final VoidCallback onClose;
 
+  /// "기록일" — when this happened, falling back to when it was written down.
+  static String? _recordedDateLabel(Map<String, dynamic> n) {
+    final raw = (n['occurred_at'] ?? n['entry_created_at'] ?? n['created_at'])
+        ?.toString();
+    if (raw == null || raw.isEmpty) return null;
+    return raw.split('T').first;
+  }
+
   /// Statement: context badge + plain content (never raw JSON).
   static ({String? contextType, String content}) _statementPreview(
       Map<String, dynamic> n) {
@@ -1580,6 +1572,13 @@ class _SelectionInfoCard extends StatelessWidget {
                       StatementContextBadge(
                         label: stmtPreview!.contextType!,
                         compact: true,
+                      ),
+                    ],
+                    if (_recordedDateLabel(n) != null) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        '· ${_recordedDateLabel(n)}',
+                        style: TextStyle(fontSize: 11, color: shell.mutedText),
                       ),
                     ],
                   ],

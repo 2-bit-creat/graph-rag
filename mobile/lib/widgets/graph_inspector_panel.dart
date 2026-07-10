@@ -947,6 +947,18 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
             onTap: () => widget.onSelectEdge?.call(e),
           )),
       const SizedBox(height: 16),
+      Builder(builder: (context) {
+        final recorded = (node['occurred_at'] ?? node['entry_created_at'] ?? node['created_at'])
+            ?.toString()
+            .split('T')
+            .first;
+        if (recorded == null || recorded.isEmpty) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Text('기록일: $recorded',
+              style: TextStyle(fontSize: 11, color: context.mutedText)),
+        );
+      }),
       Text(
         'ID: ${id.substring(0, 8)}… · ${node['created_at']?.toString().split('T').first ?? ''}',
         style: TextStyle(fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
