@@ -522,14 +522,9 @@ class QuizGraphGenerateCard extends StatelessWidget {
   ];
 
   static const _kLangMeta = {
-    'english':    (label: '영어 🇺🇸'),
-    'german':     (label: '독일어 🇩🇪'),
-    'japanese':   (label: '일본어 🇯🇵'),
-    'chinese':    (label: '중국어 🇨🇳'),
-    'spanish':    (label: '스페인어 🇪🇸'),
-    'french':     (label: '프랑스어 🇫🇷'),
-    'portuguese': (label: '포르투갈어 🇧🇷'),
-    'italian':    (label: '이탈리아어 🇮🇹'),
+    'english': (label: '영어 🇺🇸'),
+    'korean':  (label: '한국어 🇰🇷'),
+    'german':  (label: '독일어 🇩🇪'),
   };
 
   String get _settingsHint {

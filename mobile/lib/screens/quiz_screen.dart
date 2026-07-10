@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../theme/app_theme.dart';
 
 class QuizScreen extends StatefulWidget {
   const QuizScreen({super.key, required this.entryId});
@@ -67,7 +68,7 @@ class _QuizScreenState extends State<QuizScreen> {
             Text(card['question'] ?? '', style: Theme.of(context).textTheme.headlineSmall),
             if (card['hint'] != null && card['hint'].toString().isNotEmpty) ...[
               const SizedBox(height: 12),
-              Text('Hint: ${card['hint']}', style: TextStyle(color: Colors.grey[600], fontStyle: FontStyle.italic)),
+              Text('Hint: ${card['hint']}', style: TextStyle(color: context.mutedText, fontStyle: FontStyle.italic)),
             ],
             const SizedBox(height: 24),
             if (_showAnswer) ...[
@@ -83,7 +84,7 @@ class _QuizScreenState extends State<QuizScreen> {
                     Text(card['answer'] ?? '', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
                     if (card['grammar_note'] != null && card['grammar_note'].toString().isNotEmpty) ...[
                       const SizedBox(height: 8),
-                      Text(card['grammar_note'], style: TextStyle(color: Colors.grey[700])),
+                      Text(card['grammar_note'], style: TextStyle(color: context.subtleText)),
                     ],
                   ],
                 ),

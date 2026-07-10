@@ -107,7 +107,7 @@ class _KgInsightScreenState extends State<KgInsightScreen> {
               Icon(
                 isOffline ? Icons.cloud_off_rounded : Icons.error_outline_rounded,
                 size: 56,
-                color: isOffline ? AppColors.textMuted : Colors.redAccent,
+                color: isOffline ? context.mutedText : Colors.redAccent,
               ),
               const SizedBox(height: AppSpacing.lg),
               Text(
@@ -127,7 +127,7 @@ class _KgInsightScreenState extends State<KgInsightScreen> {
                     'cd backend\npy -3.12 -m uvicorn app.main:app --reload --port 8000',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       fontFamily: 'monospace',
-                      color: AppColors.textMuted,
+                      color: context.mutedText,
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -135,7 +135,7 @@ class _KgInsightScreenState extends State<KgInsightScreen> {
               else
                 Text(
                   _error!,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.textMuted),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: context.mutedText),
                   textAlign: TextAlign.center,
                 ),
               const SizedBox(height: AppSpacing.xl),
@@ -288,7 +288,7 @@ class _StatCard extends StatelessWidget {
           Text(
             label,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: AppColors.textMuted,
+              color: context.mutedText,
             ),
           ),
         ],
@@ -414,7 +414,7 @@ class _HeatmapGrid extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
               Text('적음', style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: AppColors.textMuted, fontSize: 10,
+                color: context.mutedText, fontSize: 10,
               )),
               const SizedBox(width: 4),
               ...List.generate(5, (i) => Container(
@@ -427,7 +427,7 @@ class _HeatmapGrid extends StatelessWidget {
               )),
               const SizedBox(width: 4),
               Text('많음', style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: AppColors.textMuted, fontSize: 10,
+                color: context.mutedText, fontSize: 10,
               )),
             ],
           ),
@@ -456,7 +456,7 @@ class _DayFeed extends StatelessWidget {
         const SizedBox(height: AppSpacing.sm),
         if (statements.isEmpty)
           Text('이 날 기록된 명제가 없습니다.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.textMuted))
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: context.mutedText))
         else
           for (final s in statements) ...[
             AppSurfaceCard(

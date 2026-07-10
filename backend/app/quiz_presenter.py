@@ -27,6 +27,32 @@ def _target_from_quiz_data(quiz: Quiz) -> str:
     return quiz.sentence_en or quiz.question_ko or ""
 
 
+_LANG_LABEL = {
+    "english": "영어",
+    "korean": "한국어",
+    "german": "독일어",
+}
+
+
+def _source_label(quiz: Quiz) -> str:
+    """Human-readable provenance badge from quiz_data._source (empty for old rows)."""
+    data = quiz.quiz_data or {}
+    src = data.get("_source")
+    if not isinstance(src, dict):
+        return ""
+    mode = src.get("mode")
+    lang = _LANG_LABEL.get(str(src.get("language") or "").lower(), "")
+    if mode == "statement":
+        return f"{lang} 학습 표현".strip()
+    if mode == "default":
+        return f"{lang} 기본 단어장".strip()
+    # custom user list
+    vocab_id = str(src.get("vocab_id") or "")
+    if vocab_id == "ielts":
+        return "IELTS"
+    return "내 단어장"
+
+
 def _context_sentence(quiz: Quiz) -> str:
     data = quiz.quiz_data or {}
     if quiz.quiz_type == "cloze":
@@ -55,9 +81,11 @@ def quiz_queue_item_dict(
         "queue_kind": quiz.queue_kind,
         "difficulty_level": quiz.difficulty_level,
         "target_node": target_node,
+        "source_label": _source_label(quiz),
         "context_sentence": _context_sentence(quiz),
         "question_ko": quiz.question_ko,
         "sentence_en": quiz.sentence_en,
+        "quiz_data": quiz.quiz_data if isinstance(quiz.quiz_data, dict) else None,
         "next_review_at": quiz.next_review_at,
         "streak": quiz.repetitions,
         "times_correct": quiz.times_correct,

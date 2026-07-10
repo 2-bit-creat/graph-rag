@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../theme/app_theme.dart';
 
 /// LangChain-style node → edge → node flow graph with tap-to-inspect.
 class PipelineFlowGraph extends StatelessWidget {
@@ -94,7 +95,7 @@ class PipelineFlowGraph extends StatelessWidget {
               children: [
                 Text(
                   'Edge payload (output of $fromName)',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  style: TextStyle(fontSize: 12, color: context.mutedText),
                 ),
                 if (latency != null) ...[
                   const SizedBox(height: 4),
@@ -159,13 +160,13 @@ class PipelineFlowGraph extends StatelessWidget {
                 Text(
                   'type: $type · ${step['latency_ms'] ?? '?'}ms'
                   '${status != null ? ' · $status' : ''}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  style: TextStyle(fontSize: 12, color: context.mutedText),
                 ),
                 if (step['io_hint'] != null) ...[
                   const SizedBox(height: 6),
                   Text(
                     step['io_hint'].toString(),
-                    style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+                    style: TextStyle(fontSize: 11, color: context.subtleText),
                   ),
                 ],
                 if (step['system_prompt'] != null) ...[
@@ -199,7 +200,7 @@ class PipelineFlowGraph extends StatelessWidget {
                   const SizedBox(height: 12),
                   Text(
                     '이 분기는 실행되지 않았습니다 (skip).',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                    style: TextStyle(fontSize: 12, color: context.subtleText),
                   ),
                 ],
                 if (!hasInput && !hasOutput && status == 'pending') ...[
@@ -341,12 +342,12 @@ class PipelineFlowGraph extends StatelessWidget {
             if (subtitle != null)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
-                child: Text(subtitle!, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                child: Text(subtitle!, style: TextStyle(fontSize: 11, color: context.mutedText)),
               ),
             const SizedBox(height: 4),
             Text(
               '노드 탭 = 상세 · 화살표(엣지) 탭 = output payload',
-              style: TextStyle(fontSize: 10, color: Colors.grey[500]),
+              style: TextStyle(fontSize: 10, color: context.mutedText),
             ),
             const SizedBox(height: 12),
             SingleChildScrollView(
@@ -450,7 +451,7 @@ class _FlowNode extends StatelessWidget {
               if (ms != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
-                  child: Text('${ms}ms', style: TextStyle(fontSize: 9, color: Colors.grey[600])),
+                  child: Text('${ms}ms', style: TextStyle(fontSize: 9, color: context.mutedText)),
                 ),
             ],
           ),
@@ -641,7 +642,7 @@ class SlowPathActionCard extends StatelessWidget {
                                         : 'Slow Path 대기',
                         style: TextStyle(
                           fontSize: 12,
-                          color: _failed ? Colors.red.shade700 : Colors.grey[700],
+                          color: _failed ? Colors.red.shade700 : context.subtleText,
                         ),
                       ),
                     ],
@@ -691,7 +692,7 @@ class SlowPathActionCard extends StatelessWidget {
               const SizedBox(height: 10),
               Text(
                 '백그라운드 실행 중… 완료되면 자동으로 갱신됩니다.',
-                style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+                style: TextStyle(fontSize: 11, color: context.subtleText),
               ),
               const SizedBox(height: 8),
               Row(
@@ -887,7 +888,7 @@ class PipelinePhaseConnector extends StatelessWidget {
           Expanded(child: Divider(color: Colors.grey.shade400)),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Text(label, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+            child: Text(label, style: TextStyle(fontSize: 11, color: context.mutedText)),
           ),
           Expanded(child: Divider(color: Colors.grey.shade400)),
         ],

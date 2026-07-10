@@ -19,9 +19,50 @@ _SPEAKER_LINE_RE = re.compile(
     re.MULTILINE,
 )
 
+# 대괄호 없는 "이름: 내용" 줄 (카톡·회의록 붙여넣기). 이름은 숫자 없는 12자
+# 이하 한글/영문(+공백·점·언더스코어) — 시간("12:30")·목록 콜론 오탐 방지.
+_BARE_SPEAKER_LINE_RE = re.compile(
+    r"^\s*(?P<speaker>[A-Za-z가-힣][A-Za-z가-힣 ._-]{0,11}?)\s*[:：]\s*(?P<text>.+?)\s*$"
+)
+
+
+def _pre_slice_bare_speaker_lines(paragraph_text: str) -> list[dict[str, str]]:
+    """Heuristic fallback for un-bracketed "이름: 내용" dialogue pastes.
+
+    산문 속 콜론("결심: …", "주의: …", URL)을 대화로 오인하지 않도록 보수적으로:
+    ① 서로 다른 화자 2명 이상, ② 한 화자가 2번 이상 말하거나(멀티턴) 매칭 4줄 이상,
+    ③ 비어있지 않은 줄의 60% 이상이 매칭될 때만 대화로 인정. 산문의 섹션 헤더는
+    반복되지 않아 걸러진다. 미분리로 남아도 화자 확인 UI에서 지정 가능.
+    """
+    raw_lines = [l.strip() for l in paragraph_text.splitlines() if l.strip()]
+    parsed: list[dict[str, str]] = []
+    matched = 0
+    for line in raw_lines:
+        m = _BARE_SPEAKER_LINE_RE.match(line)
+        speaker = m.group("speaker").strip() if m else ""
+        text = m.group("text").strip() if m else ""
+        if m and not text.startswith("//"):
+            parsed.append({"speaker": speaker, "text": text})
+            matched += 1
+        elif parsed:
+            # 이어지는 줄은 사용자가 넣은 줄바꿈을 살려 붙인다(공백 병합 금지) —
+            # 목록·문단 구조가 화자별 스크립트에 그대로 남게.
+            parsed[-1]["text"] = f"{parsed[-1]['text']}\n{line}".strip()
+    counts: dict[str, int] = {}
+    for p in parsed:
+        counts[p["speaker"]] = counts.get(p["speaker"], 0) + 1
+    multi_turn = any(c >= 2 for c in counts.values()) or matched >= 4
+    if len(counts) >= 2 and multi_turn and matched * 5 >= len(raw_lines) * 3:
+        return parsed
+    return []
+
 
 def pre_slice_by_speaker_lines(paragraph_text: str) -> list[dict[str, str]]:
-    """Parse [화자명]: line blocks without merging same-speaker lines."""
+    """Parse [화자명]: line blocks without merging same-speaker lines.
+
+    대괄호 형식이 하나도 없으면 "이름: 내용" 맨살 형식을 휴리스틱으로 시도한다
+    (카톡·회의록 붙여넣기 자동 화자 분리 — 2026-07-04 텍스트/음성 통일 흐름).
+    """
     lines: list[dict[str, str]] = []
     for raw_line in paragraph_text.splitlines():
         line = raw_line.strip()
@@ -37,7 +78,10 @@ def pre_slice_by_speaker_lines(paragraph_text: str) -> list[dict[str, str]]:
             )
             continue
         if lines:
-            lines[-1]["text"] = f"{lines[-1]['text']} {line}".strip()
+            # 줄바꿈 보존(공백 병합 금지) — 위 _pre_slice_bare_speaker_lines와 동일.
+            lines[-1]["text"] = f"{lines[-1]['text']}\n{line}".strip()
+    if not lines:
+        return _pre_slice_bare_speaker_lines(paragraph_text)
     return lines
 
 

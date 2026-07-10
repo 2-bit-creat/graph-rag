@@ -216,7 +216,17 @@ async def repair_entry_speaker_bindings(
     user_id: uuid.UUID,
     entry: JournalEntry,
 ) -> bool:
-    """Restore speaker_profile_id on segments after a partial voice-data wipe."""
+    """Restore speaker_profile_id on segments after a partial voice-data wipe.
+
+    This is also the first-read path that creates each brand-new speaker's
+    profile/appearance for a freshly created entry (segments start with no
+    speaker_profile_id). For a text-sourced entry (@멘션), that label is a name
+    the user explicitly typed or picked — no diarization/voice ambiguity to
+    resolve — so (aside from '나' and the unattributed-prose placeholder
+    '글쓴이') it's auto-confirmed here, linking to a same-named existing Person
+    node when one exists, instead of prompting "누가 말했나요?" for something
+    already specified.
+    """
     segments = entry.transcript_segments
     if not isinstance(segments, list) or not segments:
         return False
@@ -241,10 +251,23 @@ async def repair_entry_speaker_bindings(
         if label:
             labels_in_segments.add(label)
 
+    is_text_source = entry.audio_url is None
+    claimed_node_ids: set[uuid.UUID] = set()
+
     changed = False
     for label in sorted(labels_in_segments):
         if label in profile_id_by_label:
             continue
+
+        auto_confirm = is_text_source and label not in ("나", "글쓴이")
+        matched_node = (
+            await crud.find_person_node_by_exact_name(
+                session, user_id, label, exclude_node_ids=claimed_node_ids
+            )
+            if auto_confirm
+            else None
+        )
+
         profile = await crud.create_speaker_profile(
             session,
             user_id=user_id,
@@ -252,12 +275,24 @@ async def repair_entry_speaker_bindings(
             embedding=None,
             last_entry_id=entry.id,
         )
+        match_score = 0.0
+        if auto_confirm:
+            if matched_node is not None:
+                profile = await crud.assign_exclusive_voice_profile_to_node(
+                    session, user_id, profile, matched_node, display_name=label,
+                )
+                claimed_node_ids.add(matched_node.id)
+            else:
+                profile.display_name = label
+                profile.label = label
+                await session.flush()
+            match_score = 1.0  # speaker_confirmation.HUMAN_CONFIRMED_MATCH_SCORE
         await crud.record_speaker_entry_appearance(
             session,
             entry_id=entry.id,
             profile_id=profile.id,
             session_label=label,
-            match_score=0.0,
+            match_score=match_score,
             duration_sec=0.0,
         )
         profile_id_by_label[label] = profile.id

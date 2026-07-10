@@ -18,6 +18,17 @@ DEFAULT_VOCAB_ID_ENGLISH = "default:english"
 DEFAULT_VOCAB_ID_GERMAN = "default:german"
 IELTS_VOCAB_ID = "ielts"
 STATEMENT_VOCAB_ID = "statement_expressions"
+# Expressions the learner fumbled during tutor composition drills. A system
+# vocabulary (read-mostly): populated by the tutor, browsable in the vocab hub,
+# and re-fed into 'review' drills to close the confused → practiced loop.
+# Surfaced per language as "tutor_conversation:<language>"; the bare id is a
+# legacy alias meaning "all languages".
+TUTOR_VOCAB_ID = "tutor_conversation"
+
+_TUTOR_LANG_DISPLAY = {
+    "english": "영어", "german": "독일어", "japanese": "일본어",
+    "chinese": "중국어", "spanish": "스페인어", "french": "프랑스어",
+}
 
 _DEFAULT_IDS = {DEFAULT_VOCAB_ID, DEFAULT_VOCAB_ID_ENGLISH, DEFAULT_VOCAB_ID_GERMAN}
 _STORE_VERSION = 1
@@ -199,7 +210,11 @@ async def list_vocabularies(user_id: uuid.UUID) -> list[dict[str, Any]]:
     ]
     # Return both language defaults + user-created custom sets
     # statement_bank:* entries are appended by the router (vocabulary.py)
-    return [_default_english_summary(), _default_german_summary(), *custom]
+    result = [_default_english_summary(), _default_german_summary(), *custom]
+    # Surface the tutor vocabulary once it has collected anything — one entry
+    # per language so learners never see mixed-language word lists.
+    result.extend(_tutor_vocab_summaries(store))
+    return result
 
 
 def _default_words_english() -> list[dict[str, Any]]:
@@ -237,6 +252,19 @@ async def get_vocabulary(user_id: uuid.UUID, vocab_id: str) -> dict[str, Any]:
         words = store.get("statement_expressions") or []
         summary = _statement_vocab_summary(store)
         summary["words"] = list(words)
+        return summary
+
+    if vocab_id == TUTOR_VOCAB_ID or vocab_id.startswith(f"{TUTOR_VOCAB_ID}:"):
+        language = (
+            vocab_id.split(":", 1)[1] if ":" in vocab_id else None
+        ) or None
+        summary = _tutor_vocab_summary(store, language)
+        items = [
+            e for e in (store.get("tutor_expressions") or [])
+            if isinstance(e, dict)
+            and (language is None or (e.get("language") or "english") == language)
+        ]
+        summary["words"] = list(reversed(items))
         return summary
 
     vocab = _find_vocab(store, vocab_id)
@@ -307,8 +335,208 @@ async def upsert_statement_expressions(
     await asyncio.to_thread(_upsert)
 
 
+# ── Tutor conversation vocabulary ─────────────────────────────────────────────
+
+
+def _tutor_vocab_summary(
+    store: dict[str, Any], language: str | None = None
+) -> dict[str, Any]:
+    words = [
+        e for e in (store.get("tutor_expressions") or [])
+        if isinstance(e, dict)
+        and (language is None or (e.get("language") or "english") == language)
+    ]
+    if language:
+        label = _TUTOR_LANG_DISPLAY.get(language, language.title())
+        name = f"튜터와 배운 표현 ({label})"
+        vocab_id = f"{TUTOR_VOCAB_ID}:{language}"
+    else:
+        name = "튜터와 배운 표현"
+        vocab_id = TUTOR_VOCAB_ID
+    return {
+        "id": vocab_id,
+        "name": name,
+        "description": "작문 드릴에서 헷갈렸던 표현 모음 (튜터가 추천 · 복습에 재출제)",
+        "created_at": None,
+        "word_count": len(words),
+        "is_default": False,
+        "is_system": True,
+        "language": language or "mixed",
+    }
+
+
+def _tutor_vocab_summaries(store: dict[str, Any]) -> list[dict[str, Any]]:
+    """One summary per language present in the tutor vocabulary."""
+    languages = sorted({
+        (e.get("language") or "english")
+        for e in (store.get("tutor_expressions") or [])
+        if isinstance(e, dict)
+    })
+    return [_tutor_vocab_summary(store, lang) for lang in languages]
+
+
+async def list_tutor_expressions(
+    user_id: uuid.UUID, language: str | None = None
+) -> list[dict[str, Any]]:
+    """Newest-first list of expressions saved from tutor drills.
+
+    ``language`` filters to a single target language (None = all).
+    """
+    lang = (language or "").strip().lower() or None
+
+    def _get() -> list[dict[str, Any]]:
+        store = _read_store_sync(user_id)
+        items = [
+            e for e in (store.get("tutor_expressions") or [])
+            if isinstance(e, dict)
+            and (lang is None or (e.get("language") or "english") == lang)
+        ]
+        return list(reversed(items))
+
+    return await asyncio.to_thread(_get)
+
+
+async def save_tutor_expression(
+    user_id: uuid.UUID,
+    *,
+    expression: str,
+    meaning: str = "",
+    example: str = "",
+    language: str = "english",
+    note: str = "",
+    prompt_ko: str = "",
+    user_attempt: str = "",
+) -> dict[str, Any]:
+    """Save (or refresh) a confused expression into the tutor vocabulary.
+
+    Dedupes by (language, lowercased expression). Stores the drill context —
+    the native-language prompt and the learner's attempt — so the entry can later
+    remind them *how* they got it wrong, not just the word.
+    """
+    expr = expression.strip()
+    if not expr:
+        raise ValueError("Expression is required")
+    key = expr.lower()
+    lang = (language or "english").strip().lower()
+
+    def _save() -> dict[str, Any]:
+        store = _read_store_sync(user_id)
+        items: list[dict[str, Any]] = store.get("tutor_expressions") or []
+        for existing in items:
+            if (
+                isinstance(existing, dict)
+                and (existing.get("word") or "").lower() == key
+                and (existing.get("language") or "english") == lang
+            ):
+                # Refresh gaps + bump last-seen without duplicating.
+                if meaning.strip():
+                    existing["meaning"] = meaning.strip()
+                if example.strip():
+                    existing["example"] = example.strip()
+                existing["updated_at"] = _utc_now()
+                _write_store_sync(user_id, store)
+                return existing
+        entry = {
+            "word": expr,
+            "meaning": meaning.strip(),
+            "example": example.strip(),
+            "language": lang,
+            "note": note.strip(),
+            "prompt_ko": prompt_ko.strip(),
+            "user_attempt": user_attempt.strip(),
+            "added_at": _utc_now(),
+            "review_count": 0,
+            "source": "tutor",
+        }
+        items.append(entry)
+        store["tutor_expressions"] = items
+        _write_store_sync(user_id, store)
+        return entry
+
+    return await asyncio.to_thread(_save)
+
+
+# Recent tutor drill rounds — a lightweight activity log (NOT the knowledge
+# graph). Lives in its own file so the vocab store stays focused. Capped so it
+# never grows unbounded.
+_TUTOR_HISTORY_FILENAME = "tutor_history.json"
+_TUTOR_HISTORY_CAP = 60
+
+
+def _tutor_history_path(user_id: uuid.UUID) -> Path:
+    root = Path(get_settings().upload_dir) / str(user_id)
+    root.mkdir(parents=True, exist_ok=True)
+    return root / _TUTOR_HISTORY_FILENAME
+
+
+def _read_tutor_history_sync(user_id: uuid.UUID) -> list[dict[str, Any]]:
+    path = _tutor_history_path(user_id)
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    return [x for x in data if isinstance(x, dict)] if isinstance(data, list) else []
+
+
+async def append_tutor_history(user_id: uuid.UUID, record: dict[str, Any]) -> None:
+    """Append one completed drill round; keep only the most recent rounds."""
+    def _append() -> None:
+        items = _read_tutor_history_sync(user_id)
+        items.append({**record, "created_at": _utc_now()})
+        if len(items) > _TUTOR_HISTORY_CAP:
+            items = items[-_TUTOR_HISTORY_CAP:]
+        _tutor_history_path(user_id).write_text(
+            json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    await asyncio.to_thread(_append)
+
+
+async def list_tutor_history(
+    user_id: uuid.UUID, limit: int = 20
+) -> list[dict[str, Any]]:
+    """Most-recent-first drill rounds."""
+    def _get() -> list[dict[str, Any]]:
+        items = _read_tutor_history_sync(user_id)
+        return list(reversed(items))[: max(0, limit)]
+
+    return await asyncio.to_thread(_get)
+
+
+async def delete_tutor_expression(
+    user_id: uuid.UUID, expression: str, language: str = "english"
+) -> bool:
+    key = expression.strip().lower()
+    lang = (language or "english").strip().lower()
+
+    def _delete() -> bool:
+        store = _read_store_sync(user_id)
+        items = store.get("tutor_expressions") or []
+        new_items = [
+            e for e in items
+            if not (
+                isinstance(e, dict)
+                and (e.get("word") or "").lower() == key
+                and (e.get("language") or "english") == lang
+            )
+        ]
+        if len(new_items) == len(items):
+            return False
+        store["tutor_expressions"] = new_items
+        _write_store_sync(user_id, store)
+        return True
+
+    return await asyncio.to_thread(_delete)
+
+
 async def delete_vocabulary(user_id: uuid.UUID, vocab_id: str) -> None:
-    if vocab_id in _DEFAULT_IDS or vocab_id == STATEMENT_VOCAB_ID:
+    if (
+        vocab_id in _DEFAULT_IDS
+        or vocab_id in (STATEMENT_VOCAB_ID, TUTOR_VOCAB_ID)
+        or vocab_id.startswith(f"{TUTOR_VOCAB_ID}:")
+    ):
         raise VocabularyForbiddenError("Cannot delete this system vocabulary")
 
     def _delete() -> None:

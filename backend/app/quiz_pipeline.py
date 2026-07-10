@@ -26,6 +26,31 @@ from .quiz_types import validate_quiz_type
 logger = logging.getLogger(__name__)
 
 
+def _statement_source_node_ids(statement_expr: dict | None) -> set[uuid.UUID]:
+    """Collect the graph node id(s) a statement expression was extracted from.
+
+    Reads the representative ``source_node_id`` plus every ``origins[].node_id`` so a
+    lemma shared across several Statement nodes anchors on all of them. Non-UUID or
+    empty values are skipped.
+    """
+    if not statement_expr:
+        return set()
+    raw_ids: list[str] = []
+    primary = statement_expr.get("source_node_id")
+    if primary:
+        raw_ids.append(str(primary))
+    for origin in statement_expr.get("origins") or []:
+        if isinstance(origin, dict) and origin.get("node_id"):
+            raw_ids.append(str(origin["node_id"]))
+    resolved: set[uuid.UUID] = set()
+    for rid in raw_ids:
+        try:
+            resolved.add(uuid.UUID(rid))
+        except (ValueError, AttributeError, TypeError):
+            continue
+    return resolved
+
+
 def _merge_quiz_trace_into_entry(entry_trace: dict | None, quiz_trace: dict) -> dict:
     """Append quiz_path steps to an existing journal entry trace for canvas display."""
     merged = dict(entry_trace or {})
@@ -66,6 +91,10 @@ async def _run_vocab_node_quiz_pipeline(
     tracer.run.status = "quiz_path"
     target_level = user.current_level
     effective_freedom = is_freedom_on if is_freedom_on is not None else user.is_freedom_on
+    native_language = getattr(user, "native_language", None) or "korean"
+    from .crud import get_effective_target_languages
+
+    target_lang = (get_effective_target_languages(user) or ["english"])[0]
 
     step = tracer.begin_step(
         "graph_context_resolve",
@@ -100,6 +129,8 @@ async def _run_vocab_node_quiz_pipeline(
         ctx,
         target_level=target_level,
         freedom_off=not effective_freedom,
+        native_language=native_language,
+        target_language=target_lang,
     )
     model = generated.pop("_model", None)
     system_prompt = generated.pop("_system_prompt", None)
@@ -112,7 +143,12 @@ async def _run_vocab_node_quiz_pipeline(
         quiz_type,
         {**generated, "quiz_data": generated["quiz_data"]},
         target_level=target_level,
+        target_language=target_lang,
+        native_language=native_language,
     )
+    qd = dict(validated["quiz_data"])
+    qd["language"] = target_lang
+    validated["quiz_data"] = qd
 
     quiz = await crud.create_quiz(
         session,
@@ -128,7 +164,7 @@ async def _run_vocab_node_quiz_pipeline(
     )
 
     tts_text = resolve_quiz_tts_text(quiz_type, validated)
-    audio_url, tts_error = await synthesize_quiz_audio(quiz.id, tts_text, language="english")
+    audio_url, tts_error = await synthesize_quiz_audio(quiz.id, tts_text, language=target_lang)
     if audio_url:
         qd = dict(validated["quiz_data"])
         qd["audio_url"] = audio_url
@@ -309,7 +345,24 @@ async def run_quiz_generate_pipeline(
             session, user_id, entry_id, translation_en
         )
     else:
-        selection = await select_quiz_subgraph_from_graph(session, user_id)
+        # In statement-bank mode, anchor the subgraph on the node(s) the chosen
+        # expression was extracted from so the LLM sees the context where the
+        # expression actually appeared — not a random slice of the graph.
+        #
+        # In freedom mode (IELTS / default pool / custom vocab) the seed word has no
+        # linked node, so pass the word itself as a semantic query: the background
+        # nodes woven into the sentence are then thematically adjacent to the word
+        # rather than just the most recent ones.
+        stmt_seed_ids = _statement_source_node_ids(statement_expr)
+        vocab_query = ""
+        if not stmt_seed_ids and vocab_seed:
+            vocab_query = str(vocab_seed.get("word") or "").strip()
+        selection = await select_quiz_subgraph_from_graph(
+            session,
+            user_id,
+            seed_node_ids=stmt_seed_ids or None,
+            query=vocab_query,
+        )
     graph_context = selection.context_text
     tracer.finish_step(
         step,
@@ -379,6 +432,7 @@ async def run_quiz_generate_pipeline(
     raw_llm = generated.pop("_raw_llm", {})
     generated.pop("_vocab_seed", None)
     generated.pop("_is_freedom_on", None)
+    judge_verdict = generated.pop("_judge", {"ok": True, "reason": ""})
     step.model = model
     step.system_prompt = system_prompt
     tracer.finish_step(
@@ -389,6 +443,7 @@ async def run_quiz_generate_pipeline(
             "is_freedom_on": effective_freedom,
             "selected_vocab_id": selected_vocab,
             "vocab_seed": vocab_seed,
+            "quality_judge": judge_verdict,
         },
         artifacts=[("output.json", raw_llm, "application/json")],
     )
@@ -409,12 +464,38 @@ async def run_quiz_generate_pipeline(
         ),
         target_level=target_level,
         target_language=lang,
+        native_language=getattr(user, "native_language", None) or "korean",
     )
     tracer.finish_step(
         step,
         output={"valid": True, "difficulty_level": validated["difficulty_level"]},
         artifacts=[("validated.json", validated, "application/json")],
     )
+
+    # Stamp provenance onto the quiz so the UI can show which vocab source it came
+    # from (statement bank / default pool / custom list) and so sessions can filter
+    # by source. Stored inside quiz_data (JSONB) to avoid a schema migration.
+    if use_statement_bank:
+        source_mode = "statement"
+    elif selected_vocab.startswith("default:"):
+        source_mode = "default"
+    else:
+        source_mode = "custom"
+    source_meta: dict = {
+        "vocab_id": selected_vocab,
+        "mode": source_mode,
+        "language": lang,
+    }
+    if use_statement_bank and statement_expr:
+        source_meta["expression"] = statement_expr.get("expression")
+        source_meta["source_node_id"] = statement_expr.get("source_node_id")
+    elif vocab_seed:
+        source_meta["seed_word"] = vocab_seed.get("word")
+        source_meta["cefr"] = vocab_seed.get("cefr")
+    quiz_data_out = dict(validated["quiz_data"])
+    quiz_data_out["_source"] = source_meta
+    quiz_data_out["language"] = lang
+    validated["quiz_data"] = quiz_data_out
 
     step = tracer.begin_step(
         "quiz_enqueue_new",

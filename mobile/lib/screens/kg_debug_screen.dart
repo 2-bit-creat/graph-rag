@@ -69,7 +69,7 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
                     : _runs.isEmpty
                         ? Center(
                             child: Text('실행 기록 없음',
-                                style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                                style: TextStyle(color: context.mutedText, fontSize: 13)),
                           )
                         : ListView.separated(
                             itemCount: _runs.length,
@@ -106,7 +106,7 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text('DB 샌드박스', style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      color: AppColors.textMuted,
+                      color: context.mutedText,
                     )),
                     const SizedBox(height: AppSpacing.sm),
                     OutlinedButton.icon(
@@ -222,19 +222,19 @@ class _RunDetail extends StatelessWidget {
               _MetaChip(
                 icon: Icons.access_time,
                 label: '${latency ?? '?'}ms',
-                color: AppColors.textMuted,
+                color: context.mutedText,
               ),
               if (tokenIn != null)
                 _MetaChip(
                   icon: Icons.input_rounded,
                   label: 'in $tokenIn tok',
-                  color: AppColors.textMuted,
+                  color: context.mutedText,
                 ),
               if (tokenOut != null)
                 _MetaChip(
                   icon: Icons.output_rounded,
                   label: 'out $tokenOut tok',
-                  color: AppColors.textMuted,
+                  color: context.mutedText,
                 ),
             ],
           ),
@@ -344,7 +344,7 @@ class _JsonTree extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('[${e.key}] ', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                Text('[${e.key}] ', style: TextStyle(fontSize: 11, color: context.mutedText)),
                 Expanded(child: _JsonTree(data: e.value, indent: 0)),
               ],
             ),

@@ -36,13 +36,16 @@ def get_level_band(level: int) -> LevelBand:
     return BANDS[-1]
 
 
-def level_prompt_context(level: int) -> str:
+def level_prompt_context(level: int, *, target_language: str = "english") -> str:
+    from .language_config import lang_label
+
     level = clamp_level(level)
     band = get_level_band(level)
+    target_label = lang_label(target_language)
     return (
         f"Target difficulty: Level {level} (CEFR {band.cefr}). "
         f"Vocabulary scope: {band.vocabulary}. Grammar scope: {band.grammar}. "
-        f"Scale the English sentence and quiz content to match this level exactly."
+        f"Scale the {target_label} sentence and quiz content to match this level exactly."
     )
 
 

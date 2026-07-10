@@ -1,7 +1,7 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -27,6 +27,7 @@ class User(Base):
     target_language: Mapped[str] = mapped_column(String, nullable=False, default="english")
     target_languages: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     native_language: Mapped[str] = mapped_column(String, nullable=False, default="korean")
+    device_id: Mapped[str | None] = mapped_column(String, nullable=True, unique=True, index=True)
     language_levels: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -65,6 +66,17 @@ class JournalEntry(Base):
     )
     transcript_segments: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     graph_staging: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Content-type label (대화/일기/…); separate column so the tracer can't clobber it.
+    source_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    # LLM-suggested content type (Phase 3) — advisory; user confirms/overrides source_type.
+    suggested_source_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Who asserted this entry's statements (text-paste attribution):
+    # 'self' = 내 생각/일기, 'person' = a real person (저자/강연자), 'source' = 매체·기관·AI.
+    # None = legacy per-speaker labeling flow. Drives the graph head-node type:
+    # 'source' entries get a Source node (never a Person) as the statement head.
+    attribution_kind: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Display name of the attribution head node ("Claude", "한국경제", 저자명 등).
+    attribution_name: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -153,12 +165,27 @@ class Node(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     type: Mapped[str] = mapped_column(String, nullable=False, default="Concept")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Alternative surface forms that resolve to this node — nicknames, inflected
+    # mentions (제니가→제니), and (on the self node) the owner's real names that
+    # other speakers use. Lowercased. Lets a mentioned name auto-link to an
+    # existing Person/self node instead of forking a duplicate Concept.
+    aliases: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # Cumulative LLM-assigned importance (1-5 per mention, summed across mentions).
+    # Recurring concepts naturally outweigh one-off mentions — see _get_or_create_node.
+    importance_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Canonical "self" / diary-owner node. Exactly one per user (enforced by a
+    # partial unique index). The diary "나" and any conversation speaker the user
+    # confirms as themselves all resolve to this node, regardless of its name.
+    is_self: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     speaker_profile_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("speaker_profiles.id", ondelete="SET NULL"),
         nullable=True,
     )
     name_embedding: Mapped[list | None] = mapped_column(Vector(1536), nullable=True)
+    # When the described event happened (Statement nodes only). Extracted from diary
+    # text relative to the entry's writing date; NULL for legacy / undated claims.
+    occurred_at: Mapped[date | None] = mapped_column(Date, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -185,6 +212,38 @@ class Node(Base):
         back_populates="target",
         foreign_keys="Edge.target_id",
         cascade="all, delete-orphan",
+    )
+
+
+class NodeAliasEmbedding(Base):
+    """Embedding index for identity resolution — one row per learned surface form.
+
+    Each row is a name/alias string of an identity node with its text embedding.
+    Powers FUZZY matching: an incoming variant ("장세영님") that isn't an exact
+    known alias yet is compared against these vectors to SUGGEST (not auto-link) the
+    right identity. Confirming a suggestion writes a new alias + row here, so the
+    graph gets smarter the more the user resolves. Derived index, not source of
+    truth — the authoritative alias list stays on Node.aliases.
+    """
+
+    __tablename__ = "node_alias_embeddings"
+    __table_args__ = (
+        UniqueConstraint("node_id", "text", name="uq_alias_emb_node_text"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False
+    )
+    text: Mapped[str] = mapped_column(String, nullable=False)
+    embedding: Mapped[list | None] = mapped_column(Vector(1536), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 
@@ -381,6 +440,82 @@ class SpeakerEntryAppearance(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class ChatSession(Base):
+    """A single Claude-style chat room grounded in the user's knowledge graph.
+
+    Replaces the former per-user JSON chat log (graph_chat_store.py): the user can
+    now keep several conversations side by side. ``distill_state`` holds the current
+    chat→journal distillation draft while the session is in distill mode (Phase 2);
+    it's None the rest of the time.
+    """
+
+    __tablename__ = "chat_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
+    distill_state: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    summary_state: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    messages: Mapped[list["ChatMessage"]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="ChatMessage.created_at",
+    )
+
+
+class ChatMessage(Base):
+    """One turn in a :class:`ChatSession`.
+
+    ``kind`` distinguishes plain conversation ("text") from records the chat feed
+    hosts but the RAG loop must ignore — inline quiz cards ("quiz_prompt"/
+    "quiz_result") and distillation drafts ("distill_draft"). ``referenced_node_ids``
+    on assistant turns names the memories that grounded the answer (drives node
+    glow on the map and dedup at distill time). ``meta`` carries kind-specific
+    payload (quiz id/type/verdict, draft sentences, …).
+    """
+
+    __tablename__ = "chat_messages"
+    __table_args__ = (
+        Index("idx_chat_messages_session_created", "session_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False, default="text")
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    referenced_node_ids: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    session: Mapped["ChatSession"] = relationship(back_populates="messages")
 
 
 class OntologyVersion(Base):

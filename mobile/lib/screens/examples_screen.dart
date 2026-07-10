@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../theme/app_theme.dart';
 
 class ExamplesScreen extends StatefulWidget {
   const ExamplesScreen({super.key, required this.entryId});
@@ -108,7 +109,7 @@ class _ExamplesScreenState extends State<ExamplesScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('${idx + 1}.', style: TextStyle(color: Colors.grey[600])),
+                              Text('${idx + 1}.', style: TextStyle(color: context.mutedText)),
                               const SizedBox(height: 4),
                               Text(
                                 ex['en']?.toString() ?? '',
@@ -121,14 +122,14 @@ class _ExamplesScreenState extends State<ExamplesScreen> {
                                 const SizedBox(height: 8),
                                 Text(
                                   ex['ko'].toString(),
-                                  style: TextStyle(color: Colors.grey[700]),
+                                  style: TextStyle(color: context.subtleText),
                                 ),
                               ],
                               if ((ex['note']?.toString() ?? '').isNotEmpty) ...[
                                 const SizedBox(height: 8),
                                 Text(
                                   ex['note'].toString(),
-                                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                                  style: TextStyle(fontSize: 12, color: context.mutedText),
                                 ),
                               ],
                             ],

@@ -147,12 +147,19 @@ async def build_speaker_summaries_for_entry(
                 )
             )
             if not reassigned:
+                # Resolve to the canonical self node so the diary owner shows the
+                # same identity (and name) as in conversations. Don't create it on
+                # this read path — it's created at graph-build / self-confirm time.
+                self_node = await crud.get_self_node(session, user_id)
                 summaries.append(
                     SpeakerSummary(
                         session_label=label,
                         speaker_profile_id=app.speaker_profile_id,
                         needs_confirmation=False,
-                        confirmed_node=RecommendedNode(id=None, name="나"),
+                        confirmed_node=RecommendedNode(
+                            id=self_node.id if self_node is not None else None,
+                            name=self_node.name if self_node is not None else "나",
+                        ),
                         suggested_node=None,
                         auto_assigned=True,
                     )
@@ -190,7 +197,18 @@ async def build_speaker_summaries_for_entry(
                 # whose graph node is created later by GraphRAG — keep it
                 # confirmed instead of forcing re-confirmation.
                 name = (profile.display_name or "").strip()
-                if name and name != "나":
+                if name == "나":
+                    # Human-confirmed as the diary owner but never linked to a
+                    # node (legacy new-name path, before '나' routed to the self
+                    # node). Resolve to the canonical self node so it shows
+                    # confirmed rather than reverting to '화자 확인 필요' —
+                    # self-heals entries already locked behind a built graph.
+                    self_node = await crud.get_self_node(session, user_id)
+                    confirmed = RecommendedNode(
+                        id=self_node.id if self_node is not None else None,
+                        name=self_node.name if self_node is not None else "나",
+                    )
+                elif name:
                     confirmed = RecommendedNode(id=None, name=name)
                 else:
                     human_confirmed = False
@@ -619,14 +637,74 @@ async def confirm_speaker_identity(
     new_node_name: str | None = None,
     wrong_name: str | None = None,
     session_label: str | None = None,
+    as_self: bool = False,
+    as_source: bool = False,
 ) -> SpeakerConfirmResult:
-    """Link speaker profile to graph node and correct misrecognized text for this entry."""
-    if node_id is None and not (new_node_name and new_node_name.strip()):
-        raise ValueError("node_id or new_node_name is required")
+    """Link speaker profile to graph node and correct misrecognized text for this entry.
 
+    When as_self is set, the speaker is linked to the user's canonical self node
+    (created if needed) so the diary "나" and this conversation speaker share one
+    identity — no duplicate node even if the user later renames the self node.
+
+    When as_source is set, this "speaker" is not a person but an external source
+    (책·AI·기사·매체): the profile is confirmed under the source name and the entry's
+    attribution is set to kind='source' so the graph builds a Source head — the
+    post-hoc counterpart of the compose-time 외부 출처 mode.
+    """
     entry = await crud.get_journal_entry(session, journal_entry_id, user_id)
     if entry is None:
         raise ValueError("entry not found")
+
+    if as_source:
+        name = (new_node_name or "").strip()
+        if not name:
+            raise ValueError("source name is required")
+        profile, session_label = await _resolve_profile_for_session(
+            session, user_id, journal_entry_id, speaker_profile_id, session_label
+        )
+        profile.display_name = name
+        profile.label = name
+        await session.flush()
+        session_label = (session_label or "").strip() or await _session_label_for_profile(
+            session, journal_entry_id, profile.id
+        )
+        await _mark_human_confirmed_appearance(
+            session, journal_entry_id, profile.id, session_label
+        )
+        _sync_segment_profile_ids(entry, session_label, profile.id)
+        replacements = 0
+        if session_label:
+            replacements = _replace_speaker_label_in_entry_texts(
+                entry, session_label, name
+            )
+        # 그래프 head를 Source 노드로 만들 근거 — kg_build가 이 컬럼을 읽는다.
+        entry.attribution_kind = "source"
+        entry.attribution_name = name
+        await session.commit()
+        await session.refresh(entry)
+        return SpeakerConfirmResult(
+            speaker_profile_id=profile.id,
+            confirmed_node=RecommendedNode(id=None, name=name),
+            transcript_replacements=replacements,
+            edges_reassigned=0,
+        )
+
+    # '나' is the reserved diary-owner identity. Confirming any speaker as '나'
+    # must resolve to the canonical self node — storing a bare display_name='나'
+    # with no node link leaves the speaker looking unconfirmed, because
+    # build_speaker_summaries_for_entry can't tell it apart from an auto-assigned
+    # monologue '나'. Treat it exactly like the "이 화자는 나(본인)예요" path.
+    if not as_self and node_id is None and (new_node_name or "").strip() == "나":
+        as_self = True
+
+    if as_self:
+        # Resolve to the one canonical self node, ignoring any typed name.
+        self_node = await crud.get_or_create_self_node(session, user_id)
+        node_id = self_node.id
+        new_node_name = None
+
+    if node_id is None and not (new_node_name and new_node_name.strip()):
+        raise ValueError("node_id or new_node_name is required")
 
     profile, session_label = await _resolve_profile_for_session(
         session,

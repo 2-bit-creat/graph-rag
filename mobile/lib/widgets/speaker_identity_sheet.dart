@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../theme/app_theme.dart';
 
 /// Bottom sheet: [👍 맞아요] [🔍 다른 사람 선택] [✏️ 직접 입력]
 Future<bool?> showSpeakerIdentitySheet({
@@ -246,7 +247,7 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
                   '음성 유사도 ${(score as num).toStringAsFixed(2)}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  style: TextStyle(fontSize: 12, color: context.mutedText),
                 ),
               ),
             const SizedBox(height: 12),
@@ -296,7 +297,7 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
                   '음성 유사도 ${(score as num).toStringAsFixed(2)}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  style: TextStyle(fontSize: 12, color: context.mutedText),
                 ),
               ),
             const SizedBox(height: 16),
@@ -323,7 +324,7 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
                   '최고 유사도 ${(score as num).toStringAsFixed(2)} (임계값 미달)',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  style: TextStyle(fontSize: 12, color: context.mutedText),
                 ),
               ),
             const SizedBox(height: 12),
@@ -338,7 +339,7 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
         ] else if (_mode == _Mode.pickOther) ...[
           Text(
             '기존 인물을 고르거나, 없으면 새 이름으로 등록하세요.',
-            style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+            style: TextStyle(fontSize: 13, color: context.subtleText),
           ),
           const SizedBox(height: 10),
           TextField(
@@ -368,7 +369,7 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
           ],
           if (_pickerItems(personNodesOnly: true).isNotEmpty) ...[
             const SizedBox(height: 12),
-            Text('기존 인물', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+            Text('기존 인물', style: TextStyle(fontSize: 12, color: context.mutedText)),
             const SizedBox(height: 4),
             ConstrainedBox(
               constraints: BoxConstraints(
@@ -394,7 +395,7 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
             const SizedBox(height: 12),
             Text(
               '등록된 인물이 없습니다. 이름을 입력해 새 인물을 만드세요.',
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              style: TextStyle(fontSize: 12, color: context.mutedText),
             ),
           ],
           const SizedBox(height: 8),
@@ -415,7 +416,7 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
         ] else ...[
           Text(
             '지식 그래프에 새 Speaker 노드를 만들고 이 화자에 연결합니다.',
-            style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+            style: TextStyle(fontSize: 13, color: context.subtleText),
           ),
           const SizedBox(height: 10),
           TextField(

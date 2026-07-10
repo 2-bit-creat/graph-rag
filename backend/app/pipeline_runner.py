@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from . import crud
 from .audio_trim import TrimReport, trim_audio_file
 from .config import get_settings
 from .db import async_session_factory
 from .journal_pipeline import (
-    build_cleanup_system_prompt,
-    cleanup_and_translate,
+    apply_cleaned_text_to_segments,
+    build_cleanup_only_system_prompt,
+    cleanup_only,
+    gate_source_type,
     transcribe_audio,
 )
 from .pipeline_trace import PipelineTracer
@@ -29,10 +34,17 @@ async def run_journal_fast_pipeline(
     source_type: str | None = None,
 ) -> tuple[object, dict]:
     """Audio → STT → translate. Returns quickly with status=ready."""
+    from .language_config import normalize_native
+    from .models import User as _User
+
+    user = await session.get(_User, user_id)
+    native_language = normalize_native(getattr(user, "native_language", None) if user else None)
+
     entry = await crud.create_journal_entry(session, user_id, audio_url=None)
     if source_type:
+        # Dedicated column — the tracer overwrites pipeline_trace later.
         entry = await crud.update_journal_entry(
-            session, entry, pipeline_trace={"source_type": source_type}
+            session, entry, source_type=source_type
         )
     tracer = PipelineTracer(entry.id)
 
@@ -183,23 +195,13 @@ async def run_journal_fast_pipeline(
         tracer.finish_step(diarize_step, error=str(exc), output={"skipped": True})
         segments = []
 
-    # Diary mode (source_type=None): this is the user's own recording.
-    # A single-speaker diary is a monologue → label everything '나' and skip
-    # voice matching. But when diarization separated multiple distinct speakers
-    # we must NOT collapse them all into '나' — run voice profiling so each
-    # speaker gets its own profile and the user confirms identities individually.
-    is_diary = source_type is None
-    distinct_speakers = {seg.speaker for seg in segments} if segments else set()
-    diary_monologue = is_diary and len(distinct_speakers) <= 1
-    if diary_monologue and segments:
-        for seg in segments:
-            seg.speaker = "나"
-        if transcript_segments:
-            for seg in transcript_segments:
-                seg["speaker"] = "나"
-        diarized_text = segments_to_labeled_transcript(segments)
-
-    if segments and get_settings().speaker_voice_memory_enabled and not diary_monologue:
+    # Unified flow (no diary/external mode split): every audio entry is diarized
+    # and voice-matched, and speaker identity is ALWAYS user-confirmed. We never
+    # auto-label a speaker as '나' — a single-speaker recording might be someone
+    # else (a lecture, a forwarded voice memo), so the owner is confirmed via the
+    # identity sheet (its '나(본인)' action) just like any other speaker.
+    # source_type is now only a content label, not a processing mode.
+    if segments and get_settings().speaker_voice_memory_enabled:
         try:
             _, transcript_segments = await process_entry_speaker_profiles(
                 session,
@@ -264,7 +266,7 @@ async def run_journal_fast_pipeline(
             },
         )
         try:
-            transcript_ko = await transcribe_audio(stt_path)
+            transcript_ko = await transcribe_audio(stt_path, native_language=native_language)
             llm_transcript_ko = transcript_ko
             tracer.finish_step(
                 step,
@@ -286,24 +288,20 @@ async def run_journal_fast_pipeline(
             )
             raise
 
-    # Load user's target languages for language-aware translation
-    from .models import User as _User
-    from .crud import get_effective_target_languages as _get_langs
-    _user = await session.get(_User, user_id)
-    _target_langs = _get_langs(_user) if _user else ["english"]
-
+    # 번역 제거(2026-07-04): 쓰기 경로는 정제만 — 번역은 학습 파이프라인(표현 추출)
+    # 쪽에서 문장 단위로 다루고, 일기 자체를 통번역하는 기능은 사용하지 않기로 결정.
     gpt_input = llm_transcript_ko or transcript_ko
-    _active_prompt = build_cleanup_system_prompt(_target_langs)
+    _active_prompt = build_cleanup_only_system_prompt(native_language=native_language)
     step = tracer.begin_step(
-        "gpt_cleanup_translate",
+        "gpt_cleanup",
         "llm",
         phase="fast_path",
         model=get_settings().openai_model,
         system_prompt=_active_prompt,
-        input_data={"user_message": gpt_input, "languages": _target_langs},
+        input_data={"user_message": gpt_input, "translate": False},
     )
     try:
-        cleaned = await cleanup_and_translate(gpt_input, languages=_target_langs)
+        cleaned = await cleanup_only(gpt_input, native_language=native_language)
         tracer.finish_step(
             step,
             output=cleaned,
@@ -330,19 +328,39 @@ async def run_journal_fast_pipeline(
         "fast_path_complete",
         "policy",
         phase="fast_path",
-        input_data={"chain": "LangChain RunnableSequence: audio_ingest | whisper_stt | gpt_cleanup_translate"},
+        input_data={"chain": "LangChain RunnableSequence: audio_ingest | whisper_stt | gpt_cleanup"},
     )
     tracer.finish_step(
         summary,
         output={
             "transcript_ko_len": len(transcript_ko),
-            "translation_en_len": len(cleaned.get("translation_en", "")),
-            "translation_de_len": len(cleaned.get("translation_de", "")),
-            "translation_langs": sorted((cleaned.get("translations") or {}).keys()),
+            "transcript_clean_ko_len": len(cleaned.get("transcript_clean_ko", "")),
             "next": "auto_graph_ingest",
         },
     )
+    # Map the cleaned wording back onto segments so the speaker-selection UI and
+    # the graph both show STT-corrected text (마차→말차), not the raw mishearing.
+    if transcript_segments:
+        transcript_segments = apply_cleaned_text_to_segments(
+            transcript_segments, cleaned.get("transcript_clean_ko") or ""
+        )
+
     trace = tracer.finish_fast()
+
+    # Speaker count is the hard signal for the type gate: the classification LLM
+    # drifts toward 대화 whenever it sees [Speaker_N] labels, so reconcile its guess
+    # with the actual number of distinct diarized speakers before suggesting a type.
+    distinct = {
+        str(s.get("speaker", "")).strip()
+        for s in (transcript_segments or [])
+        if isinstance(s, dict) and str(s.get("speaker", "")).strip()
+    }
+    effective_single = bool(cleaned.get("single_speaker")) or len(distinct) <= 1
+    gated_source_type = gate_source_type(
+        cleaned.get("content_type"),
+        single_speaker=effective_single,
+        native_language=native_language,
+    )
 
     entry = await crud.update_journal_entry(
         session,
@@ -354,10 +372,141 @@ async def run_journal_fast_pipeline(
         translations=cleaned.get("translations") or {},
         status="ready",
         transcript_segments=transcript_segments,
+        suggested_source_type=gated_source_type,
         pipeline_trace=trace,
         debug_run_dir=tracer.debug_dir_relative,
     )
+
+    # Phase 3: if the LLM judged this a single first-person diary but diarization
+    # over-split it into multiple speakers, collapse them in the background (fully
+    # reversible — speaker_original is preserved, so the user can split back).
+    if cleaned.get("single_speaker") and len(distinct) > 1:
+        try:
+            await crud.remap_entry_speakers(session, user_id, entry, merge_all=True)
+            await session.refresh(entry)
+        except Exception:
+            logger.exception("auto merge_all failed for entry %s", entry.id)
+
     return entry, trace
+
+
+async def _mark_graph_failed(
+    session: AsyncSession,
+    entry_id: uuid.UUID,
+    user_id: uuid.UUID,
+    trace: dict,
+) -> None:
+    """Persist status=graph_failed, falling back to a fresh session.
+
+    The build session may still be unusable even after rollback (e.g. the
+    connection is broken), so a fresh session is the last-resort guarantee that
+    the entry leaves 'graph_processing' instead of spinning on the client forever.
+    """
+    try:
+        entry = await crud.get_journal_entry(session, entry_id, user_id)
+        if entry is not None:
+            await crud.update_journal_entry(
+                session, entry, status="graph_failed", pipeline_trace=trace
+            )
+            return
+    except Exception:
+        logger.exception("graph_failed write failed on build session; retrying fresh")
+
+    async with async_session_factory() as recovery:
+        entry = await crud.get_journal_entry(recovery, entry_id, user_id)
+        if entry is not None:
+            await crud.update_journal_entry(
+                recovery, entry, status="graph_failed", pipeline_trace=trace
+            )
+
+
+async def enqueue_entry_expression_extraction(
+    session: AsyncSession, user_id: uuid.UUID
+) -> None:
+    """Enqueue language-expression extraction for the user's committed Statement nodes.
+
+    Runs only AFTER the graph is committed (one-shot build or HITL apply), so the
+    expensive per-node LLM extraction targets confirmed content — never a draft.
+    """
+    try:
+        from .models import User as _User
+        from .crud import get_effective_target_languages, get_all_statement_nodes
+        from .extraction_queue import enqueue_bulk
+
+        user = await session.get(_User, user_id)
+        if user is not None:
+            langs = get_effective_target_languages(user)
+            all_stmts = await get_all_statement_nodes(session, user_id)
+            await enqueue_bulk(user_id, all_stmts, langs)
+    except Exception as _eq_exc:
+        logger.warning("Failed to enqueue extraction: %s", _eq_exc)
+
+
+async def run_entry_graph_draft(
+    entry_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> dict | None:
+    """Build a STAGING draft for HITL review — extraction only, NO commit.
+
+    Stores the draft claims in ``entry.graph_staging`` and sets status to
+    ``graph_staging_ready``. The user reviews/edits the draft, then the
+    ``/graph/apply`` endpoint commits it (and only then extracts expressions).
+    """
+    from .routers.kg_build import extract_statement_graph_draft
+
+    async with async_session_factory() as session:
+        entry = await crud.get_journal_entry(session, entry_id, user_id)
+        if entry is None:
+            return None
+
+        tracer = PipelineTracer.resume(entry_id, entry.pipeline_trace)
+        tracer.run.current_phase = "slow_path"
+
+        step = tracer.begin_step(
+            "statement_graph_draft",
+            "graph",
+            phase="slow_path",
+            input_data={"entry_id": str(entry_id)},
+        )
+        try:
+            draft = await extract_statement_graph_draft(session, entry_id, user_id)
+            # Pull the prompt debug fields off before persisting graph_staging —
+            # they're for the pipeline flow trace only, not the reviewable draft.
+            system_prompt = draft.pop("system_prompt", None)
+            user_prompt = draft.pop("user_prompt", None)
+            step.system_prompt = system_prompt
+            step.input = {**step.input, "user_prompt": user_prompt}
+            tracer.finish_step(
+                step,
+                output={
+                    "claims": draft.get("claims"),
+                    "context_type": draft.get("context_type"),
+                    "speaker_count": draft.get("speaker_count"),
+                },
+            )
+            trace = tracer.finish("completed")
+            trace["graph_status"] = "graph_staging_ready"
+            entry = await crud.get_journal_entry(session, entry_id, user_id)
+            if entry is not None:
+                await crud.update_journal_entry(
+                    session,
+                    entry,
+                    status="graph_staging_ready",
+                    graph_staging=draft,
+                    pipeline_trace=trace,
+                )
+            return draft
+        except Exception as exc:
+            logger.exception("graph draft failed for entry %s", entry_id)
+            try:
+                await session.rollback()
+            except Exception:
+                logger.exception("rollback failed after graph draft error")
+            tracer.finish_step(step, error=str(exc))
+            trace = tracer.finish("completed_with_errors")
+            trace["graph_status"] = "graph_failed"
+            await _mark_graph_failed(session, entry_id, user_id, trace)
+            raise
 
 
 async def run_graph_ingest_pipeline(
@@ -404,33 +553,23 @@ async def run_graph_ingest_pipeline(
                 )
 
             # Enqueue expression extraction for newly added Statement nodes.
-            try:
-                from .models import User as _User
-                from .crud import get_effective_target_languages, get_all_statement_nodes
-                from .extraction_queue import enqueue_bulk
-
-                user = await session.get(_User, user_id)
-                if user is not None:
-                    langs = get_effective_target_languages(user)
-                    all_stmts = await get_all_statement_nodes(session, user_id)
-                    await enqueue_bulk(user_id, all_stmts, langs)
-            except Exception as _eq_exc:
-                import logging as _log
-                _log.getLogger(__name__).warning("Failed to enqueue extraction: %s", _eq_exc)
+            await enqueue_entry_expression_extraction(session, user_id)
 
             return summary
         except Exception as exc:
+            logger.exception("graph ingest failed for entry %s", entry_id)
+            # A DB error during the build leaves `session` in a failed-transaction
+            # state. Without recovering it here, the graph_failed write below
+            # silently fails too and the entry is stuck in 'graph_processing'
+            # forever — the client just keeps spinning (infinite buffering).
+            try:
+                await session.rollback()
+            except Exception:
+                logger.exception("rollback failed after graph ingest error")
             tracer.finish_step(step, error=str(exc))
             trace = tracer.finish("completed_with_errors")
             trace["graph_status"] = "graph_failed"
-            entry = await crud.get_journal_entry(session, entry_id, user_id)
-            if entry is not None:
-                await crud.update_journal_entry(
-                    session,
-                    entry,
-                    status="graph_failed",
-                    pipeline_trace=trace,
-                )
+            await _mark_graph_failed(session, entry_id, user_id, trace)
             raise
 
 
@@ -461,9 +600,16 @@ async def run_journal_text_pipeline(
     *,
     paragraph_text: str | None = None,
     source_type: str | None = None,
+    attribution_kind: str | None = None,
+    attribution_name: str | None = None,
 ) -> tuple[object, dict]:
     """Labeled text → cleanup/translate. No audio, no voice embeddings."""
-    from .journal_pipeline import build_cleanup_system_prompt, cleanup_and_translate
+    import re as _re
+    from datetime import UTC, datetime
+
+    from .language_config import normalize_native
+    from .journal_pipeline import build_cleanup_only_system_prompt, cleanup_only
+    from .models import User as _User
     from .precision_text import (
         dialogue_to_transcript,
         normalize_dialogue,
@@ -471,17 +617,54 @@ async def run_journal_text_pipeline(
         segments_from_dialogue,
     )
 
+    user = await session.get(_User, user_id)
+    native_language = normalize_native(getattr(user, "native_language", None) if user else None)
+
+    # Resolve the attribution head label before slicing: with an attribution the
+    # whole text belongs to one asserter, so unlabeled paste needs no [화자]: lines.
+    attribution_kind = (attribution_kind or "").strip().lower() or None
+    attribution_name = (attribution_name or "").strip() or None
+    if attribution_kind == "source" and not attribution_name:
+        # Per-entry fallback — never a shared "미상" hub node (hub pollution).
+        attribution_name = f"출처 미상 {datetime.now(UTC):%Y-%m-%d %H:%M}"
+    attribution_label = (
+        "나" if attribution_kind == "self" else attribution_name
+    ) if attribution_kind else None
+
     if paragraph_text and paragraph_text.strip():
         pre_lines = pre_slice_by_speaker_lines(paragraph_text)
+        if not pre_lines:
+            # Plain prose (no "[이름]: …" lines): one line per blank-line paragraph.
+            # 귀속이 지정됐으면 그 이름을, 아니면 '글쓴이'를 화자로 — 음성의
+            # Speaker_N처럼 미확정 화자를 만들어 저장 후 칩에서 지정하게 한다
+            # (나/사람/외부 출처). 업프론트 귀속 질문을 없애는 통일 흐름의 핵심.
+            owner = attribution_label or "글쓴이"
+            paras = [p.strip() for p in _re.split(r"\n\s*\n", paragraph_text) if p.strip()]
+            # 문단 안에서도 사용자가 넣은 줄바꿈을 살린다 — 각 줄의 가로 공백만
+            # 접고 줄바꿈은 유지해 목록·시 같은 구조가 뭉개지지 않게.
+            pre_lines = [
+                {
+                    "speaker": owner,
+                    "text": "\n".join(
+                        " ".join(ln.split()) for ln in p.splitlines() if ln.strip()
+                    ),
+                }
+                for p in paras
+            ]
         lines = normalize_dialogue(pre_lines)
-        labeled = paragraph_text.strip()
+        labeled = dialogue_to_transcript(lines) if lines else paragraph_text.strip()
     else:
         lines = normalize_dialogue(dialogue or [])
         labeled = dialogue_to_transcript(lines)
     entry = await crud.create_journal_entry(session, user_id, audio_url=None)
-    if source_type:
+    if source_type or attribution_kind:
+        # Dedicated columns — the tracer overwrites pipeline_trace later.
         entry = await crud.update_journal_entry(
-            session, entry, pipeline_trace={"source_type": source_type}
+            session,
+            entry,
+            source_type=source_type,
+            attribution_kind=attribution_kind,
+            attribution_name=attribution_name,
         )
     tracer = PipelineTracer(entry.id)
 
@@ -497,22 +680,21 @@ async def run_journal_text_pipeline(
         output={"transcript_preview": labeled[:500], "segment_count": len(segments)},
     )
 
-    from .models import User as _User2
-    from .crud import get_effective_target_languages as _get_langs2
-    _user2 = await session.get(_User2, user_id)
-    _target_langs2 = _get_langs2(_user2) if _user2 else ["english"]
-    _active_prompt2 = build_cleanup_system_prompt(_target_langs2)
+    # 쓰기 = 정제만(빠름). 번역은 학습 시 온디맨드(POST .../translate)로 분리 —
+    # 긴 글을 다국어로 동기 번역하면 지연이 과도하고, 정작 먼저 보고 싶은 건 정제된
+    # 일기이기 때문. 그래프 빌드는 한국어 정제 텍스트를 쓰므로 영향 없음.
+    _active_prompt2 = build_cleanup_only_system_prompt(native_language=native_language)
 
     step = tracer.begin_step(
-        "gpt_cleanup_translate",
+        "gpt_cleanup",
         "llm",
         phase="fast_path",
         model=get_settings().openai_model,
         system_prompt=_active_prompt2,
-        input_data={"transcript_ko": labeled, "languages": _target_langs2},
+        input_data={"transcript_ko": labeled, "translate": False},
     )
     try:
-        cleaned = await cleanup_and_translate(labeled, languages=_target_langs2)
+        cleaned = await cleanup_only(labeled, native_language=native_language)
         tracer.finish_step(
             step,
             output=cleaned,
@@ -556,6 +738,25 @@ async def run_journal_text_pipeline(
     trace = tracer.finish_fast()
     trace["entry_source"] = "precision_text"
     trace["graph_status"] = "graph_pending"
+
+    # Reconcile the LLM's type guess with the actual speaker count (see gate above).
+    # A typed entry with no explicit speakers is treated as a single-speaker diary.
+    distinct = {
+        str(s.get("speaker", "")).strip()
+        for s in (segments or [])
+        if isinstance(s, dict) and str(s.get("speaker", "")).strip()
+    }
+    effective_single = bool(cleaned.get("single_speaker")) or len(distinct) <= 1
+    gated_source_type = (
+        source_type
+        or gate_source_type(
+            cleaned.get("content_type"),
+            single_speaker=effective_single,
+            source_attributed=attribution_kind == "source",
+            native_language=native_language,
+        )
+    )
+
     await crud.update_journal_entry(
         session,
         entry,
@@ -566,6 +767,7 @@ async def run_journal_text_pipeline(
         translations=cleaned.get("translations") or {},
         transcript_segments=segments,
         status="ready",
+        suggested_source_type=gated_source_type,
         pipeline_trace=trace,
         debug_run_dir=tracer.debug_dir_relative,
     )

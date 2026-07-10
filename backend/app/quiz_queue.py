@@ -27,8 +27,16 @@ async def build_session(
     *,
     size: int | None = None,
     entry_id: uuid.UUID | None = None,
+    vocab_source: str | None = None,
+    language: str | None = None,
 ) -> list[Quiz]:
-    """Pick quizzes: 70% review + 30% new, filtered by type and level window."""
+    """Pick quizzes: 70% review + 30% new, filtered by type and level window.
+
+    When ``vocab_source`` is given, the primary review/new queries prefer quizzes
+    stamped with that source (``quiz_data._source.vocab_id``); the shortfall backfill
+    stays unfiltered so a session is never left empty just because few same-source
+    quizzes exist yet.
+    """
     settings = get_settings()
     quiz_type = validate_quiz_type(quiz_type)
     size = size or settings.quiz_session_size
@@ -38,9 +46,22 @@ async def build_session(
     review_count = math.ceil(size * settings.quiz_review_ratio)
     new_count = size - review_count
     now = datetime.now(UTC)
+    lang = (language or "").strip().lower() or None
 
-    review_q = (
-        select(Quiz)
+    def _source_filter(stmt):
+        if not vocab_source:
+            return stmt
+        return stmt.where(
+            Quiz.quiz_data["_source"]["vocab_id"].astext == vocab_source
+        )
+
+    def _language_filter(stmt):
+        if not lang:
+            return stmt
+        return stmt.where(Quiz.quiz_data["language"].astext == lang)
+
+    review_q = _source_filter(
+        _language_filter(select(Quiz))
         .where(
             Quiz.user_id == user_id,
             Quiz.quiz_type == quiz_type,
@@ -53,7 +74,7 @@ async def build_session(
         .limit(review_count)
     )
     new_q = (
-        select(Quiz)
+        _language_filter(select(Quiz))
         .where(
             Quiz.user_id == user_id,
             Quiz.quiz_type == quiz_type,
@@ -62,11 +83,13 @@ async def build_session(
             Quiz.difficulty_level >= lo,
             Quiz.difficulty_level <= hi,
         )
-        .order_by(Quiz.created_at.desc())
+        # FIFO: serve new items in the order they were generated
+        .order_by(Quiz.created_at.asc())
         .limit(new_count)
     )
     if entry_id is not None:
         new_q = new_q.where(Quiz.associated_entry_id == entry_id)
+    new_q = _source_filter(new_q)
 
     review_items = list((await session.execute(review_q)).scalars().all())
     new_items = list((await session.execute(new_q)).scalars().all())
@@ -81,10 +104,12 @@ async def build_session(
         ]
         if picked:
             extra_filters.append(Quiz.id.not_in([q.id for q in picked]))
+        if lang:
+            extra_filters.append(Quiz.quiz_data["language"].astext == lang)
         extra_review = (
             select(Quiz)
             .where(*extra_filters)
-            .order_by(Quiz.created_at.desc())
+            .order_by(Quiz.created_at.asc())
             .limit(shortfall)
         )
         picked.extend((await session.execute(extra_review)).scalars().all())
@@ -177,7 +202,8 @@ async def count_queues(
     """Per-type new/review counts."""
     now = datetime.now(UTC)
     result: dict[str, dict[str, int]] = {
-        t: {"new": 0, "review": 0} for t in ("cloze", "scramble", "mcq_nuance")
+        t: {"new": 0, "review": 0}
+        for t in ("cloze", "scramble", "mcq_nuance", "composition")
     }
     q = select(Quiz).where(Quiz.user_id == user_id, Quiz.queue_kind != "archived")
     for quiz in (await session.execute(q)).scalars().all():

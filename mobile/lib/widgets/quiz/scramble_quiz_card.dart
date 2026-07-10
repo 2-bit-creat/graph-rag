@@ -151,7 +151,7 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
                 child: Text(
                   hint,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: AppColors.textMuted,
+                        color: context.mutedText,
                         fontStyle: FontStyle.italic,
                         height: 1.45,
                       ),
@@ -170,7 +170,7 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
         Text(
           '내 답안',
           style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                color: AppColors.textMuted,
+                color: context.mutedText,
               ),
         ),
         const SizedBox(height: AppSpacing.md),
@@ -189,7 +189,7 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
               ? Text(
                   '아래 단어를 순서대로 탭하세요',
                   style: TextStyle(
-                    color: AppColors.textMuted.withValues(alpha: 0.8),
+                    color: context.mutedText.withValues(alpha: 0.8),
                     fontSize: 14,
                   ),
                 )
@@ -210,7 +210,7 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
         Text(
           '단어 조각',
           style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                color: AppColors.textMuted,
+                color: context.mutedText,
               ),
         ),
         const SizedBox(height: AppSpacing.md),

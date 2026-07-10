@@ -39,8 +39,11 @@ async def enqueue(
     translation_en: str = "",
 ) -> None:
     """Add a single (node, language) extraction job."""
+    from .config import get_settings
     from .node_expression_store import is_extracted
 
+    if not get_settings().expression_extraction_enabled:
+        return
     if await is_extracted(user_id, node_id, language):
         return
     await _queue.put(ExtractionJob(
@@ -63,8 +66,11 @@ async def enqueue_bulk(
     node_info_list: [{node_id, node_name, content_ko, translation_en}]
     Returns number of jobs enqueued (one job = one node with ≥1 pending languages).
     """
+    from .config import get_settings
     from .node_expression_store import get_pending_node_language_pairs
 
+    if not get_settings().expression_extraction_enabled:
+        return 0
     if not node_info_list or not languages:
         return 0
 
@@ -99,8 +105,17 @@ async def enqueue_bulk(
 
 
 async def _process_one(job: ExtractionJob) -> None:
+    from .db import async_session_factory
+    from .language_config import normalize_native
+    from .models import User
     from .node_expression_store import is_extracted, save_node_expressions
     from .statement_vocab_extractor import extract_multilang
+
+    native_language = "korean"
+    async with async_session_factory() as session:
+        user = await session.get(User, job.user_id)
+        if user:
+            native_language = normalize_native(getattr(user, "native_language", None))
 
     # Filter out already-done languages
     pending_langs = [
@@ -116,6 +131,7 @@ async def _process_one(job: ExtractionJob) -> None:
             content_ko=job.content_ko,
             translation_en=job.translation_en,
             languages=pending_langs,
+            native_language=native_language,
         )
         for lang, expressions in results.items():
             await save_node_expressions(job.user_id, job.node_id, lang, expressions, node_name=job.node_name)

@@ -777,7 +777,7 @@ class _AudioInputContentState extends State<_AudioInputContent> {
           child: Text(
             widget.recording ? '녹음 중… ${_fmtTime(widget.elapsedSec)}' : '탭하여 녹음 시작',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: widget.recording ? Colors.red : AppColors.textMuted,
+              color: widget.recording ? Colors.red : context.mutedText,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -790,7 +790,7 @@ class _AudioInputContentState extends State<_AudioInputContent> {
             const Expanded(child: Divider()),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-              child: Text('또는', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.textMuted)),
+              child: Text('또는', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: context.mutedText)),
             ),
             const Expanded(child: Divider()),
           ],
@@ -991,7 +991,7 @@ class _ExternalInputContent extends StatelessWidget {
               Text(
                 'LLM이 텍스트에서 화자별로 클레임을 자동 분리합니다.',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: AppColors.textMuted,
+                  color: context.mutedText,
                 ),
               ),
               const SizedBox(height: AppSpacing.md),
@@ -1014,7 +1014,7 @@ class _ExternalInputContent extends StatelessWidget {
           Text(
             '등록된 인물/출처 ${existingNodes.length}개 — LLM이 Entity Resolution에 활용합니다',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: AppColors.textMuted,
+              color: context.mutedText,
             ),
           ),
         ],
@@ -1087,12 +1087,12 @@ class _ReviewView extends StatelessWidget {
         // Context type indicator
         Row(
           children: [
-            Icon(Icons.category_outlined, size: 14, color: AppColors.textMuted),
+            Icon(Icons.category_outlined, size: 14, color: context.mutedText),
             const SizedBox(width: 6),
             Text(
               '매체 유형: $contextType',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: AppColors.textMuted,
+                color: context.mutedText,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -1410,12 +1410,12 @@ class _FieldLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(icon, size: 15, color: AppColors.textMuted),
+        Icon(icon, size: 15, color: context.mutedText),
         const SizedBox(width: 6),
         Text(
           label,
           style: Theme.of(context).textTheme.labelLarge?.copyWith(
-            color: AppColors.textMuted,
+            color: context.mutedText,
           ),
         ),
         if (badge != null) ...[const SizedBox(width: AppSpacing.sm), badge!],
@@ -1498,7 +1498,7 @@ class _Legend extends StatelessWidget {
         Text(
           label,
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: AppColors.textMuted,
+            color: context.mutedText,
           ),
         ),
       ],

@@ -1,6 +1,6 @@
 import json
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -36,9 +36,15 @@ class NodeOut(BaseModel):
     description: str | None = None
     context_type: str | None = None   # Statement nodes only
     content: str | None = None        # Statement nodes only — pure body text
+    occurred_at: date | None = None   # Statement nodes — when the event happened
+    entry_created_at: datetime | None = None  # Source journal entry writing time
     created_at: datetime
     updated_at: datetime | None = None
     has_name_embedding: bool = False
+    # Learned alternative surface forms (nicknames / 장세영→나 real names / variants)
+    # and how many of them are embedding-indexed for fuzzy resolution.
+    aliases: list[str] = []
+    alias_embedding_count: int = 0
     speaker_profile_id: uuid.UUID | None = None
     voice_embedding_registered: bool = False
     voice_sample_count: int = 0
@@ -49,6 +55,8 @@ class NodeOut(BaseModel):
     speaker_name: str | None = None
     deleted_at: datetime | None = None
     deleted_context: dict | None = None
+    importance_score: int = 0
+    is_self: bool = False
     source_entry_id: uuid.UUID | None = None
     source_transcript_ko: str | None = None
     source_transcript_clean_ko: str | None = None
@@ -77,20 +85,80 @@ class GraphOut(BaseModel):
     edges: list[EdgeOut]
 
 
-# --- Chat (pure conversation) ------------------------------------------------
-
 
 class ChatMessage(BaseModel):
+    """Generic user/assistant turn used by agent and generation APIs."""
+
     role: Literal["user", "assistant"]
     content: str
 
 
-class ChatRequest(BaseModel):
-    messages: list[ChatMessage]
+# --- Tutor (English-thinking composition drill) ------------------------------
 
 
-class ChatResponse(BaseModel):
-    answer: str
+class TutorChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class TutorDrillRequest(BaseModel):
+    language: str = "english"
+    source_mode: Literal["journal", "review"] = "journal"
+
+
+class TutorDrillBatchRequest(BaseModel):
+    """Dev tool — batch pre-generation of drills into the tutor drill queue."""
+
+    language: str = "english"
+    source_mode: Literal["journal", "review"] = "journal"
+    count: int = Field(default=3, ge=1, le=10)
+
+
+class TutorGlossaryItem(BaseModel):
+    term: str      # native-language proper noun / domain term in the prompt
+    target: str    # its target-language rendering
+
+
+class TutorHint(BaseModel):
+    note: str          # coaching in the learner's native language
+    snippet: str = ""  # optional target-language fragment to try
+
+
+class TutorDrillOut(BaseModel):
+    drill_id: str
+    prompt: str
+    source_label: str
+    source_mode: str
+    seed_node_id: str | None = None
+    # Hidden from the user until they submit; echoed back on evaluate.
+    target_expressions: list[str] = []
+    # Proper nouns / domain terms rendered in the target language (shown upfront).
+    glossary: list[TutorGlossaryItem] = []
+    # Progressive hints — native-language coaching + optional target snippet.
+    hints: list[TutorHint] = []
+    language: str
+    level: int
+    cefr: str
+
+
+class TutorChatRequest(BaseModel):
+    messages: list[TutorChatMessage]
+    language: str = "english"
+    drill_prompt: str | None = None
+
+
+class TutorVocabSaveRequest(BaseModel):
+    expression: str
+    meaning: str = ""
+    example: str = ""
+    language: str = "english"
+    note: str = ""
+    prompt_ko: str = ""
+    user_attempt: str = ""
+
+
+class TutorVocabBatchRequest(BaseModel):
+    items: list[TutorVocabSaveRequest] = []
 
 
 # --- Ontology ----------------------------------------------------------------
@@ -176,6 +244,12 @@ class EdgeCreate(BaseModel):
     relation: str = "RELATED_TO"
 
 
+class NodeCreate(BaseModel):
+    name: str
+    type: str = "Concept"
+    description: str | None = None
+
+
 class NodeUpdate(BaseModel):
     name: str | None = None
     type: str | None = None
@@ -214,6 +288,10 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class DeviceAuthRequest(BaseModel):
+    device_id: str
 
 
 class TokenResponse(BaseModel):
@@ -301,6 +379,10 @@ class JournalEntryOut(BaseModel):
     translation_de: str | None = None
     translations: dict | None = None
     status: str
+    source_type: str | None = None
+    suggested_source_type: str | None = None
+    attribution_kind: str | None = None
+    attribution_name: str | None = None
     graph_job_id: uuid.UUID | None = None
     debug_run_dir: str | None = None
     pipeline_trace: dict | None = None
@@ -347,6 +429,11 @@ class SpeakerConfirmRequest(BaseModel):
     node_id: uuid.UUID | None = None
     new_node_name: str | None = None
     wrong_name: str | None = None
+    # Link this speaker to the user's canonical self node (the diary "나").
+    as_self: bool = False
+    # 이 "화자"가 사람이 아니라 외부 출처(책·AI·기사·매체)임 — new_node_name을
+    # 출처 이름으로 쓰고 엔트리 귀속(attribution_kind='source')을 설정한다.
+    as_source: bool = False
 
 
 class SpeakerConfirmResponse(BaseModel):
@@ -354,6 +441,32 @@ class SpeakerConfirmResponse(BaseModel):
     confirmed_node: RecommendedNodeOut
     transcript_replacements: int = 0
     edges_reassigned: int = 0
+
+
+class SourceTypeUpdate(BaseModel):
+    """Confirm/override an entry's content-type label (Phase 3)."""
+    source_type: str
+
+
+class AttributionUpdate(BaseModel):
+    """Change who the entry's statements are attributed to (pre-graph only)."""
+    attribution_kind: Literal["self", "person", "source"]
+    attribution_name: str | None = Field(default=None, max_length=120)
+
+    @model_validator(mode="after")
+    def person_requires_name(self) -> "AttributionUpdate":
+        if self.attribution_kind == "person" and not (self.attribution_name or "").strip():
+            raise ValueError("attribution_name is required when attribution_kind is 'person'")
+        return self
+
+
+class SpeakerRemapRequest(BaseModel):
+    """Reversibly remap an entry's diarization speakers (fix over-split)."""
+    group_map: dict[str, str] | None = None  # {speaker_original: group_label} (drag merge/split)
+    merges: dict[str, str] | None = None     # {from_label: to_label}
+    merge_all: bool = False                  # collapse all into one (user confirms who)
+    to_self: bool = False                    # collapse all speakers to '나'
+    reset: bool = False                      # restore original diarization
 
 
 class QuizCard(BaseModel):
@@ -389,6 +502,18 @@ class GraphBuildOut(BaseModel):
     entry_id: uuid.UUID
     status: str
     message: str = ""
+
+
+class GraphApplyRequest(BaseModel):
+    """Reviewed/edited graph draft submitted from the HITL review screen.
+
+    ``claims`` is the (possibly user-edited) list of
+    ``{speaker, title, statement, concepts}`` dicts from ``graph_staging``. When
+    omitted, the server commits the stored draft as-is.
+    """
+
+    claims: list[dict] | None = None
+    context_type: str | None = None
 
 
 class ExampleSentence(BaseModel):
@@ -444,13 +569,16 @@ class QuizGenerateOut(BaseModel):
     quiz_type: str
     difficulty_level: int
     trace_step_count: int = 0
+    generated_count: int = 1
 
 
 class QuizSessionRequest(BaseModel):
-    quiz_type: Literal["cloze", "scramble", "mcq_nuance"]
+    quiz_type: Literal["cloze", "scramble", "mcq_nuance", "composition"]
     size: int = 10
     entry_id: uuid.UUID | None = None
     quiz_ids: list[uuid.UUID] | None = None
+    vocab_source: str | None = None  # prefer quizzes generated from this vocab source
+    language: str | None = None
 
 
 class QuizSessionOut(BaseModel):
@@ -472,6 +600,7 @@ class QuizSubmitResponse(BaseModel):
     quality: int
     quiz: QuizItemOut
     explanation: str | None = None
+    tutor_feedback: dict | None = None
 
 
 class QueueCounts(BaseModel):
@@ -498,7 +627,10 @@ class QuizQueueItemOut(BaseModel):
     queue_kind: str
     difficulty_level: int
     target_node: str
+    source_label: str = ""
     context_sentence: str
+    question_ko: str | None = None
+    quiz_data: dict | None = None
     next_review_at: datetime | None = None
     streak: int = 0
     times_correct: int = 0
@@ -620,8 +752,101 @@ class VocabularyUpdateWordRequest(BaseModel):
 class QuizGenerateRequest(BaseModel):
     selected_vocab_id: str | None = None   # e.g. "default:english", "statement_bank:german", UUID
     vocab_node_id: uuid.UUID | None = None
+    source_mode: Literal["journal", "review"] = "journal"
+    count: int = Field(default=1, ge=1, le=10)
+    # Composition only: shifts the prompt-language difficulty, not the queue level.
+    difficulty: Literal["easy", "normal", "hard"] = "normal"
     # Legacy: ignored — use selected_vocab_id instead
     is_freedom_on: bool | None = None
+
+
+# --- Graph chat (multi-room conversation over the knowledge graph) -----------
+
+
+class GraphChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+
+
+class ChatSessionCreateRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=200)
+
+
+class ChatSessionRenameRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=200)
+
+
+class ChatSessionOut(BaseModel):
+    id: str
+    title: str | None = None
+    preview: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ChatSessionListOut(BaseModel):
+    items: list[ChatSessionOut] = []
+
+
+class GraphChatMessageOut(BaseModel):
+    id: str
+    role: Literal["user", "assistant"]
+    kind: str = "text"
+    content: str
+    referenced_node_ids: list[str] = []
+    meta: dict | None = None
+    created_at: str | None = None
+
+
+class GraphChatHistoryOut(BaseModel):
+    items: list[GraphChatMessageOut] = []
+    total: int = 0
+
+
+class GraphChatResponse(BaseModel):
+    answer: str
+    referenced_node_ids: list[str] = []
+    user_message_id: str
+    assistant_message_id: str
+    created_at: str | None = None
+
+
+class ChatEventRequest(BaseModel):
+    """Append a non-LLM record to a session (e.g. an inline quiz prompt/result)."""
+
+    role: Literal["user", "assistant"] = "assistant"
+    kind: str = Field(default="text", max_length=40)
+    content: str = Field(default="", max_length=8000)
+    referenced_node_ids: list[str] = []
+    meta: dict | None = None
+
+
+# --- Chat → journal distillation (Phase 2) -----------------------------------
+
+
+class DistillSentenceOut(BaseModel):
+    text: str
+    speaker: str = "나"
+    included: bool = True
+    duplicate: bool = False
+    matched_statement: str | None = None
+    matched_node_id: str | None = None
+    referenced: bool = False
+
+
+class DistillDraftOut(BaseModel):
+    draft_id: str
+    sentences: list[DistillSentenceOut] = []
+    message_id: str | None = None
+
+
+class DistillRefineRequest(BaseModel):
+    instruction: str = Field(min_length=1, max_length=2000)
+
+
+class DistillStateUpdateRequest(BaseModel):
+    """Persist the user's include-toggles without re-running the LLM."""
+
+    included: list[bool] = []
 
 
 class LabeledDialogueLine(BaseModel):
@@ -630,12 +855,20 @@ class LabeledDialogueLine(BaseModel):
 
 
 class JournalTextEntryRequest(BaseModel):
-    paragraph_text: str | None = Field(default=None, min_length=1, max_length=100_000)
+    # 4,000자 — 추출 품질이 급격히 떨어지는 지점 이전으로 캡. 프론트에서 먼저
+    # 안내 다이얼로그로 차단하지만, 우회 요청에 대비한 서버 측 방어선.
+    paragraph_text: str | None = Field(default=None, min_length=1, max_length=4_000)
     dialogue: list[LabeledDialogueLine] | None = Field(default=None, min_length=1)
     source_type: str | None = None
+    # 붙여넣기 귀속처: 'self'=내 생각, 'person'=실제 인물(저자·강연자),
+    # 'source'=매체·기관·AI 출처. None이면 기존 화자 라벨링 흐름.
+    attribution_kind: Literal["self", "person", "source"] | None = None
+    attribution_name: str | None = Field(default=None, max_length=120)
 
     @model_validator(mode="after")
     def require_paragraph_or_dialogue(self) -> "JournalTextEntryRequest":
+        if self.attribution_kind == "person" and not (self.attribution_name or "").strip():
+            raise ValueError("attribution_name is required when attribution_kind is 'person'")
         if self.paragraph_text and self.paragraph_text.strip():
             return self
         if self.dialogue:

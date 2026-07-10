@@ -407,7 +407,7 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
             Text(
               'wav · mp3 · m4a · aac · ogg · webm · flac',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 10, height: 1.2, color: Colors.grey[600]),
+              style: TextStyle(fontSize: 10, height: 1.2, color: context.mutedText),
             ),
           ],
         ),
@@ -464,7 +464,7 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
           if (kIsWeb && _pcmBytes > 0)
             Text(
               '${(_pcmBytes / 32000).toStringAsFixed(1)}s captured',
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              style: TextStyle(fontSize: 12, color: context.mutedText),
             ),
         ],
         Text(_recording ? '녹음 중… 탭하여 중지' : '탭하여 녹음 시작'),
@@ -479,7 +479,7 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
           ),
         if (_hasRecording && _recordingInfo.isNotEmpty) ...[
           const SizedBox(height: 8),
-          Text(_recordingInfo, style: TextStyle(color: Colors.grey[600])),
+          Text(_recordingInfo, style: TextStyle(color: context.mutedText)),
         ],
         if (_hasRecording) ...[
           const SizedBox(height: 32),

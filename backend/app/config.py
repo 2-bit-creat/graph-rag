@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     openai_premium_model: str = "gpt-4o"
+    # Cap each LLM request so a hung/slow OpenAI call surfaces as a fast failure
+    # instead of leaving the graph build stuck in 'graph_processing' (the default
+    # SDK timeout is 600s × retries — perceived as an indefinite buffering spinner).
+    openai_timeout_sec: float = 90.0
     cors_origins: str = "http://localhost:8080"
 
     jwt_secret: str = "change-me-in-production"
@@ -60,12 +64,49 @@ class Settings(BaseSettings):
     audio_trim_min_duration_sec: float = 0.4
     audio_trim_min_keep_ratio: float = 0.85
     audio_trim_max_remove_ratio: float = 0.25
-    hybrid_weight: float = 0.6
     free_tier_quiz_limit: int = 3
     free_tier_review_days: int = 7
 
-    # Quiz MVP v2 — manual generation only when False
-    quiz_auto_enabled: bool = False
+    # Statement-bank expression extraction during KG build (LLM cost).
+    expression_extraction_enabled: bool = True
+
+    # Graph chat: cosine-distance cutoff for retrieving Statement/Concept nodes.
+    # Looser than the 0.35 identity-matching threshold — sentence-level similarity.
+    graph_chat_max_distance: float = 0.55
+    graph_chat_seed_limit: int = 8
+    graph_chat_history_turns: int = 12
+    # Identity heads (사람·기업/출처·반려동물 등) carry no Node.name_embedding — their
+    # surface forms live in node_alias_embeddings. Graph chat searches that index
+    # too so "마야가 누구야?"/"삼성전자가 뭐랬어?" seed the identity node itself.
+    # Aliases are short names, so the cutoff is a touch looser than the 0.35
+    # write-time resolution threshold.
+    graph_chat_identity_seed_limit: int = 3
+    graph_chat_identity_max_distance: float = 0.5
+    graph_chat_max_triples: int = 30
+    graph_chat_max_completion_tokens: int = 500
+    chat_timezone: str = "Asia/Seoul"
+    graph_chat_temporal_seed_limit: int = 12
+    graph_chat_summary_enabled: bool = True
+    graph_chat_summary_batch: int = 8
+    graph_chat_summary_max_tokens: int = 600
+    # retrieve_graph_context / hybrid_retrieve seed cutoffs (formerly hardcoded in rag.py)
+    graph_retrieve_max_distance: float = 0.35
+    graph_retrieve_seed_limit: int = 5
+    graph_retrieve_identity_max_distance: float = 0.5
+    graph_retrieve_identity_seed_limit: int = 3
+
+    # Chat→journal distillation: a candidate diary sentence within this cosine
+    # distance of an existing Statement node is flagged as a duplicate (RAG already
+    # surfaced it) and excluded from the draft by default. Tighter than the 0.55
+    # chat-retrieval cutoff — dedup must be confident before dropping user content.
+    chat_distill_dup_max_distance: float = 0.25
+
+    dev_auth_fallback: bool = True
+
+    # Quiz auto-refill keeps per-type new queues topped up.
+    quiz_auto_enabled: bool = True
+    quiz_queue_target_per_type: int = 10
+    quiz_refill_max_per_run: int = 5
     quiz_session_size: int = 10
     quiz_review_ratio: float = 0.7
     quiz_level_window: int = 3

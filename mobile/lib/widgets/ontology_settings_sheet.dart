@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/client.dart';
 import '../utils/graph_layout.dart';
+import '../theme/app_theme.dart';
 
 class OntologySettingsSheet extends StatefulWidget {
   const OntologySettingsSheet({super.key, this.onApplied});
@@ -84,7 +85,7 @@ class _OntologySettingsSheetState extends State<OntologySettingsSheet> {
             const SizedBox(height: 4),
             Text(
               'GraphRAG 추출 시 사용하는 엔티티·관계 타입입니다.\n노드 색상은 아래 타입 정의를 따릅니다.',
-              style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+              style: TextStyle(fontSize: 13, color: context.mutedText),
             ),
             const SizedBox(height: 16),
             ListTile(

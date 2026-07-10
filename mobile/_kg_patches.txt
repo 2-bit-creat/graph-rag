@@ -1,0 +1,617 @@
+=== LINE 18 ===
+TOOL StrReplace c:\Users\jsy97\Desktop\Projects\Graph-RAG\mobile\lib\widgets\chat_journal_compose_bar.dart
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+
+TOOL StrReplace c:\Users\jsy97\Desktop\Projects\Graph-RAG\mobile\lib\widgets\chat_journal_compose_bar.dart
+}
+
+
+TOOL StrReplace c:\Users\jsy97\Desktop\Projects\Graph-RAG\mobile\lib\widgets\graph_chat_panel.dart
+import 'package:flutter/material.dart';
+
+import '../theme/app_theme.dart';
+import '../utils/graph_layout.dart';
+import 'journal_progress_card.dart';
+
+/// 지식그래프 화면 오른쪽에 붙는 대화 패널.
+///
+/// 그래프 위에 떠 있는 사이드 패널 형태 — 접으면 그래프만 전체 너비로 보인다.
+class GraphChatPanel extends StatelessWidget {
+  const GraphChatPanel({
+    super.key,
+    required this.messages,
+    required this.busy,
+    required this.typeColors,
+    required this.nodeById,
+    required this.inputController,
+    required this.scrollController,
+    required this.onSend,
+    required this.onNodeHighlight,
+    required this.onNodeSelect,
+    required this.onClearHistory,
+    required this.onCollapse,
+    this.activeCard,
+    this.modeLabel,
+    this.onExitMode,
+    this.onModeSelected,
+    this.inputEnabled = true,
+    this.inputHint = '아무 얘기나 해보세요…',
+    this.inputBarOverride,
+  });
+
+  final List<GraphChatMessage> messages;
+  final bool busy;
+  final Map<String, Color> typeColors;
+  final Map<String, Map<String, dynamic>> nodeById;
+  final TextEditingController inputController;
+  final ScrollController scrollController;
+  final ValueChanged<String> onSend;
+  final void Function(Set<String> nodeIds) onNodeHighlight;
+  final void Function(Map<String, dynamic> node) onNodeSelect;
+  final VoidCallback onClearHistory;
+  final VoidCallback onCollapse;
+
+  /// Active mode card (quiz/distill) rendered above the input, from the controller.
+  final Widget? activeCard;
+
+  /// When non-null, a mode chip is shown with an X that calls [onExitMode].
+  final String? modeLabel;
+  final VoidCallback? onExitMode;
+
+  /// "+" menu action: 'journal' | 'composition' | 'word' | 'distill'.
+  final ValueChanged<String>? onModeSelected;
+
+  final bool inputEnabled;
+  final String inputHint;
+
+  /// When non-null, replaces the default [_InputBar] (e.g. journal compose).
+  final Widget? inputBarOverride;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xE6101018),
+      child: DecoratedBox(
+        decoration: const BoxDecoration(
+          border: Border(left: BorderSide(color: Color(0xFF2D2D38))),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _PanelHeader(
+              hasMessages: messages.isNotEmpty,
+              onCollapse: onCollapse,
+              onClear: onClearHistory,
+            ),
+            Expanded(child: _buildMessageList()),
+            if (activeCard != null) activeCard!,
+            if (modeLabel != null && inputBarOverride == null)
+              _ModeChip(label: modeLabel!, onExit: onExitMode),
+            inputBarOverride ??
+                _InputBar(
+                  controller: inputController,
+                  busy: busy,
+                  enabled: inputEnabled,
+                  hint: inputHint,
+                  onSend: onSend,
+                  onModeSelected: onModeSelected,
+                ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMessageList() {
+    if (messages.isEmpty && !busy) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.forum_rounded,
+                  size: 32,
+                  color: AppColors.graphLabelLight.withValues(alpha: 0.3)),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                '그래프를 보면서 바로 물어보세요.\nAI가 내 일기를 기억하고 답해요.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: AppColors.graphLabelLight.withValues(alpha: 0.5),
+                  height: 1.45,
+                  fontSize: 12.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      controller: scrollController,
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.md),
+      itemCount: messages.length + (busy ? 1 : 0),
+      itemBuilder: (context, i) {
+        if (i >= messages.length) return const _ThinkingRow();
+        final m = messages[i];
+        if (m.kind == 'journal_progress') {
+          final entryId = m.meta?['entry_id']?.toString();
+          if (entryId != null && entryId.isNotEmpty) {
+            return JournalProgressCard(entryId: entryId);
+          }
+        }
+        return m.role == 'user'
+            ? _UserBubble(text: m.content)
+            : _AssistantBubble(
+                text: m.content,
+                referencedNodes: [
+                  for (final id in m.referencedNodeIds)
+                    if (nodeById[id] != null) nodeById[id]!,
+                ],
+                typeColors: typeColors,
+                onNodeTap: (node) {
+                  final ids = m.referencedNodeIds
+                      .where(nodeById.containsKey)
+                      .toSet();
+                  if (ids.isNotEmpty) onNodeHighlight(ids);
+                },
+                onNodeOpen: onNodeSelect,
+              );
+      },
+    );
+  }
+}
+
+TOOL StrReplace c:\Users\jsy97\Desktop\Projects\Graph-RAG\mobile\lib\screens\knowledge_graph_screen.dart
+import '../chat/chat_mode_cards.dart';
+import '../chat/chat_session_controller.dart';
+import '../theme/app_theme.dart';
+import '../utils/graph_layout.dart';
+import '../utils/statement_display.dart';
+import '../widgets/chat_journal_compose_bar.dart';
+import '../widgets/graph_chat_panel.dart';
+import '../widgets/graph_inspector_panel.dart';
+import '../widgets/knowledge_graph_canvas.dart';
+import '../widgets/ontology_rules_panel.dart';
+import '../widgets/ontology_settings_sheet.dart';
+import 'graph_trash_screen.dart';
+
+TOOL StrReplace c:\Users\jsy97\Desktop\Projects\Graph-RAG\mobile\lib\screens\knowledge_graph_screen.dart
+  void _onModeSelected(String action) {
+    switch (action) {
+      case 'journal':
+        chatSession.setMode(ChatMode.journal);
+        break;
+      case 'distill':
+        chatSession.startDistill();
+        break;
+      case 'composition':
+        chatSession.startQuiz('composition');
+        break;
+    }
+  }
+
+  String? _modeLabel() {
+    switch (chatSession.mode) {
+      case ChatMode.distill:
+        return '대화 → 일기 정리';
+      case ChatMode.quizComposition:
+        return '작문 퀴즈';
+      case ChatMode.quizWord:
+        return '단어 퀴즈';
+      case ChatMode.journal:
+        return '일기 쓰기';
+      case ChatMode.normal:
+        return null;
+    }
+  }
+
+  bool get _inputEnabled => chatSession.mode != ChatMode.quizWord;
+
+  String get _inputHint {
+    switch (chatSession.mode) {
+      case ChatMode.distill:
+        return '고칠 부분을 말해보세요. 예) 첫 문장 빼줘';
+      case ChatMode.quizComposition:
+        return '영어로 작문해서 보내기';
+      case ChatMode.quizWord:
+        return '카드에서 답을 선택하세요';
+      case ChatMode.journal:
+        return '일기를 작성하세요…';
+      case ChatMode.normal:
+        return '아무 얘기나 해보세요…';
+    }
+  }
+
+  Widget? _journalInputBar() =>
+      chatSession.mode == ChatMode.journal ? const ChatJournalComposeBar() : null;
+
+  /// The active mode card (quiz/distill) rendered above the input, or null.
+  Widget? _activeModeCard() {
+    switch (chatSession.mode) {
+      case ChatMode.normal:
+      case ChatMode.journal:
+        return null;
+      case ChatMode.distill:
+        return DistillDraftCard(
+          sentences: chatSession.distillSentences,
+          loading: chatSession.distillLoading,
+          onToggle: chatSession.toggleDistillSentence,
+          onSave: chatSession.saveDistillAsJournal,
+          onCancel: chatSession.exitMode,
+        );
+      case ChatMode.quizComposition:
+        final quiz = chatSession.activeQuiz;
+        if (quiz == null) return _quizStatusCard();
+        return CompositionDrillCard(
+          key: ValueKey('comp-${quiz['id']}'),
+          quiz: quiz,
+          feedback: chatSession.quizFeedback,
+          busy: chatSession.busy,
+          onNext: chatSession.nextQuiz,
+          onExit: chatSession.exitMode,
+        );
+      case ChatMode.quizWord:
+        final quiz = chatSession.activeQuiz;
+        if (quiz == null) return _quizStatusCard();
+        return WordQuizCard(
+          key: ValueKey('word-${quiz['id']}'),
+          quiz: quiz,
+          onSubmit: ({answer, order, selectedIndex}) =>
+              chatSession.submitWordQuiz(
+                  answer: answer, order: order, selectedIndex: selectedIndex),
+          onNext: chatSession.nextQuiz,
+          onExit: chatSession.exitMode,
+        );
+    }
+  }
+
+=== LINE 19 ===
+TOOL StrReplace c:\Users\jsy97\Desktop\Projects\Graph-RAG\mobile\lib\screens\knowledge_graph_screen.dart
+                  ? GraphChatPanel(
+                      messages: chatSession.messages,
+                      busy: chatSession.busy,
+                      typeColors: const {},
+                      nodeById: const {},
+                      inputController: _chatInputController,
+                      scrollController: _chatScrollController,
+                      onSend: _sendChat,
+                      onNodeHighlight: (_) {},
+                      onNodeSelect: (_) {},
+                      onClearHistory: _deleteActiveRoom,
+                      onCollapse: _collapseChat,
+                      activeCard: _activeModeCard(),
+                      modeLabel: _modeLabel(),
+                      onExitMode: chatSession.exitMode,
+                      onModeSelected: _onModeSelected,
+                      inputEnabled: _inputEnabled,
+                      inputHint: _inputHint,
+                      inputBarOverride: _journalInputBar(),
+                    )
+
+TOOL StrReplace c:\Users\jsy97\Desktop\Projects\Graph-RAG\mobile\lib\screens\knowledge_graph_screen.dart
+                  ? GraphChatPanel(
+                      messages: chatSession.messages,
+                      busy: chatSession.busy,
+                      typeColors: typeColors,
+                      nodeById: nodeById,
+                      inputController: _chatInputController,
+                      scrollController: _chatScrollController,
+                      onSend: _sendChat,
+                      onNodeHighlight: _highlightNodes,
+                      onNodeSelect: (node) => _selectNode(node, showSheet: true),
+                      onClearHistory: _deleteActiveRoom,
+                      onCollapse: _collapseChat,
+                      activeCard: _activeModeCard(),
+                      modeLabel: _modeLabel(),
+                      onExitMode: chatSession.exitMode,
+                      onModeSelected: _onModeSelected,
+                      inputEnabled: _inputEnabled,
+                      inputHint: _inputHint,
+                      inputBarOverride: _journalInputBar(),
+                    )
+
+TOOL Read c:\Users\jsy97\Desktop\Projects\Graph-RAG\mobile\lib\widgets\chat_journal_compose_bar.dart
+
+
+TOOL Grep c:\Users\jsy97\Desktop\Projects\Graph-RAG\mobile\lib
+
+
+=== LINE 82 ===
+TOOL StrReplace c:\Users\jsy97\Desktop\Projects\Graph-RAG\mobile\lib\screens\knowledge_graph_screen.dart
+  Set<String> _glowIds = const {};
+  int _glowSeq = 0;
+  int _lastMsgCount = 0;
+
+  /// User-resizable chat panel width (px). Null → default fraction on first layout.
+  double? _chatPanelWidth;
+
+  static const _chatMinWidth = 280.0;
+  static const _chatMaxWidthFraction = 0.58;
+
+  double _chatMaxWidth(BuildContext context) =>
+      (MediaQuery.sizeOf(context).width * _chatMaxWidthFraction)
+          .clamp(_chatMinWidth, 720.0);
+
+  double _resolvedChatWidth(BuildContext context) {
+    final maxW = _chatMaxWidth(context);
+    _chatPanelWidth ??=
+        (MediaQuery.sizeOf(context).width.clamp(320.0, 900.0) * 0.34)
+            .clamp(_chatMinWidth, maxW);
+    return _chatPanelWidth!.clamp(_chatMinWidth, maxW);
+  }
+
+  void _resizeChatPanel(double deltaDx) {
+    final maxW = _chatMaxWidth(context);
+    setState(() {
+      _chatPanelWidth =
+          (_resolvedChatWidth(context) + deltaDx).clamp(_chatMinWidth, maxW);
+    });
+  }
+
+  Widget _buildGraphChatPanel({
+    Map<String, Color> typeColors = const {},
+    Map<String, Map<String, dynamic>> nodeById = const {},
+  }) {
+    return GraphChatPanel(
+      messages: chatSession.messages,
+      busy: chatSession.busy,
+      typeColors: typeColors,
+      nodeById: nodeById,
+      inputController: _chatInputController,
+      scrollController: _chatScrollController,
+      onSend: _sendChat,
+      onNodeHighlight: nodeById.isEmpty ? (_) {} : _highlightNodes,
+      onNodeSelect: nodeById.isEmpty
+          ? (_) {}
+          : (node) => _selectNode(node, showSheet: true),
+      onClearHistory: _deleteActiveRoom,
+      onCollapse: _collapseChat,
+      activeCard: _activeModeCard(),
+      modeLabel: _modeLabel(),
+      onExitMode: chatSession.exitMode,
+      onModeSelected: _onModeSelected,
+      inputEnabled: _inputEnabled,
+      inputHint: _inputHint,
+      inputBarOverride: _journalInputBar(),
+    );
+  }
+
+  Widget _layoutGraphWithChat({
+    required Widget graphSide,
+    Map<String, Color> typeColors = const {},
+    Map<String, Map<String, dynamic>> nodeById = const {},
+  }) {
+    final showChat = widget.chatOpen;
+    if (!showChat) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          graphSide,
+          Positioned(
+            right: 0,
+            top: MediaQuery.sizeOf(context).height * 0.38,
+            child: GraphChatCollapsedTab(onExpand: _expandChat),
+          ),
+        ],
+      );
+    }
+
+    final chatW = _resolvedChatWidth(context);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(child: graphSide),
+        _ChatPanelResizeHandle(onDrag: _resizeChatPanel),
+        SizedBox(
+          width: chatW,
+          child: _buildGraphChatPanel(
+            typeColors: typeColors,
+            nodeById: nodeById,
+          ),
+        ),
+      ],
+    );
+  }
+
+TOOL StrReplace c:\Users\jsy97\Desktop\Projects\Graph-RAG\mobile\lib\screens\knowledge_graph_screen.dart
+  Widget _buildEmptyWithChat() {
+    return _layoutGraphWithChat(
+      graphSide: const _EmptyGraphHint(),
+    );
+  }
+
+TOOL StrReplace c:\Users\jsy97\Desktop\Projects\Graph-RAG\mobile\lib\screens\knowledge_graph_screen.dart
+    final nodeById = buildNodeById(nodes);
+
+    return _layoutGraphWithChat(
+      typeColors: typeColors,
+      nodeById: nodeById,
+      graphSide: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _GraphToolbar(
+            query: _query,
+            nodeCount: nodes.length,
+            edgeCount: edges.length,
+            matchCount: _queryMatchCount(nodes),
+            onQueryChanged: (v) => setState(() => _query = v),
+            onRefresh: () {
+              _load();
+              chatSession.loadSessions();
+            },
+            onOntology: () => OntologySettingsSheet.show(
+              context,
+              onApplied: _load,
+              onFilterByType: (type) => setState(() => _typeFilter = type),
+            ),
+            onTrash: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                  builder: (_) => const GraphTrashScreen()),
+            ).then((_) => _load()),
+            onClearGraph: _clearGraph,
+            onAddNode: _addNode,
+          ),
+          Container(
+            padding: const EdgeInsets.only(bottom: 6),
+            decoration: const BoxDecoration(
+              color: Color(0xFF101018),
+              border: Border(bottom: BorderSide(color: Color(0xFF2D2D38))),
+            ),
+            child: OntologyLegendBar(
+              entityTypes: _legendEntityTypes(entityTypes),
+              typeColors: typeColors,
+              selectedType: _typeFilter,
+              onTypeSelected: (t) => setState(() => _typeFilter = t),
+            ),
+          ),
+          OntologyRulesPanel(
+            ontologyName:
+                _ontology?['name']?.toString() ?? 'DailyLife_English',
+            entityTypes: entityTypes,
+            relationTypes: relationTypes,
+            typeColors: typeColors,
+            expanded: _showOntologyRules,
+            onToggle: () {
+              setState(() => _showOntologyRules = !_showOntologyRules);
+              _canvasKey.currentState?.refit();
+            },
+            onEdit: () =>
+                OntologySettingsSheet.show(context, onApplied: _load),
+          ),
+          Expanded(
+            child: _canvasWithCard(
+              nodes: nodes,
+              edges: edges,
+              typeColors: typeColors,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Drag handle between graph canvas and chat panel.
+class _ChatPanelResizeHandle extends StatelessWidget {
+  const _ChatPanelResizeHandle({required this.onDrag});
+
+  final ValueChanged<double> onDrag;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragUpdate: (d) => onDrag(d.delta.dx),
+        child: Container(
+          width: 8,
+          color: Colors.transparent,
+          child: Center(
+            child: Container(
+              width: 2,
+              height: double.infinity,
+              color: const Color(0xFF3A3A48),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+TOOL StrReplace c:\Users\jsy97\Desktop\Projects\Graph-RAG\mobile\lib\widgets\chat_journal_compose_bar.dart
+  String? _labeledFromField() {
+    final field = _fieldKey.currentState;
+    if (field == null) return null;
+    final raw = field.text;
+    final text = raw.trim();
+    if (text.isEmpty) return null;
+    final hits = findMentions(raw, field.matchableNames());
+    if (hits.isNotEmpty) {
+      return toLabeledLines(splitByMentions(raw, hits));
+    }
+    final legacy = parseDialogueLines(text);
+    if (legacy != null) {
+      return toLabeledLines(legacy.lines);
+    }
+    return null;
+  }
+
+  Future<void> _saveText() async {
+    final field = _fieldKey.currentState;
+    if (field == null) return;
+    final text = field.text.trim();
+    if (text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('텍스트를 입력해 주세요')),
+      );
+      return;
+    }
+    if (text.length > kMaxJournalTextChars) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('입력이 너무 깁니다'),
+          content: Text(
+            '현재 ${text.length}자 / 최대 $kMaxJournalTextChars자입니다.\n'
+            '내용을 나눠서 여러 번 입력해 주세요.',
+          ),
+          actions: [
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx), child: const Text('확인')),
+          ],
+        ),
+      );
+      return;
+    }
+    final labeled = _labeledFromField();
+    if (labeled == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('@화자로 시작해 주세요. 예) @나 오늘 회의…  @엄마 10시까지 오라고 했어'),
+        ),
+      );
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await chatSession.saveJournalText(labeled);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+TOOL StrReplace c:\Users\jsy97\Desktop\Projects\Graph-RAG\mobile\lib\widgets\chat_journal_compose_bar.dart
+                decoration: InputDecoration(
+                  hintText:
+                      '@화자로 시작해 주세요.\n'
+                      '예) @나 오늘 회의…  @엄마 10시까지 오라고 했어',
+
+=== LINE 102 ===
+TOOL StrReplace c:\Users\jsy97\Desktop\Projects\Graph-RAG\mobile\lib\main.dart
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF101018),
+        foregroundColor: AppColors.graphLabelLight,
+        elevation: 0,
+        scrolledUnderElevation: 0.5,
+        surfaceTintColor: Colors.transparent,
+        automaticallyImplyLeading: !wide,
+        leading: wide
+            ? null
+            : Builder(
+                builder: (ctx) => IconButton(
+                  icon: const Icon(Icons.menu_rounded),
+                  tooltip: '채팅방 · 메뉴',
+                  onPressed: () => Scaffold.of(ctx).openDrawer(),
+                ),
+              ),
+

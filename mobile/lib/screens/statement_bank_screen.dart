@@ -5,10 +5,9 @@ import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 
 const _kLangDisplay = {
-  'english': '영어', 'german': '독일어', 'japanese': '일본어',
-  'chinese': '중국어', 'spanish': '스페인어', 'french': '프랑스어',
-  'portuguese': '포르투갈어', 'italian': '이탈리아어',
-  'arabic': '아랍어', 'russian': '러시아어',
+  'english': '영어',
+  'korean': '한국어',
+  'german': '독일어',
 };
 
 class StatementBankScreen extends StatefulWidget {
@@ -214,7 +213,7 @@ class _ExpressionCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       meaning,
-                      style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                      style: TextStyle(fontSize: 13, color: context.subtleText),
                     ),
                   ],
                   if (example.isNotEmpty) ...[
@@ -232,14 +231,14 @@ class _ExpressionCard extends StatelessWidget {
                     const SizedBox(height: 6),
                     Row(
                       children: [
-                        Icon(Icons.account_tree_outlined, size: 11, color: Colors.grey[500]),
+                        Icon(Icons.account_tree_outlined, size: 11, color: context.mutedText),
                         const SizedBox(width: 4),
                         Flexible(
                           child: Text(
                             nodeName.isNotEmpty
                                 ? nodeName
                                 : '노드 ${nodeId.length > 8 ? nodeId.substring(0, 8) : nodeId}…',
-                            style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                            style: TextStyle(fontSize: 11, color: context.mutedText),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -250,7 +249,7 @@ class _ExpressionCard extends StatelessWidget {
               ),
             ),
             IconButton(
-              icon: Icon(Icons.delete_outline, size: 20, color: Colors.grey[500]),
+              icon: Icon(Icons.delete_outline, size: 20, color: context.mutedText),
               onPressed: onDelete,
               tooltip: '삭제',
             ),

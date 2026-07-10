@@ -1,0 +1,165 @@
+import 'package:flutter/material.dart';
+
+import 'app_navigator.dart';
+import 'app_route_observer.dart';
+import 'chat/chat_session_controller.dart';
+import 'chat/chat_sidebar.dart';
+import 'compose/compose_window_host.dart';
+import 'screens/knowledge_graph_screen.dart';
+import 'theme/app_theme.dart';
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const GraphRagApp());
+}
+
+class GraphRagApp extends StatelessWidget {
+  const GraphRagApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'MyLife English',
+      debugShowCheckedModeBanner: false,
+      theme: buildAppTheme(brightness: Brightness.light),
+      darkTheme: buildAppTheme(brightness: Brightness.dark),
+      themeMode: ThemeMode.system,
+      navigatorKey: appNavigatorKey,
+      navigatorObservers: [appRouteObserver],
+      // 작성 창 오버레이를 Navigator 위에 얹는다 — 어떤 화면/라우트에 있어도
+      // 우하단 미니 창이 보이고, 탭하면 그 자리에서 다시 확대된다.
+      builder: (context, child) => Stack(
+        children: [
+          if (child != null) child,
+          const ComposeWindowHost(),
+        ],
+      ),
+      home: const ChatHomeShell(),
+    );
+  }
+}
+
+// ─── Chat-centric home shell (Claude-style sidebar + graph conversation) ──────
+
+/// The app's single home. The knowledge-graph conversation is the default view;
+/// a left sidebar (rail on wide, drawer on narrow) lists chat rooms and links to
+/// 기록/메뉴. Journal, quiz, and distillation all launch from inside the chat feed
+/// (Phase 4), so there's no bottom navigation anymore.
+class ChatHomeShell extends StatefulWidget {
+  const ChatHomeShell({super.key});
+
+  @override
+  State<ChatHomeShell> createState() => _ChatHomeShellState();
+}
+
+class _ChatHomeShellState extends State<ChatHomeShell> {
+  static const _wideBreakpoint = 1000.0;
+  static const _sidebarExpandedWidth = 260.0;
+  static const _sidebarCollapsedWidth = 56.0;
+
+  bool _chatOpen = true;
+  bool _sidebarOpen = true;
+
+  @override
+  void initState() {
+    super.initState();
+    chatSession.init();
+  }
+
+  void _toggleSidebar() => setState(() => _sidebarOpen = !_sidebarOpen);
+
+  @override
+  Widget build(BuildContext context) {
+    final wide = MediaQuery.sizeOf(context).width >= _wideBreakpoint;
+
+    final graph = Scaffold(
+      backgroundColor: AppColors.graphBgDark,
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF101018),
+        foregroundColor: AppColors.graphLabelLight,
+        elevation: 0,
+        scrolledUnderElevation: 0.5,
+        surfaceTintColor: Colors.transparent,
+        leading: wide
+            ? IconButton(
+                icon: Icon(
+                  _sidebarOpen
+                      ? Icons.menu_open_rounded
+                      : Icons.menu_rounded,
+                ),
+                tooltip: _sidebarOpen ? '사이드바 접기' : '사이드바 펼치기',
+                onPressed: _toggleSidebar,
+              )
+            : Builder(
+                builder: (ctx) => IconButton(
+                  icon: const Icon(Icons.menu_rounded),
+                  tooltip: '채팅방 · 메뉴',
+                  onPressed: () => Scaffold.of(ctx).openDrawer(),
+                ),
+              ),
+        title: ListenableBuilder(
+          listenable: chatSession,
+          builder: (context, _) {
+            final title =
+                (chatSession.activeSession?['title'] as String?)?.trim();
+            return Text(title?.isNotEmpty == true ? title! : '그래프 대화');
+          },
+        ),
+        actions: [
+          IconButton(
+            tooltip: _chatOpen ? '대화 패널 접기' : '대화 패널 펼치기',
+            icon: Icon(
+              _chatOpen
+                  ? Icons.chat_bubble_rounded
+                  : Icons.chat_bubble_outline_rounded,
+              color: _chatOpen ? AppColors.hubGraph : null,
+            ),
+            onPressed: () => setState(() => _chatOpen = !_chatOpen),
+          ),
+        ],
+      ),
+      drawer: wide
+          ? null
+          : Drawer(
+              child: SafeArea(
+                child: ChatSidebar(onNavigate: () => Navigator.pop(context)),
+              ),
+            ),
+      body: KnowledgeGraphView(
+        chatOpen: _chatOpen,
+        onChatOpenChanged: (open) => setState(() => _chatOpen = open),
+      ),
+    );
+
+    if (!wide) return graph;
+
+    final sidebarW =
+        _sidebarOpen ? _sidebarExpandedWidth : _sidebarCollapsedWidth;
+
+    return Scaffold(
+      body: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            width: sidebarW,
+            child: Material(
+              color: Theme.of(context).colorScheme.surface,
+              child: SafeArea(
+                child: _sidebarOpen
+                    ? ChatSidebar(onCollapse: _toggleSidebar)
+                    : ChatSidebarRail(onExpand: _toggleSidebar),
+              ),
+            ),
+          ),
+          VerticalDivider(
+            width: 1,
+            color: Theme.of(context).dividerColor.withValues(alpha: 0.35),
+          ),
+          Expanded(child: graph),
+        ],
+      ),
+    );
+  }
+}

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import crud
 from ..db import get_session
-from ..dev_user import dev_user_dep
+from ..deps import request_user_dep
 from ..models import User
 from ..schemas import (
     VocabWordOut,
@@ -42,7 +42,7 @@ router = APIRouter(prefix="/vocabularies", tags=["vocabularies"])
 @router.get("/statement-bank", tags=["vocabularies"])
 async def get_statement_bank(
     language: str = "english",
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Return all system-extracted expressions for a given target language."""
@@ -82,7 +82,7 @@ async def get_statement_bank(
 @router.get("/statement-bank/reprocess-info", tags=["vocabularies"])
 async def get_reprocess_info(
     languages: str = Query(description="Comma-separated list of languages to check"),
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Dry-run: return how many Statement nodes would be reprocessed per language.
@@ -120,7 +120,7 @@ async def get_reprocess_info(
 @router.post("/statement-bank/reprocess", tags=["vocabularies"])
 async def trigger_reprocess(
     languages: list[str],
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Trigger retroactive expression extraction for given languages.
@@ -150,7 +150,7 @@ async def delete_statement_expression(
     node_id: str,
     language: str,
     expression: str,
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
 ) -> dict:
     """Delete a single expression from the statement bank.
 
@@ -167,7 +167,7 @@ async def delete_statement_expression(
 @router.delete("/statement-bank/language/{language}", tags=["vocabularies"])
 async def delete_all_language_expressions(
     language: str,
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Delete ALL extracted expressions for a language, then trigger re-extraction.
@@ -194,7 +194,7 @@ async def delete_all_language_expressions(
 async def reprocess_single_node(
     node_id: uuid.UUID,
     languages: list[str],
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Force re-extraction for a single Statement node (e.g. after deleting its expressions).
@@ -318,7 +318,7 @@ _LANG_DISPLAY = {
 
 @router.get("", response_model=VocabularyListOut)
 async def list_all_vocabularies(
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
 ) -> VocabularyListOut:
     from ..node_expression_store import get_statement_bank_for_language
     from ..crud import get_effective_target_languages
@@ -346,7 +346,7 @@ async def list_all_vocabularies(
 @router.get("/{vocab_id}", response_model=VocabularyDetailOut)
 async def get_vocabulary_detail(
     vocab_id: str,
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
 ) -> VocabularyDetailOut:
     # statement_bank:<language> routes to node_expression_store
     if vocab_id.startswith("statement_bank:"):
@@ -392,7 +392,7 @@ async def get_vocabulary_detail(
 @router.post("", response_model=VocabularySummaryOut, status_code=status.HTTP_201_CREATED)
 async def create_vocab(
     payload: VocabularyCreateRequest,
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
 ) -> VocabularySummaryOut:
     try:
         item = await create_vocabulary(
@@ -408,7 +408,7 @@ async def create_vocab(
 @router.delete("/{vocab_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 async def remove_vocab(
     vocab_id: str,
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
 ) -> Response:
     try:
         await delete_vocabulary(user.id, vocab_id)
@@ -423,7 +423,7 @@ async def remove_vocab(
 async def patch_vocab(
     vocab_id: str,
     payload: VocabularyUpdateRequest,
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
 ) -> VocabularySummaryOut:
     if payload.name is None and payload.description is None:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -447,7 +447,7 @@ async def patch_vocab(
 async def add_vocab_word(
     vocab_id: str,
     payload: VocabularyAddWordRequest,
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> VocabWordOut:
     if payload.linked_diary_id is not None:
@@ -489,7 +489,7 @@ async def add_vocab_word(
 async def remove_vocab_word(
     vocab_id: str,
     word: str,
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
 ) -> Response:
     try:
         await delete_word(user.id, vocab_id, word)
@@ -507,7 +507,7 @@ async def patch_vocab_word(
     vocab_id: str,
     word: str,
     payload: VocabularyUpdateWordRequest,
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
 ) -> VocabWordOut:
     try:
         updated = await update_word(

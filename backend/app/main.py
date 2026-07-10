@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .db import init_db
-from .routers import agent, auth, chat, debug, graph, jobs, journal, kg_build, ontology, quiz, subscription, vocabulary
+from .routers import agent, auth, debug, graph, graph_chat, graph_chat_distill, jobs, journal, kg_build, ontology, quiz, subscription, tutor, vocabulary
 
 settings = get_settings()
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -27,7 +27,8 @@ async def lifespan(app: FastAPI):
     ensure_vocab_files()
     ensure_ielts_vocab_file()
     await init_db()
-    start_worker()
+    if settings.expression_extraction_enabled:
+        start_worker()
     yield
     await stop_worker()
 
@@ -57,7 +58,9 @@ app.include_router(vocabulary.router)
 app.include_router(debug.router)
 app.include_router(jobs.router)
 app.include_router(subscription.router)
-app.include_router(chat.router)
+app.include_router(tutor.router)
+app.include_router(graph_chat.router)
+app.include_router(graph_chat_distill.router)
 app.include_router(graph.router)
 app.include_router(graph.v1_router)
 app.include_router(kg_build.router)

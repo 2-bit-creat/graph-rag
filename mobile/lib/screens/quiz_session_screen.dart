@@ -235,7 +235,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
                     Text(
                       questionKo,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: AppColors.textMuted,
+                            color: context.mutedText,
                           ),
                     ),
                   if (audioUrl == null || audioUrl.isEmpty)
@@ -243,7 +243,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
                       padding: const EdgeInsets.only(top: 8),
                       child: Text(
                         '이 문제에는 음성이 없습니다. 새로 생성한 문제만 재생됩니다.',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        style: TextStyle(fontSize: 12, color: context.mutedText),
                       ),
                     ),
                   const SizedBox(height: AppSpacing.lg),

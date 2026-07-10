@@ -160,20 +160,51 @@ async def get_statement_bank_for_language(
     user_id: uuid.UUID,
     language: str,
 ) -> list[dict[str, Any]]:
-    """Return all expressions for a language across all nodes, with source node info."""
+    """Return expressions for a language, MERGED by lemma across all nodes.
+
+    The same word (e.g. "matcha") extracted from several Statement nodes — common
+    when two speakers share a concept — collapses into ONE entry whose ``origins``
+    lists every source node (+ its example). Back-compat top-level fields
+    (source_node_id / source_node_name / example) mirror the first origin so older
+    consumers keep working. Deleting one origin (its node) drops that badge; the
+    entry disappears only when the last origin is gone (merge is purely read-time).
+    """
     def _get() -> list[dict[str, Any]]:
         store = _read_store_sync(user_id)
-        result: list[dict[str, Any]] = []
+        # Preserve first-seen order of lemmas.
+        merged: dict[str, dict[str, Any]] = {}
         for node_id, lang_map in store.get("expressions", {}).items():
             node_name = lang_map.get("node_name") or ""
             for item in lang_map.get(language, []):
-                result.append({
-                    **item,
-                    "source_node_id": node_id,
-                    "source_node_name": node_name or None,
-                    "language": language,
-                })
-        return result
+                lemma = (item.get("expression") or "").strip().lower()
+                if not lemma:
+                    continue
+                example = (item.get("example") or "").strip()
+                origin = {
+                    "node_id": node_id,
+                    "node_name": node_name or None,
+                    "example": example or None,
+                }
+                entry = merged.get(lemma)
+                if entry is None:
+                    merged[lemma] = {
+                        **item,
+                        "language": language,
+                        # Back-compat: representative (first) origin.
+                        "source_node_id": node_id,
+                        "source_node_name": node_name or None,
+                        "origins": [origin],
+                    }
+                else:
+                    entry["origins"].append(origin)
+                    # Fill gaps from later origins (meaning/cefr/example).
+                    if not entry.get("meaning") and item.get("meaning"):
+                        entry["meaning"] = item["meaning"]
+                    if not entry.get("cefr") and item.get("cefr"):
+                        entry["cefr"] = item["cefr"]
+                    if not entry.get("example") and example:
+                        entry["example"] = example
+        return list(merged.values())
     return await asyncio.to_thread(_get)
 
 
@@ -225,6 +256,47 @@ async def delete_node_expression(
     return await asyncio.to_thread(_delete)
 
 
+async def delete_expression_all_origins(
+    user_id: uuid.UUID,
+    language: str,
+    expression: str,
+) -> int:
+    """Delete a lemma from EVERY node's bank for a language. Returns count removed.
+
+    The statement-bank card merges a lemma across origins, so its trash icon means
+    "remove this word from my vocab" — one call clears all origins so the merged
+    card doesn't reappear from a surviving copy. (Per-origin removal is done by
+    deleting the source graph node instead.)
+    """
+    expr_key = (expression or "").strip().lower()
+
+    def _delete() -> int:
+        if not expr_key:
+            return 0
+        store = _read_store_sync(user_id)
+        removed = 0
+        for node_id, lang_map in store.get("expressions", {}).items():
+            lang_exprs = lang_map.get(language)
+            if not isinstance(lang_exprs, list):
+                continue
+            kept = [e for e in lang_exprs if (e.get("expression") or "").lower() != expr_key]
+            if len(kept) == len(lang_exprs):
+                continue
+            removed += len(lang_exprs) - len(kept)
+            lang_map[language] = kept
+            # If this node has no more expressions for the language, reset its
+            # done-flag so it can be re-extracted later (matches single-delete).
+            if not kept:
+                done = store.get("extraction_done", {})
+                done_langs = done.get(node_id, [])
+                done[node_id] = [l for l in done_langs if l != language]
+        if removed:
+            _write_store_sync(user_id, store)
+        return removed
+
+    return await asyncio.to_thread(_delete)
+
+
 _CEFR_RANK = {"A1": 1, "A2": 2, "B1": 3, "B2": 4, "C1": 5, "C2": 6}
 
 
@@ -262,9 +334,16 @@ async def pick_random_expression_for_quiz(
 
     def _pick() -> dict[str, Any] | None:
         store = _read_store_sync(user_id)
+        # Dedup by lemma so a word shared across nodes isn't weighted N× — the
+        # first occurrence wins (keeps a source_node_id for provenance).
+        seen: set[str] = set()
         candidates: list[dict[str, Any]] = []
         for node_id, lang_map in store.get("expressions", {}).items():
             for item in lang_map.get(language, []):
+                lemma = (item.get("expression") or "").strip().lower()
+                if not lemma or lemma in seen:
+                    continue
+                seen.add(lemma)
                 candidates.append({**item, "source_node_id": node_id, "language": language})
         if not candidates:
             return None
@@ -287,6 +366,53 @@ async def pick_random_expression_for_quiz(
     return await asyncio.to_thread(_pick)
 
 
+async def read_node_expressions_snapshot(
+    user_id: uuid.UUID,
+    node_id: str,
+) -> dict[str, Any]:
+    """Read a node's full expression entry + extraction_done flags (no mutation).
+
+    Returns a JSON-serializable snapshot ``{"entry": {...}, "extraction_done": [...]}``
+    for embedding in a soft-deleted node's ``deleted_context`` so it can be restored
+    verbatim. Returns ``{}`` when the node has no expressions.
+    """
+
+    def _read() -> dict[str, Any]:
+        store = _read_store_sync(user_id)
+        entry = store.get("expressions", {}).get(node_id)
+        if not entry:
+            return {}
+        done = list(store.get("extraction_done", {}).get(node_id, []))
+        # Deep copy so the snapshot is decoupled from the live store dict.
+        return {
+            "entry": json.loads(json.dumps(entry, ensure_ascii=False)),
+            "extraction_done": done,
+        }
+
+    return await asyncio.to_thread(_read)
+
+
+async def restore_node_expressions(
+    user_id: uuid.UUID,
+    node_id: str,
+    snapshot: dict[str, Any],
+) -> None:
+    """Write a snapshot from ``read_node_expressions_snapshot`` back into the store."""
+    entry = snapshot.get("entry") if isinstance(snapshot, dict) else None
+    if not entry:
+        return
+    done = snapshot.get("extraction_done") or []
+
+    def _write() -> None:
+        store = _read_store_sync(user_id)
+        store["expressions"][node_id] = entry
+        if done:
+            store["extraction_done"][node_id] = list(done)
+        _write_store_sync(user_id, store)
+
+    return await asyncio.to_thread(_write)
+
+
 async def delete_node_all_expressions(
     user_id: uuid.UUID,
     node_id: str,
@@ -305,6 +431,39 @@ async def delete_node_all_expressions(
         return count
 
     return await asyncio.to_thread(_delete)
+
+
+async def prune_expressions_not_in(
+    user_id: uuid.UUID,
+    valid_node_ids: set[str],
+) -> int:
+    """Drop expression entries whose node no longer exists.
+
+    Reconciliation safety net: the per-node store is keyed by Statement node id, but
+    bulk node deletions (e.g. clearing the whole graph) bypass the per-node cleanup
+    and leave the expressions orphaned. Removing every key not in ``valid_node_ids``
+    (the user's live node ids) cleans those up — pass an empty set to wipe all.
+    Returns the number of expressions removed.
+    """
+
+    def _prune() -> int:
+        store = _read_store_sync(user_id)
+        exprs = store.get("expressions", {})
+        done = store.get("extraction_done", {})
+        removed = 0
+        for node_id in list(exprs.keys()):
+            if node_id in valid_node_ids:
+                continue
+            removed += sum(
+                len(v) for v in exprs[node_id].values() if isinstance(v, list)
+            )
+            exprs.pop(node_id, None)
+            done.pop(node_id, None)
+        if removed:
+            _write_store_sync(user_id, store)
+        return removed
+
+    return await asyncio.to_thread(_prune)
 
 
 async def delete_all_language_expressions(

@@ -32,6 +32,8 @@ class KnowledgeGraphCanvas extends StatefulWidget {
     this.typeFilter = '전체',
     this.focusMode = true,
     this.compactMode = false,
+    this.glowNodeIds = const {},
+    this.glowSeq = 0,
     this.onNodeTap,
     this.onEdgeTap,
     this.onBackgroundTap,
@@ -46,6 +48,8 @@ class KnowledgeGraphCanvas extends StatefulWidget {
   final String typeFilter;
   final bool focusMode;
   final bool compactMode;
+  final Set<String> glowNodeIds;
+  final int glowSeq;
   final void Function(Map<String, dynamic> node)? onNodeTap;
   final void Function(Map<String, dynamic> edge)? onEdgeTap;
   final VoidCallback? onBackgroundTap;
@@ -87,6 +91,11 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas> {
         !_sameIds(oldWidget.nodes, widget.nodes)) {
       _fitted = false;
       _rebuildLayout();
+    }
+    if (widget.glowSeq != oldWidget.glowSeq && widget.glowNodeIds.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) focusOnNodes(widget.glowNodeIds);
+      });
     }
   }
 
@@ -273,6 +282,39 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas> {
     }
   }
 
+  /// Pan/zoom so referenced chat nodes stay in view (Obsidian-style focus).
+  void focusOnNodes(Set<String> nodeIds) {
+    final layout = _layout;
+    if (layout == null || nodeIds.isEmpty || _lastViewport == Size.zero) return;
+
+    Rect? bounds;
+    for (final id in nodeIds) {
+      final pos = layout.positions[id];
+      if (pos == null) continue;
+      final r = (layout.nodeRadii[id] ?? kGraphNodeRadius) + 48;
+      final world = pos + _worldTranslate;
+      final rect = Rect.fromCircle(center: world, radius: r);
+      bounds = bounds == null ? rect : bounds.expandToInclude(rect);
+    }
+    if (bounds == null) return;
+
+    const pad = 72.0;
+    final viewport = _lastViewport;
+    final scale = math.min(
+      (viewport.width - pad * 2) / bounds.width,
+      (viewport.height - pad * 2) / bounds.height,
+    ).clamp(0.12, 3.5);
+    final cx = bounds.center.dx;
+    final cy = bounds.center.dy;
+    final dx = viewport.width / 2 - cx * scale;
+    final dy = viewport.height / 2 - cy * scale;
+
+    _transformationController.value = Matrix4.identity()
+      ..translateByDouble(dx, dy, 0, 1)
+      ..scaleByDouble(scale, scale, 1, 1);
+    _clampTransformToViewport(viewport);
+  }
+
   void _zoomBy(double factor) {
     if (_lastViewport == Size.zero) return;
     final center = Offset(_lastViewport.width / 2, _lastViewport.height / 2);
@@ -327,11 +369,12 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas> {
 
   @override
   Widget build(BuildContext context) {
+    final shell = context.shell;
     if (widget.nodes.isEmpty || _layout == null) {
-      return const ColoredBox(
-        color: AppColors.graphBgDark,
+      return ColoredBox(
+        color: shell.graphBackground,
         child: Center(
-          child: Text('노드 없음', style: TextStyle(color: AppColors.textMuted)),
+          child: Text('노드 없음', style: TextStyle(color: context.mutedText)),
         ),
       );
     }
@@ -368,7 +411,7 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas> {
         return Stack(
           fit: StackFit.expand,
           children: [
-            const ColoredBox(color: AppColors.graphBgDark),
+            ColoredBox(color: shell.graphBackground),
             Listener(
               onPointerSignal: _onPointerSignal,
               child: ClipRect(
@@ -443,6 +486,7 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas> {
                                     selectedEdgeId: widget.selectedEdgeId,
                                     hoveredNodeId: _hoveredNodeId,
                                     focusIds: focusIds,
+                                    glowNodeIds: widget.glowNodeIds,
                                   ),
                                 ),
                               ),
@@ -464,10 +508,11 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas> {
                               );
                               final isHub = id == _hubId;
                               final isHovered = _hoveredNodeId == id;
+                              final glowed = widget.glowNodeIds.contains(id);
                               final fillOpacity = graphNodeFillOpacity(
                                 isHub: isHub,
-                                dimmed: dimmed,
-                                selected: selected,
+                                dimmed: dimmed && !glowed,
+                                selected: selected || glowed,
                                 hovered: isHovered,
                               );
                               final label = graphShortLabel(
@@ -507,9 +552,11 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas> {
                                   labelSize: labelSize,
                                   fillOpacity: fillOpacity,
                                   selected: selected,
+                                  glowed: glowed,
                                   isHub: isHub,
-                                  dimmed: dimmed,
+                                  dimmed: dimmed && !glowed,
                                   nameOpacity: nodeNameAlpha,
+                                  labelColor: shell.graphLabel,
                                   draggable: true,
                                   panScale: scale,
                                   onTap: () => widget.onNodeTap?.call(node),
@@ -736,6 +783,7 @@ class _CurvedEdgesPainter extends CustomPainter {
     this.selectedEdgeId,
     this.hoveredNodeId,
     this.focusIds,
+    this.glowNodeIds = const {},
   });
 
   final List<Map<String, dynamic>> edges;
@@ -749,6 +797,7 @@ class _CurvedEdgesPainter extends CustomPainter {
   final String? selectedEdgeId;
   final String? hoveredNodeId;
   final Set<String>? focusIds;
+  final Set<String> glowNodeIds;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -770,11 +819,12 @@ class _CurvedEdgesPainter extends CustomPainter {
           (srcId == selectedNodeId || tgtId == selectedNodeId);
       final hoverHit = hoveredNodeId != null &&
           (srcId == hoveredNodeId || tgtId == hoveredNodeId);
+      final glowHit = glowNodeIds.contains(srcId) || glowNodeIds.contains(tgtId);
       final edgeHit = edgeId == selectedEdgeId;
       final connectedToFocus =
           focusIds != null && focusIds!.contains(srcId) && focusIds!.contains(tgtId);
-      final highlighted = nodeHit || edgeHit || connectedToFocus || hoverHit;
-      final dimmed = focusIds != null && !connectedToFocus;
+      final highlighted = nodeHit || edgeHit || connectedToFocus || hoverHit || glowHit;
+      final dimmed = focusIds != null && !connectedToFocus && !glowHit;
 
       final srcColor = nodeColors[srcId] ?? const Color(0xFF888888);
       final tgtColor = nodeColors[tgtId] ?? srcColor;
@@ -793,11 +843,11 @@ class _CurvedEdgesPainter extends CustomPainter {
       canvas.drawPath(
         path,
         Paint()
-          ..color = color.withValues(alpha: highlighted ? 0.28 : 0.12)
-          ..strokeWidth = highlighted ? 4.0 : 2.5
+          ..color = color.withValues(alpha: highlighted ? (glowHit ? 0.42 : 0.28) : 0.12)
+          ..strokeWidth = highlighted ? (glowHit ? 5.0 : 4.0) : 2.5
           ..style = PaintingStyle.stroke
           ..strokeCap = StrokeCap.round
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2),
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, glowHit ? 4 : 2),
       );
 
       // Crisp edge line.
@@ -998,9 +1048,11 @@ class _GraphNode extends StatefulWidget {
     required this.labelSize,
     required this.fillOpacity,
     required this.selected,
+    required this.glowed,
     required this.isHub,
     required this.dimmed,
     required this.nameOpacity,
+    required this.labelColor,
     required this.draggable,
     required this.panScale,
     required this.onTap,
@@ -1017,9 +1069,11 @@ class _GraphNode extends StatefulWidget {
   final double labelSize;
   final double fillOpacity;
   final bool selected;
+  final bool glowed;
   final bool isHub;
   final bool dimmed;
   final double nameOpacity;
+  final Color labelColor;
   final bool draggable;
   final double panScale;
   final VoidCallback onTap;
@@ -1043,8 +1097,8 @@ class _GraphNodeState extends State<_GraphNode> {
     final d = r * 2;
     final hitW = math.max(d, kGraphMinHitDiameter);
     final showLabel = widget.nameOpacity > 0.02;
-    final active = widget.selected || _hovered || widget.dragging;
-    final scale = active ? 1.1 : 1.0;
+    final active = widget.selected || _hovered || widget.dragging || widget.glowed;
+    final scale = active ? (widget.glowed ? 1.15 : 1.1) : 1.0;
 
     return MouseRegion(
       onEnter: (_) {
@@ -1094,6 +1148,11 @@ class _GraphNodeState extends State<_GraphNode> {
                     color: widget.color.withValues(alpha: widget.fillOpacity),
                     border: widget.selected
                         ? Border.all(color: Colors.white, width: 2.5)
+                        : widget.glowed
+                            ? Border.all(
+                                color: const Color(0xFFFBBF24).withValues(alpha: 0.95),
+                                width: 2.2,
+                              )
                         : _hovered
                             ? Border.all(
                                 color: Colors.white.withValues(alpha: 0.75),
@@ -1101,6 +1160,12 @@ class _GraphNodeState extends State<_GraphNode> {
                               )
                             : null,
                     boxShadow: [
+                      if (widget.glowed)
+                        BoxShadow(
+                          color: const Color(0xFFFBBF24).withValues(alpha: 0.55),
+                          blurRadius: 16,
+                          spreadRadius: 2,
+                        ),
                       if (widget.isHub || active)
                         BoxShadow(
                           color: widget.color.withValues(alpha: active ? 0.45 : 0.3),
@@ -1123,8 +1188,8 @@ class _GraphNodeState extends State<_GraphNode> {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: active
-                          ? Colors.white
-                          : AppColors.graphLabelLight,
+                          ? (widget.glowed ? const Color(0xFFFDE68A) : Colors.white)
+                          : widget.labelColor,
                       fontSize: widget.labelSize,
                       fontWeight: widget.isHub || active ? FontWeight.w700 : FontWeight.w500,
                       height: 1.15,
@@ -1172,7 +1237,7 @@ class OntologyLegendBar extends StatelessWidget {
         children: [
           _LegendChip(
             label: '전체',
-            color: AppColors.textMuted,
+            color: context.mutedText,
             selected: selectedType == '전체',
             onTap: () => onTypeSelected('전체'),
           ),

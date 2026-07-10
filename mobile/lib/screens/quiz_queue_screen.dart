@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../theme/app_theme.dart';
 
 class QuizQueueScreen extends StatefulWidget {
   const QuizQueueScreen({super.key});
@@ -175,7 +176,7 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Text('$_total개', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                child: Text('$_total개', style: TextStyle(fontSize: 12, color: context.mutedText)),
               ),
             ),
           Expanded(
@@ -249,13 +250,13 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                                                 Text(
                                                   _reviewLabel(nextReview),
                                                   style: TextStyle(
-                                                      fontSize: 10, color: Colors.grey[600]),
+                                                      fontSize: 10, color: context.mutedText),
                                                 ),
                                                 if (streak > 0)
                                                   Text(
                                                     '스트릭 ${streak}회',
                                                     style: TextStyle(
-                                                        fontSize: 10, color: Colors.grey[600]),
+                                                        fontSize: 10, color: context.mutedText),
                                                   ),
                                               ],
                                             ],

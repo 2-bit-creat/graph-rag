@@ -317,10 +317,34 @@ async def select_quiz_subgraph(
 async def select_quiz_subgraph_from_graph(
     session: AsyncSession,
     user_id: uuid.UUID,
+    *,
+    seed_node_ids: set[uuid.UUID] | None = None,
+    query: str = "",
 ) -> QuizGraphSelection:
-    """Graph-only subgraph selection (no journal entry)."""
+    """Graph-only subgraph selection (no journal entry).
+
+    When ``seed_node_ids`` is given (e.g. the Statement node a target expression was
+    extracted from), those nodes anchor the neighborhood so the quiz context is built
+    around where the expression actually appeared — not a random slice of the graph.
+
+    When there is no linked node (IELTS / default pool / custom vocab), ``query`` (the
+    target vocab word) drives semantic RAG retrieval so the background nodes are at
+    least thematically adjacent to the word, instead of just the newest nodes.
+    Falls back to recency seeding when both are empty.
+    """
     cfg = quiz_selection_settings()
-    seed_pairs = await _fallback_seed_nodes(session, user_id, "")
+    seed_pairs: list[tuple[Node, datetime | None]] = []
+    if seed_node_ids:
+        result = await session.execute(
+            select(Node).where(
+                Node.user_id == user_id,
+                Node.id.in_(seed_node_ids),
+                Node.deleted_at.is_(None),
+            )
+        )
+        seed_pairs = [(n, n.created_at) for n in result.scalars().all()]
+    if not seed_pairs:
+        seed_pairs = await _fallback_seed_nodes(session, user_id, query)
     settings = get_settings()
     max_nodes = settings.quiz_max_nodes
     max_edges = settings.quiz_max_edges

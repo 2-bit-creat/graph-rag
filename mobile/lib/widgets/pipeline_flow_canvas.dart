@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'pipeline_flow_graph.dart';
+import '../theme/app_theme.dart';
 
 /// 2D DAG view driven by backend `flow_layout`.
 /// Fits to screen width; full Fast + Slow Path height visible via page scroll.
@@ -242,12 +243,12 @@ class PipelineTraceCanvasState extends State<PipelineTraceCanvas> {
                 _panEnabled
                     ? '드래그=이동 · 핀치=확대 · 노드 탭=입출력 상세'
                     : '입력(텍스트/음성) → 정제 합류 → Graph Path · Quiz Path는 하단',
-                style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                style: TextStyle(fontSize: 10, color: context.mutedText),
               ),
             if (widget.journalMode || quizOnly)
               Text(
                 _panEnabled ? '드래그=이동 · 노드 탭=입출력' : '노드 탭 → 단계별 input/output 확인',
-                style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                style: TextStyle(fontSize: 10, color: context.mutedText),
               ),
             if (isTextLayout && widget.journalMode) ...[
               const SizedBox(height: 4),
@@ -547,7 +548,7 @@ class _PhaseBand extends StatelessWidget {
               style: TextStyle(
                   fontSize: 9,
                   fontWeight: FontWeight.w700,
-                  color: Colors.grey[700])),
+                  color: context.subtleText)),
           const SizedBox(width: 6),
           Expanded(child: Divider(color: Colors.grey.shade300, height: 1)),
         ],
@@ -622,7 +623,7 @@ class _FlowNodeCard extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        fontSize: 6.5, color: Colors.grey[700], height: 1.05),
+                        fontSize: 6.5, color: context.subtleText, height: 1.05),
                   ),
               ],
             ),

@@ -1,0 +1,112 @@
+  Widget _buildFullGraph({
+    required List<Map<String, dynamic>> nodes,
+    required List<Map<String, dynamic>> edges,
+    required List<Map<String, dynamic>> entityTypes,
+    required List<String> relationTypes,
+    required Map<String, Color> typeColors,
+  }) {
+    final nodeById = buildNodeById(nodes);
+    final chatWidth = MediaQuery.sizeOf(context).width.clamp(320.0, 900.0) * 0.34;
+    final showChat = widget.chatOpen;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _GraphToolbar(
+                    query: _query,
+                    nodeCount: nodes.length,
+                    edgeCount: edges.length,
+                    matchCount: _queryMatchCount(nodes),
+                    onQueryChanged: (v) => setState(() => _query = v),
+                    onRefresh: () {
+                      _load();
+                      _loadChatHistory();
+                    },
+                    onOntology: () => OntologySettingsSheet.show(
+                      context,
+                      onApplied: _load,
+                      onFilterByType: (type) => setState(() => _typeFilter = type),
+                    ),
+                    onTrash: () => Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                          builder: (_) => const GraphTrashScreen()),
+                    ).then((_) => _load()),
+                    onClearGraph: _clearGraph,
+                    onAddNode: _addNode,
+                  ),
+                  Container(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF101018),
+                      border: Border(bottom: BorderSide(color: Color(0xFF2D2D38))),
+                    ),
+                    child: OntologyLegendBar(
+                      entityTypes: _legendEntityTypes(entityTypes),
+                      typeColors: typeColors,
+                      selectedType: _typeFilter,
+                      onTypeSelected: (t) => setState(() => _typeFilter = t),
+                    ),
+                  ),
+                  OntologyRulesPanel(
+                    ontologyName:
+                        _ontology?['name']?.toString() ?? 'DailyLife_English',
+                    entityTypes: entityTypes,
+                    relationTypes: relationTypes,
+                    typeColors: typeColors,
+                    expanded: _showOntologyRules,
+                    onToggle: () {
+                      setState(() => _showOntologyRules = !_showOntologyRules);
+                      _canvasKey.currentState?.refit();
+                    },
+                    onEdit: () =>
+                        OntologySettingsSheet.show(context, onApplied: _load),
+                  ),
+                  Expanded(
+                    child: _canvasWithCard(
+                      nodes: nodes,
+                      edges: edges,
+                      typeColors: typeColors,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 260),
+              curve: Curves.easeOutCubic,
+              width: showChat ? chatWidth.clamp(280.0, 400.0) : 0,
+              child: showChat
+                  ? GraphChatPanel(
+                      messages: _chatMessages,
+                      busy: _chatBusy,
+                      typeColors: typeColors,
+                      nodeById: nodeById,
+                      inputController: _chatInputController,
+                      scrollController: _chatScrollController,
+                      onSend: _sendChat,
+                      onNodeHighlight: _highlightNodes,
+                      onNodeSelect: (node) => _selectNode(node, showSheet: true),
+                      onClearHistory: _clearChatHistory,
+                      onCollapse: _collapseChat,
+                    )
+                  : const SizedBox.shrink(),
+            ),
+          ],
+        ),
+        if (!showChat)
+          Positioned(
+            right: 0,
+            top: MediaQuery.sizeOf(context).height * 0.38,
+            child: GraphChatCollapsedTab(onExpand: _expandChat),
+          ),
+      ],
+    );
+  }

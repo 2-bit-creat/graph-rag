@@ -1,16 +1,19 @@
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
+    ChatMessage,
+    ChatSession,
     Chunk,
     Edge,
     GraphJob,
     JournalEntry,
     JournalGraphLink,
     Node,
+    NodeAliasEmbedding,
     Ontology,
     OntologyVersion,
     Quiz,
@@ -19,7 +22,12 @@ from .models import (
     SpeakerProfile,
     User,
 )
-from .entity_types import is_person_like_type, normalize_entity_type, type_group_key
+from .entity_types import (
+    is_identity_type,
+    is_person_like_type,
+    normalize_entity_type,
+    type_group_key,
+)
 from .graph_schema import (
     NODE_CHUNK,
     NODE_SPEAKER,
@@ -47,6 +55,8 @@ def build_node_out(
     source_entry_id: uuid.UUID | None = None,
     source_transcript_ko: str | None = None,
     source_transcript_clean_ko: str | None = None,
+    entry_created_at: datetime | None = None,
+    alias_embedding_count: int = 0,
 ) -> NodeOut:
     """Graph API node + voice/name embedding metadata."""
     linked = is_bidirectional_voice_link(profile, node)
@@ -68,8 +78,12 @@ def build_node_out(
         name=node.name,
         type=node.type,
         description=node.description,
+        occurred_at=getattr(node, "occurred_at", None),
+        entry_created_at=entry_created_at,
         created_at=node.created_at,
         has_name_embedding=node.name_embedding is not None,
+        aliases=[a for a in (node.aliases or []) if isinstance(a, str)],
+        alias_embedding_count=alias_embedding_count,
         speaker_profile_id=profile.id if linked and profile else None,
         voice_embedding_registered=has_voice,
         voice_sample_count=profile.sample_count if profile else 0,
@@ -77,6 +91,7 @@ def build_node_out(
         voice_total_duration_sec=float(profile.total_duration_sec or 0.0) if profile else 0.0,
         deleted_at=getattr(node, "deleted_at", None),
         deleted_context=getattr(node, "deleted_context", None),
+        importance_score=getattr(node, "importance_score", 0) or 0,
         source_entry_id=source_entry_id,
         source_transcript_ko=source_transcript_ko,
         source_transcript_clean_ko=source_transcript_clean_ko,
@@ -174,8 +189,61 @@ async def sanitize_stale_voice_links(
     )
     referenced_ids = {pid for (pid,) in referenced.all() if pid is not None}
     for profile in await list_speaker_profiles(session, user_id):
-        if profile.node_id is None and profile.id not in referenced_ids:
-            await session.delete(profile)
+        if profile.id in referenced_ids:
+            continue
+        # Voice invariant: an embedding exists only while some journal entry still
+        # references it. No appearance left → drop the voice, detaching any node
+        # link first (the node itself follows the statement-centric GC rules — it
+        # survives iff still referenced by a Statement).
+        if profile.node_id is not None:
+            node = await session.get(Node, profile.node_id)
+            if node is not None and node.speaker_profile_id == profile.id:
+                node.speaker_profile_id = None
+        await session.delete(profile)
+        cleared += 1
+
+    # Garbage-collect orphan identity/Concept nodes: Speaker/Person/Concept nodes
+    # left with no edges, no live voice link, and no surviving journal provenance.
+    # Statement-centric GC (delete_statement_cascade) only removes the edge-neighbours
+    # of a deleted Statement, so a voice-confirmed Speaker node that never anchored a
+    # surviving Statement — e.g. the speaker said nothing that became a claim — has no
+    # such edge and would otherwise linger in the graph forever, even after every
+    # journal entry referencing it is deleted (the '장세영' ghost-node bug).
+    await session.flush()
+    active_nodes = await get_all_nodes(session, user_id=user_id)
+    node_ids = [n.id for n in active_nodes]
+    connected: set[uuid.UUID] = set()
+    provenance_linked: set[uuid.UUID] = set()
+    if node_ids:
+        edge_rows = await session.execute(
+            select(Edge.source_id, Edge.target_id).where(
+                or_(Edge.source_id.in_(node_ids), Edge.target_id.in_(node_ids))
+            )
+        )
+        for src, tgt in edge_rows.all():
+            connected.add(src)
+            connected.add(tgt)
+        link_rows = await session.execute(
+            select(JournalGraphLink.node_id)
+            .join(JournalEntry, JournalEntry.id == JournalGraphLink.journal_entry_id)
+            .where(
+                JournalEntry.user_id == user_id,
+                JournalGraphLink.node_id.is_not(None),
+            )
+        )
+        provenance_linked = {nid for (nid,) in link_rows.all() if nid is not None}
+
+    orphan_ids = [
+        n.id
+        for n in active_nodes
+        if n.id not in connected
+        and n.id not in provenance_linked
+        and n.speaker_profile_id is None
+        and not n.is_self  # the diary owner is never garbage-collected
+        and (is_identity_type(n.type) or normalize_entity_type(n.type) == "Concept")
+    ]
+    for nid in orphan_ids:
+        if await delete_node(session, nid):
             cleared += 1
 
     if cleared:
@@ -305,15 +373,35 @@ async def list_nodes_out(
             if nid is not None and nid not in entry_by_node:
                 entry_by_node[nid] = eid
 
+    alias_emb_counts = await _alias_embedding_counts(session, node_ids)
+
     return [
         build_node_out(
             n,
             profiles.get(n.id),
             speaker_name=speaker_by_chunk.get(n.id),
             source_entry_id=entry_by_node.get(n.id),
+            alias_embedding_count=alias_emb_counts.get(n.id, 0),
         )
         for n in nodes
     ]
+
+
+async def _alias_embedding_counts(
+    session: AsyncSession, node_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, int]:
+    """node_id → number of embedding-indexed aliases (fuzzy-resolution readiness)."""
+    if not node_ids:
+        return {}
+    rows = await session.execute(
+        select(NodeAliasEmbedding.node_id, func.count())
+        .where(
+            NodeAliasEmbedding.node_id.in_(node_ids),
+            NodeAliasEmbedding.embedding.isnot(None),
+        )
+        .group_by(NodeAliasEmbedding.node_id)
+    )
+    return {nid: int(cnt) for nid, cnt in rows.all()}
 
 
 async def get_node_out(
@@ -333,6 +421,7 @@ async def get_node_out(
     source_entry_id: uuid.UUID | None = None
     source_transcript_ko: str | None = None
     source_transcript_clean_ko: str | None = None
+    entry_created_at: datetime | None = None
 
     link_result = await session.execute(
         select(JournalGraphLink.journal_entry_id)
@@ -360,6 +449,11 @@ async def get_node_out(
             source_entry_id = linked_entry_id
             source_transcript_ko = entry.transcript_ko
             source_transcript_clean_ko = entry.transcript_clean_ko
+            entry_created_at = entry.created_at
+        else:
+            entry_created_at = None
+    else:
+        entry_created_at = None
 
     # Fallback for Statement nodes (kg_build) with no JournalGraphLink:
     # search JournalEntry by matching statement content against transcript_clean_ko.
@@ -398,9 +492,11 @@ async def get_node_out(
                     source_entry_id = found.id
                     source_transcript_ko = found.transcript_ko
                     source_transcript_clean_ko = found.transcript_clean_ko
+                    entry_created_at = found.created_at
         except (ValueError, TypeError, AttributeError):
             pass
 
+    alias_emb_counts = await _alias_embedding_counts(session, [node.id])
     return build_node_out(
         node,
         profiles.get(node.id),
@@ -408,7 +504,49 @@ async def get_node_out(
         source_entry_id=source_entry_id,
         source_transcript_ko=source_transcript_ko,
         source_transcript_clean_ko=source_transcript_clean_ko,
+        entry_created_at=entry_created_at,
+        alias_embedding_count=alias_emb_counts.get(node.id, 0),
     )
+
+
+async def find_statements_by_time_window(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    start: date,
+    end: date,
+    *,
+    limit: int = 12,
+    tz_name: str = "Asia/Seoul",
+) -> list[Node]:
+    """Statement nodes whose event or source-entry date falls in [start, end] (KST dates)."""
+    entry_local_date = func.date(func.timezone(tz_name, JournalEntry.created_at))
+    node_local_date = func.date(func.timezone(tz_name, Node.created_at))
+
+    stmt = (
+        select(Node)
+        .outerjoin(JournalGraphLink, JournalGraphLink.node_id == Node.id)
+        .outerjoin(JournalEntry, JournalEntry.id == JournalGraphLink.journal_entry_id)
+        .where(
+            Node.user_id == user_id,
+            Node.type == "Statement",
+            Node.deleted_at.is_(None),
+            or_(
+                and_(
+                    Node.occurred_at.is_not(None),
+                    Node.occurred_at >= start,
+                    Node.occurred_at <= end,
+                ),
+                and_(
+                    Node.occurred_at.is_(None),
+                    entry_local_date >= start,
+                    entry_local_date <= end,
+                ),
+            ),
+        )
+        .order_by(func.coalesce(Node.occurred_at, node_local_date).desc())
+        .limit(limit)
+    )
+    return list((await session.execute(stmt)).scalars().unique().all())
 
 
 async def get_user_by_email(session: AsyncSession, email: str) -> User | None:
@@ -424,12 +562,42 @@ async def create_user(session: AsyncSession, email: str, password_hash: str) -> 
     return user
 
 
+async def get_user_by_device_id(session: AsyncSession, device_id: str) -> User | None:
+    result = await session.execute(select(User).where(User.device_id == device_id))
+    return result.scalar_one_or_none()
+
+
+async def get_or_create_device_user(session: AsyncSession, device_id: str) -> User:
+    device_id = device_id.strip()
+    existing = await get_user_by_device_id(session, device_id)
+    if existing is not None:
+        if existing.subscription_tier != "premium":
+            existing.subscription_tier = "premium"
+            await session.commit()
+            await session.refresh(existing)
+        return existing
+
+    from .auth_utils import hash_password
+
+    user = User(
+        email=f"device-{uuid.uuid4().hex[:12]}@anon.local",
+        password_hash=hash_password(uuid.uuid4().hex),
+        device_id=device_id,
+        subscription_tier="premium",
+    )
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
 async def _get_or_create_node(
     session: AsyncSession,
     name: str,
     type_: str,
     description: str | None = None,
     user_id: uuid.UUID | None = None,
+    importance_delta: int = 0,
 ) -> Node:
     name = (name or "").strip()
     type_ = normalize_entity_type(type_)
@@ -447,12 +615,100 @@ async def _get_or_create_node(
     result = await session.execute(select(Node).where(*filters))
     node = result.scalar_one_or_none()
     if node is None:
-        node = Node(name=name, type=type_, description=description, user_id=user_id)
+        node = Node(
+            name=name,
+            type=type_,
+            description=description,
+            user_id=user_id,
+            importance_score=importance_delta,
+        )
         session.add(node)
         await session.flush()
-    elif description and not node.description:
-        node.description = description
-        node.updated_at = datetime.now(UTC)
+    else:
+        if description and not node.description:
+            node.description = description
+            node.updated_at = datetime.now(UTC)
+        # Cumulative: a concept mentioned again adds to its running importance,
+        # so recurring themes naturally outweigh one-off mentions.
+        if importance_delta:
+            node.importance_score = (node.importance_score or 0) + importance_delta
+    return node
+
+
+# --- Self / diary-owner identity --------------------------------------------
+
+
+async def get_self_node(
+    session: AsyncSession, user_id: uuid.UUID
+) -> Node | None:
+    """The user's canonical self/diary-owner node, if established."""
+    result = await session.execute(
+        select(Node)
+        .where(
+            Node.user_id == user_id,
+            Node.is_self.is_(True),
+            Node.deleted_at.is_(None),
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_or_create_self_node(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    default_name: str = "나",
+) -> Node:
+    """Return the user's self node, creating (or adopting) one if needed.
+
+    Adopts a pre-existing Person node named '나' (from older diaries) so the
+    diary owner doesn't fork into a second node. Always a Person-type node so
+    the diary-statement graph and the voice link converge on the same identity.
+    """
+    node = await get_self_node(session, user_id)
+    if node is not None:
+        return node
+
+    # Adopt an existing owner-default Person '나' node rather than duplicating it.
+    existing = await session.execute(
+        select(Node)
+        .where(
+            Node.user_id == user_id,
+            Node.name == default_name,
+            func.lower(Node.type) == type_group_key("Person"),
+            Node.deleted_at.is_(None),
+        )
+        .order_by(Node.created_at)
+        .limit(1)
+    )
+    node = existing.scalar_one_or_none()
+    if node is not None:
+        node.is_self = True
+        await session.flush()
+        return node
+
+    node = Node(user_id=user_id, name=default_name, type="Person", is_self=True)
+    session.add(node)
+    await session.flush()
+    return node
+
+
+async def mark_node_as_self(
+    session: AsyncSession, user_id: uuid.UUID, node: Node
+) -> Node:
+    """Designate `node` as the user's self node, clearing any previous one."""
+    await session.execute(
+        update(Node)
+        .where(
+            Node.user_id == user_id,
+            Node.is_self.is_(True),
+            Node.id != node.id,
+        )
+        .values(is_self=False)
+    )
+    node.is_self = True
+    await session.flush()
     return node
 
 
@@ -556,6 +812,33 @@ async def find_similar_nodes_by_embedding(
     return [row[0] for row in result.all()]
 
 
+async def find_similar_nodes_with_distance(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    embedding: list[float],
+    limit: int = 3,
+    max_distance: float = 0.3,
+) -> list[tuple[Node, float]]:
+    """Distance-exposing sibling of :func:`find_similar_nodes_by_embedding`.
+
+    Same query, but returns the cosine distance alongside each node so callers
+    can turn similarity into a relevance score (e.g. hybrid retrieval's
+    graph_score) instead of a present/absent boolean."""
+    dist_col = Node.name_embedding.cosine_distance(embedding).label("dist")
+    result = await session.execute(
+        select(Node, dist_col)
+        .where(
+            Node.user_id == user_id,
+            Node.name_embedding.isnot(None),
+            Node.deleted_at.is_(None),
+            dist_col <= max_distance,
+        )
+        .order_by(dist_col)
+        .limit(limit)
+    )
+    return [(row[0], float(row[1])) for row in result.all()]
+
+
 async def upsert_weighted_edge(
     session: AsyncSession,
     user_id: uuid.UUID,
@@ -647,9 +930,25 @@ async def record_journal_graph_links(
     node_ids: list[uuid.UUID],
     edge_ids: list[uuid.UUID],
 ) -> None:
-    for nid in set(node_ids):
+    # Idempotent: skip (entry_id, node_id)/(entry_id, edge_id) pairs that already
+    # exist, so re-running a graph build for an entry never duplicates links (which
+    # would double-render Statements in the timeline).
+    existing = await session.execute(
+        select(JournalGraphLink.node_id, JournalGraphLink.edge_id).where(
+            JournalGraphLink.journal_entry_id == entry_id
+        )
+    )
+    existing_nodes: set[uuid.UUID] = set()
+    existing_edges: set[uuid.UUID] = set()
+    for nid, eid in existing.all():
+        if nid is not None:
+            existing_nodes.add(nid)
+        if eid is not None:
+            existing_edges.add(eid)
+
+    for nid in set(node_ids) - existing_nodes:
         session.add(JournalGraphLink(journal_entry_id=entry_id, node_id=nid))
-    for eid in set(edge_ids):
+    for eid in set(edge_ids) - existing_edges:
         session.add(JournalGraphLink(journal_entry_id=entry_id, edge_id=eid))
     await session.commit()
 
@@ -670,6 +969,46 @@ async def entry_has_graph_nodes(
         .limit(1)
     )
     return result.first() is not None
+
+
+async def node_is_journal_locked(
+    session: AsyncSession, node_id: uuid.UUID
+) -> bool:
+    """True if this node is provenance-linked to a journal entry (committed graph).
+
+    Journal-derived nodes are immutable after commit — they can only be
+    deleted/restored, not edited. Dev-tool / non-journal nodes have no
+    JournalGraphLink and stay editable.
+    """
+    result = await session.execute(
+        select(JournalGraphLink.id)
+        .where(JournalGraphLink.node_id == node_id)
+        .limit(1)
+    )
+    return result.first() is not None
+
+
+async def edge_is_journal_locked(
+    session: AsyncSession, edge_id: uuid.UUID
+) -> bool:
+    """True if this edge belongs to a committed journal graph (immutable).
+
+    Locked if the edge itself has a provenance link, or if either of its
+    endpoint nodes is journal-derived.
+    """
+    result = await session.execute(
+        select(JournalGraphLink.id)
+        .where(JournalGraphLink.edge_id == edge_id)
+        .limit(1)
+    )
+    if result.first() is not None:
+        return True
+    edge = await session.get(Edge, edge_id)
+    if edge is None:
+        return False
+    return await node_is_journal_locked(
+        session, edge.source_id
+    ) or await node_is_journal_locked(session, edge.target_id)
 
 
 # --- Journal -----------------------------------------------------------------
@@ -727,15 +1066,63 @@ async def get_journal_entry(
     return result.scalar_one_or_none()
 
 
+async def prune_orphaned_node_expressions(
+    session: AsyncSession, user_id: uuid.UUID
+) -> int:
+    """Drop extracted expressions whose source node no longer exists.
+
+    The expression store is keyed by Statement node id; per-node deletes clean their
+    own entries, but bulk node removal (clearing the graph) bypasses that. Reconciling
+    against the user's live node ids removes any orphans left behind — including those
+    accumulated before this safety net existed. Returns the count removed.
+    """
+    from .node_expression_store import prune_expressions_not_in
+
+    rows = await session.execute(
+        select(Node.id).where(Node.user_id == user_id, Node.deleted_at.is_(None))
+    )
+    valid_node_ids = {str(nid) for (nid,) in rows.all()}
+    return await prune_expressions_not_in(user_id, valid_node_ids)
+
+
+async def delete_entry_statement_nodes(
+    session: AsyncSession, user_id: uuid.UUID, entry_id: uuid.UUID
+) -> int:
+    """Hard-delete the Statement nodes this entry produced (statement-centric GC).
+
+    Each statement deletion cascades its orphaned Concept/Speaker neighbours
+    (including the self node) — a node survives only while another Statement still
+    references it. Must run BEFORE the entry is deleted, since provenance links
+    (JournalGraphLink) cascade away with the entry. Returns the count removed.
+    """
+    rows = await session.execute(
+        select(JournalGraphLink.node_id).where(
+            JournalGraphLink.journal_entry_id == entry_id,
+            JournalGraphLink.node_id.is_not(None),
+        )
+    )
+    node_ids = [nid for (nid,) in rows.all() if nid is not None]
+    removed = 0
+    for nid in node_ids:
+        node = await session.get(Node, nid)
+        if node is not None and node.type == "Statement" and node.deleted_at is None:
+            await delete_statement_cascade(session, nid, user_id)
+            removed += 1
+    return removed
+
+
 async def delete_journal_entry(
     session: AsyncSession, entry: JournalEntry
 ) -> None:
-    """Delete an entry and its DB-cascaded children (appearances, graph links,
-    chunks, review schedules). Speaker profiles survive (last_entry_id SET NULL);
-    orphaned ones are garbage-collected by sanitize_stale_voice_links afterward.
-    Best-effort removes the local audio file."""
+    """Delete an entry, its derived Statement nodes (cascading orphan Concept/
+    Speaker GC), and its DB-cascaded children (appearances, graph links, chunks,
+    review schedules). Orphaned voice profiles are GC'd by sanitize_stale_voice_links
+    afterward (a voice survives only while some entry references it). Best-effort
+    removes the local audio file."""
     from .config import get_settings
     from .storage import local_path
+
+    await delete_entry_statement_nodes(session, entry.user_id, entry.id)
 
     audio_key = entry.audio_url
     if audio_key and not get_settings().s3_bucket:
@@ -747,6 +1134,9 @@ async def delete_journal_entry(
             pass
     await session.delete(entry)
     await session.commit()
+
+    # Safety net: clean any extracted expressions left without a live source node.
+    await prune_orphaned_node_expressions(session, entry.user_id)
 
 
 async def delete_all_journal_entries(
@@ -770,6 +1160,7 @@ async def delete_all_journal_entries(
 
     use_local_audio = not get_settings().s3_bucket
     for entry in entries:
+        await delete_entry_statement_nodes(session, user_id, entry.id)
         if use_local_audio and entry.audio_url:
             try:
                 path = local_path(entry.audio_url)
@@ -779,7 +1170,178 @@ async def delete_all_journal_entries(
                 pass
         await session.delete(entry)
     await session.commit()
+    await prune_orphaned_node_expressions(session, user_id)
     return len(entries)
+
+
+async def _rebuild_entry_appearances(
+    session: AsyncSession, user_id: uuid.UUID, entry: JournalEntry
+) -> None:
+    """Sync appearances + segment profile ids to the segments' effective speaker
+    labels. Reuses the profile of a label that still has an appearance (keeps its
+    voice), drops appearances for vanished labels, and creates an empty profile for
+    any new label.
+
+    Text-sourced entries (@멘션) have no diarization/voice ambiguity to confirm —
+    the label IS the name the user explicitly picked or typed — so a brand-new
+    label there (other than '나'/the unattributed-prose placeholder '글쓴이') is
+    auto-confirmed instead of asking "누가 말했나요?" again for something already
+    specified."""
+    segments = entry.transcript_segments if isinstance(entry.transcript_segments, list) else []
+    duration_by_label: dict[str, float] = {}
+    for seg in segments:
+        if not isinstance(seg, dict):
+            continue
+        label = str(seg.get("speaker", "")).strip()
+        if not label:
+            continue
+        d = float(seg.get("end_sec", 0) or 0) - float(seg.get("start_sec", 0) or 0)
+        duration_by_label[label] = duration_by_label.get(label, 0.0) + max(0.0, d)
+
+    existing = await list_speaker_appearances_for_entry(session, entry.id)
+    by_label = {a.session_label: a for a in existing}
+    for a in existing:
+        if a.session_label not in duration_by_label:
+            await session.delete(a)
+    await session.flush()
+
+    is_text_source = entry.audio_url is None
+    claimed_node_ids: set[uuid.UUID] = set()
+
+    label_to_profile: dict[str, uuid.UUID] = {}
+    for label, total in duration_by_label.items():
+        existing_app = by_label.get(label)
+        if existing_app is not None:
+            existing_app.duration_sec = round(total, 2)
+            label_to_profile[label] = existing_app.speaker_profile_id
+            continue
+
+        auto_confirm = is_text_source and label not in ("나", "글쓴이")
+        matched_node = (
+            await find_person_node_by_exact_name(
+                session, user_id, label, exclude_node_ids=claimed_node_ids
+            )
+            if auto_confirm
+            else None
+        )
+
+        profile = await create_speaker_profile(
+            session, user_id=user_id, label=label, embedding=None,
+            duration_sec=round(total, 2), last_entry_id=entry.id,
+        )
+        match_score = 0.0
+        if auto_confirm:
+            if matched_node is not None:
+                profile = await assign_exclusive_voice_profile_to_node(
+                    session, user_id, profile, matched_node, display_name=label,
+                )
+                claimed_node_ids.add(matched_node.id)
+            else:
+                profile.display_name = label
+                profile.label = label
+                await session.flush()
+            match_score = 1.0  # speaker_confirmation.HUMAN_CONFIRMED_MATCH_SCORE
+        await record_speaker_entry_appearance(
+            session, entry_id=entry.id, profile_id=profile.id,
+            session_label=label, match_score=match_score, duration_sec=round(total, 2),
+        )
+        label_to_profile[label] = profile.id
+
+    new_segments: list = []
+    for seg in segments:
+        if isinstance(seg, dict):
+            copy = dict(seg)
+            pid = label_to_profile.get(str(copy.get("speaker", "")).strip())
+            if pid is not None:
+                copy["speaker_profile_id"] = str(pid)
+            new_segments.append(copy)
+        else:
+            new_segments.append(seg)
+    entry.transcript_segments = new_segments
+    await session.flush()
+
+
+async def remap_entry_speakers(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    entry: JournalEntry,
+    *,
+    group_map: dict[str, str] | None = None,
+    merges: dict[str, str] | None = None,
+    merge_all: bool = False,
+    to_self: bool = False,
+    reset: bool = False,
+) -> dict:
+    """Reversibly remap an entry's diarization speakers (fix diarization over-split).
+
+    Each segment keeps an immutable ``speaker_original`` snapshot, so ``reset`` can
+    always restore the original diarization. Exactly one mode at a time:
+      - reset:     restore each segment's speaker from speaker_original.
+      - group_map: {speaker_original: effective_label} — the general drag-merge/split
+                   form. Each ORIGINAL diarization label is reassigned to a group
+                   label, so any combination of merges/splits is expressible.
+      - merge_all: collapse every segment into ONE speaker (the dominant label, so
+                   its voice profile survives) — identity stays UNconfirmed.
+      - to_self:   collapse every segment to a single '나' speaker (this is all me).
+      - merges:    {from_label: to_label} pairwise relabel of current labels.
+    Appearances/profiles are rebuilt to match; orphaned voice profiles are GC'd.
+    Returns {"changed": bool, "labels": [effective labels]}.
+    """
+    segments = entry.transcript_segments
+    if not isinstance(segments, list) or not segments:
+        return {"changed": False, "labels": []}
+
+    # For merge_all: pick the dominant (most-spoken) current label as the survivor.
+    target_label: str | None = None
+    if merge_all:
+        dur: dict[str, float] = {}
+        for seg in segments:
+            if not isinstance(seg, dict):
+                continue
+            label = str(seg.get("speaker", "")).strip()
+            if not label:
+                continue
+            d = float(seg.get("end_sec", 0) or 0) - float(seg.get("start_sec", 0) or 0)
+            dur[label] = dur.get(label, 0.0) + max(0.0, d)
+        if dur:
+            target_label = max(dur.items(), key=lambda kv: kv[1])[0]
+
+    new_segments: list = []
+    for seg in segments:
+        if not isinstance(seg, dict):
+            new_segments.append(seg)
+            continue
+        copy = dict(seg)
+        if "speaker_original" not in copy:
+            copy["speaker_original"] = copy.get("speaker", "")
+        cur = str(copy.get("speaker", "")).strip()
+        orig = str(copy.get("speaker_original", "")).strip()
+        if reset:
+            copy["speaker"] = copy.get("speaker_original") or cur
+        elif group_map is not None:
+            copy["speaker"] = group_map.get(orig, cur)
+        elif merge_all and target_label:
+            copy["speaker"] = target_label
+        elif to_self:
+            copy["speaker"] = "나"
+        elif merges and cur in merges:
+            copy["speaker"] = merges[cur]
+        new_segments.append(copy)
+    entry.transcript_segments = new_segments
+    await session.flush()
+
+    await _rebuild_entry_appearances(session, user_id, entry)
+    await session.commit()
+    await sanitize_stale_voice_links(session, user_id)
+    await session.refresh(entry)
+
+    labels: list[str] = []
+    for seg in (entry.transcript_segments or []):
+        if isinstance(seg, dict):
+            label = str(seg.get("speaker", "")).strip()
+            if label and label not in labels:
+                labels.append(label)
+    return {"changed": True, "labels": labels}
 
 
 async def count_recent_entries(
@@ -1030,13 +1592,21 @@ async def soft_delete_statement_cascade(
     - Soft-delete only the Statement node itself (stays in trash for restore).
     - Delete associated quizzes and language expressions.
     """
-    from .node_expression_store import delete_node_all_expressions
+    from .node_expression_store import (
+        delete_node_all_expressions,
+        read_node_expressions_snapshot,
+    )
 
     node = await session.get(Node, node_id)
     if node is None:
         return {}
 
     now = datetime.now(UTC)
+
+    # Snapshot expressions so restore brings them back (Q1: expressions follow the
+    # node). Read-only here; actual store removal happens after the DB commit so a
+    # failed transaction never leaves the store and DB out of sync.
+    expr_snapshot = await read_node_expressions_snapshot(user_id, str(node_id))
 
     # ── 1. Snapshot all edges connected to this Statement ──────────────────────
     edge_rows = await session.execute(
@@ -1123,10 +1693,12 @@ async def soft_delete_statement_cascade(
         "orphan_nodes": orphan_nodes_snapshot,   # full node data for recreation
         "edges": edges_snapshot,                  # full edge data for recreation
         "quiz_ids": quiz_ids,
+        "expressions": expr_snapshot,             # restored on un-trash
     }
 
     await session.commit()
 
+    # Remove from the active store now that the snapshot is safely committed.
     expr_count = await delete_node_all_expressions(user_id, str(node_id))
 
     return {
@@ -1150,6 +1722,7 @@ async def restore_statement_from_trash(
     ctx = node.deleted_context or {}
     orphan_nodes_data = ctx.get("orphan_nodes") or []
     edges_data = ctx.get("edges") or []
+    expr_snapshot = ctx.get("expressions") or {}
 
     # ── 1. Restore the Statement itself first ──────────────────────────────────
     node.deleted_at = None
@@ -1211,6 +1784,14 @@ async def restore_statement_from_trash(
         ))
 
     await session.commit()
+
+    # Restore the node's extracted expressions (Statement id is preserved, so the
+    # store key still matches). Done after commit to mirror the soft-delete ordering.
+    if expr_snapshot:
+        from .node_expression_store import restore_node_expressions
+
+        await restore_node_expressions(user_id, str(node_id), expr_snapshot)
+
     return True
 
 
@@ -1243,6 +1824,13 @@ async def purge_trash_node(
         return False
     await session.delete(node)
     await session.commit()
+
+    # Expressions were already removed from the active store at soft-delete time
+    # (snapshot lives only in deleted_context, which is purged with the node);
+    # call delete for idempotency in case anything lingered.
+    from .node_expression_store import delete_node_all_expressions
+
+    await delete_node_all_expressions(user_id, str(node_id))
     return True
 
 
@@ -1321,7 +1909,7 @@ async def delete_statement_cascade(
     expr_count = await delete_node_all_expressions(user_id, str(node_id))
 
     return {
-        "deleted_node_id": node_id_str,
+        "deleted_node_id": str(node_id),
         "orphan_nodes_deleted": len(orphan_node_ids),
         "quizzes_deleted": deleted_quiz_count,
         "expressions_deleted": expr_count,
@@ -1460,16 +2048,22 @@ async def clear_user_knowledge_graph(
     entries = await session.execute(
         select(JournalEntry).where(JournalEntry.user_id == user_id)
     )
+    # 번역 제거 후 그래프 재생성 가능 조건 = 정제(또는 원문) 텍스트 유무.
     for entry in entries.scalars():
+        has_text = bool(entry.transcript_clean_ko or entry.transcript_ko)
         if entry.status == "graph_processing":
-            entry.status = "ready" if entry.translation_en else "ready_no_graph"
+            entry.status = "ready" if has_text else "ready_no_graph"
         elif entry.status in ("graph_staging_ready", "graph_ready", "completed"):
-            entry.status = "ready" if entry.translation_en else "ready_no_graph"
+            entry.status = "ready" if has_text else "ready_no_graph"
         entry.graph_job_id = None
         entry.graph_build_requested_at = None
         entry.graph_staging = None
 
     await session.commit()
+
+    # All nodes are gone — wipe every extracted expression (valid set is now empty).
+    await prune_orphaned_node_expressions(session, user_id)
+
     return {
         "nodes_deleted": int(node_count or 0),
         "edges_deleted": int(edge_count or 0),
@@ -1869,6 +2463,265 @@ async def list_person_nodes(
     return nodes[:limit]
 
 
+async def find_person_node_by_exact_name(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    name: str,
+    *,
+    exclude_node_ids: set[uuid.UUID] | None = None,
+) -> Node | None:
+    """Exact (case-insensitive) name match among this user's Person-like nodes.
+
+    Used to auto-link a text-typed (@멘션) speaker label to an already-known
+    person — the frontend's @ picker only offers exact existing names, so a
+    match here means the user picked/typed that same node, not a same-name
+    coincidence.
+    """
+    key = name.strip().lower()
+    if not key:
+        return None
+    excluded = exclude_node_ids or set()
+    for node in await list_person_nodes(session, user_id, limit=500):
+        if node.id in excluded:
+            continue
+        if (node.name or "").strip().lower() == key:
+            return node
+    return None
+
+
+# --- Mention → identity resolution -------------------------------------------
+#
+# When a name shows up as an extracted entity (a diarist mentions 제니 or the cat
+# 마야, or another speaker mentions the diary owner by name), it must resolve to
+# the SAME node as that identity — never fork a duplicate Concept. The scope is
+# the whole 정체성 category (Person / Source / Identity subtypes); voice linking
+# remains Person-only. These helpers match a surface name against a node's
+# canonical name AND its aliases (nicknames / inflected forms / the self node's
+# real names). See [[project_speaker_identity]] and the KG-build commit path.
+
+
+def _norm_surface(name: str | None) -> str:
+    return (name or "").strip().lower()
+
+
+def node_alias_keys(node: Node) -> list[str]:
+    return [
+        a.strip().lower()
+        for a in (node.aliases or [])
+        if isinstance(a, str) and a.strip()
+    ]
+
+
+def add_node_alias(node: Node, surface: str) -> bool:
+    """Register `surface` as an alias of `node` (lowercased). No-op if it already
+    equals the canonical name or an existing alias. Returns True if added."""
+    key = _norm_surface(surface)
+    if not key or key == _norm_surface(node.name):
+        return False
+    keys = node_alias_keys(node)
+    if key in keys:
+        return False
+    node.aliases = [*(a for a in (node.aliases or []) if isinstance(a, str)), key]
+    return True
+
+
+# --- Alias embedding index (fuzzy identity resolution) -----------------------
+
+
+async def index_identity_alias(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    node: Node,
+    text: str,
+) -> bool:
+    """Embed a surface form (canonical name or learned alias) and index it against
+    ``node`` for fuzzy resolution. Idempotent, best-effort — an embedding failure
+    is swallowed so exact matching keeps working. Only identity-category nodes are
+    indexed (concepts don't need alias resolution). Returns True if a new row was
+    added."""
+    key = (text or "").strip()
+    if not key or not is_identity_type(node.type):
+        return False
+    dup = await session.execute(
+        select(NodeAliasEmbedding.id).where(
+            NodeAliasEmbedding.node_id == node.id,
+            func.lower(NodeAliasEmbedding.text) == key.lower(),
+        )
+    )
+    if dup.scalar_one_or_none() is not None:
+        return False
+    from .rag import embed_text
+
+    try:
+        vec = await embed_text(key)
+    except Exception:
+        return False
+    session.add(
+        NodeAliasEmbedding(
+            user_id=user_id, node_id=node.id, text=key, embedding=vec
+        )
+    )
+    await session.flush()
+    return True
+
+
+async def backfill_alias_embeddings(
+    session: AsyncSession, user_id: uuid.UUID, *, limit: int = 200
+) -> int:
+    """Index any name/alias of the user's identity nodes that lacks an embedding.
+
+    Self-heals data created before alias-embedding indexing existed (e.g. a '장세영'
+    alias linked to 나 in an earlier session). Bounded and idempotent."""
+    indexed = 0
+    for node in await _identity_nodes_self_first(session, user_id):
+        surfaces = [node.name, *node_alias_keys(node)]
+        for surface in surfaces:
+            if indexed >= limit:
+                return indexed
+            if await index_identity_alias(session, user_id, node, surface):
+                indexed += 1
+    return indexed
+
+
+async def user_has_alias_embeddings(session: AsyncSession, user_id: uuid.UUID) -> bool:
+    """Cheap gate: is fuzzy identity resolution worth attempting for this user?"""
+    row = await session.execute(
+        select(NodeAliasEmbedding.id)
+        .where(
+            NodeAliasEmbedding.user_id == user_id,
+            NodeAliasEmbedding.embedding.isnot(None),
+        )
+        .limit(1)
+    )
+    return row.scalar_one_or_none() is not None
+
+
+async def find_identity_by_alias_embedding(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    query_embedding: list[float],
+    *,
+    max_distance: float = 0.25,
+    exclude_node_ids: set[uuid.UUID] | None = None,
+) -> tuple[Node, str, float] | None:
+    """Nearest active identity node whose indexed name/alias embedding is within
+    ``max_distance`` (cosine) of the query. Returns (node, matched_text, distance)
+    or None. Used to SUGGEST — never to auto-link."""
+    dist = NodeAliasEmbedding.embedding.cosine_distance(query_embedding).label("dist")
+    result = await session.execute(
+        select(Node, NodeAliasEmbedding.text, dist)
+        .join(NodeAliasEmbedding, NodeAliasEmbedding.node_id == Node.id)
+        .where(
+            NodeAliasEmbedding.user_id == user_id,
+            NodeAliasEmbedding.embedding.isnot(None),
+            Node.deleted_at.is_(None),
+            dist <= max_distance,
+        )
+        .order_by(dist)
+        .limit(5)
+    )
+    excluded = exclude_node_ids or set()
+    for node, text, d in result.all():
+        if node.id in excluded:
+            continue
+        return node, text, float(d)
+    return None
+
+
+async def find_identities_by_alias_embedding(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    query_embedding: list[float],
+    *,
+    limit: int = 5,
+    max_distance: float = 0.5,
+) -> list[tuple[Node, str, float]]:
+    """List sibling of :func:`find_identity_by_alias_embedding`.
+
+    Returns up to ``limit`` DISTINCT active identity nodes (Person·Source·Identity)
+    whose indexed name/alias embedding is within ``max_distance`` of the query,
+    nearest first, keeping each node's best-matching surface form. Powers graph-chat
+    retrieval, where "마야가 누구야?"/"삼성전자가 뭐랬어?" must seed the identity node
+    itself — identities carry no ``name_embedding`` (their surface forms live only in
+    ``node_alias_embeddings``)."""
+    dist = NodeAliasEmbedding.embedding.cosine_distance(query_embedding).label("dist")
+    result = await session.execute(
+        select(Node, NodeAliasEmbedding.text, dist)
+        .join(NodeAliasEmbedding, NodeAliasEmbedding.node_id == Node.id)
+        .where(
+            NodeAliasEmbedding.user_id == user_id,
+            NodeAliasEmbedding.embedding.isnot(None),
+            Node.deleted_at.is_(None),
+            dist <= max_distance,
+        )
+        .order_by(dist)
+        .limit(limit * 4)  # over-fetch: multiple aliases can point to one node
+    )
+    best: dict[uuid.UUID, tuple[Node, str, float]] = {}
+    for node, text, d in result.all():
+        if node.id not in best:
+            best[node.id] = (node, text, float(d))
+        if len(best) >= limit:
+            break
+    return list(best.values())
+
+
+async def _identity_nodes_self_first(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    limit: int = 500,
+) -> list[Node]:
+    """Active 정체성-category nodes (Person·Source·Identity류), self node first.
+
+    Self leads so the owner's real names (stored as self aliases) win any
+    name collision during mention resolution.
+    """
+    ordered: list[Node] = []
+    seen: set[uuid.UUID] = set()
+    self_node = await get_self_node(session, user_id)
+    if self_node is not None:
+        ordered.append(self_node)
+        seen.add(self_node.id)
+    for node in await get_all_nodes(session, user_id=user_id):
+        if len(ordered) >= limit:
+            break
+        if node.id in seen or not is_identity_type(node.type):
+            continue
+        ordered.append(node)
+        seen.add(node.id)
+    return ordered
+
+
+async def find_identity_node_by_name_or_alias(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    name: str,
+    *,
+    exclude_node_ids: set[uuid.UUID] | None = None,
+) -> Node | None:
+    """Resolve a mentioned name to an existing identity node (self / Person /
+    Source / Identity). Matches the canonical name first, then aliases."""
+    key = _norm_surface(name)
+    if not key:
+        return None
+    excluded = exclude_node_ids or set()
+    for node in await _identity_nodes_self_first(session, user_id):
+        if node.id in excluded:
+            continue
+        if _norm_surface(node.name) == key or key in node_alias_keys(node):
+            return node
+    return None
+
+
+async def list_identity_reference_candidates(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    limit: int = 200,
+) -> list[Node]:
+    """Identity-category nodes offered in the review picker for a mentioned name."""
+    return await _identity_nodes_self_first(session, user_id, limit=limit)
+
+
 async def _voiced_person_names(
     session: AsyncSession, user_id: uuid.UUID
 ) -> set[str]:
@@ -2154,7 +3007,12 @@ async def merge_node_into(
     source_id: uuid.UUID,
     target_id: uuid.UUID,
 ) -> int:
-    """Reassign edges from duplicate node to confirmed node; delete source."""
+    """Reassign edges from duplicate node to confirmed node; delete source.
+
+    Journal provenance (JournalGraphLink) is re-pointed to the target before the
+    source is deleted — otherwise the ON DELETE CASCADE would silently erase the
+    노드↔일기 trace and the timeline would lose the merged item.
+    """
     if source_id == target_id:
         return 0
 
@@ -2164,6 +3022,27 @@ async def merge_node_into(
         return 0
     if source.user_id != user_id or target.user_id != user_id:
         return 0
+
+    # Re-point provenance rows, deduping (entry, target) pairs that already exist.
+    existing_target_entries = {
+        eid
+        for (eid,) in (
+            await session.execute(
+                select(JournalGraphLink.journal_entry_id).where(
+                    JournalGraphLink.node_id == target_id
+                )
+            )
+        ).all()
+    }
+    link_rows = await session.execute(
+        select(JournalGraphLink).where(JournalGraphLink.node_id == source_id)
+    )
+    for link in link_rows.scalars().all():
+        if link.journal_entry_id in existing_target_entries:
+            await session.delete(link)
+        else:
+            link.node_id = target_id
+            existing_target_entries.add(link.journal_entry_id)
 
     reassigned = 0
     result = await session.execute(
@@ -2367,13 +3246,15 @@ async def update_user_profile_settings(
     if target_language is not None:
         user.target_language = target_language
     if target_languages is not None:
-        langs = [l.strip().lower() for l in target_languages if isinstance(l, str) and l.strip()]
-        if not langs:
-            raise ValueError("target_languages must be a non-empty list")
+        from .language_config import validate_target_list
+
+        langs = validate_target_list(target_languages)
         user.target_languages = langs
         user.target_language = langs[0]
     if native_language is not None:
-        user.native_language = native_language.strip().lower()
+        from .language_config import validate_native
+
+        user.native_language = validate_native(native_language)
     if language_levels is not None:
         merged = dict(user.language_levels or {})
         for lang, lv in language_levels.items():
@@ -2401,11 +3282,13 @@ def get_language_level(user: "User", language: str) -> int:
 
 def get_effective_target_languages(user: "User") -> list[str]:
     """Return the user's active target languages (always at least one)."""
+    from .language_config import filter_target_languages
+
     langs = getattr(user, "target_languages", None)
     if langs and isinstance(langs, list):
-        return [l for l in langs if isinstance(l, str)]
+        return filter_target_languages(langs)
     legacy = getattr(user, "target_language", None) or "english"
-    return [legacy]
+    return filter_target_languages([legacy])
 
 
 async def get_all_statement_nodes(
@@ -2444,6 +3327,30 @@ async def get_all_statement_nodes(
     return out
 
 
+async def get_recent_quiz_seed_node_ids(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    quiz_type: str = "composition",
+    limit: int = 20,
+) -> set[str]:
+    """Source-node ids of the most recently generated quizzes of a type.
+
+    Used to rotate journal seeds: recently-drilled statements are excluded from
+    the next generation batch so repeated generation covers more of the diary.
+    """
+    result = await session.execute(
+        select(Quiz.source_nodes)
+        .where(Quiz.user_id == user_id, Quiz.quiz_type == quiz_type)
+        .order_by(Quiz.created_at.desc())
+        .limit(limit)
+    )
+    ids: set[str] = set()
+    for (source_nodes,) in result.all():
+        for nid in source_nodes or []:
+            ids.add(str(nid))
+    return ids
+
+
 async def list_quiz_queue_items(
     session: AsyncSession,
     user_id: uuid.UUID,
@@ -2452,7 +3359,9 @@ async def list_quiz_queue_items(
     quiz_type: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    order: str = "desc",
 ) -> tuple[list[Quiz], int]:
+    """``order='asc'`` lists in generation order — the order sessions serve 'new' items."""
     from sqlalchemy import func
 
     filters = [
@@ -2472,10 +3381,11 @@ async def list_quiz_queue_items(
     count_q = select(func.count()).select_from(Quiz).where(*filters)
     total = int((await session.execute(count_q)).scalar_one())
 
+    order_col = Quiz.created_at.asc() if order == "asc" else Quiz.created_at.desc()
     result = await session.execute(
         select(Quiz)
         .where(*filters)
-        .order_by(Quiz.created_at.desc())
+        .order_by(order_col)
         .offset(offset)
         .limit(limit)
     )
@@ -2553,4 +3463,191 @@ async def reclassify_quiz_queues(
             quiz.queue_kind = "review" if quiz.repetitions > 0 else "new"
     await session.commit()
     return archived
+
+
+# --- Chat sessions (Claude-style multi-room graph chat) ----------------------
+
+
+async def create_chat_session(
+    session: AsyncSession, user_id: uuid.UUID, title: str | None = None
+) -> ChatSession:
+    row = ChatSession(user_id=user_id, title=title)
+    session.add(row)
+    await session.flush()
+    await session.refresh(row)
+    return row
+
+
+async def list_chat_sessions(
+    session: AsyncSession, user_id: uuid.UUID, limit: int = 100
+) -> list[ChatSession]:
+    """Sessions newest-activity-first (for the sidebar)."""
+    result = await session.execute(
+        select(ChatSession)
+        .where(ChatSession.user_id == user_id)
+        .order_by(ChatSession.updated_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def get_chat_session(
+    session: AsyncSession, user_id: uuid.UUID, session_id: uuid.UUID
+) -> ChatSession | None:
+    result = await session.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id, ChatSession.user_id == user_id
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def rename_chat_session(
+    session: AsyncSession, row: ChatSession, title: str | None
+) -> ChatSession:
+    row.title = title
+    await session.flush()
+    return row
+
+
+async def delete_chat_session(session: AsyncSession, row: ChatSession) -> None:
+    await session.delete(row)
+    await session.flush()
+
+
+async def set_chat_session_distill_state(
+    session: AsyncSession, row: ChatSession, state: dict | None
+) -> ChatSession:
+    row.distill_state = state
+    await session.flush()
+    return row
+
+
+async def set_chat_session_summary_state(
+    session: AsyncSession, row: ChatSession, state: dict | None
+) -> ChatSession:
+    row.summary_state = state
+    await session.flush()
+    return row
+
+
+async def last_message_preview(
+    session: AsyncSession,
+    session_id: uuid.UUID,
+    *,
+    user_id: uuid.UUID | None = None,
+) -> str | None:
+    """Sidebar one-liner — resolves stale journal_progress rows from entry status."""
+    result = await session.execute(
+        select(ChatMessage)
+        .where(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at.desc())
+        .limit(8)
+    )
+    for m in result.scalars().all():
+        if m.kind in ("journal_progress", "journal_complete"):
+            resolved = await _journal_sidebar_preview(session, m, user_id=user_id)
+            if resolved:
+                return resolved[:80]
+            continue
+        content = (m.content or "").strip()
+        if content:
+            return content[:80]
+    return None
+
+
+async def _journal_sidebar_preview(
+    session: AsyncSession,
+    message: ChatMessage,
+    *,
+    user_id: uuid.UUID | None,
+) -> str | None:
+    if message.kind == "journal_complete":
+        return (message.content or "").strip() or "📔 지식그래프 완성"
+    content = (message.content or "").strip() or "📔 일기 처리 중…"
+    if user_id is None:
+        return content
+    meta = message.meta if isinstance(message.meta, dict) else {}
+    raw_id = meta.get("entry_id")
+    if not raw_id:
+        return content
+    try:
+        entry_id = uuid.UUID(str(raw_id))
+    except ValueError:
+        return content
+    entry = await get_journal_entry(session, entry_id, user_id)
+    if entry is None:
+        return content
+    status = (entry.status or "").strip()
+    trace = entry.pipeline_trace if isinstance(entry.pipeline_trace, dict) else {}
+    graph_status = (trace.get("graph_status") or "").strip()
+    if not graph_status and status in (
+        "graph_processing",
+        "graph_ready",
+        "graph_failed",
+    ):
+        graph_status = status
+    if status in ("graph_ready", "completed") or graph_status == "graph_ready":
+        return "📔 지식그래프 완성"
+    if status in ("failed", "graph_failed") or graph_status == "graph_failed":
+        return "📔 일기 처리 실패"
+    if status == "graph_staging_ready" or graph_status == "graph_staging_ready":
+        return "📔 그래프 검토 필요"
+    if status in ("processing", "graph_processing") or graph_status == "graph_processing":
+        return "📔 일기 처리 중…"
+    if status == "ready":
+        return "📔 화자 확인 필요"
+    return content
+
+
+async def list_chat_messages(
+    session: AsyncSession,
+    session_id: uuid.UUID,
+    limit: int = 200,
+    kinds: list[str] | None = None,
+    after: datetime | None = None,
+) -> list[ChatMessage]:
+    """Most recent ``limit`` messages, returned oldest-first (render order)."""
+    stmt = select(ChatMessage).where(ChatMessage.session_id == session_id)
+    if kinds is not None:
+        stmt = stmt.where(ChatMessage.kind.in_(kinds))
+    if after is not None:
+        stmt = stmt.where(ChatMessage.created_at > after)
+    stmt = stmt.order_by(ChatMessage.created_at.desc()).limit(limit)
+    rows = list((await session.execute(stmt)).scalars().all())
+    rows.reverse()
+    return rows
+
+
+async def append_chat_messages(
+    session: AsyncSession,
+    session_row: ChatSession,
+    messages: list[dict],
+) -> list[ChatMessage]:
+    """Append messages to a session in the given order.
+
+    ``created_at`` is assigned in Python with a strictly-increasing per-batch
+    offset — ``func.now()`` returns the transaction timestamp, so a user+assistant
+    pair inserted together would otherwise collide and lose their order.
+    """
+    base = datetime.now(UTC)
+    rows: list[ChatMessage] = []
+    for i, m in enumerate(messages):
+        row = ChatMessage(
+            session_id=session_row.id,
+            role=m["role"],
+            kind=m.get("kind", "text"),
+            content=m.get("content", "") or "",
+            referenced_node_ids=m.get("referenced_node_ids") or [],
+            meta=m.get("meta"),
+            created_at=base + timedelta(microseconds=i),
+        )
+        session.add(row)
+        rows.append(row)
+    # Bump the session's updated_at so it floats to the top of the sidebar.
+    session_row.updated_at = base + timedelta(microseconds=len(messages))
+    await session.flush()
+    for row in rows:
+        await session.refresh(row)
+    return rows
 

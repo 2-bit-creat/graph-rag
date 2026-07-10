@@ -13,8 +13,8 @@ def test_blueprint_has_branch_nodes():
     ids = {n["id"] for n in bp["nodes"]}
     assert "whisper_stt_diar" in ids
     assert "whisper_stt_api" in ids
-    assert "lightrag_vector" in ids
-    assert "speaker_context_resolve" in ids
+    assert "statement_graph_draft" in ids
+    assert "graph_apply" in ids
     print("OK blueprint branch nodes")
 
 
@@ -39,105 +39,64 @@ def test_layout_whisper_diar_branch():
     print("OK whisper diar branch")
 
 
-def test_layout_uses_latest_incremental_step():
+def test_layout_graph_draft_only_waits_for_apply():
     trace = {
         "steps": [
             {
                 "step_id": "5",
-                "name": "incremental_graph_pipeline",
-                "type": "graph",
-                "phase": "slow_path",
-                "status": "running",
-                "output": {},
-                "input": {"transcript": "old"},
-            },
-            {
-                "step_id": "6",
-                "name": "incremental_graph_pipeline",
-                "type": "graph",
+                "name": "statement_graph_draft",
+                "type": "llm",
                 "phase": "slow_path",
                 "status": "completed",
+                "model": "gpt-4o-mini",
+                "system_prompt": "You are a knowledge graph assistant...",
                 "output": {
-                    "mode": "preview",
-                    "triple_count": 2,
-                    "filtered_extract_count": 2,
-                    "substeps": {"extract": 2, "vector_queries": 2, "merge_decisions": 2},
-                    "triples": [{"source_name": "A", "relation": "r", "target_name": "B"}],
-                    "entities": [{"name": "A", "type": "Entity", "action": "NEW", "candidates": []}],
+                    "claims": [{"speaker": "나", "title": "말차", "statement": "..."}],
+                    "context_type": "개인일기",
+                    "speaker_count": 1,
                 },
-                "input": {"transcript": "new"},
-                "artifacts": [
-                    {
-                        "name": "extract_triples.json",
-                        "relative_path": "steps/6_incremental_graph_pipeline_extract_triples.json",
-                        "media_type": "application/json",
-                    }
-                ],
+                "input": {"entry_id": "e1", "user_prompt": "Fixed speaker: 나..."},
             },
         ]
     }
     layout = build_flow_layout(trace)
-    extract = next(n for n in layout["nodes"] if n["id"] == "lightrag_extract")
-    assert extract["step_id"] == "6"
-    assert extract["step"]["name"] == "lightrag_extract"
-    assert extract["step"]["output"]["filtered_extract_count"] == 2
-    review = next(n for n in layout["nodes"] if n["id"] == "graph_review_apply")
-    assert review["status"] == "waiting_user"
-    extract_view = extract["step"]
-    assert extract_view["name"] == "lightrag_extract"
-    assert "transcript" in (extract_view.get("input") or {})
-    assert "triples" in (extract_view.get("output") or {})
-    vector = next(n for n in layout["nodes"] if n["id"] == "lightrag_vector")
-    assert vector["step"]["name"] == "lightrag_vector"
-    assert vector["step"]["output"]["vector_queries"] == 2
-    print("OK latest incremental step")
+    draft = next(n for n in layout["nodes"] if n["id"] == "statement_graph_draft")
+    assert draft["status"] == "completed"
+    assert draft["step"]["system_prompt"] is not None
+    assert draft["step"]["output"]["claims"][0]["speaker"] == "나"
+    apply_node = next(n for n in layout["nodes"] if n["id"] == "graph_apply")
+    assert apply_node["status"] == "waiting_user"
+    print("OK graph draft waits for apply")
 
 
-def test_layout_speaker_context_step():
+def test_layout_graph_apply_step():
     trace = {
         "steps": [
             {
-                "step_id": "slow0",
-                "name": "slow_path_start",
-                "type": "policy",
+                "step_id": "5",
+                "name": "statement_graph_draft",
+                "type": "llm",
                 "phase": "slow_path",
                 "status": "completed",
-                "input": {},
-                "output": {},
+                "output": {"claims": [], "context_type": "개인일기", "speaker_count": 1},
+                "input": {"entry_id": "e1"},
             },
             {
-                "step_id": "sp1",
-                "name": "speaker_context_resolve",
+                "step_id": "6",
+                "name": "graph_apply",
                 "type": "graph",
                 "phase": "slow_path",
                 "status": "completed",
-                "input": {"entry_id": "e1"},
-                "output": {
-                    "confirmed_speaker_count": 1,
-                    "pre_confirmed_mappings": 1,
-                    "confirmed_speakers": [
-                        {
-                            "person_name": "Alice",
-                            "node_id": "n1",
-                            "node_name": "Alice",
-                        }
-                    ],
-                },
-                "artifacts": [
-                    {
-                        "name": "speaker_context.json",
-                        "relative_path": "steps/sp1_speaker_context.json",
-                    }
-                ],
+                "output": {"statement_count": 1, "concept_count": 2, "node_count": 4, "edge_count": 3},
+                "input": {"claim_count": 1, "context_type": "개인일기", "user_edited": False},
             },
         ]
     }
     layout = build_flow_layout(trace)
-    spk = next(n for n in layout["nodes"] if n["id"] == "speaker_context_resolve")
-    assert spk["status"] == "completed"
-    assert spk["step"]["output"]["confirmed_speaker_count"] == 1
-    assert "speaker_context_resolve" in bp_ids(get_pipeline_blueprint())
-    print("OK speaker context step")
+    apply_node = next(n for n in layout["nodes"] if n["id"] == "graph_apply")
+    assert apply_node["status"] == "completed"
+    assert apply_node["step"]["output"]["node_count"] == 4
+    print("OK graph apply step")
 
 
 def test_blueprint_has_quiz_audio_node():
@@ -177,18 +136,16 @@ def test_layout_quiz_audio_step():
     print("OK quiz audio layout step")
 
 
-def test_blueprint_has_manual_graph_nodes():
+def test_blueprint_has_graph_path_nodes():
     bp = get_pipeline_blueprint()
     ids = {n["id"] for n in bp["nodes"]}
     assert "precision_text_ingest" in ids
-    assert "manual_graph_trigger" in ids
-    assert "manual_graph_staging" in ids
-    assert "lightrag_extract" in ids
-    assert "graph_review_apply" in ids
-    print("OK blueprint manual graph nodes")
+    assert "statement_graph_draft" in ids
+    assert "graph_apply" in ids
+    print("OK blueprint graph path nodes")
 
 
-def test_layout_manual_graph_path():
+def test_layout_precision_text_graph_path():
     trace = {
         "entry_source": "precision_text",
         "steps": [
@@ -212,62 +169,30 @@ def test_layout_manual_graph_path():
             },
             {
                 "step_id": "3",
-                "name": "manual_graph_trigger",
-                "type": "policy",
-                "phase": "manual_graph_path",
+                "name": "statement_graph_draft",
+                "type": "llm",
+                "phase": "slow_path",
                 "status": "completed",
-                "output": {},
-                "input": {},
+                "output": {"claims": [{"speaker": "A", "statement": "..."}], "context_type": "대화"},
+                "input": {"entry_id": "e1"},
             },
             {
                 "step_id": "4",
-                "name": "speaker_context_resolve",
+                "name": "graph_apply",
                 "type": "graph",
-                "phase": "manual_graph_path",
+                "phase": "slow_path",
                 "status": "completed",
-                "output": {
-                    "confirmed_speaker_count": 2,
-                    "entry_source": "precision_text",
-                    "confirmed_speakers": [{"person_name": "A"}],
-                },
-                "input": {},
-            },
-            {
-                "step_id": "5",
-                "name": "incremental_graph_pipeline",
-                "type": "graph",
-                "phase": "manual_graph_path",
-                "status": "completed",
-                "output": {
-                    "mode": "manual_extract",
-                    "filtered_extract_count": 2,
-                    "triple_count": 2,
-                    "substeps": {"extract": 2, "vector_queries": 1, "merge_decisions": 1},
-                    "triples": [{"source_name": "A", "relation": "r", "target_name": "B"}],
-                },
-                "input": {"transcript": "dialogue"},
-            },
-            {
-                "step_id": "6",
-                "name": "manual_graph_staging",
-                "type": "graph",
-                "phase": "manual_graph_path",
-                "status": "completed",
-                "output": {"entity_count": 2, "mode": "manual"},
-                "input": {},
+                "output": {"node_count": 3, "edge_count": 2},
+                "input": {"claim_count": 1},
             },
         ]
     }
     layout = flow_layout_for_trace(trace)
     by_id = {n["id"]: n for n in layout["nodes"]}
     assert by_id["precision_text_ingest"]["status"] == "completed"
-    assert by_id["manual_graph_trigger"]["status"] == "completed"
-    assert by_id["speaker_context_resolve"]["status"] == "completed"
-    assert by_id["lightrag_extract"]["status"] == "completed"
-    assert by_id["manual_graph_staging"]["status"] == "completed"
-    assert by_id["slow_path_start"]["status"] == "skipped"
-    assert by_id["lightrag_vector"]["status"] == "skipped"
-    print("OK manual graph path layout")
+    assert by_id["statement_graph_draft"]["status"] == "completed"
+    assert by_id["graph_apply"]["status"] == "completed"
+    print("OK precision text graph path layout")
 
 
 def test_text_journal_flow_layout():
@@ -314,17 +239,13 @@ def test_text_journal_flow_layout():
     print("OK text journal flow layout")
 
 
-def bp_ids(bp):
-    return {n["id"] for n in bp["nodes"]}
-
-
 if __name__ == "__main__":
     test_blueprint_has_branch_nodes()
-    test_blueprint_has_manual_graph_nodes()
+    test_blueprint_has_graph_path_nodes()
     test_blueprint_has_quiz_audio_node()
     test_layout_whisper_diar_branch()
-    test_layout_uses_latest_incremental_step()
-    test_layout_speaker_context_step()
-    test_layout_manual_graph_path()
+    test_layout_graph_draft_only_waits_for_apply()
+    test_layout_graph_apply_step()
+    test_layout_precision_text_graph_path()
     test_text_journal_flow_layout()
     test_layout_quiz_audio_step()

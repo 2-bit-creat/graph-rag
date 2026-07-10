@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import crud
 from ..config import get_settings
 from ..db import get_session
-from ..dev_user import dev_user_dep
+from ..deps import request_user_dep
 from ..models import User
 from ..pipeline_flow import flow_layout_for_trace, get_pipeline_blueprint
 from ..schemas import PipelineTraceOut
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/journal", tags=["debug"])
 @router.get("/entries/{entry_id}/trace", response_model=PipelineTraceOut)
 async def get_entry_trace(
     entry_id: uuid.UUID,
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> PipelineTraceOut:
     entry = await crud.get_journal_entry(session, entry_id, user.id)
@@ -58,7 +58,7 @@ async def get_pipeline_flow_blueprint() -> dict:
 async def get_artifact(
     entry_id: uuid.UUID,
     artifact_path: str,
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> FileResponse:
     entry = await crud.get_journal_entry(session, entry_id, user.id)

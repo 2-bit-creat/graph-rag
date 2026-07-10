@@ -652,6 +652,15 @@ bool isSpeakerLikeType(String? raw) {
   return t == 'speaker' || t == 'person' || t == 'individual';
 }
 
+bool isSourceLikeType(String? raw) {
+  final t = canonicalEntityType(raw ?? '').toLowerCase();
+  return t == 'source' || t == 'media' || t == 'publication';
+}
+
+/// Person or external-source heads that can anchor @-mentions in journal compose.
+bool isStatementHeadType(String? raw) =>
+    isSpeakerLikeType(raw) || isSourceLikeType(raw);
+
 /// Display label for graph nodes (Chunk uses display_title when available).
 String nodeDisplayLabel(Map<String, dynamic> node) {
   final type = canonicalEntityType(node['type']?.toString() ?? '').toLowerCase();

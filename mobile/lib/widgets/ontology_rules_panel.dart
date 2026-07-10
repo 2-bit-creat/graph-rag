@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../utils/graph_layout.dart';
+import '../theme/app_theme.dart';
 
 /// Collapsible ontology rules reference (entity + relation types).
 class OntologyRulesPanel extends StatelessWidget {
@@ -25,8 +26,16 @@ class OntologyRulesPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isDark = context.isDarkTheme;
+    final panelBg = isDark ? const Color(0xFF111827) : scheme.surfaceContainerLow;
+    final titleColor = scheme.onSurface;
+    final muted = context.mutedText;
+    final chipBg = isDark ? const Color(0xFF1E293B) : scheme.surfaceContainerHighest;
+    final chipBorder = scheme.outlineVariant.withValues(alpha: isDark ? 0.55 : 0.65);
+
     return Material(
-      color: const Color(0xFF111827),
+      color: panelBg,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
@@ -37,13 +46,13 @@ class OntologyRulesPanel extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Row(
                 children: [
-                  const Icon(Icons.menu_book_outlined, size: 18, color: Color(0xFF94A3B8)),
+                  Icon(Icons.menu_book_outlined, size: 18, color: muted),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       '온톨로지 규칙 · $ontologyName',
-                      style: const TextStyle(
-                        color: Color(0xFFE2E8F0),
+                      style: TextStyle(
+                        color: titleColor,
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
                       ),
@@ -53,7 +62,7 @@ class OntologyRulesPanel extends StatelessWidget {
                     TextButton(
                       onPressed: onEdit,
                       style: TextButton.styleFrom(
-                        foregroundColor: const Color(0xFF94A3B8),
+                        foregroundColor: muted,
                         padding: const EdgeInsets.symmetric(horizontal: 8),
                         minimumSize: Size.zero,
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -62,7 +71,7 @@ class OntologyRulesPanel extends StatelessWidget {
                     ),
                   Icon(
                     expanded ? Icons.expand_less : Icons.expand_more,
-                    color: const Color(0xFF94A3B8),
+                    color: muted,
                     size: 20,
                   ),
                 ],
@@ -77,7 +86,7 @@ class OntologyRulesPanel extends StatelessWidget {
                 children: [
                   Text(
                     '엔티티 타입 (노드 색상)',
-                    style: TextStyle(fontSize: 11, color: Colors.grey[500], fontWeight: FontWeight.w600),
+                    style: TextStyle(fontSize: 11, color: muted, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 6),
                   ...entityTypes.map((et) {
@@ -98,7 +107,7 @@ class OntologyRulesPanel extends StatelessWidget {
                           Expanded(
                             child: RichText(
                               text: TextSpan(
-                                style: const TextStyle(fontSize: 11, color: Color(0xFFCBD5E1), height: 1.3),
+                                style: TextStyle(fontSize: 11, color: titleColor, height: 1.3),
                                 children: [
                                   TextSpan(
                                     text: '$name  ',
@@ -106,7 +115,7 @@ class OntologyRulesPanel extends StatelessWidget {
                                   ),
                                   TextSpan(
                                     text: et['description']?.toString() ?? '',
-                                    style: TextStyle(color: Colors.grey[500], fontSize: 10),
+                                    style: TextStyle(color: muted, fontSize: 10),
                                   ),
                                 ],
                               ),
@@ -119,7 +128,7 @@ class OntologyRulesPanel extends StatelessWidget {
                   const SizedBox(height: 8),
                   Text(
                     '관계 타입 (엣지 라벨)',
-                    style: TextStyle(fontSize: 11, color: Colors.grey[500], fontWeight: FontWeight.w600),
+                    style: TextStyle(fontSize: 11, color: muted, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 6),
                   Wrap(
@@ -130,11 +139,11 @@ class OntologyRulesPanel extends StatelessWidget {
                           (r) => Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF1E293B),
+                              color: chipBg,
                               borderRadius: BorderRadius.circular(6),
-                              border: Border.all(color: const Color(0xFF334155)),
+                              border: Border.all(color: chipBorder),
                             ),
-                            child: Text(r, style: const TextStyle(fontSize: 10, color: Color(0xFF94A3B8))),
+                            child: Text(r, style: TextStyle(fontSize: 10, color: muted)),
                           ),
                         )
                         .toList(),

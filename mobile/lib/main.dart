@@ -1,365 +1,191 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
-import 'screens/journal_hub_screen.dart';
+import 'app_navigator.dart';
+import 'app_route_observer.dart';
+import 'auth/device_auth.dart';
+import 'chat/chat_session_controller.dart';
+import 'chat/chat_sidebar.dart';
+import 'l10n/app_localizations.dart';
+import 'locale/native_language_controller.dart';
 import 'screens/knowledge_graph_screen.dart';
-import 'screens/kg_debug_screen.dart';
-import 'screens/kg_insight_screen.dart';
-import 'screens/kg_timeline_screen.dart';
-import 'screens/pipeline_debug_hub_screen.dart';
-import 'screens/quiz_pipeline_hub_screen.dart';
-import 'screens/settings_screen.dart';
-import 'screens/vocabulary_hub_screen.dart';
-import 'screens/quiz_session_screen.dart';
 import 'theme/app_theme.dart';
-import 'widgets/app_ui.dart';
+import 'theme/app_theme_controller.dart';
+import 'widgets/app_theme_toggle_button.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const GraphRagApp());
+  await appThemeController.load();
+  final localeController = NativeLanguageController();
+  runApp(GraphRagApp(controller: localeController));
 }
 
-class GraphRagApp extends StatelessWidget {
-  const GraphRagApp({super.key});
+class GraphRagApp extends StatefulWidget {
+  const GraphRagApp({super.key, required this.controller});
+
+  final NativeLanguageController controller;
+
+  @override
+  State<GraphRagApp> createState() => _GraphRagAppState();
+}
+
+class _GraphRagAppState extends State<GraphRagApp> {
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.loadFromProfile();
+    ensureDeviceAuth();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'MyLife English',
-      debugShowCheckedModeBanner: false,
-      theme: buildAppTheme(brightness: Brightness.light),
-      darkTheme: buildAppTheme(brightness: Brightness.dark),
-      themeMode: ThemeMode.system,
-      home: const MainShell(),
+    return ListenableBuilder(
+      listenable: Listenable.merge([widget.controller, appThemeController]),
+      builder: (context, _) {
+        return NativeLanguageScope(
+          controller: widget.controller,
+          child: MaterialApp(
+            title: 'MyLife English',
+            debugShowCheckedModeBanner: false,
+            locale: widget.controller.locale,
+            localizationsDelegates: const [
+              AppLocalizations.delegate,
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            supportedLocales: AppLocalizations.supportedLocales,
+            theme: buildAppTheme(brightness: Brightness.light),
+            darkTheme: buildAppTheme(brightness: Brightness.dark),
+            themeMode: appThemeController.mode,
+            navigatorKey: appNavigatorKey,
+            navigatorObservers: [appRouteObserver],
+            home: const ChatHomeShell(),
+          ),
+        );
+      },
     );
   }
 }
 
-// ─── Main shell with bottom navigation ───────────────────────────────────────
+// ─── Chat-centric home: graph canvas + conversation panel + room sidebar ───────
 
-class MainShell extends StatefulWidget {
-  const MainShell({super.key});
+class ChatHomeShell extends StatefulWidget {
+  const ChatHomeShell({super.key});
 
   @override
-  State<MainShell> createState() => _MainShellState();
+  State<ChatHomeShell> createState() => _ChatHomeShellState();
 }
 
-class _MainShellState extends State<MainShell> {
-  int _currentIndex = 0;
+class _ChatHomeShellState extends State<ChatHomeShell> {
+  static const _wideBreakpoint = 1000.0;
+  static const _sidebarExpandedWidth = 260.0;
+  static const _sidebarCollapsedWidth = 56.0;
 
-  // Shared date notifier: Insight heatmap tap → calendar sub-view auto-scrolls
-  final _sharedDate = ValueNotifier<String?>(null);
-  // Incremented every time the home tab becomes active → triggers timeline refresh
-  final _timelineRefresh = ValueNotifier<int>(0);
+  bool _chatOpen = true;
+  bool _sidebarOpen = true;
 
   @override
-  void dispose() {
-    _sharedDate.dispose();
-    _timelineRefresh.dispose();
-    super.dispose();
+  void initState() {
+    super.initState();
+    chatSession.init();
   }
 
-  static const _titles = ['홈', '돌아보기', '학습', '더보기'];
-  static const _subtitles = [
-    '타임라인 · 미디어 · 캘린더',
-    '성장 통계 & 활동 현황',
-    '퀴즈로 복습',
-    '전체 메뉴 & 설정',
-  ];
+  void _toggleSidebar() => setState(() => _sidebarOpen = !_sidebarOpen);
 
   @override
   Widget build(BuildContext context) {
-    // Tab 0 (홈): KgTimelineScreen has its own AppBar — hide shell AppBar
-    final showAppBar = _currentIndex != 0;
+    final wide = MediaQuery.sizeOf(context).width >= _wideBreakpoint;
+    final shell = context.shell;
 
-    return Scaffold(
-      appBar: showAppBar
-          ? AppHubAppBar(
-              title: _titles[_currentIndex],
-              subtitle: _subtitles[_currentIndex],
-              actions: _currentIndex == 3
-                  ? [
-                      IconButton(
-                        icon: const Icon(Icons.settings_outlined),
-                        tooltip: '프로필 설정',
-                        onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.bug_report_outlined),
-                        tooltip: '파이프라인 디버그',
-                        onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => Scaffold(
-                              appBar: AppBar(title: const Text('KG 파이프라인 디버그')),
-                              body: const KgDebugScreen(),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ]
-                  : null,
-            )
-          : null,
-      body: SafeArea(
-        child: IndexedStack(
-          index: _currentIndex,
-          children: [
-            _HomeTab(sharedDate: _sharedDate, refreshSignal: _timelineRefresh),
-            KgInsightScreen(
-              onDateSelected: (d) {
-                _sharedDate.value = d;
-                // Switch to home tab so calendar becomes visible
-                setState(() => _currentIndex = 0);
-              },
-            ),
-            const _LearnTab(),
-            const _MyPageTab(),
-          ],
+    final graph = Scaffold(
+      backgroundColor: shell.graphBackground,
+      appBar: AppBar(
+        backgroundColor: shell.toolbarBackground,
+        foregroundColor: shell.graphLabel,
+        elevation: 0,
+        scrolledUnderElevation: 0.5,
+        surfaceTintColor: Colors.transparent,
+        leading: wide
+            ? IconButton(
+                icon: Icon(
+                  _sidebarOpen
+                      ? Icons.menu_open_rounded
+                      : Icons.menu_rounded,
+                ),
+                tooltip: _sidebarOpen ? '사이드바 접기' : '사이드바 펼치기',
+                onPressed: _toggleSidebar,
+              )
+            : Builder(
+                builder: (ctx) => IconButton(
+                  icon: const Icon(Icons.menu_rounded),
+                  tooltip: '채팅방 · 메뉴',
+                  onPressed: () => Scaffold.of(ctx).openDrawer(),
+                ),
+              ),
+        title: ListenableBuilder(
+          listenable: chatSession,
+          builder: (context, _) {
+            final title =
+                (chatSession.activeSession?['title'] as String?)?.trim();
+            return Text(title?.isNotEmpty == true ? title! : '그래프 대화');
+          },
         ),
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: (i) {
-          if (i == 0) _timelineRefresh.value++;
-          setState(() => _currentIndex = i);
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home_rounded),
-            label: '홈',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.bar_chart_outlined),
-            selectedIcon: Icon(Icons.bar_chart_rounded),
-            label: '돌아보기',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.school_outlined),
-            selectedIcon: Icon(Icons.school_rounded),
-            label: '학습',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.grid_view_outlined),
-            selectedIcon: Icon(Icons.grid_view_rounded),
-            label: '더보기',
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ─── Tab: 홈 (Timeline + Media + Calendar) ────────────────────────────────────
-
-class _HomeTab extends StatefulWidget {
-  const _HomeTab({required this.sharedDate, required this.refreshSignal});
-  final ValueNotifier<String?> sharedDate;
-  final ValueNotifier<int> refreshSignal;
-
-  @override
-  State<_HomeTab> createState() => _HomeTabState();
-}
-
-class _HomeTabState extends State<_HomeTab> with AutomaticKeepAliveClientMixin {
-  @override
-  bool get wantKeepAlive => true;
-
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-    return KgTimelineScreen(
-      sharedDate: widget.sharedDate,
-      refreshSignal: widget.refreshSignal,
-    );
-  }
-}
-
-// ─── Tab: 학습 ────────────────────────────────────────────────────────────────
-
-class _LearnTab extends StatelessWidget {
-  const _LearnTab();
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.pageH, AppSpacing.pageV, AppSpacing.pageH, AppSpacing.xxl,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const AppSectionHeader(title: '나의 지식', subtitle: '내가 모아 둔 단어 · 사람과 관계'),
-          const SizedBox(height: AppSpacing.md),
-          AppHubTile(
-            icon: Icons.library_books_outlined,
-            title: '단어장',
-            subtitle: '커스텀 단어장 관리 · 일기에서 추가',
-            color: AppColors.accentWarm,
-            onTap: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const VocabularyHubScreen())),
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          AppHubTile(
-            icon: Icons.hub_outlined,
-            title: '지식 그래프',
-            subtitle: '노드 · 관계 탐색',
-            color: AppColors.hubGraph,
-            onTap: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const KnowledgeGraphScreen())),
-          ),
-          const SizedBox(height: AppSpacing.xl),
-          const AppSectionHeader(title: '퀴즈 유형', subtitle: '누적된 지식그래프 기반'),
-          const SizedBox(height: AppSpacing.md),
-          AppHubTile(
-            icon: Icons.edit_outlined,
-            title: '단어 완성',
-            subtitle: '빈칸 채우기 클로즈 테스트',
-            color: AppColors.hubQuiz,
-            onTap: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const QuizSessionScreen(quizType: 'cloze'))),
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          AppHubTile(
-            icon: Icons.sort_by_alpha_rounded,
-            title: '문장 배열',
-            subtitle: '단어를 올바른 순서로 배열하기',
-            color: AppColors.hubVoice,
-            onTap: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const QuizSessionScreen(quizType: 'scramble'))),
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          AppHubTile(
-            icon: Icons.psychology_outlined,
-            title: '뉘앙스 선택',
-            subtitle: '상황에 맞는 표현 고르기',
-            color: AppColors.accentWarm,
-            onTap: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const QuizSessionScreen(quizType: 'mcq_nuance'))),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ─── Tab: 더보기 ──────────────────────────────────────────────────────────────
-
-class _MyPageTab extends StatelessWidget {
-  const _MyPageTab();
-
-  void _open(BuildContext context, Widget screen) {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.pageH, AppSpacing.pageV, AppSpacing.pageH, AppSpacing.xxl,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // ── 프로필 카드 ──────────────────────────────────────────────────
-          _ProfileHeader(onTap: () => _open(context, const SettingsScreen())),
-          const SizedBox(height: AppSpacing.xl),
-
-          // ── 내 일기 ──────────────────────────────────────────────────────────
-          const AppSectionHeader(title: '내 기록', subtitle: '일기 · 지식그래프'),
-          const SizedBox(height: AppSpacing.md),
-          AppHubTile(
-            icon: Icons.auto_stories_outlined,
-            title: '내 일기',
-            subtitle: '번역 · 화자 확인 · 지식그래프 이동',
-            color: AppColors.accent,
-            onTap: () => _open(context, const JournalHubScreen()),
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          AppHubTile(
-            icon: Icons.account_tree_rounded,
-            title: '지식 그래프',
-            subtitle: '내 지식 노드 전체 보기',
-            color: AppColors.hubGraph,
-            onTap: () => _open(context, const KnowledgeGraphScreen()),
-          ),
-          const SizedBox(height: AppSpacing.xl),
-
-          // ── 개발자 도구 ───────────────────────────────────────────────────
-          const AppSectionHeader(title: '개발자 도구', subtitle: '내부 디버깅 전용'),
-          const SizedBox(height: AppSpacing.md),
-          AppHubTile(
-            icon: Icons.account_tree_outlined,
-            title: '파이프라인',
-            subtitle: '음성·텍스트 기록별 처리 trace · GraphRAG 단계',
-            color: AppColors.hubVoice,
-            onTap: () => _open(context, const PipelineDebugHubScreen()),
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          AppHubTile(
-            icon: Icons.quiz_outlined,
-            title: '문제 생성',
-            subtitle: '지식 그래프 · Quiz Path trace',
-            color: AppColors.hubQuiz,
-            onTap: () => _open(context, const QuizPipelineHubScreen()),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ─── Profile header card ──────────────────────────────────────────────────────
-
-class _ProfileHeader extends StatelessWidget {
-  const _ProfileHeader({required this.onTap});
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-      child: Container(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        decoration: BoxDecoration(
-          color: cs.primaryContainer.withOpacity(0.35),
-          borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-          border: Border.all(color: cs.primary.withOpacity(0.18)),
-        ),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 26,
-              backgroundColor: cs.primary,
-              child: Icon(Icons.person_rounded, color: cs.onPrimary, size: 28),
+        actions: [
+          const AppThemeToggleButton(),
+          IconButton(
+            tooltip: _chatOpen ? '대화 패널 접기' : '대화 패널 펼치기',
+            icon: Icon(
+              _chatOpen
+                  ? Icons.chat_bubble_rounded
+                  : Icons.chat_bubble_outline_rounded,
+              color: _chatOpen ? AppColors.hubGraph : shell.graphLabel,
             ),
-            const SizedBox(width: AppSpacing.md),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('내 프로필',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 2),
-                  Text('레벨 · 목표 언어 · 학습 목적 설정',
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.copyWith(color: AppColors.textMuted)),
-                ],
+            onPressed: () => setState(() => _chatOpen = !_chatOpen),
+          ),
+        ],
+      ),
+      drawer: wide
+          ? null
+          : Drawer(
+              child: SafeArea(
+                child: ChatSidebar(onNavigate: () => Navigator.pop(context)),
               ),
             ),
-            Icon(Icons.chevron_right_rounded, color: cs.primary),
-          ],
-        ),
+      body: KnowledgeGraphView(
+        chatOpen: _chatOpen,
+        onChatOpenChanged: (open) => setState(() => _chatOpen = open),
+      ),
+    );
+
+    if (!wide) return graph;
+
+    final sidebarW =
+        _sidebarOpen ? _sidebarExpandedWidth : _sidebarCollapsedWidth;
+
+    return Scaffold(
+      body: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            width: sidebarW,
+            child: Material(
+              color: shell.barBackground,
+              child: SafeArea(
+                child: _sidebarOpen
+                    ? ChatSidebar(onCollapse: _toggleSidebar)
+                    : ChatSidebarRail(onExpand: _toggleSidebar),
+              ),
+            ),
+          ),
+          VerticalDivider(
+            width: 1,
+            color: Theme.of(context).dividerColor.withValues(alpha: 0.35),
+          ),
+          Expanded(child: graph),
+        ],
       ),
     );
   }

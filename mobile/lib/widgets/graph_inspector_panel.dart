@@ -584,9 +584,9 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       if (_isStatementNode(node)) ...[
         Row(
           children: [
-            Icon(Icons.category_outlined, size: 13, color: AppColors.textMuted),
+            Icon(Icons.category_outlined, size: 13, color: context.mutedText),
             const SizedBox(width: 4),
-            Text('소스 유형: ', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+            Text('소스 유형: ', style: TextStyle(fontSize: 12, color: context.mutedText)),
             Chip(
               label: Text(
                 _stmtCtxType(node),
@@ -652,12 +652,12 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       const SizedBox(height: 16),
       Text(
         'ID: ${id.substring(0, 8)}… · ${node['created_at']?.toString().split('T').first ?? ''}',
-        style: TextStyle(fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
+        style: TextStyle(fontSize: 10, color: context.mutedText, fontFamily: 'monospace'),
       ),
       const SizedBox(height: 8),
       Text(
         '저장: PostgreSQL nodes 테이블\nGraphRAG 배치 시 upsert',
-        style: TextStyle(fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
+        style: TextStyle(fontSize: 10, color: context.mutedText, fontFamily: 'monospace'),
       ),
     ];
   }
@@ -721,7 +721,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       const SizedBox(height: 16),
       Text(
         '저장: PostgreSQL edges 테이블',
-        style: TextStyle(fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
+        style: TextStyle(fontSize: 10, color: context.mutedText, fontFamily: 'monospace'),
       ),
     ];
   }
@@ -833,7 +833,7 @@ class _StatusRow extends StatelessWidget {
               Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
               Text(
                 detail,
-                style: TextStyle(fontSize: 11, color: Colors.grey[700], height: 1.3),
+                style: TextStyle(fontSize: 11, color: context.subtleText, height: 1.3),
               ),
             ],
           ),
@@ -872,10 +872,10 @@ class _SourceTranscriptSectionState extends State<_SourceTranscriptSection> {
                 Icon(
                   _expanded ? Icons.expand_less : Icons.expand_more,
                   size: 16,
-                  color: Colors.grey[600],
+                  color: context.mutedText,
                 ),
                 const SizedBox(width: 4),
-                Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                Text(label, style: TextStyle(fontSize: 12, color: context.mutedText)),
               ],
             ),
           ),
@@ -968,16 +968,9 @@ class _NodeExpressionButtonState extends State<_NodeExpressionButton> {
 }
 
 const _kLangLabelMap = {
-  'english':    '영어',
-  'japanese':   '일본어',
-  'chinese':    '중국어',
-  'spanish':    '스페인어',
-  'french':     '프랑스어',
-  'german':     '독일어',
-  'portuguese': '포르투갈어',
-  'italian':    '이탈리아어',
-  'arabic':     '아랍어',
-  'russian':    '러시아어',
+  'english': '영어',
+  'korean':  '한국어',
+  'german':  '독일어',
 };
 
 class _ExpressionsBottomSheet extends StatefulWidget {
@@ -1021,7 +1014,7 @@ class _ExpressionsBottomSheetState extends State<_ExpressionsBottomSheet>
             Container(
               width: 40, height: 4,
               decoration: BoxDecoration(
-                color: Colors.grey[400],
+                color: context.mutedText.withValues(alpha: 0.55),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -1102,7 +1095,7 @@ class _ExpressionList extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   meaning,
-                  style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                  style: TextStyle(fontSize: 12, color: context.subtleText),
                 ),
               ],
               if (example.isNotEmpty) ...[
@@ -1142,7 +1135,7 @@ class _RelationTile extends StatelessWidget {
           child: Row(
             children: [
               Expanded(child: Text(label, style: const TextStyle(fontSize: 12))),
-              Icon(Icons.chevron_right, size: 18, color: Colors.grey[500]),
+              Icon(Icons.chevron_right, size: 18, color: context.mutedText),
             ],
           ),
         ),

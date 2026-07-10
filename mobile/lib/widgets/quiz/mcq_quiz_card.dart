@@ -96,7 +96,7 @@ class _McqQuizCardState extends State<McqQuizCard> {
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
-                      color: isSelected ? Colors.white : AppColors.textMuted,
+                      color: isSelected ? Colors.white : context.mutedText,
                     ),
                   ),
                 ),
@@ -155,7 +155,7 @@ class _McqQuizCardState extends State<McqQuizCard> {
           '가장 자연스러운 영어 표현을 고르세요',
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: AppColors.textMuted,
+                color: context.mutedText,
                 fontSize: 15,
               ),
         ),

@@ -12,7 +12,63 @@ from app.quiz_generator import (
     _build_system_prompt,
     _validate_mcq_nuance_coherence,
     _MCQ_NUANCE_DISTRACTOR_RULES,
+    _judge_quiz,
 )
+
+
+class _FakeCompletions:
+    def __init__(self, content, raise_exc=False):
+        self._content = content
+        self._raise = raise_exc
+
+    async def create(self, **_kw):
+        if self._raise:
+            raise RuntimeError("judge boom")
+        msg = type("M", (), {"content": self._content})()
+        choice = type("C", (), {"message": msg})()
+        return type("R", (), {"choices": [choice]})()
+
+
+class _FakeClient:
+    def __init__(self, content="{}", raise_exc=False):
+        self.chat = type("Chat", (), {"completions": _FakeCompletions(content, raise_exc)})()
+
+
+async def test_judge_rejects_mistranslated_gloss():
+    # Regression for "Gemini는 …이온음료를 좋습니다" highlighting 좋습니다 as 'recommend'.
+    client = _FakeClient('{"ok": false, "reason": "gloss is not a translation of recommend"}')
+    validated = {
+        "sentence_en": "Gemini recommends drinking an electrolyte beverage.",
+        "quiz_data": {
+            "blank": "recommend",
+            "context_ko": "Gemini는 이온음료를 <span color='#FFA500'>좋습니다</span>.",
+        },
+    }
+    ok, reason = await _judge_quiz(
+        "cloze", validated, client=client, model="x",
+        target_language="english", native_language="korean",
+    )
+    assert ok is False
+    assert "recommend" in reason
+
+
+async def test_judge_accepts_good_quiz():
+    client = _FakeClient('{"ok": true, "reason": ""}')
+    validated = {"sentence_en": "x", "quiz_data": {"blank": "recommend", "context_ko": "권장"}}
+    ok, _ = await _judge_quiz(
+        "cloze", validated, client=client, model="x",
+        target_language="english", native_language="korean",
+    )
+    assert ok is True
+
+
+async def test_judge_fails_open_on_error():
+    client = _FakeClient(raise_exc=True)
+    ok, _ = await _judge_quiz(
+        "cloze", {"quiz_data": {}}, client=client, model="x",
+        target_language="english", native_language="korean",
+    )
+    assert ok is True  # infra error must never block generation
 
 
 def test_malheoboca_hint_low_level():
@@ -91,6 +147,31 @@ def test_freedom_seed_multi_word_phrase():
     )
     assert out["quiz_data"]["blank"] == "cause a stir"
     assert "cause" in out["quiz_data"]["blank_display"] or "_" in out["quiz_data"]["blank_display"]
+
+
+def test_cloze_seed_mismatch_is_rejected():
+    """If the model ignores the seed and answers a different word, reject the quiz.
+
+    Regression for the 'threshold' bug: seed was 'threshold' but the model wrote
+    '...achieving the desired result', and the server used to graft the seed onto
+    that mismatched sentence.
+    """
+    payload = {
+        "difficulty_level": 60,
+        "question_ko": "x",
+        "sentence_en": "The necessity of a CTA is crucial to achieving the desired result.",
+        "quiz_data": {
+            "prompt_en": "The necessity of a CTA is crucial to achieving the desired ___.",
+            "blank": "result",
+            "accepted_answers": ["result"],
+            "context_ko": "원하는 <span color='#FFA500'>결과</span>를 달성하는 데 중요합니다.",
+        },
+    }
+    try:
+        validate_quiz_payload("cloze", payload, freedom_seed="threshold", target_level=60)
+        raise AssertionError("expected ValueError for seed mismatch")
+    except ValueError as e:
+        assert "threshold" in str(e)
 
 
 def test_apply_freedom_seed_syncs_prompt():

@@ -219,23 +219,23 @@ class _GraphTrashScreenState extends State<GraphTrashScreen> {
                                     content,
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontSize: 13, color: AppColors.textMuted),
+                                    style: TextStyle(fontSize: 13, color: context.mutedText),
                                   ),
                                 ],
                                 const SizedBox(height: 8),
                                 Row(
                                   children: [
-                                    Icon(Icons.delete_outline, size: 13, color: Colors.grey[500]),
+                                    Icon(Icons.delete_outline, size: 13, color: context.mutedText),
                                     const SizedBox(width: 4),
                                     Text(
                                       deletedAt,
-                                      style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                                      style: TextStyle(fontSize: 11, color: context.mutedText),
                                     ),
                                     if (orphanCount > 0 || quizCount > 0) ...[
                                       const SizedBox(width: 10),
                                       Text(
                                         '노드 +$orphanCount · 퀴즈 $quizCount',
-                                        style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                                        style: TextStyle(fontSize: 11, color: context.mutedText),
                                       ),
                                     ],
                                     const Spacer(),

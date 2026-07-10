@@ -46,6 +46,14 @@ _MIGRATIONS = [
     "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS graph_build_requested_at TIMESTAMPTZ",
     "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS transcript_segments JSONB",
     "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS graph_staging JSONB",
+    # Content-type label (대화/일기/회의록/…) — kept on its own column so the
+    # pipeline tracer's pipeline_trace dump can never clobber it.
+    "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS source_type TEXT",
+    # LLM-suggested content type (Phase 3) — advisory, user confirms.
+    "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS suggested_source_type TEXT",
+    # Text-paste attribution: 'self' | 'person' | 'source' (+ head-node name).
+    "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS attribution_kind TEXT",
+    "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS attribution_name TEXT",
     """
     CREATE TABLE IF NOT EXISTS speaker_profiles (
         id UUID PRIMARY KEY,
@@ -73,6 +81,10 @@ _MIGRATIONS = [
         UNIQUE (journal_entry_id, session_label)
     )
     """,
+    # Canonical "self" node: the diary owner. Exactly one per user; '나' and any
+    # conversation speaker the user confirms as themselves resolve to this node.
+    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS is_self BOOLEAN NOT NULL DEFAULT FALSE",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_nodes_one_self_per_user ON nodes (user_id) WHERE is_self",
     # LightRAG incremental graph schema
     "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS speaker_profile_id UUID REFERENCES speaker_profiles(id) ON DELETE SET NULL",
     "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS name_embedding vector(1536)",
@@ -124,6 +136,23 @@ _MIGRATIONS = [
     # Soft delete: nodes moved to trash retain their data
     "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ",
     "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS deleted_context JSONB",
+    # Cumulative LLM-assigned concept importance (1-5 per mention, summed).
+    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS importance_score INTEGER NOT NULL DEFAULT 0",
+    # Alternative surface forms (nicknames / inflected mentions / self's real names)
+    # that resolve to a node — powers person-mention → existing-identity linking.
+    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS aliases JSONB NOT NULL DEFAULT '[]'::jsonb",
+    # Alias embedding index for FUZZY identity resolution (suggest unseen variants).
+    """
+    CREATE TABLE IF NOT EXISTS node_alias_embeddings (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        node_id UUID NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+        text TEXT NOT NULL,
+        embedding vector(1536),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (node_id, text)
+    )
+    """,
     # German translation output in fast path
     "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS translation_de TEXT",
     # All target-language translations keyed by ISO code (multi-language fast path)
@@ -141,6 +170,12 @@ _MIGRATIONS = [
         OR EXISTS (SELECT 1 FROM nodes WHERE nodes.id = speaker_profiles.node_id AND nodes.deleted_at IS NOT NULL)
       )
     """,
+    "ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS summary_state JSONB",
+    "CREATE INDEX IF NOT EXISTS idx_alias_embeddings_embedding ON node_alias_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50)",
+    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS occurred_at DATE",
+    "CREATE INDEX IF NOT EXISTS idx_nodes_user_occurred ON nodes (user_id, occurred_at)",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS device_id TEXT",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_device_id ON users (device_id) WHERE device_id IS NOT NULL",
 ]
 
 
@@ -181,14 +216,18 @@ async def init_db() -> None:
     for sql in _MIGRATIONS:
         try:
             async with engine.begin() as conn:
+                # Avoid hanging forever when pytest/another uvicorn holds a DDL lock.
+                await conn.exec_driver_sql("SET lock_timeout = '10s'")
                 await conn.exec_driver_sql(sql)
-        except Exception:
+        except Exception as exc:
             # ivfflat index etc. may fail on empty/small datasets — non-fatal
-            if "idx_nodes_name_embedding" not in sql:
+            if "USING ivfflat" not in sql and "lock timeout" not in str(exc).lower():
                 raise
+            logger.warning("Migration skipped (non-fatal): %s", exc)
 
     try:
         async with engine.begin() as conn:
+            await conn.exec_driver_sql("SET lock_timeout = '10s'")
             await conn.exec_driver_sql(
                 "ALTER TABLE nodes DROP CONSTRAINT IF EXISTS uq_node_name_type"
             )
@@ -196,8 +235,8 @@ async def init_db() -> None:
                 "ALTER TABLE nodes ADD CONSTRAINT uq_node_user_name_type "
                 "UNIQUE (user_id, name, type)"
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Constraint migration skipped (non-fatal): %s", exc)
 
     async with async_session_factory() as session:
         from . import crud
