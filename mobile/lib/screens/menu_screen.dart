@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../auth/account_controller.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import 'journal_hub_screen.dart';
@@ -28,6 +30,38 @@ class _MenuScreenState extends State<MenuScreen> {
 
   void _open(Widget screen) {
     Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+  }
+
+  Future<void> _confirmDeleteAccount() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('account.deleteData')),
+        content: Text(tr('account.deleteConfirm')),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(tr('common.cancel'))),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(tr('account.deleteData')),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final nav = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await accountController.deleteCurrentServerSide();
+      // current=null makes the app root show the entry screen; pop to it.
+      if (mounted) nav.popUntil((r) => r.isFirst);
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+      );
+    }
   }
 
   @override
@@ -94,6 +128,29 @@ class _MenuScreenState extends State<MenuScreen> {
               subtitle: '대기 · 복습 예정 문제 관리',
               color: AppColors.hubQuiz,
               onTap: () => _open(const QuizQueueScreen()),
+            ),
+            const SizedBox(height: AppSpacing.xl),
+
+            AppSectionHeader(title: tr('account.switch'), subtitle: accountController.current ?? ''),
+            const SizedBox(height: AppSpacing.sm),
+            AppHubTile(
+              icon: Icons.switch_account_rounded,
+              title: tr('account.switch'),
+              subtitle: accountController.current ?? '',
+              color: AppColors.hubGraph,
+              onTap: () async {
+                final nav = Navigator.of(context);
+                await accountController.signOut();
+                if (mounted) nav.popUntil((r) => r.isFirst);
+              },
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            AppHubTile(
+              icon: Icons.delete_forever_rounded,
+              title: tr('account.deleteData'),
+              subtitle: '',
+              color: Colors.red,
+              onTap: _confirmDeleteAccount,
             ),
             const SizedBox(height: AppSpacing.xl),
 

@@ -290,6 +290,10 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class SimpleLoginRequest(BaseModel):
+    handle: str
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

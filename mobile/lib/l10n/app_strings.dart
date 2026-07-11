@@ -87,6 +87,19 @@ const Map<String, String> _ko = {
   'common.save': '저장',
   'common.saved': '저장했어요.',
   'common.cancel': '취소',
+  // Accounts
+  'account.title': '입장',
+  'account.welcome': '아이디를 입력하면 나만의 공간이 열려요.',
+  'account.newId': '새 아이디',
+  'account.hint': '3–20자 영문·숫자',
+  'account.enter': '입장',
+  'account.saved': '저장된 아이디',
+  'account.switch': '계정 전환',
+  'account.signOut': '로그아웃',
+  'account.forget': '이 기기에서 제거',
+  'account.deleteData': '계정과 데이터 삭제',
+  'account.deleteConfirm': '이 계정의 모든 일기·그래프·퀴즈가 영구 삭제됩니다. 계속할까요?',
+  'account.mainHint': '기존 데이터는 아이디 "main"으로 열 수 있어요.',
 };
 
 const Map<String, String> _en = {
@@ -120,4 +133,16 @@ const Map<String, String> _en = {
   'common.save': 'Save',
   'common.saved': 'Saved.',
   'common.cancel': 'Cancel',
+  'account.title': 'Enter',
+  'account.welcome': 'Type an ID to open your own space.',
+  'account.newId': 'New ID',
+  'account.hint': '3–20 letters or digits',
+  'account.enter': 'Enter',
+  'account.saved': 'Saved IDs',
+  'account.switch': 'Switch account',
+  'account.signOut': 'Sign out',
+  'account.forget': 'Remove from this device',
+  'account.deleteData': 'Delete account & data',
+  'account.deleteConfirm': 'This permanently deletes all journals, graph, and quizzes for this account. Continue?',
+  'account.mainHint': 'Your existing data opens under the ID "main".',
 };

@@ -4,6 +4,12 @@ import 'config.dart';
 
 export 'config.dart' show apiBaseUrl, resolveMediaUrl, resolvedApiBaseUrl;
 
+/// Bearer token for the active ID-entry account. Set by the account controller;
+/// read by the Dio interceptor. A module-level var (not an import of the account
+/// controller) keeps client.dart free of a dependency cycle.
+String? _apiAuthToken;
+void setApiAuthToken(String? token) => _apiAuthToken = token;
+
 class ApiClient {
   ApiClient() {
     _dio = Dio(BaseOptions(
@@ -12,9 +18,37 @@ class ApiClient {
       receiveTimeout: const Duration(minutes: 2),
       headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
     ));
+    _dio.interceptors.add(InterceptorsWrapper(
+      onRequest: (options, handler) {
+        final token = _apiAuthToken;
+        if (token != null && token.isNotEmpty) {
+          options.headers['Authorization'] = 'Bearer $token';
+        }
+        handler.next(options);
+      },
+    ));
   }
 
   late final Dio _dio;
+
+  /// Enter (or create) an ID-entry account space; returns its bearer token.
+  Future<String> simpleLogin(String handle) async {
+    try {
+      final resp = await _dio.post('/auth/simple', data: {'handle': handle});
+      return (resp.data as Map)['access_token'] as String;
+    } on DioException catch (e) {
+      throw _friendlyError(e, '입장');
+    }
+  }
+
+  /// Delete the current account and all its data (server-side cascade).
+  Future<void> deleteAccount() async {
+    try {
+      await _dio.delete('/auth/me');
+    } on DioException catch (e) {
+      throw _friendlyError(e, '계정 삭제');
+    }
+  }
 
   Future<List<dynamic>> listEntries() async {
     try {

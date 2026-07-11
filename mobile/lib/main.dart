@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 
+import 'api/client.dart';
 import 'app_navigator.dart';
 import 'app_route_observer.dart';
+import 'auth/account_controller.dart';
 import 'chat/chat_session_controller.dart';
 import 'chat/chat_sidebar.dart';
 import 'compose/compose_window_host.dart';
 import 'l10n/app_strings.dart';
+import 'screens/account_entry_screen.dart';
 import 'screens/knowledge_graph_screen.dart';
 import 'theme/app_theme.dart';
 import 'theme/app_theme_controller.dart';
@@ -15,6 +18,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await appThemeController.load();
   await appLocaleController.load();
+  await accountController.load();
   runApp(const GraphRagApp());
 }
 
@@ -24,7 +28,8 @@ class GraphRagApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge([appThemeController, appLocaleController]),
+      listenable: Listenable.merge(
+          [appThemeController, appLocaleController, accountController]),
       builder: (context, _) {
         return MaterialApp(
           title: 'MyLife English',
@@ -40,7 +45,11 @@ class GraphRagApp extends StatelessWidget {
               const ComposeWindowHost(),
             ],
           ),
-          home: const ChatHomeShell(),
+          // Gate on having an ID-entry account. Keying the shell by the current
+          // handle remounts (fresh chat/profile) when switching accounts.
+          home: accountController.hasAccount
+              ? ChatHomeShell(key: ValueKey(accountController.current))
+              : const AccountEntryScreen(),
         );
       },
     );
@@ -72,6 +81,17 @@ class _ChatHomeShellState extends State<ChatHomeShell> {
   void initState() {
     super.initState();
     chatSession.init();
+    _syncLocaleFromProfile();
+  }
+
+  Future<void> _syncLocaleFromProfile() async {
+    try {
+      final profile = await apiClient.getUserProfile();
+      await appLocaleController
+          .setFromNativeLanguage(profile['native_language']?.toString());
+    } catch (_) {
+      // Non-fatal — keep the persisted locale.
+    }
   }
 
   void _toggleSidebar() => setState(() => _sidebarOpen = !_sidebarOpen);
