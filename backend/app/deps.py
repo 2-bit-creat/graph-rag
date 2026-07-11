@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth_utils import decode_access_token
+from .config import get_settings
 from .db import get_session
 from .models import User
 
@@ -65,8 +66,13 @@ async def get_request_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     session: AsyncSession = Depends(get_session),
 ) -> User:
-    """Resolve the request user: a valid Bearer token wins; otherwise fall back
-    to the local dev user so the app keeps working without login during dev."""
+    """Resolve the request user from a Bearer token.
+
+    A valid token always wins. A missing token is rejected with 401 — except in
+    a local development environment, where it falls back to the shared dev user
+    so curl/manual testing keeps working without a login. In production this
+    fallback is disabled so a header-less request can never reach the primary
+    account (see [[project_id_entry_accounts]])."""
     if credentials is not None and credentials.credentials:
         payload = decode_access_token(credentials.credentials)
         if payload is not None and "sub" in payload:
@@ -82,9 +88,16 @@ async def get_request_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
         )
-    from .dev_user import get_dev_user
 
-    return await get_dev_user(session)
+    if not get_settings().is_production:
+        from .dev_user import get_dev_user
+
+        return await get_dev_user(session)
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Not authenticated",
+    )
 
 
 request_user_dep = get_request_user

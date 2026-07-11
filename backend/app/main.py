@@ -20,6 +20,11 @@ async def lifespan(app: FastAPI):
     from .extraction_queue import start_worker, stop_worker
 
     settings = get_settings()
+    if settings.is_production and settings.jwt_secret_is_insecure:
+        raise RuntimeError(
+            "Refusing to start in production with an insecure JWT_SECRET. "
+            "Set a strong, random JWT_SECRET in the environment."
+        )
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
     Path(settings.debug_runs_dir).mkdir(parents=True, exist_ok=True)
     _STATIC_DIR.mkdir(parents=True, exist_ok=True)
@@ -37,19 +42,23 @@ app = FastAPI(title="Graph RAG Language Platform API", version="0.2.0", lifespan
 
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
-# Flutter web dev server uses random localhost ports — allow all localhost origins in dev.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
-    allow_origin_regex=(
+_cors_kwargs: dict = {
+    "allow_origins": settings.cors_origin_list,
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+if not settings.is_production:
+    # Flutter web dev server uses random localhost ports, and physical-device
+    # testing hits the host over LAN Wi-Fi — allow localhost + private ranges in
+    # development only. In production the explicit CORS_ORIGINS whitelist is the
+    # sole allowed set (no wildcard, no LAN).
+    _cors_kwargs["allow_origin_regex"] = (
         r"http://(localhost|127\.0\.0\.1)(:\d+)?|"
         r"http://192\.168\.\d{1,3}\.\d{1,3}(:\d+)?|"
         r"http://10\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?"
-    ),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    )
+app.add_middleware(CORSMiddleware, **_cors_kwargs)
 
 app.include_router(auth.router)
 app.include_router(journal.router)

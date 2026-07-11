@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     openai_timeout_sec: float = 90.0
     cors_origins: str = "http://localhost:8080"
 
+    # Deployment environment. "development" keeps local ergonomics (no-token
+    # requests fall back to the shared dev user, the placeholder JWT secret is
+    # tolerated). Set ENVIRONMENT=production before shipping — that disables the
+    # dev-user fallback and refuses to boot on an insecure JWT secret.
+    environment: str = "development"
+
     jwt_secret: str = "change-me-in-production"
     jwt_expire_minutes: int = 60 * 24 * 7
 
@@ -123,6 +129,14 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment.strip().lower() in ("production", "prod")
+
+    @property
+    def jwt_secret_is_insecure(self) -> bool:
+        return self.jwt_secret.strip() in ("", "change-me-in-production")
 
     def quiz_selection_snapshot(self, current_level: int = 10) -> dict:
         """Global quiz graph-selection parameters for trace IO / profile API."""

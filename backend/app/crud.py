@@ -1544,8 +1544,16 @@ async def record_review_result(
 # --- Node/edge mutations -----------------------------------------------------
 
 
-async def delete_node(session: AsyncSession, node_id: uuid.UUID) -> bool:
+async def delete_node(
+    session: AsyncSession,
+    node_id: uuid.UUID,
+    owner_id: uuid.UUID | None = None,
+) -> bool:
     """Hard-delete a node and ALL data linked to it.
+
+    When ``owner_id`` is supplied the node must belong to that user, so a caller
+    can never delete another account's node by guessing its id. Internal cascade
+    callers that already scope to a user's nodes may omit it.
 
     Cleanup order (node is the source of truth):
     1. Detach SpeakerProfiles that referenced this node (keep profile; clear identity link)
@@ -1557,6 +1565,8 @@ async def delete_node(session: AsyncSession, node_id: uuid.UUID) -> bool:
 
     node = await session.get(Node, node_id)
     if node is None:
+        return False
+    if owner_id is not None and node.user_id != owner_id:
         return False
 
     user_id = node.user_id
@@ -1966,6 +1976,13 @@ async def create_edge(
     if source is None or target is None:
         return None
 
+    # Ownership guard: when a user_id is supplied, both endpoints must belong to
+    # that user so one account can never wire an edge into another's graph.
+    if user_id is not None and (
+        source.user_id != user_id or target.user_id != user_id
+    ):
+        return None
+
     existing = await session.execute(
         select(Edge).where(
             Edge.source_id == source_id,
@@ -1990,9 +2007,12 @@ async def update_edge(
     relation: str | None = None,
     source_id: uuid.UUID | None = None,
     target_id: uuid.UUID | None = None,
+    user_id: uuid.UUID | None = None,
 ) -> Edge | None:
     edge = await session.get(Edge, edge_id)
     if edge is None:
+        return None
+    if user_id is not None and edge.user_id != user_id:
         return None
 
     new_source = source_id if source_id is not None else edge.source_id
@@ -2002,10 +2022,19 @@ async def update_edge(
     if new_source == new_target:
         return None
 
-    if source_id is not None and await session.get(Node, source_id) is None:
-        return None
-    if target_id is not None and await session.get(Node, target_id) is None:
-        return None
+    # Re-pointing an endpoint must stay within the owner's graph.
+    if source_id is not None:
+        new_src_node = await session.get(Node, source_id)
+        if new_src_node is None or (
+            user_id is not None and new_src_node.user_id != user_id
+        ):
+            return None
+    if target_id is not None:
+        new_tgt_node = await session.get(Node, target_id)
+        if new_tgt_node is None or (
+            user_id is not None and new_tgt_node.user_id != user_id
+        ):
+            return None
 
     duplicate = await session.execute(
         select(Edge).where(
@@ -2029,9 +2058,13 @@ async def update_edge(
     return edge
 
 
-async def delete_edge(session: AsyncSession, edge_id: uuid.UUID) -> bool:
+async def delete_edge(
+    session: AsyncSession, edge_id: uuid.UUID, user_id: uuid.UUID | None = None
+) -> bool:
     edge = await session.get(Edge, edge_id)
     if edge is None:
+        return False
+    if user_id is not None and edge.user_id != user_id:
         return False
     await session.delete(edge)
     await session.commit()

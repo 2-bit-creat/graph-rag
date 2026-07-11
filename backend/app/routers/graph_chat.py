@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import crud
 from ..chat_summary import needs_summary_update, update_session_summary, watermark_from_state
 from ..db import get_session
-from ..dev_user import dev_user_dep
+from ..deps import request_user_dep
 from ..graph_chat import graph_chat_answer
 from ..models import ChatMessage, ChatSession, User
 from ..schemas import (
@@ -121,7 +121,7 @@ async def _migrate_legacy_json(session: AsyncSession, user: User) -> None:
 
 @router.get("/sessions", response_model=ChatSessionListOut)
 async def list_sessions(
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> ChatSessionListOut:
     rows = await crud.list_chat_sessions(session, user.id)
@@ -137,7 +137,7 @@ async def list_sessions(
 @router.post("/sessions", response_model=ChatSessionOut)
 async def create_session(
     payload: ChatSessionCreateRequest,
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> ChatSessionOut:
     row = await crud.create_chat_session(session, user.id, title=payload.title)
@@ -149,7 +149,7 @@ async def create_session(
 async def rename_session(
     session_id: uuid.UUID,
     payload: ChatSessionRenameRequest,
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> ChatSessionOut:
     row = await _require_session(session, user, session_id)
@@ -161,7 +161,7 @@ async def rename_session(
 @router.delete("/sessions/{session_id}")
 async def delete_session(
     session_id: uuid.UUID,
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     row = await _require_session(session, user, session_id)
@@ -177,7 +177,7 @@ async def delete_session(
 async def list_messages(
     session_id: uuid.UUID,
     limit: int = Query(200, ge=1, le=500),
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> GraphChatHistoryOut:
     await _require_session(session, user, session_id)
@@ -192,7 +192,7 @@ async def send_message(
     session_id: uuid.UUID,
     payload: GraphChatRequest,
     background_tasks: BackgroundTasks,
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> GraphChatResponse:
     row = await _require_session(session, user, session_id)
@@ -258,7 +258,7 @@ async def send_message(
 async def append_event(
     session_id: uuid.UUID,
     payload: ChatEventRequest,
-    user: User = Depends(dev_user_dep),
+    user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> GraphChatMessageOut:
     row = await _require_session(session, user, session_id)
