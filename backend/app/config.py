@@ -8,8 +8,10 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://graphrag:graphrag@localhost:6432/graphrag"
     openai_api_key: str = ""
+    # Single model for every LLM call — quiz generation, tutor, chat, cleanup.
+    # (The old gpt-4o "premium" path was removed for cost; the bundle generator
+    # produces 4-8 questions per call, so a mini model is both cheaper and enough.)
     openai_model: str = "gpt-4o-mini"
-    openai_premium_model: str = "gpt-4o"
     # Cap each LLM request so a hung/slow OpenAI call surfaces as a fast failure
     # instead of leaving the graph build stuck in 'graph_processing' (the default
     # SDK timeout is 600s × retries — perceived as an indefinite buffering spinner).
@@ -102,8 +104,12 @@ class Settings(BaseSettings):
     # chat-retrieval cutoff — dedup must be confident before dropping user content.
     chat_distill_dup_max_distance: float = 0.25
 
-    # Quiz MVP v2 — manual generation only when False
-    quiz_auto_enabled: bool = False
+    # Quiz auto-refill: top up the per-language×per-type queues in the background
+    # after graph commits and when a queue runs low. Each "bundle" is one LLM call
+    # that yields all four quiz types for one Statement.
+    quiz_auto_enabled: bool = True
+    quiz_queue_target_per_type: int = 10
+    quiz_refill_max_bundles_per_run: int = 3
     quiz_session_size: int = 10
     quiz_review_ratio: float = 0.7
     quiz_level_window: int = 3

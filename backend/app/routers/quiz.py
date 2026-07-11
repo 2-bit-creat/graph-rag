@@ -7,7 +7,7 @@ from typing import Literal
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,8 +24,8 @@ from ..level_adjuster import reclassify_queue_by_level
 from ..level_guidelines import cefr_label, window_for_level
 from ..models import User
 from ..pipeline_flow import build_quiz_only_flow_layout
+from ..quiz_bundle import BundleSeedError, generate_quiz_bundle
 from ..quiz_pipeline import (
-    run_quiz_generate_pipeline,
     trace_quiz_queue_pick,
     trace_quiz_sm2_update,
 )
@@ -99,8 +99,9 @@ async def get_profile(
 
 @router.get("/queue/items", response_model=QuizQueueListOut)
 async def list_queue_items(
+    background: BackgroundTasks,
     queue_kind: Literal["new", "review"] = Query(...),
-    quiz_type: Literal["cloze", "scramble", "mcq_nuance"] | None = None,
+    quiz_type: Literal["cloze", "scramble", "mcq_nuance", "composition"] | None = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user: User = Depends(request_user_dep),
@@ -114,6 +115,15 @@ async def list_queue_items(
         limit=limit,
         offset=offset,
     )
+    # Top up in the background when the new queue is running low, so the learner
+    # rarely hits an empty queue. Cheap no-op when auto-refill is off or full.
+    settings = get_settings()
+    if (
+        queue_kind == "new"
+        and settings.quiz_auto_enabled
+        and total < settings.quiz_min_new_queue
+    ):
+        background.add_task(refill_user_quizzes, user.id)
     node_ids: set[uuid.UUID] = set()
     for quiz in items:
         if quiz.source_nodes:
@@ -163,6 +173,37 @@ async def list_generations(
     return QuizGenerationListOut(
         items=[QuizQueueItemOut(**quiz_queue_item_dict(q, node_names)) for q in items],
         total=total,
+    )
+
+
+@router.get("/history", response_model=QuizQueueListOut)
+async def list_quiz_history(
+    quiz_type: Literal["cloze", "scramble", "mcq_nuance", "composition"] | None = None,
+    language: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> QuizQueueListOut:
+    """Past answered quizzes (most-recent first) for the review/history screen."""
+    items, total = await crud.list_quiz_history(
+        session,
+        user.id,
+        quiz_type=quiz_type,
+        language=language,
+        limit=limit,
+        offset=offset,
+    )
+    node_ids: set[uuid.UUID] = set()
+    for quiz in items:
+        if quiz.source_nodes:
+            node_ids.update(quiz.source_nodes)
+    node_names = await crud.get_node_names(session, node_ids)
+    return QuizQueueListOut(
+        items=[QuizQueueItemOut(**quiz_queue_item_dict(q, node_names)) for q in items],
+        total=total,
+        queue_kind="history",
+        quiz_type=quiz_type,
     )
 
 
@@ -230,22 +271,32 @@ async def generate_quiz_graph(
             generated_count=generated,
         )
 
+    # Word types (cloze/scramble/mcq_nuance) → unified bundle: one LLM call
+    # generates all four types from one Statement; we return the requested type
+    # and leave the rest queued.
+    lang = (language or getattr(user, "target_language", None) or "english").lower()
     try:
-        quiz, trace = await run_quiz_generate_pipeline(
-            session,
-            user.id,
-            quiz_type,
-            selected_vocab_id=body.selected_vocab_id if body else None,
-            vocab_node_id=body.vocab_node_id if body else None,
-            target_language=language,
+        created, trace = await generate_quiz_bundle(session, user, language=lang)
+    except BundleSeedError as exc:
+        raise HTTPException(
+            status_code=409, detail={"code": "no_seed", "message": str(exc)}
+        ) from exc
+    match = next((q for q in created if q.quiz_type == quiz_type), None)
+    if match is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "no_item",
+                "quiz_type": quiz_type,
+                "generated": len(created),
+            },
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return QuizGenerateOut(
-        quiz_id=quiz.id,
-        quiz_type=quiz.quiz_type,
-        difficulty_level=quiz.difficulty_level,
+        quiz_id=match.id,
+        quiz_type=match.quiz_type,
+        difficulty_level=match.difficulty_level,
         trace_step_count=len(trace.get("steps") or []),
+        generated_count=len(created),
     )
 
 

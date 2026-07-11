@@ -984,7 +984,7 @@ async def generate_one(
     quiz_type = validate_quiz_type(quiz_type)
     settings = get_settings()
     client = _client()
-    model = settings.openai_premium_model if premium else settings.openai_model
+    model = settings.openai_model
     system = _build_system_prompt(
         quiz_type,
         target_level,
@@ -1121,7 +1121,7 @@ async def generate_vocab_cloze_from_context(
     freedom_off: bool = True,
 ) -> dict:
     settings = get_settings()
-    model = settings.openai_premium_model if settings.openai_premium_model else settings.openai_model
+    model = settings.openai_model
     client = AsyncOpenAI(api_key=settings.openai_api_key)
 
     user_content = (

@@ -3200,14 +3200,20 @@ async def create_quiz(
     quiz_data: dict | None = None,
     difficulty_level: int = 10,
     queue_kind: str = "new",
+    language: str | None = None,
     source_nodes: list[uuid.UUID] | None = None,
     pipeline_trace: dict | None = None,
     debug_run_dir: str | None = None,
 ) -> Quiz:
+    # Keep the dedicated column and the quiz_data mirror in sync so the
+    # per-language queue filter and legacy JSON readers agree.
+    if language is None and isinstance(quiz_data, dict):
+        language = quiz_data.get("language")
     quiz = Quiz(
         user_id=user_id,
         associated_entry_id=associated_entry_id,
         quiz_type=quiz_type,
+        language=(language or "").lower() or None,
         source_nodes=source_nodes,
         question_ko=question_ko,
         sentence_en=sentence_en,
@@ -3399,6 +3405,37 @@ async def list_quiz_queue_items(
         select(Quiz)
         .where(*filters)
         .order_by(order_col)
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(result.scalars().all()), total
+
+
+async def list_quiz_history(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    quiz_type: str | None = None,
+    language: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[Quiz], int]:
+    """Answered quizzes, most-recently-answered first — the 'review past quizzes' feed."""
+    from sqlalchemy import func
+
+    filters = [Quiz.user_id == user_id, Quiz.is_solved.is_(True)]
+    if quiz_type is not None:
+        filters.append(Quiz.quiz_type == quiz_type)
+    if language is not None:
+        filters.append(Quiz.language == language.lower())
+
+    total = int((await session.execute(
+        select(func.count()).select_from(Quiz).where(*filters)
+    )).scalar_one())
+    result = await session.execute(
+        select(Quiz)
+        .where(*filters)
+        .order_by(Quiz.last_answered_at.desc().nullslast())
         .offset(offset)
         .limit(limit)
     )

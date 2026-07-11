@@ -415,7 +415,7 @@ async def generate_quiz_cards(
 ) -> list[dict]:
     settings = get_settings()
     client = _client()
-    model = settings.openai_premium_model if premium else settings.openai_model
+    model = settings.openai_model
     system = (
         "Create personalized English learning flashcards from the user's journal "
         "entry and their personal knowledge graph facts. "

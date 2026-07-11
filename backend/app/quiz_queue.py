@@ -58,7 +58,14 @@ async def build_session(
     def _language_filter(stmt):
         if not lang:
             return stmt
-        return stmt.where(Quiz.quiz_data["language"].astext == lang)
+        # Prefer the indexed column; fall back to the JSON mirror for any rows
+        # created before the language column existed and not yet backfilled.
+        return stmt.where(
+            or_(
+                Quiz.language == lang,
+                and_(Quiz.language.is_(None), Quiz.quiz_data["language"].astext == lang),
+            )
+        )
 
     review_q = _source_filter(
         _language_filter(select(Quiz))
@@ -105,7 +112,12 @@ async def build_session(
         if picked:
             extra_filters.append(Quiz.id.not_in([q.id for q in picked]))
         if lang:
-            extra_filters.append(Quiz.quiz_data["language"].astext == lang)
+            extra_filters.append(
+                or_(
+                    Quiz.language == lang,
+                    and_(Quiz.language.is_(None), Quiz.quiz_data["language"].astext == lang),
+                )
+            )
         extra_review = (
             select(Quiz)
             .where(*extra_filters)

@@ -12,7 +12,6 @@ from ..journal_pipeline import (
 )
 from ..models import User
 from ..pipeline_runner import (
-    enqueue_entry_expression_extraction,
     run_entry_graph_draft,
     run_graph_ingest_pipeline,
     run_journal_fast_pipeline,
@@ -501,9 +500,8 @@ async def apply_entry_graph(
             pipeline_trace=trace,
         )
 
-    # Extract expressions from the CONFIRMED nodes only (cost + accuracy).
-    await enqueue_entry_expression_extraction(session, user.id)
-
+    # Quizzes are generated straight from Statement nodes (no expression
+    # extraction). Top up the per-language quiz queues off the confirmed graph.
     background_tasks.add_task(refill_user_quizzes, user.id)
 
     return GraphBuildOut(

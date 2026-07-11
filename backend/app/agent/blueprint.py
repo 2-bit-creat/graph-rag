@@ -115,7 +115,7 @@ def _build_shared_configs(settings) -> dict[str, dict]:
         description="Journal GraphRAG slow path: triple extract, pgvector merge, weighted edges.",
         fields={
             "step1_model": settings.openai_model,
-            "step3_model": settings.openai_premium_model,
+            "step3_model": settings.openai_model,
             "embedding_model": "text-embedding-3-small",
             "vector_max_distance": 0.3,
             "vector_top_k": 3,

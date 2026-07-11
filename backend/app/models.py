@@ -319,6 +319,13 @@ class Quiz(Base):
             "quiz_type",
             "next_review_at",
         ),
+        Index(
+            "idx_quizzes_user_lang_type_queue",
+            "user_id",
+            "language",
+            "quiz_type",
+            "queue_kind",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -333,6 +340,9 @@ class Quiz(Base):
         nullable=True,
     )
     quiz_type: Mapped[str] = mapped_column(String, nullable=False)
+    # Target language this quiz drills (english/german/korean). Separates the
+    # per-language queues so build_session can serve one language at a time.
+    language: Mapped[str | None] = mapped_column(String, nullable=True)
     source_nodes: Mapped[list[uuid.UUID] | None] = mapped_column(
         ARRAY(UUID(as_uuid=True)), nullable=True
     )

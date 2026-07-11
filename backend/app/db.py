@@ -187,6 +187,11 @@ _MIGRATIONS = [
     ) sub
     WHERE n.id = sub.node_id AND n.type = 'Statement' AND n.occurred_at IS NULL
     """,
+    # Per-language quiz queues: dedicated column mirrors quiz_data->>'language'
+    # so build_session can filter by an indexed column. Backfill from the JSON.
+    "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS language TEXT",
+    "UPDATE quizzes SET language = lower(quiz_data->>'language') WHERE language IS NULL AND quiz_data->>'language' IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_quizzes_user_lang_type_queue ON quizzes (user_id, language, quiz_type, queue_kind)",
 ]
 
 
