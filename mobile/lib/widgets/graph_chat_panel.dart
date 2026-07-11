@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart';
 import 'chat_rich_text.dart';
@@ -135,7 +136,7 @@ class GraphChatPanel extends StatelessWidget {
                   color: shell.mutedText.withValues(alpha: 0.6)),
               const SizedBox(height: AppSpacing.sm),
               Text(
-                '그래프를 보면서 바로 물어보세요.\nAI가 내 일기를 기억하고 답해요.',
+                tr('chat.emptyTitle'),
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: shell.mutedText,
@@ -441,27 +442,30 @@ class _InputBarState extends State<_InputBar> {
                       color: shell.primaryText.withValues(alpha: 0.75)),
                   color: shell.barBackground,
                   onSelected: widget.onModeSelected,
-                  itemBuilder: (_) => const [
+                  itemBuilder: (_) => [
                     PopupMenuItem(
                       value: 'journal',
                       child: _ModeMenuRow(
-                          icon: Icons.auto_stories_rounded, label: '일기 쓰기'),
+                          icon: Icons.auto_stories_rounded,
+                          label: tr('chat.menu.journal')),
                     ),
                     PopupMenuItem(
                       value: 'distill',
                       child: _ModeMenuRow(
                           icon: Icons.playlist_add_check_rounded,
-                          label: '이 대화 일기로 정리'),
+                          label: tr('chat.menu.distill')),
                     ),
                     PopupMenuItem(
                       value: 'composition',
                       child: _ModeMenuRow(
-                          icon: Icons.edit_note_rounded, label: '작문 퀴즈'),
+                          icon: Icons.edit_note_rounded,
+                          label: tr('chat.menu.composition')),
                     ),
                     PopupMenuItem(
                       value: 'word',
                       child: _ModeMenuRow(
-                          icon: Icons.style_rounded, label: '단어 퀴즈'),
+                          icon: Icons.style_rounded,
+                          label: tr('chat.menu.word')),
                     ),
                   ],
                 ),

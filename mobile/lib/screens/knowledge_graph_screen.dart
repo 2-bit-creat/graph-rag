@@ -5,6 +5,7 @@ import '../chat/chat_mode_cards.dart';
 import '../chat/chat_session_controller.dart';
 import '../chat/journal_task_controller.dart';
 import '../compose/compose_session_controller.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart';
 import '../utils/statement_display.dart';
@@ -520,13 +521,13 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   String? _modeLabel() {
     switch (chatSession.mode) {
       case ChatMode.distill:
-        return '대화 → 일기 정리';
+        return tr('chat.mode.distill');
       case ChatMode.quizComposition:
-        return '작문 퀴즈';
+        return tr('chat.mode.composition');
       case ChatMode.quizWord:
-        return '단어 퀴즈';
+        return tr('chat.mode.word');
       case ChatMode.journal:
-        return '일기 쓰기';
+        return tr('chat.mode.journal');
       case ChatMode.normal:
         return null;
     }
@@ -538,15 +539,15 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   String get _inputHint {
     switch (chatSession.mode) {
       case ChatMode.distill:
-        return '고칠 부분을 말해보세요. 예) 첫 문장 빼줘';
+        return tr('chat.hint.distill');
       case ChatMode.quizComposition:
-        return '영어로 작문해서 보내기';
+        return tr('chat.hint.composition');
       case ChatMode.quizWord:
-        return '카드에서 답을 선택하세요';
+        return tr('chat.hint.word');
       case ChatMode.journal:
-        return '일기를 작성하세요…';
+        return tr('chat.hint.journal');
       case ChatMode.normal:
-        return '아무 얘기나 해보세요…';
+        return tr('chat.inputHint');
     }
   }
 
@@ -619,15 +620,15 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
         child: Row(
           children: [
             Expanded(
-              child: Text('이 세션을 다 풀었어요! 👏',
+              child: Text(tr('quiz.sessionDone'),
                   style: TextStyle(
                       color: context.shell.primaryText, fontSize: 13)),
             ),
             TextButton(
-                onPressed: chatSession.exitMode, child: const Text('닫기')),
+                onPressed: chatSession.exitMode, child: Text(tr('quiz.close'))),
             FilledButton(
               onPressed: () => chatSession.startQuiz(chatSession.quizType),
-              child: const Text('더 풀기'),
+              child: Text(tr('quiz.more')),
             ),
           ],
         ),

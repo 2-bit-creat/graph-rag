@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import 'quiz_queue_screen.dart';
@@ -76,6 +77,8 @@ final rawLangs = profile['target_languages'];
             _targetLanguages = {profile['target_language']?.toString() ?? 'english'};
           }
           _nativeLanguage = profile['native_language']?.toString() ?? 'korean';
+          // Sync the app UI language to the loaded native language.
+          appLocaleController.setFromNativeLanguage(_nativeLanguage);
 
           // Load per-language levels
           final rawLevels = profile['language_levels'];
@@ -113,6 +116,9 @@ final rawLangs = profile['target_languages'];
         apiClient.updateNativeLanguage(_nativeLanguage),
         apiClient.updateLanguageLevels(levelsInt),
       ]);
+
+      // Switch the app UI language immediately on save.
+      await appLocaleController.setFromNativeLanguage(_nativeLanguage);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

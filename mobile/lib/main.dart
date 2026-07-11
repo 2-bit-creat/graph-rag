@@ -5,6 +5,7 @@ import 'app_route_observer.dart';
 import 'chat/chat_session_controller.dart';
 import 'chat/chat_sidebar.dart';
 import 'compose/compose_window_host.dart';
+import 'l10n/app_strings.dart';
 import 'screens/knowledge_graph_screen.dart';
 import 'theme/app_theme.dart';
 import 'theme/app_theme_controller.dart';
@@ -13,6 +14,7 @@ import 'widgets/app_theme_toggle_button.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await appThemeController.load();
+  await appLocaleController.load();
   runApp(const GraphRagApp());
 }
 
@@ -22,7 +24,7 @@ class GraphRagApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: appThemeController,
+      listenable: Listenable.merge([appThemeController, appLocaleController]),
       builder: (context, _) {
         return MaterialApp(
           title: 'MyLife English',
@@ -93,7 +95,7 @@ class _ChatHomeShellState extends State<ChatHomeShell> {
             : Builder(
                 builder: (ctx) => IconButton(
                   icon: const Icon(Icons.menu_rounded),
-                  tooltip: '채팅방 · 메뉴',
+                  tooltip: tr('shell.roomsMenu'),
                   onPressed: () => Scaffold.of(ctx).openDrawer(),
                 ),
               ),
@@ -102,13 +104,13 @@ class _ChatHomeShellState extends State<ChatHomeShell> {
           builder: (context, _) {
             final title =
                 (chatSession.activeSession?['title'] as String?)?.trim();
-            return Text(title?.isNotEmpty == true ? title! : '그래프 대화');
+            return Text(title?.isNotEmpty == true ? title! : tr('shell.graphChat'));
           },
         ),
         actions: [
           const AppThemeToggleButton(),
           IconButton(
-            tooltip: _chatOpen ? '대화 패널 접기' : '대화 패널 펼치기',
+            tooltip: _chatOpen ? tr('shell.collapseChat') : tr('shell.expandChat'),
             icon: Icon(
               _chatOpen
                   ? Icons.chat_bubble_rounded

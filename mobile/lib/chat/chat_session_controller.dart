@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../api/client.dart';
 import '../compose/journal_phase.dart';
+import '../l10n/app_strings.dart';
 import '../widgets/graph_chat_panel.dart' show GraphChatMessage;
 import 'journal_task_controller.dart';
 
@@ -476,7 +477,7 @@ class ChatSessionController extends ChangeNotifier {
       if (items.isEmpty) {
         // Nothing queued yet — kick off a background top-up and let the learner
         // retry shortly. Refill generates straight from their graph statements.
-        errors.value = '아직 풀 문제가 없어요. 방금 문제를 만들기 시작했으니 잠시 후 다시 눌러 주세요.';
+        errors.value = tr('quiz.empty');
         _mode = ChatMode.normal;
         unawaited(apiClient.refillQuizzes());
       }
