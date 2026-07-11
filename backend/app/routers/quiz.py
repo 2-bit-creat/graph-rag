@@ -12,6 +12,11 @@ from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import crud
+from ..composition_quiz import (
+    generate_composition_quiz,
+    merge_composition_feedback,
+    verdict_to_sm2,
+)
 from ..config import get_settings
 from ..db import get_session
 from ..deps import request_user_dep
@@ -27,7 +32,8 @@ from ..quiz_pipeline import (
 from ..quiz_presenter import quiz_queue_item_dict
 from ..quiz_queue import build_session, count_queues, grade_answer, pick_quizzes_by_ids, record_quiz_result
 from ..quiz_settings import quiz_selection_settings
-from ..quiz_types import validate_quiz_type
+from ..quiz_types import ENABLED_QUIZ_TYPES, validate_quiz_type
+from ..tutor import DrillSeedError, evaluate_attempt_against_reference
 from ..schemas import (
     LearningProfileOut,
     LevelUpdateRequest,
@@ -172,12 +178,58 @@ async def get_quiz_flow_blueprint() -> dict:
 
 @router.post("/generate", response_model=QuizGenerateOut)
 async def generate_quiz_graph(
-    quiz_type: Literal["cloze", "scramble", "mcq_nuance"] = Query(...),
+    quiz_type: Literal["cloze", "scramble", "mcq_nuance", "composition"] = Query(...),
     language: str | None = Query(None, description="Target language for this quiz (overrides profile default)"),
     body: QuizGenerateRequest | None = None,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> QuizGenerateOut:
+    if quiz_type not in ENABLED_QUIZ_TYPES:
+        raise HTTPException(
+            status_code=410,
+            detail={"code": "disabled", "quiz_type": quiz_type},
+        )
+
+    if quiz_type == "composition":
+        lang = (language or getattr(user, "target_language", None) or "english").lower()
+        count = max(1, min(body.count if body else 1, 10))
+        source_mode = body.source_mode if body else "journal"
+        difficulty = body.difficulty if body else "normal"
+        first: object | None = None
+        first_trace: dict = {}
+        used_nodes: set[str] = set()
+        generated = 0
+        for _ in range(count):
+            try:
+                quiz, trace = await generate_composition_quiz(
+                    session,
+                    user,
+                    language=lang,
+                    source_mode=source_mode,
+                    exclude_node_ids=used_nodes or None,
+                    difficulty=difficulty,
+                )
+            except DrillSeedError as exc:
+                if generated == 0:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"code": "no_seed", "message": str(exc)},
+                    ) from exc
+                break
+            if first is None:
+                first, first_trace = quiz, trace
+            for nid in quiz.source_nodes or []:
+                used_nodes.add(str(nid))
+            generated += 1
+        assert first is not None  # generated >= 1 guaranteed by the raise above
+        return QuizGenerateOut(
+            quiz_id=first.id,
+            quiz_type=first.quiz_type,
+            difficulty_level=first.difficulty_level,
+            trace_step_count=len(first_trace.get("steps") or []),
+            generated_count=generated,
+        )
+
     try:
         quiz, trace = await run_quiz_generate_pipeline(
             session,
@@ -300,6 +352,11 @@ async def start_session(
     session: AsyncSession = Depends(get_session),
 ) -> QuizSessionOut:
     quiz_type = validate_quiz_type(payload.quiz_type)
+    if quiz_type not in ENABLED_QUIZ_TYPES:
+        raise HTTPException(
+            status_code=410,
+            detail={"code": "disabled", "quiz_type": quiz_type},
+        )
     if payload.quiz_ids:
         picked = await pick_quizzes_by_ids(session, user.id, payload.quiz_ids)
         if not picked:
@@ -312,6 +369,7 @@ async def start_session(
             size=payload.size,
             entry_id=payload.entry_id,
             vocab_source=payload.vocab_source,
+            language=payload.language,
         )
     if picked:
         lo, hi = window_for_level(user.current_level)
@@ -343,6 +401,30 @@ async def submit_quiz(
     quiz = await crud.get_quiz(session, quiz_id, user.id)
     if quiz is None:
         raise HTTPException(status_code=404, detail="Quiz not found")
+
+    if quiz.quiz_type == "composition":
+        qd = quiz.quiz_data or {}
+        eval_result = await evaluate_attempt_against_reference(
+            user,
+            prompt=quiz.question_ko or qd.get("prompt") or "",
+            user_answer=payload.answer or "",
+            language=qd.get("language") or getattr(user, "target_language", None) or "english",
+            model_answers=qd.get("model_answers"),
+            target_expressions=qd.get("target_expressions"),
+            key_expressions=qd.get("key_expressions"),
+        )
+        correct, quality = verdict_to_sm2(eval_result.get("verdict", "understandable"))
+        quiz = await record_quiz_result(session, quiz, correct=correct, quality=quality)
+        await trace_quiz_sm2_update(
+            session, quiz_id, user.id, quiz, correct=correct, quality=quality,
+        )
+        return QuizSubmitResponse(
+            correct=correct,
+            quality=quality,
+            quiz=_quiz_out(quiz),
+            explanation=None,
+            tutor_feedback=merge_composition_feedback(qd, eval_result),
+        )
 
     submit_payload = payload.model_dump(exclude_none=True)
     correct, quality = grade_answer(quiz, submit_payload)
