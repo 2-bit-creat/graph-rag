@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-BLUEPRINT_VERSION = 9
+BLUEPRINT_VERSION = 10
 
 
 @dataclass(frozen=True)
@@ -167,8 +167,9 @@ QUIZ_NODES: tuple[FlowBlueprintNode, ...] = (
         "quiz_path",
         0,
         0,
+        optional=True,
         match_names=("quiz_manual_trigger",),
-        io_hint="button + quiz_type",
+        io_hint="생성/자동충전 + 언어",
     ),
     FlowBlueprintNode(
         "quiz_level_load",
@@ -187,19 +188,29 @@ QUIZ_NODES: tuple[FlowBlueprintNode, ...] = (
         "quiz_path",
         2,
         0,
-        # graph_context_resolve is the vocab-quiz variant's equivalent step.
-        match_names=("quiz_source_fetch", "graph_context_resolve"),
-        io_hint="seeds → 2hop → 70/30 pick",
+        # bundle_seed_select / composition_seed_select are the current bundle-path
+        # equivalents; graph_context_resolve is the legacy vocab-quiz variant.
+        match_names=(
+            "quiz_source_fetch",
+            "bundle_seed_select",
+            "composition_seed_select",
+            "graph_context_resolve",
+        ),
+        io_hint="Statement 시드 회전 (언어별)",
     ),
     FlowBlueprintNode(
         "quiz_llm_generate",
-        "GPT\n생성",
+        "GPT\n번들",
         "llm",
         "quiz_path",
         3,
         0,
-        match_names=("quiz_llm_generate",),
-        io_hint="type + level → quiz_data",
+        match_names=(
+            "quiz_llm_generate",
+            "bundle_llm_generate",
+            "composition_drill_llm_generate",
+        ),
+        io_hint="1콜 → 4유형 (gpt-4o-mini)",
     ),
     FlowBlueprintNode(
         "quiz_validate",
@@ -208,8 +219,9 @@ QUIZ_NODES: tuple[FlowBlueprintNode, ...] = (
         "quiz_path",
         4,
         0,
+        optional=True,
         match_names=("quiz_validate",),
-        io_hint="schema + blank/order",
+        io_hint="schema + blank/order (번들 내부)",
     ),
     FlowBlueprintNode(
         "quiz_enqueue_new",
@@ -218,8 +230,8 @@ QUIZ_NODES: tuple[FlowBlueprintNode, ...] = (
         "quiz_path",
         5,
         0,
-        match_names=("quiz_enqueue_new",),
-        io_hint="quiz row → DB",
+        match_names=("quiz_enqueue_new", "composition_quiz_persist"),
+        io_hint="4유형 → 언어별 큐",
     ),
     FlowBlueprintNode(
         "quiz_audio_tts",
@@ -228,8 +240,9 @@ QUIZ_NODES: tuple[FlowBlueprintNode, ...] = (
         "quiz_path",
         6,
         0,
+        optional=True,
         match_names=("quiz_audio_tts",),
-        io_hint="sentence_en → mp3",
+        io_hint="sentence_en → mp3 (선택)",
     ),
     FlowBlueprintNode(
         "quiz_queue_pick",
