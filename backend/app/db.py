@@ -192,6 +192,11 @@ _MIGRATIONS = [
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS language TEXT",
     "UPDATE quizzes SET language = lower(quiz_data->>'language') WHERE language IS NULL AND quiz_data->>'language' IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_quizzes_user_lang_type_queue ON quizzes (user_id, language, quiz_type, queue_kind)",
+    # Consent tracking (PIPA): policy version + timestamps. speaker_id_consent_at
+    # gates voiceprint (biometric) derivation.
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_version TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS consented_at TIMESTAMPTZ",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS speaker_id_consent_at TIMESTAMPTZ",
 ]
 
 

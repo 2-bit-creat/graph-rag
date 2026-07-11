@@ -306,6 +306,17 @@ class UserOut(BaseModel):
     email: str
     subscription_tier: str
     created_at: datetime
+    consent_version: str | None = None
+    consented_at: datetime | None = None
+    speaker_id_consent_at: datetime | None = None
+
+
+class ConsentRequest(BaseModel):
+    # Version string of the privacy policy / terms the user is accepting.
+    consent_version: str
+    # Separate opt-in for voice speaker-identification (biometric). Omit to leave
+    # unchanged; false withdraws it.
+    speaker_id_consent: bool | None = None
 
 
 # --- Journal ----------------------------------------------------------------

@@ -28,6 +28,16 @@ class User(Base):
     target_languages: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     native_language: Mapped[str] = mapped_column(String, nullable=False, default="korean")
     language_levels: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Consent (PIPA): the privacy-policy/terms version the user accepted and when.
+    # speaker_id_consent_at is the SEPARATE consent required to derive a voiceprint
+    # (a biometric feature = sensitive info); null means not consented / withdrawn.
+    consent_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    consented_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    speaker_id_consent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

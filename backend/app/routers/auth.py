@@ -3,6 +3,7 @@ import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,7 @@ from ..dev_user import DEV_USER_ID, get_dev_user
 from ..models import JournalEntry, User
 from ..storage import purge_user_storage
 from ..schemas import (
+    ConsentRequest,
     LoginRequest,
     RegisterRequest,
     SimpleLoginRequest,
@@ -110,3 +112,44 @@ async def login(
 @router.get("/me", response_model=UserOut)
 async def me(user: User = Depends(get_current_user)) -> User:
     return user
+
+
+@router.post("/consent", response_model=UserOut)
+async def record_consent(
+    payload: ConsentRequest,
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    """Record acceptance of the privacy policy / terms, and the separate opt-in
+    for voice speaker-identification (biometric)."""
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC)
+    user.consent_version = payload.consent_version
+    user.consented_at = now
+    if payload.speaker_id_consent is True:
+        user.speaker_id_consent_at = now
+    elif payload.speaker_id_consent is False:
+        user.speaker_id_consent_at = None
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
+@router.get("/me/export")
+async def export_me(
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Download all data held for this account as a JSON file (PIPA access right)."""
+    from ..data_export import export_user_data
+    from ..json_util import dumps_json
+
+    bundle = await export_user_data(session, user)
+    body = dumps_json(bundle, ensure_ascii=False, indent=2)
+    filename = f"my-data-{user.id}.json"
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

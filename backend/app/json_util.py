@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
+import uuid as _uuid
 from typing import Any
 
 
@@ -12,6 +14,11 @@ def json_safe(value: Any) -> Any:
         return value
     if isinstance(value, float):
         return value
+
+    if isinstance(value, _uuid.UUID):
+        return str(value)
+    if isinstance(value, (_dt.datetime, _dt.date)):
+        return value.isoformat()
 
     mod = type(value).__module__
     name = type(value).__name__
