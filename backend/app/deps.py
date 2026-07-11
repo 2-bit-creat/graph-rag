@@ -103,6 +103,16 @@ async def get_request_user(
 request_user_dep = get_request_user
 
 
+def require_debug_enabled() -> None:
+    """Gate debug/introspection endpoints — they expose raw prompts/transcripts,
+    so they 404 when debug is off (production default)."""
+    if not get_settings().debug_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not found",
+        )
+
+
 def require_premium(user: User) -> None:
     if user.subscription_tier != "premium":
         raise HTTPException(

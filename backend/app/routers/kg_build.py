@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import crud
 from ..config import get_settings
 from ..db import get_session
-from ..deps import request_user_dep
+from ..deps import request_user_dep, require_debug_enabled
 from ..entity_types import (
     is_identity_type,
     is_person_like_type,
@@ -50,6 +50,15 @@ router = APIRouter(prefix="/kg", tags=["kg-build"])
 # ─── In-memory run log (last 50 extract calls) ───────────────────────────────
 
 _run_log: deque[dict] = deque(maxlen=50)
+
+
+def _log_run(entry: dict) -> None:
+    """Record a run trace only when debug is on — the entries hold raw prompts
+    and responses, so production keeps nothing in memory."""
+    from ..config import get_settings
+
+    if get_settings().debug_enabled:
+        _run_log.appendleft(entry)
 
 
 # ─── OpenAI client (shared, cached) ──────────────────────────────────────────
@@ -669,7 +678,7 @@ async def kg_extract(
         result["person_candidates"] = await _person_candidates_payload(session, user.id)
 
         latency_ms = int((time.monotonic() - t0) * 1000)
-        _run_log.appendleft({
+        _log_run({
             "run_id": run_id,
             "mode": body.mode,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -683,7 +692,7 @@ async def kg_extract(
         })
         return result
     except json.JSONDecodeError as exc:
-        _run_log.appendleft({
+        _log_run({
             "run_id": run_id, "mode": body.mode,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "status": "json_error", "latency_ms": int((time.monotonic() - t0) * 1000),
@@ -692,7 +701,7 @@ async def kg_extract(
         logger.warning("kg_extract JSON parse error: %s | raw=%s", exc, raw[:200])
         raise HTTPException(status_code=502, detail=f"LLM 응답 파싱 실패: {exc}")
     except Exception as exc:
-        _run_log.appendleft({
+        _log_run({
             "run_id": run_id, "mode": body.mode,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "status": "error", "latency_ms": int((time.monotonic() - t0) * 1000),
@@ -1600,6 +1609,7 @@ async def kg_stats(
 @router.get("/debug/runs")
 async def kg_debug_runs(
     _user: User = Depends(request_user_dep),
+    _: None = Depends(require_debug_enabled),
 ) -> list[dict]:
     """Returns recent KG extract pipeline runs (in-memory, last 50)."""
     return list(_run_log)

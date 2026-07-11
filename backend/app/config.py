@@ -29,6 +29,13 @@ class Settings(BaseSettings):
 
     upload_dir: str = "./uploads"
     debug_runs_dir: str = "./debug_runs"
+    # Debug tracing (pipeline_trace DB column + debug_runs/ artifacts + the
+    # /kg/debug/runs and entry trace/artifacts endpoints). These retain raw
+    # prompts, transcripts, and audio, so they are OFF in production by default.
+    # None = auto (on in development, off in production); set true/false to force.
+    debug_features_enabled: bool | None = None
+    # Debug artifacts older than this are swept at startup (0 disables the sweep).
+    debug_runs_retention_days: int = 7
     s3_bucket: str = ""
     s3_endpoint: str = ""
     s3_region: str = "ap-northeast-2"
@@ -137,6 +144,13 @@ class Settings(BaseSettings):
     @property
     def jwt_secret_is_insecure(self) -> bool:
         return self.jwt_secret.strip() in ("", "change-me-in-production")
+
+    @property
+    def debug_enabled(self) -> bool:
+        """Whether debug tracing/artifacts and their endpoints are active."""
+        if self.debug_features_enabled is not None:
+            return self.debug_features_enabled
+        return not self.is_production
 
     def quiz_selection_snapshot(self, current_level: int = 10) -> dict:
         """Global quiz graph-selection parameters for trace IO / profile API."""

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import crud
 from ..config import get_settings
 from ..db import get_session
-from ..deps import request_user_dep
+from ..deps import request_user_dep, require_debug_enabled
 from ..models import User
 from ..pipeline_flow import flow_layout_for_trace, get_pipeline_blueprint
 from ..schemas import PipelineTraceOut
@@ -23,6 +23,7 @@ async def get_entry_trace(
     entry_id: uuid.UUID,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_debug_enabled),
 ) -> PipelineTraceOut:
     entry = await crud.get_journal_entry(session, entry_id, user.id)
     if entry is None:
@@ -60,6 +61,7 @@ async def get_artifact(
     artifact_path: str,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_debug_enabled),
 ) -> FileResponse:
     entry = await crud.get_journal_entry(session, entry_id, user.id)
     if entry is None:

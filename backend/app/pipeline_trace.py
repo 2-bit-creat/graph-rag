@@ -95,10 +95,15 @@ class PipelineTracer:
     def __init__(self, entry_id: uuid.UUID, *, resume: dict | None = None) -> None:
         settings = get_settings()
         self.entry_id = entry_id
+        # When debug is off (production default), the tracer keeps step timing in
+        # memory for the flow view but writes nothing to disk and redacts the raw
+        # prompts/inputs/outputs/audio from the trace stored in the DB.
+        self.persist = settings.debug_enabled
         self.root = Path(settings.debug_runs_dir) / str(entry_id)
-        self.root.mkdir(parents=True, exist_ok=True)
-        (self.root / "audio").mkdir(exist_ok=True)
-        (self.root / "steps").mkdir(exist_ok=True)
+        if self.persist:
+            self.root.mkdir(parents=True, exist_ok=True)
+            (self.root / "audio").mkdir(exist_ok=True)
+            (self.root / "steps").mkdir(exist_ok=True)
 
         if resume:
             self.run_id = resume["run_id"]
@@ -174,7 +179,7 @@ class PipelineTracer:
         step.status = "error" if error else "completed"
         step.output = output or {}
         step.error = error
-        if artifacts:
+        if artifacts and self.persist:
             for art_name, content, media in artifacts:
                 rel = f"steps/{step.step_id}_{step.name}_{art_name}"
                 path = self.root / rel
@@ -195,6 +200,9 @@ class PipelineTracer:
     def save_audio_bytes(self, data: bytes, filename: str) -> ArtifactRef:
         ext = Path(filename).suffix or ".wav"
         dest_rel = f"audio/original{ext}"
+        if not self.persist:
+            # Never keep a raw diary-audio copy when debug is off.
+            return ArtifactRef(name=filename, relative_path="", media_type="audio/*")
         dest = self.root / dest_rel
         dest.write_bytes(data)
         return ArtifactRef(name=filename, relative_path=dest_rel, media_type="audio/*")
@@ -228,14 +236,49 @@ class PipelineTracer:
 
     def _persist(self) -> dict:
         data = json_safe(self.run.to_dict())
+        if not self.persist:
+            data = _redact_trace(data)
         data["flow_layout"] = flow_layout_for_trace(data)
-        trace_path = self.root / "trace.json"
-        trace_path.write_text(
-            dumps_json(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        if self.persist:
+            trace_path = self.root / "trace.json"
+            trace_path.write_text(
+                dumps_json(data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
         return data
 
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _redact_trace(data: dict) -> dict:
+    """Strip raw prompts/inputs/outputs/audio artifacts from a trace, keeping
+    only step structure and timing. Used when debug is off so the DB never
+    retains diary content while the flow view still renders."""
+    for step in data.get("steps", []):
+        step["system_prompt"] = None
+        step["input"] = {}
+        step["output"] = {}
+        step["artifacts"] = []
+    return data
+
+
+def cleanup_old_debug_runs(retention_days: int) -> int:
+    """Delete debug_runs/ subdirectories older than retention_days. Best-effort;
+    returns the count removed. A retention_days <= 0 disables the sweep."""
+    if retention_days <= 0:
+        return 0
+    root = Path(get_settings().debug_runs_dir)
+    if not root.is_dir():
+        return 0
+    cutoff = datetime.now(UTC).timestamp() - retention_days * 86400
+    removed = 0
+    for child in root.iterdir():
+        try:
+            if child.is_dir() and child.stat().st_mtime < cutoff:
+                shutil.rmtree(child, ignore_errors=True)
+                removed += 1
+        except OSError:
+            continue
+    return removed

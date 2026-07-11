@@ -31,6 +31,11 @@ async def lifespan(app: FastAPI):
     (_STATIC_DIR / "audio").mkdir(parents=True, exist_ok=True)
     ensure_vocab_files()
     ensure_ielts_vocab_file()
+
+    from .pipeline_trace import cleanup_old_debug_runs
+
+    cleanup_old_debug_runs(settings.debug_runs_retention_days)
+
     await init_db()
     if settings.expression_extraction_enabled:
         start_worker()

@@ -1,7 +1,9 @@
+import asyncio
 import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import crud
@@ -9,7 +11,8 @@ from ..auth_utils import create_access_token, hash_password, verify_password
 from ..db import get_session
 from ..deps import get_current_user, request_user_dep
 from ..dev_user import DEV_USER_ID, get_dev_user
-from ..models import User
+from ..models import JournalEntry, User
+from ..storage import purge_user_storage
 from ..schemas import (
     LoginRequest,
     RegisterRequest,
@@ -54,14 +57,26 @@ async def delete_me(
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Delete the current account and all its data (cascade)."""
+    """Delete the current account and all its data.
+
+    DB rows cascade via FK; on-disk artifacts (audio, file-based vocab/expression
+    stores, and pipeline debug dumps) are purged explicitly so nothing survives."""
     if user.id == DEV_USER_ID:
         raise HTTPException(
             status_code=400,
             detail={"code": "protected", "message": "the primary account cannot be deleted"},
         )
+    user_id = user.id
+    # Collect entry ids before the cascade removes them — debug_runs/ is keyed by entry.
+    entry_id_rows = await session.execute(
+        select(JournalEntry.id).where(JournalEntry.user_id == user_id)
+    )
+    entry_ids = [row[0] for row in entry_id_rows.all()]
+
     await session.delete(user)
     await session.commit()
+
+    await asyncio.to_thread(purge_user_storage, user_id, entry_ids)
     return {"status": "deleted"}
 
 
