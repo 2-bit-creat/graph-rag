@@ -714,9 +714,9 @@ class _ClaimCard extends StatelessWidget {
   Widget _buildChatCard(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF12121A),
+        color: context.shell.panelBackground,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFF2A2A36)),
+        border: Border.all(color: context.shell.panelBorder),
       ),
       padding: const EdgeInsets.fromLTRB(10, 8, 6, 10),
       child: Column(

@@ -99,7 +99,7 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
     }
     if (committed == true && navCtx.mounted) {
       ScaffoldMessenger.of(navCtx).showSnackBar(
-        const SnackBar(content: Text('????? ?? ??')),
+        const SnackBar(content: Text('지식그래프 확정 완료')),
       );
     }
   }
@@ -141,7 +141,7 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
     if (_staticError != null || _staticEntry == null) {
       return _Shell(
         child: Text(
-          _staticError ?? '?? ??? ???? ????.',
+          _staticError ?? '일기 상태를 불러오지 못했어요.',
           style: Theme.of(context).textTheme.bodySmall,
         ),
       );
@@ -168,9 +168,9 @@ class _Shell extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.06),
+        color: context.shell.subtleSurface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF2D2D38)),
+        border: Border.all(color: context.shell.panelBorder),
       ),
       child: child,
     );
@@ -195,10 +195,10 @@ class _CardBody extends StatelessWidget {
   final VoidCallback? onDismiss;
 
   static const _steps = [
-    '????',
-    '?? ??',
-    '??? ??',
-    '??',
+    '받아쓰기',
+    '화자 확인',
+    '그래프 생성',
+    '완료',
   ];
 
   int get _activeStep {
@@ -208,7 +208,7 @@ class _CardBody extends StatelessWidget {
         final graphStatus = entry?['graph_status']?.toString() ?? '';
         if (status == 'graph_processing' ||
             graphStatus == 'graph_processing' ||
-            label.contains('???')) {
+            label.contains('그래프')) {
           return 2;
         }
         return 0;
@@ -253,21 +253,21 @@ class _CardBody extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  label.isEmpty ? '?? ??' : label,
-                  style: const TextStyle(
+                  label.isEmpty ? '일기 처리' : label,
+                  style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
-                    color: AppColors.graphLabelLight,
+                    color: context.shell.primaryText,
                   ),
                 ),
               ),
               if (showDismiss)
                 InkWell(
                   onTap: onDismiss,
-                  child: const Padding(
-                    padding: EdgeInsets.all(2),
+                  child: Padding(
+                    padding: const EdgeInsets.all(2),
                     child: Icon(Icons.close_rounded,
-                        size: 16, color: AppColors.graphLabelLight),
+                        size: 16, color: context.shell.primaryText),
                   ),
                 ),
             ],
@@ -282,7 +282,7 @@ class _CardBody extends StatelessWidget {
                       height: 1.5,
                       color: i <= step
                           ? AppColors.hubVoice.withValues(alpha: 0.7)
-                          : Colors.white.withValues(alpha: 0.12),
+                          : context.shell.panelBorder,
                     ),
                   ),
                 _StepDot(
@@ -306,14 +306,14 @@ class _CardBody extends StatelessWidget {
               alignment: Alignment.centerRight,
               child: FilledButton.tonal(
                 onPressed: needsGraph ? onGraphReview : onSpeakerConfirm,
-                child: Text(needsGraph ? '??? ??' : '?? ??'),
+                child: Text(needsGraph ? '그래프 검토' : '화자 확인'),
               ),
             ),
           ],
           if (phase == ComposePhase.error) ...[
             const SizedBox(height: 8),
             Text(
-              '??? ?????. ?? ? ?? ??? ???.',
+              '처리에 실패했어요. 닫은 뒤 다시 시도해 주세요.',
               style: TextStyle(
                 fontSize: 11.5,
                 color: Colors.red.shade300,
@@ -366,7 +366,7 @@ class _StepDot extends StatelessWidget {
           height: 8,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: Colors.white.withValues(alpha: 0.25),
+            color: context.shell.panelBorder,
           ),
         );
         break;
@@ -380,8 +380,8 @@ class _StepDot extends StatelessWidget {
           style: TextStyle(
             fontSize: 9.5,
             color: state == _StepState.todo
-                ? AppColors.graphLabelLight.withValues(alpha: 0.4)
-                : AppColors.graphLabelLight.withValues(alpha: 0.85),
+                ? context.shell.mutedText
+                : context.shell.primaryText.withValues(alpha: 0.85),
           ),
         ),
       ],
