@@ -926,7 +926,7 @@ class _CalendarSubViewState extends State<_CalendarSubView> {
           Positioned.fill(
             child: GestureDetector(
               onTap: () => setState(() => _selectedDate = null),
-              child: ColoredBox(color: Colors.black.withOpacity(0.18)),
+              child: ColoredBox(color: Colors.black.withValues(alpha: 0.18)),
             ),
           ),
         // Selected date panel overlaid at bottom — does not affect calendar layout
@@ -1162,7 +1162,7 @@ class _DayPanel extends StatelessWidget {
         color: theme.colorScheme.surface,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
+            color: Colors.black.withValues(alpha: 0.08),
             blurRadius: 12,
             offset: const Offset(0, -4),
           ),

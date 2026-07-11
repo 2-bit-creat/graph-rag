@@ -234,9 +234,10 @@ class _ChatJournalComposeBarState extends State<ChatJournalComposeBar> {
   Widget build(BuildContext context) {
     final maxLines = _expanded ? 22 : 10;
     final recording = _recorder.recording;
+    final shell = context.shell;
     return Container(
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFF2D2D38))),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: shell.panelBorder)),
       ),
       child: SafeArea(
         top: false,
@@ -250,14 +251,14 @@ class _ChatJournalComposeBarState extends State<ChatJournalComposeBar> {
                   IconButton(
                     tooltip: '취소',
                     onPressed: _saving ? null : _confirmExit,
-                    icon: const Icon(Icons.close_rounded,
-                        color: AppColors.graphLabelLight, size: 20),
+                    icon: Icon(Icons.close_rounded,
+                        color: shell.primaryText, size: 20),
                   ),
-                  const Expanded(
+                  Expanded(
                     child: Text(
                       '일기 쓰기',
                       style: TextStyle(
-                        color: AppColors.graphLabelLight,
+                        color: shell.primaryText,
                         fontWeight: FontWeight.w700,
                         fontSize: 13,
                       ),
@@ -267,7 +268,7 @@ class _ChatJournalComposeBarState extends State<ChatJournalComposeBar> {
                     '$_charCount / $kMaxJournalTextChars',
                     style: TextStyle(
                       fontSize: 11,
-                      color: AppColors.graphLabelLight.withValues(alpha: 0.45),
+                      color: shell.mutedText,
                     ),
                   ),
                   IconButton(
@@ -277,7 +278,7 @@ class _ChatJournalComposeBarState extends State<ChatJournalComposeBar> {
                       _expanded
                           ? Icons.unfold_less_rounded
                           : Icons.unfold_more_rounded,
-                      color: AppColors.graphLabelLight.withValues(alpha: 0.75),
+                      color: shell.primaryText.withValues(alpha: 0.75),
                       size: 20,
                     ),
                   ),
@@ -293,11 +294,11 @@ class _ChatJournalComposeBarState extends State<ChatJournalComposeBar> {
                 decoration: InputDecoration(
                   hintText: '그냥 쓰면 나의 일기 · @로 화자 지정\n예: @엄마 10시까지 오라고 했어',
                   hintStyle: TextStyle(
-                    color: AppColors.graphLabelLight.withValues(alpha: 0.35),
+                    color: shell.mutedText,
                     fontSize: 13,
                   ),
                   filled: true,
-                  fillColor: Colors.white.withValues(alpha: 0.06),
+                  fillColor: shell.subtleSurface,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                     borderSide: BorderSide.none,
@@ -334,18 +335,19 @@ class _ChatJournalComposeBarState extends State<ChatJournalComposeBar> {
                     onPressed: _saving || recording ? null : _pickFile,
                     icon: Icon(
                       Icons.attach_file_rounded,
-                      color: AppColors.graphLabelLight.withValues(alpha: 0.75),
+                      color: shell.primaryText.withValues(alpha: 0.75),
                     ),
                   ),
                   const Spacer(),
                   FilledButton.icon(
                     onPressed: _saving || recording ? null : _saveText,
                     icon: _saving
-                        ? const SizedBox(
+                        ? SizedBox(
                             width: 16,
                             height: 16,
                             child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white),
+                                strokeWidth: 2,
+                                color: Theme.of(context).colorScheme.onPrimary),
                           )
                         : const Icon(Icons.save_alt_outlined, size: 18),
                     label: Text(_saving ? '저장 중…' : '저장'),
