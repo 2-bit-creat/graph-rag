@@ -316,11 +316,14 @@ async def graph_chat_answer(
         )
 
     if user.id not in _backfill_checked:
-        _backfill_checked.add(user.id)
         try:
             await ensure_statement_embeddings(session, user.id)
             if not await user_has_alias_embeddings(session, user.id):
                 await backfill_alias_embeddings(session, user.id)
+            # Only mark as done on success — a transient embedding failure must be
+            # retried on the next message, or a new user's journals stay
+            # unsearchable for the whole server lifetime.
+            _backfill_checked.add(user.id)
         except Exception as exc:  # noqa: BLE001 — backfill failure must not kill chat
             logger.warning("graph_chat: embedding backfill failed: %s", exc)
             await session.rollback()
