@@ -10,10 +10,19 @@ Parameters:
   OpenAiApiKey:
     Type: String
     NoEcho: true
+  JwtSecret:
+    Type: String
+    NoEcho: true
+    Description: Long random string for signing auth tokens. Required — the app refuses to boot in production on the placeholder default.
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [production, development]
+    Description: Deployment environment. "production" enforces auth (no token-less fallback) and rejects an insecure JWT secret.
   CorsOrigins:
     Type: String
-    Default: "*"
-    Description: Comma-separated allowed origins (Flutter web / API clients)
+    Default: ""
+    Description: Comma-separated allowed web origins (e.g. https://app.example.com). Leave empty for a native-only mobile client. Do NOT use "*" — credentials are enabled.
 
 Globals:
   Function:
@@ -37,6 +46,8 @@ Resources:
           DATABASE_URL: !Ref DatabaseUrl
           OPENAI_API_KEY: !Ref OpenAiApiKey
           CORS_ORIGINS: !Ref CorsOrigins
+          ENVIRONMENT: !Ref Environment
+          JWT_SECRET: !Ref JwtSecret
       Events:
         Root:
           Type: HttpApi

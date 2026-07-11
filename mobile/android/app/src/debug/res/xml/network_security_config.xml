@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only. Overrides the strict main config so `flutter run`
+     (emulator 10.0.2.2, physical device over LAN Wi-Fi) can reach the local
+     backend over plain HTTP. Never shipped in release/profile builds. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

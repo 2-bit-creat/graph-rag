@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Release/profile default: HTTPS only. Cleartext HTTP is blocked so a
+     production build can never talk to the backend over an unencrypted link.
+     The debug build overrides this with a permissive config
+     (src/debug/res/xml/network_security_config.xml) for localhost/LAN dev. -->
 <network-security-config>
-    <!-- Allow HTTP to local backend during dev (emulator + LAN Wi-Fi). -->
-    <base-config cleartextTrafficPermitted="true">
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>

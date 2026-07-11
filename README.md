@@ -77,6 +77,24 @@ run_android.bat http://192.168.x.x:8000
 `setup_android_wifi.bat` pairs/connects ADB over Wi‑Fi (one-time after reboot).  
 `run_android.bat` URL is your **PC** IP for the app API — not the phone's wireless-debugging port.
 
-Android manifest allows HTTP to your PC (`usesCleartextTraffic` + network security config).
+Cleartext HTTP to your PC works in **debug** builds only (`src/debug/.../network_security_config.xml`).
+Release/profile builds enforce HTTPS — see production deployment below.
 
 Set `OPENAI_API_KEY` in `backend/.env`.
+
+## Production deployment (security)
+
+Local dev runs over plain HTTP on `0.0.0.0`; production must not. Before shipping:
+
+- **Set `ENVIRONMENT=production`.** This disables the token-less dev-user fallback
+  (all API calls then require a valid Bearer token) and makes the server refuse to
+  boot on the placeholder `JWT_SECRET`.
+- **Set a strong random `JWT_SECRET`** (e.g. `openssl rand -hex 32`).
+- **Terminate TLS at a reverse proxy / API Gateway.** The Flutter release build
+  blocks cleartext, so the backend must be reached over `https://`. Point the app at
+  it with `--dart-define=API_BASE_URL=https://api.example.com`.
+- **Set `CORS_ORIGINS`** to your exact web origin(s) (comma-separated) — never `*`,
+  since credentials are enabled. Leave empty for a native-only mobile client.
+
+The AWS SAM template (`template.yaml`) wires these as stack parameters and serves the
+API over HTTPS via API Gateway.
