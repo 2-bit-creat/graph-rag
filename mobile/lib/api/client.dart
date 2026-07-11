@@ -63,17 +63,7 @@ class ApiClient {
     final status = e.response?.statusCode;
     final detail = e.response?.data?.toString();
     if (e.type == DioExceptionType.connectionError || e.type == DioExceptionType.unknown) {
-      return Exception(
-        '$action 실패: 서버에 연결할 수 없습니다 ($resolvedApiBaseUrl).\n'
-        '백엔드 실행: cd backend && py -3.12 -m uvicorn app.main:app --reload --port 8000',
-      );
-    }
-    if (status == 404 && action == '퀴즈 생성') {
-      return Exception(
-        '$action 실패 (HTTP 404): /quiz API가 없습니다.\n'
-        '백엔드를 최신 코드로 재시작하세요:\n'
-        'cd backend && py -3.12 -m uvicorn app.main:app --reload --port 8000',
-      );
+      return Exception('서버에 연결할 수 없어요. 잠시 후 다시 시도해 주세요.');
     }
     if (status != null) {
       return Exception('$action 실패 (HTTP $status)${detail != null ? ': $detail' : ''}');

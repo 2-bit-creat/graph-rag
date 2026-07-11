@@ -142,6 +142,8 @@ class ChatSessionController extends ChangeNotifier {
     final key = 'fail:$entryId';
     if (_journalCompleteNotified.contains(key)) return;
     _journalCompleteNotified.add(key);
+    // Surface the failure to the user (was previously silent).
+    errors.value = tr('journal.failed');
     await _ensureSession();
     if (_activeId == null) return;
     const content = '📔 일기 처리 실패';

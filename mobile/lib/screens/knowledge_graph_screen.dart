@@ -1742,16 +1742,15 @@ class _EmptyGraphHint extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.hub_outlined, size: 56, color: Colors.grey[400]),
+            Icon(Icons.hub_outlined, size: 56, color: context.shell.mutedText),
             const SizedBox(height: 16),
-            Text('아직 지식 그래프가 비어 있습니다', style: Theme.of(context).textTheme.titleMedium),
+            Text(tr('graph.emptyTitle'),
+                style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(
-              compact
-                  ? '개발자 도구 → 파이프라인에서 GraphRAG 수동 배치'
-                  : '일기 작성 후 파이프라인(Dev)에서 GraphRAG 배치 실행',
+              tr('graph.emptyBody'),
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey[600]),
+              style: TextStyle(color: context.shell.mutedText),
             ),
           ],
         ),

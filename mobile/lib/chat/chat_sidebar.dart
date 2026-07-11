@@ -153,7 +153,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
               ),
               const SizedBox(width: 8),
               const Expanded(
-                child: Text('MyLife',
+                child: Text('MyLife English',
                     style:
                         TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
               ),
