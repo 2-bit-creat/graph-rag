@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .db import init_db
-from .routers import agent, auth, debug, graph, graph_chat, graph_chat_distill, jobs, journal, kg_build, ontology, quiz, subscription, tutor, vocabulary
+from .routers import auth, debug, graph, graph_chat, graph_chat_distill, jobs, journal, kg_build, ontology, quiz, tutor, vocabulary
 
 settings = get_settings()
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -57,7 +57,6 @@ app.include_router(quiz.router)
 app.include_router(vocabulary.router)
 app.include_router(debug.router)
 app.include_router(jobs.router)
-app.include_router(subscription.router)
 app.include_router(tutor.router)
 app.include_router(graph_chat.router)
 app.include_router(graph_chat_distill.router)
@@ -65,7 +64,6 @@ app.include_router(graph.router)
 app.include_router(graph.v1_router)
 app.include_router(kg_build.router)
 app.include_router(ontology.router)
-app.include_router(agent.router)
 
 
 @app.get("/health", tags=["health"])

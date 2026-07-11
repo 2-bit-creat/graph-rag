@@ -406,11 +406,6 @@ class ApiClient {
     }
   }
 
-  Future<List<dynamic>> generateQuiz(String entryId) async {
-    final resp = await _dio.post('/journal/entries/$entryId/quiz');
-    return (resp.data as Map<String, dynamic>)['cards'] as List<dynamic>;
-  }
-
   Future<Map<String, dynamic>> buildGraph(String entryId, {bool force = false}) async {
     try {
       final resp = await _dio.post(
@@ -522,11 +517,6 @@ class ApiClient {
     } on DioException catch (e) {
       throw _friendlyError(e, '노드 재분류');
     }
-  }
-
-  Future<Map<String, dynamic>> generateExamples(String entryId) async {
-    final resp = await _dio.post('/journal/entries/$entryId/examples');
-    return resp.data as Map<String, dynamic>;
   }
 
   Future<Map<String, dynamic>> graphSummary() async {

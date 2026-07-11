@@ -10,8 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import crud
 
-from ..agent import tools as agent_tools
-
 from ..dev_user import dev_user_dep
 
 from ..db import get_session
@@ -25,8 +23,6 @@ from ..schemas import (
     EdgeOut,
 
     EdgeUpdate,
-
-    GenerateRequest,
 
     GraphOut,
 
@@ -45,12 +41,6 @@ from ..schemas import (
     SpeakerConfirmResponse,
 
     SpeakerRecommendResponse,
-
-    StagedEdge,
-
-    StagedNode,
-
-    StagingGraph,
 
 )
 
@@ -392,41 +382,6 @@ async def clear_graph_v1(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     return await clear_graph(user=user, session=session)
-
-
-@router.post("/generate", response_model=StagingGraph)
-
-async def generate(
-
-    payload: GenerateRequest, session: AsyncSession = Depends(get_session)
-
-) -> StagingGraph:
-
-    """Extract an ontology-based graph proposal (staging). Does NOT persist."""
-
-    return await agent_tools.generate_graph(session, payload.messages)
-
-
-
-
-
-@router.post("/apply", response_model=GraphOut)
-
-async def apply(
-
-    payload: StagingGraph, session: AsyncSession = Depends(get_session)
-
-) -> GraphOut:
-
-    await crud.apply_staged_graph(session, payload.nodes, payload.edges)
-
-    nodes = await crud.get_all_nodes(session)
-
-    edges = await crud.get_all_edges(session)
-
-    return GraphOut(nodes=nodes, edges=edges)
-
-
 
 
 

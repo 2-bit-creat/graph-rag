@@ -7,9 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import crud
 from ..db import get_session
 from ..deps import request_user_dep
-from ..journal_pipeline import (
-    generate_example_sentences,
-)
 from ..models import User
 from ..pipeline_runner import (
     run_entry_graph_draft,
@@ -21,14 +18,11 @@ from ..pipeline_trace import PipelineTracer
 from ..workers.quiz_refill import refill_user_quizzes
 from ..quiz_pipeline import run_quiz_generate_pipeline
 from ..quiz_types import ENABLED_QUIZ_TYPES, validate_quiz_type
-from ..rag import hybrid_retrieve
 from ..speaker_confirmation import (
     build_speaker_summaries_for_entry,
     unconfirmed_speaker_labels,
 )
 from ..schemas import (
-    ExamplesResponse,
-    ExampleSentence,
     GraphApplyRequest,
     GraphBuildOut,
     GraphSummaryOut,
@@ -530,36 +524,6 @@ async def get_entry(
     if entry is None:
         raise HTTPException(status_code=404, detail="Entry not found")
     return await _entry_out(session, user.id, entry)
-
-
-@router.post("/entries/{entry_id}/examples", response_model=ExamplesResponse)
-async def generate_examples(
-    entry_id: uuid.UUID,
-    user: User = Depends(request_user_dep),
-    session: AsyncSession = Depends(get_session),
-) -> ExamplesResponse:
-    """GraphRAG-backed personalized example sentences (5)."""
-    entry = await crud.get_journal_entry(session, entry_id, user.id)
-    if entry is None:
-        raise HTTPException(status_code=404, detail="Entry not found")
-    if not entry.translation_en:
-        raise HTTPException(status_code=400, detail="Entry not yet translated")
-
-    query = entry.translation_en[:200]
-    rc = await hybrid_retrieve(session, query, user.id)
-    raw = await generate_example_sentences(
-        entry.translation_en,
-        entry.transcript_clean_ko or entry.transcript_ko or "",
-        rc.context,
-    )
-    examples = [ExampleSentence(**e) for e in raw]
-    while len(examples) < 5:
-        examples.append(ExampleSentence(en="(placeholder)", ko="", note=""))
-    return ExamplesResponse(
-        examples=examples[:5],
-        graph_context_used=bool(rc.context.strip()),
-        retrieval_preview=rc.context[:500] if rc.context else "",
-    )
 
 
 @router.post("/entries/{entry_id}/quiz/generate", response_model=QuizGenerateOut)
