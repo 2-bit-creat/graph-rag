@@ -186,8 +186,14 @@ async def build_distill_draft(
 
     sentences: list[dict] = []
     if user_lines:
+        from .tutor import _lang_label
+
+        native_label = _lang_label(getattr(user, "native_language", None) or "korean")
+        system = _EXTRACT_SYSTEM.replace(
+            "1인칭 한국어 일기 문장", f"1인칭 일기 문장({native_label})"
+        )
         sentences = await _extract_sentences(
-            _EXTRACT_SYSTEM, "사용자 발화:\n" + "\n".join(f"- {l}" for l in user_lines)
+            system, "사용자 발화:\n" + "\n".join(f"- {l}" for l in user_lines)
         )
 
     flagged = await _flag_duplicates(session, user.id, sentences, referenced_ids)

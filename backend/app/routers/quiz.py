@@ -375,6 +375,27 @@ async def update_profile_settings(
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> LearningProfileOut:
+    # Whitelist: learn English/German/Korean; explanations in Korean or English.
+    allowed_targets = {"english", "german", "korean"}
+    allowed_natives = {"korean", "english"}
+    if payload.target_languages is not None:
+        bad = {l.lower() for l in payload.target_languages} - allowed_targets
+        if bad:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "unsupported_target", "languages": sorted(bad)},
+            )
+    if payload.target_language is not None and payload.target_language.lower() not in allowed_targets:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "unsupported_target", "languages": [payload.target_language]},
+        )
+    if payload.native_language is not None and payload.native_language.lower() not in allowed_natives:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "unsupported_native", "language": payload.native_language},
+        )
+
     prev_level = user.current_level
     prev_langs = set(crud.get_effective_target_languages(user))
     await crud.update_user_profile_settings(

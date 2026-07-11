@@ -1,4 +1,4 @@
-"""Deterministic Korean time-window parsing for graph chat (no LLM)."""
+"""Deterministic time-window parsing for graph chat (no LLM), Korean + English."""
 
 from __future__ import annotations
 
@@ -21,11 +21,41 @@ _RELATIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"요즘|최근"), "recent"),
 ]
 
+# English relative expressions — matched against the original (spaced) text.
+_EN_RELATIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"day\s+before\s+yesterday", re.I), "day_before_yesterday"),
+    (re.compile(r"\byesterday\b", re.I), "yesterday"),
+    (re.compile(r"\btoday\b", re.I), "today"),
+    (re.compile(r"this\s+week", re.I), "this_week"),
+    (re.compile(r"last\s+week", re.I), "last_week"),
+    (re.compile(r"this\s+month", re.I), "this_month"),
+    (re.compile(r"last\s+month", re.I), "last_month"),
+    (re.compile(r"this\s+year", re.I), "this_year"),
+    (re.compile(r"last\s+year", re.I), "last_year"),
+    (re.compile(r"\brecently\b|\blately\b|these\s+days", re.I), "recent"),
+]
+
 _DAYS_AGO = re.compile(r"(\d+)\s*일\s*전")
 _WEEKS_AGO = re.compile(r"(\d+)\s*주\s*전")
+_EN_DAYS_AGO = re.compile(r"(\d+)\s*days?\s*ago", re.I)
+_EN_WEEKS_AGO = re.compile(r"(\d+)\s*weeks?\s*ago", re.I)
 _ISO_DATE = re.compile(r"(?<!\d)(20\d{2})-(\d{1,2})-(\d{1,2})(?!\d)")
 _MONTH_DAY = re.compile(r"(?<!\d)(\d{1,2})\s*월\s*(\d{1,2})\s*일(?!\d)")
 _MONTH_ONLY = re.compile(r"(?<!\d)(\d{1,2})\s*월(?!\s*\d)(?!\d)")
+
+_EN_MONTHS = {
+    "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
+    "april": 4, "apr": 4, "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
+    "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9, "october": 10,
+    "oct": 10, "november": 11, "nov": 11, "december": 12, "dec": 12,
+}
+# "July 9", "on Jul 9th", "9 July"
+_EN_MONTH_DAY = re.compile(
+    r"\b([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b|\b(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\b",
+    re.I,
+)
+# "7/9" (month/day), guarded against years
+_EN_SLASH_DATE = re.compile(r"(?<!\d)(\d{1,2})/(\d{1,2})(?!\d)")
 
 
 def _local_date(dt: datetime, tz: ZoneInfo) -> date:
@@ -158,6 +188,37 @@ def parse_time_window(
     if m:
         mo = int(m.group(1))
         return _closest_past_month(today.year, mo, today)
+
+    # ── English cues (matched on the original, spaced text) ──────────────────
+    for pat, kind in _EN_RELATIVE_PATTERNS:
+        if pat.search(text):
+            return _resolve_relative(kind, today)
+
+    m = _EN_DAYS_AGO.search(text)
+    if m:
+        d = today - timedelta(days=int(m.group(1)))
+        return d, d
+
+    m = _EN_WEEKS_AGO.search(text)
+    if m:
+        return _week_bounds(today - timedelta(weeks=int(m.group(1))))
+
+    m = _EN_MONTH_DAY.search(text)
+    if m:
+        name = (m.group(1) or m.group(4) or "").lower()
+        day_str = m.group(2) or m.group(3)
+        if name in _EN_MONTHS and day_str:
+            single = _closest_past_month_day(
+                today.year, _EN_MONTHS[name], int(day_str), today
+            )
+            return single, single
+
+    m = _EN_SLASH_DATE.search(text)
+    if m:
+        mo, d = int(m.group(1)), int(m.group(2))
+        if 1 <= mo <= 12 and 1 <= d <= 31:
+            single = _closest_past_month_day(today.year, mo, d, today)
+            return single, single
 
     return None
 

@@ -267,8 +267,8 @@ Return ONLY valid JSON in this exact shape (no markdown, no commentary):
   "claims": [
     {{
       "speaker": "화자명 또는 출처명",
-      "title": "핵심 내용을 담은 5-7단어 한국어 제목",
-      "statement": "정제된 핵심 한국어 진술 (1-2문장 전체 내용)",
+      "title": "핵심 내용을 담은 5-7단어 제목 (written in {native_label})",
+      "statement": "정제된 핵심 진술 (1-2문장 전체 내용, written in {native_label})",
       "concepts": [{{"name": "개념1", "importance": 4, "kind": "concept"}}, {{"name": "제니", "importance": 3, "kind": "person"}}],
       "speaker_matched": false,
       "concepts_matched": [false, false]
@@ -288,8 +288,8 @@ Return ONLY valid JSON in this exact shape (no markdown, no commentary):
 
 [FIELDS]
 {speaker_rule}
-- title: 5–7 Korean words capturing the essence of this claim. Used as the graph node label.
-- statement: 1–2 clean Korean sentences (remove filler, preserve full meaning).
+- title: 5–7 {native_label} words capturing the essence of this claim. Used as the graph node label.
+- statement: 1–2 clean {native_label} sentences (remove filler, preserve full meaning).
 - concepts: 1–5 concrete nouns per claim — NEVER an empty array. Every claim has
   at least one concept: for emotional/reflective claims, extract the TARGET or
   CAUSE of the feeling (e.g. "면접이 생각나 기분이 안 좋았다" → concepts: 면접;

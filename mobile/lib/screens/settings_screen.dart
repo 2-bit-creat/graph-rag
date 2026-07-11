@@ -7,24 +7,17 @@ import 'quiz_queue_screen.dart';
 
 // ─── Static data ──────────────────────────────────────────────────────────────
 
+// Learnable target languages (the quiz engine is tuned for these three).
 const _kLanguages = [
-  (key: 'english',    label: '영어',      flag: '🇺🇸'),
-  (key: 'japanese',   label: '일본어',    flag: '🇯🇵'),
-  (key: 'chinese',    label: '중국어',    flag: '🇨🇳'),
-  (key: 'spanish',    label: '스페인어',  flag: '🇪🇸'),
-  (key: 'french',     label: '프랑스어',  flag: '🇫🇷'),
-  (key: 'german',     label: '독일어',    flag: '🇩🇪'),
-  (key: 'portuguese', label: '포르투갈어',flag: '🇧🇷'),
-  (key: 'italian',    label: '이탈리아어',flag: '🇮🇹'),
+  (key: 'english', label: '영어',   flag: '🇺🇸'),
+  (key: 'german',  label: '독일어', flag: '🇩🇪'),
+  (key: 'korean',  label: '한국어', flag: '🇰🇷'),
 ];
 
+// Native languages (UI + graph + explanations are generated in this language).
 const _kNativeLanguages = [
-  (key: 'korean',   label: '한국어 🇰🇷'),
-  (key: 'english',  label: '영어 🇺🇸'),
-  (key: 'japanese', label: '일본어 🇯🇵'),
-  (key: 'chinese',  label: '중국어 🇨🇳'),
-  (key: 'spanish',  label: '스페인어 🇪🇸'),
-  (key: 'french',   label: '프랑스어 🇫🇷'),
+  (key: 'korean',  label: '한국어 🇰🇷'),
+  (key: 'english', label: '영어 🇺🇸'),
 ];
 
 String _cefrLabel(int level) {

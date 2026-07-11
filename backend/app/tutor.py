@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # Reuse the canonical language-label map so tutor output naming never drifts from
 # the quiz pipeline.
 from .quiz_generator import _LANG_DISPLAY_NAMES
+from .quiz_bundle import lang_guide as _lang_guide
 
 SourceMode = Literal["journal", "review"]
 
@@ -239,6 +240,7 @@ async def generate_drill(
         "into the target language, then gets coached). "
         f"NATIVE language: {native_label}. TARGET language: {target_label}. "
         f"{_level_line(level, target_label)} "
+        f"TARGET-LANGUAGE TEACHING FOCUS: {_lang_guide(language)} "
         "Produce a single drill sentence that is natural, concrete, and worth "
         "practicing — avoid textbook blandness. "
         f"VARIATION for this drill (bend the seed toward it while staying true to "
@@ -425,6 +427,7 @@ async def evaluate_attempt_against_reference(
         "reference answers. Do NOT generate a new drill or new model answer. "
         f"NATIVE language: {native_label}. TARGET language: {target_label}. "
         f"{_level_line(level, target_label)} "
+        f"TARGET-LANGUAGE TEACHING FOCUS: {_lang_guide(language)} "
         "Judge communication generously first, then point out only learner-specific "
         "issues. 'corrections' should contain concrete fixes for the submitted "
         "attempt. 'save_suggestions' must list ONLY expressions the learner clearly "
