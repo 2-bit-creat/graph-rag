@@ -474,8 +474,11 @@ class ChatSessionController extends ChangeNotifier {
           .toList();
       _quizItems.addAll(items);
       if (items.isEmpty) {
-        errors.value = '풀 수 있는 문제가 없어요. 메뉴 → 문제 생성에서 만들어 주세요.';
+        // Nothing queued yet — kick off a background top-up and let the learner
+        // retry shortly. Refill generates straight from their graph statements.
+        errors.value = '아직 풀 문제가 없어요. 방금 문제를 만들기 시작했으니 잠시 후 다시 눌러 주세요.';
         _mode = ChatMode.normal;
+        unawaited(apiClient.refillQuizzes());
       }
     } catch (e) {
       errors.value = _clean(e);

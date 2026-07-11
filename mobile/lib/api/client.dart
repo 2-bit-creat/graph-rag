@@ -343,6 +343,15 @@ class ApiClient {
     }
   }
 
+  /// Kick off a background quiz-queue top-up (generates from the graph).
+  Future<void> refillQuizzes() async {
+    try {
+      await _dio.post('/quiz/refill');
+    } on DioException catch (e) {
+      throw _friendlyError(e, '문제 생성');
+    }
+  }
+
   Future<Map<String, dynamic>> submitQuizAnswer({
     required String quizId,
     String? answer,

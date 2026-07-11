@@ -511,6 +511,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
       case 'composition':
         chatSession.startQuiz('composition');
         break;
+      case 'word':
+        chatSession.startQuiz('word');
+        break;
     }
   }
 
@@ -552,13 +555,23 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
           ? const ChatJournalComposeBar()
           : null;
 
-  /// The active mode card (quiz) pinned above the input, or null.
-  Widget? _activeModeCard() {
+  /// Quiz cards now render inline in the chat scroll (see [_chatListFooter]) so
+  /// they flow with the conversation like every other feature card — nothing is
+  /// pinned above the input anymore.
+  Widget? _activeModeCard() => null;
+
+  /// Feature cards that live INSIDE the chat scroll so they grow with content and
+  /// scroll up with the conversation — distill draft and the active quiz card.
+  Widget? _chatListFooter() {
     switch (chatSession.mode) {
-      case ChatMode.normal:
-      case ChatMode.journal:
       case ChatMode.distill:
-        return null;
+        return DistillDraftCard(
+          sentences: chatSession.distillSentences,
+          loading: chatSession.distillLoading,
+          onToggle: chatSession.toggleDistillSentence,
+          onSave: chatSession.saveDistillAsJournal,
+          onCancel: chatSession.exitMode,
+        );
       case ChatMode.quizComposition:
         final quiz = chatSession.activeQuiz;
         if (quiz == null) return _quizStatusCard();
@@ -582,19 +595,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
           onNext: chatSession.nextQuiz,
           onExit: chatSession.exitMode,
         );
+      case ChatMode.normal:
+      case ChatMode.journal:
+        return null;
     }
-  }
-
-  /// Distill draft lives in the chat scroll so it grows with content — no nested scroll.
-  Widget? _chatListFooter() {
-    if (chatSession.mode != ChatMode.distill) return null;
-    return DistillDraftCard(
-      sentences: chatSession.distillSentences,
-      loading: chatSession.distillLoading,
-      onToggle: chatSession.toggleDistillSentence,
-      onSave: chatSession.saveDistillAsJournal,
-      onCancel: chatSession.exitMode,
-    );
   }
 
   Widget? _quizStatusCard() {

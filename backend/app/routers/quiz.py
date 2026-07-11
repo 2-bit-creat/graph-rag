@@ -402,26 +402,56 @@ async def start_session(
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> QuizSessionOut:
-    quiz_type = validate_quiz_type(payload.quiz_type)
-    if quiz_type not in ENABLED_QUIZ_TYPES:
-        raise HTTPException(
-            status_code=410,
-            detail={"code": "disabled", "quiz_type": quiz_type},
-        )
-    if payload.quiz_ids:
-        picked = await pick_quizzes_by_ids(session, user.id, payload.quiz_ids)
-        if not picked:
-            raise HTTPException(status_code=404, detail="Quiz not found")
+    # "word" fans out into a single mixed session over the three word types so
+    # the chat "단어 퀴즈" serves cloze/scramble/mcq_nuance interleaved.
+    if payload.quiz_type == "word":
+        quiz_type = "word"
+        merged: list = []
+        for wt in ("cloze", "scramble", "mcq_nuance"):
+            merged.extend(
+                await build_session(
+                    session,
+                    user.id,
+                    wt,
+                    size=payload.size,
+                    vocab_source=payload.vocab_source,
+                    language=payload.language,
+                )
+            )
+        # Round-robin by type so the learner doesn't get all clozes first.
+        by_type: dict[str, list] = {}
+        for q in merged:
+            by_type.setdefault(q.quiz_type, []).append(q)
+        picked = []
+        while by_type and len(picked) < payload.size:
+            for wt in list(by_type.keys()):
+                if by_type[wt]:
+                    picked.append(by_type[wt].pop(0))
+                    if len(picked) >= payload.size:
+                        break
+                if not by_type[wt]:
+                    by_type.pop(wt, None)
     else:
-        picked = await build_session(
-            session,
-            user.id,
-            quiz_type,
-            size=payload.size,
-            entry_id=payload.entry_id,
-            vocab_source=payload.vocab_source,
-            language=payload.language,
-        )
+        quiz_type = validate_quiz_type(payload.quiz_type)
+        if quiz_type not in ENABLED_QUIZ_TYPES:
+            raise HTTPException(
+                status_code=410,
+                detail={"code": "disabled", "quiz_type": quiz_type},
+            )
+        if payload.quiz_ids:
+            picked = await pick_quizzes_by_ids(session, user.id, payload.quiz_ids)
+            if not picked:
+                raise HTTPException(status_code=404, detail="Quiz not found")
+        else:
+            picked = await build_session(
+                session,
+                user.id,
+                quiz_type,
+                size=payload.size,
+                entry_id=payload.entry_id,
+                vocab_source=payload.vocab_source,
+                language=payload.language,
+            )
     if picked:
         lo, hi = window_for_level(user.current_level)
         await trace_quiz_queue_pick(

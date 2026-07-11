@@ -458,6 +458,11 @@ class _InputBarState extends State<_InputBar> {
                       child: _ModeMenuRow(
                           icon: Icons.edit_note_rounded, label: '작문 퀴즈'),
                     ),
+                    PopupMenuItem(
+                      value: 'word',
+                      child: _ModeMenuRow(
+                          icon: Icons.style_rounded, label: '단어 퀴즈'),
+                    ),
                   ],
                 ),
               Expanded(
