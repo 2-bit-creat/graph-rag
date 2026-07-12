@@ -670,6 +670,20 @@ class _AssistantBubble extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 ChatRichText(text: text),
+                const SizedBox(height: 2),
+                // AI Basic Act (2026) generated-content marking.
+                Text(
+                  'AI 생성',
+                  style: TextStyle(
+                    fontSize: 10,
+                    height: 1.2,
+                    letterSpacing: 0.3,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurfaceVariant
+                        .withValues(alpha: 0.7),
+                  ),
+                ),
                 if (referencedNodes.isNotEmpty) ...[
                   const SizedBox(height: 5),
                   Wrap(

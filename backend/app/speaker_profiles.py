@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import crud
 from .config import get_settings
-from .models import JournalEntry, Node, SpeakerProfile, SpeakerProfile
+from .models import JournalEntry, Node, SpeakerProfile, User
 from .speaker_diarization import SpeakerSegment, segments_to_labeled_transcript
 from .speaker_matching import assign_speakers_to_profiles
 from .voice_embedding import embed_speaker_segments
@@ -30,6 +30,13 @@ async def process_entry_speaker_profiles(
     """Extract segment embeddings, match/create profiles, annotate segments."""
     settings = get_settings()
     if not settings.speaker_voice_memory_enabled or not segments:
+        return [], []
+
+    # A voiceprint is a biometric feature (sensitive info): derive it only with
+    # the user's explicit speaker-identification consent. Audio itself is still
+    # kept for playback; we just skip the embedding/matching without consent.
+    user = await session.get(User, user_id)
+    if user is None or user.speaker_id_consent_at is None:
         return [], []
 
     step = (
