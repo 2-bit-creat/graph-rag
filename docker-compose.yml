@@ -4,15 +4,17 @@ services:
     container_name: graph-rag-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: graphrag
-      POSTGRES_PASSWORD: graphrag
-      POSTGRES_DB: graphrag
+      # Local-dev defaults; override via env (e.g. an .env next to this file) for
+      # any non-local deployment. Never ship the defaults to production.
+      POSTGRES_USER: ${POSTGRES_USER:-graphrag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-graphrag}
+      POSTGRES_DB: ${POSTGRES_DB:-graphrag}
     ports:
       - "6432:5432"
     volumes:
       - ./pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U graphrag -d graphrag"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-graphrag} -d ${POSTGRES_DB:-graphrag}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -35,8 +37,8 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -52,7 +54,7 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      DATABASE_URL: postgresql+asyncpg://graphrag:graphrag@postgres:5432/graphrag
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-graphrag}:${POSTGRES_PASSWORD:-graphrag}@postgres:5432/${POSTGRES_DB:-graphrag}
       REDIS_URL: redis://redis:6379/0
       GRAPH_PROCESSING_ASYNC: "false"
     depends_on:

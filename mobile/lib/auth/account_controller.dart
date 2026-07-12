@@ -1,17 +1,21 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/client.dart';
 
 /// ID-entry accounts: no signup form, just a handle. Each handle maps to its own
-/// backend space (JWT); tokens are cached locally so re-entering is one tap.
+/// backend space (JWT); bearer tokens are cached in platform secure storage
+/// (Keychain/Keystore) so re-entering is one tap without leaving them in plaintext.
 ///
 /// The reserved handle "main" opens the pre-existing local data.
 class AccountController extends ChangeNotifier {
   final Map<String, String> _tokens = {}; // handle -> bearer token
   String? _current;
+
+  static const FlutterSecureStorage _secure = FlutterSecureStorage();
 
   // Consent state for the current account, fetched from /auth/me. `_consentKnown`
   // gates the app until we know whether the onboarding consent is needed.
@@ -33,7 +37,16 @@ class AccountController extends ChangeNotifier {
   Future<void> load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(_tokensKey);
+      String? raw = await _secure.read(key: _tokensKey);
+      if (raw == null) {
+        // One-time migration: move tokens out of plaintext shared_preferences.
+        final legacy = prefs.getString(_tokensKey);
+        if (legacy != null) {
+          raw = legacy;
+          await _secure.write(key: _tokensKey, value: legacy);
+          await prefs.remove(_tokensKey);
+        }
+      }
       if (raw != null) {
         final decoded = jsonDecode(raw) as Map<String, dynamic>;
         _tokens
@@ -148,8 +161,9 @@ class AccountController extends ChangeNotifier {
   }
 
   Future<void> _persist() async {
+    // Bearer tokens → secure storage; the (non-secret) current handle → prefs.
+    await _secure.write(key: _tokensKey, value: jsonEncode(_tokens));
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_tokensKey, jsonEncode(_tokens));
     if (_current != null) {
       await prefs.setString(_currentKey, _current!);
     } else {

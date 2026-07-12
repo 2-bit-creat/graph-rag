@@ -25,6 +25,12 @@ async def lifespan(app: FastAPI):
             "Refusing to start in production with an insecure JWT_SECRET. "
             "Set a strong, random JWT_SECRET in the environment."
         )
+    if settings.is_production and settings.db_credentials_are_insecure:
+        raise RuntimeError(
+            "Refusing to start in production with the default database "
+            "credentials. Set DATABASE_URL to a managed database with unique "
+            "credentials."
+        )
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
     Path(settings.debug_runs_dir).mkdir(parents=True, exist_ok=True)
     _STATIC_DIR.mkdir(parents=True, exist_ok=True)

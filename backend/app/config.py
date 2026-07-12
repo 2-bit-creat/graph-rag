@@ -146,6 +146,11 @@ class Settings(BaseSettings):
         return self.jwt_secret.strip() in ("", "change-me-in-production")
 
     @property
+    def db_credentials_are_insecure(self) -> bool:
+        """The local-dev default Postgres credentials must not reach production."""
+        return "graphrag:graphrag@" in self.database_url
+
+    @property
     def debug_enabled(self) -> bool:
         """Whether debug tracing/artifacts and their endpoints are active."""
         if self.debug_features_enabled is not None:
