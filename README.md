@@ -82,6 +82,14 @@ Release/profile builds enforce HTTPS — see production deployment below.
 
 Set `OPENAI_API_KEY` in `backend/.env`.
 
+## Privacy & personal data
+
+Before touching anything that handles user content (new LLM calls, new data tables,
+a new agent/external service, a new screen), read [`docs/PRIVACY.md`](docs/PRIVACY.md).
+It maps what data goes where, what Korean law (PIPA / AI기본법) requires, what's
+already implemented, and what's intentionally deferred — so you don't have to
+re-derive it each time.
+
 ## Production deployment (security)
 
 Local dev runs over plain HTTP on `0.0.0.0`; production must not. Before shipping:
