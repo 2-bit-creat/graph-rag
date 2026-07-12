@@ -50,6 +50,57 @@ class ApiClient {
     }
   }
 
+  /// Current account info incl. consent state (consented_at, speaker_id_consent_at).
+  Future<Map<String, dynamic>> getMe() async {
+    final resp = await _dio.get('/auth/me');
+    return resp.data as Map<String, dynamic>;
+  }
+
+  /// Record privacy-policy acceptance + the separate voice speaker-id opt-in.
+  Future<Map<String, dynamic>> recordConsent({
+    required String version,
+    bool? speakerIdConsent,
+  }) async {
+    try {
+      final resp = await _dio.post('/auth/consent', data: {
+        'consent_version': version,
+        if (speakerIdConsent != null) 'speaker_id_consent': speakerIdConsent,
+      });
+      return resp.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw _friendlyError(e, '동의 저장');
+    }
+  }
+
+  /// Privacy policy content — {version, language, content_markdown}. Public.
+  Future<Map<String, dynamic>> getPrivacyPolicy() async {
+    final resp = await _dio.get('/legal/privacy-policy');
+    return resp.data as Map<String, dynamic>;
+  }
+
+  /// AI Basic Act generative-AI disclosure notice. Public.
+  Future<String> getAiDisclosure() async {
+    try {
+      final resp = await _dio.get('/legal/ai-disclosure');
+      return (resp.data as Map)['notice']?.toString() ?? '';
+    } on DioException catch (_) {
+      return '';
+    }
+  }
+
+  /// Download the full personal-data export as a JSON string (PIPA access right).
+  Future<String> exportMyData() async {
+    try {
+      final resp = await _dio.get<String>(
+        '/auth/me/export',
+        options: Options(responseType: ResponseType.plain),
+      );
+      return resp.data ?? '';
+    } on DioException catch (e) {
+      throw _friendlyError(e, '데이터 내보내기');
+    }
+  }
+
   Future<List<dynamic>> listEntries() async {
     try {
       final resp = await _dio.get('/journal/entries');

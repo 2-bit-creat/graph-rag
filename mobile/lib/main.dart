@@ -9,6 +9,7 @@ import 'chat/chat_sidebar.dart';
 import 'compose/compose_window_host.dart';
 import 'l10n/app_strings.dart';
 import 'screens/account_entry_screen.dart';
+import 'screens/consent_screen.dart';
 import 'screens/knowledge_graph_screen.dart';
 import 'theme/app_theme.dart';
 import 'theme/app_theme_controller.dart';
@@ -45,11 +46,15 @@ class GraphRagApp extends StatelessWidget {
               const ComposeWindowHost(),
             ],
           ),
-          // Gate on having an ID-entry account. Keying the shell by the current
-          // handle remounts (fresh chat/profile) when switching accounts.
-          home: accountController.hasAccount
-              ? ChatHomeShell(key: ValueKey(accountController.current))
-              : const AccountEntryScreen(),
+          // Gate: pick an account → accept consent → app. Keying the shell by the
+          // current handle remounts (fresh chat/profile) when switching accounts.
+          home: !accountController.hasAccount
+              ? const AccountEntryScreen()
+              : !accountController.consentKnown
+                  ? const _ConsentLoadingScreen()
+                  : accountController.needsConsent
+                      ? const ConsentScreen()
+                      : ChatHomeShell(key: ValueKey(accountController.current)),
         );
       },
     );
@@ -183,6 +188,18 @@ class _ChatHomeShellState extends State<ChatHomeShell> {
           Expanded(child: graph),
         ],
       ),
+    );
+  }
+}
+
+/// Brief spinner shown right after login while the account's consent state loads.
+class _ConsentLoadingScreen extends StatelessWidget {
+  const _ConsentLoadingScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      body: Center(child: CircularProgressIndicator()),
     );
   }
 }

@@ -1,9 +1,15 @@
+import 'dart:convert';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../api/client.dart';
+import '../auth/account_controller.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
+import 'privacy_policy_screen.dart';
 import 'quiz_queue_screen.dart';
 
 // ─── Static data ──────────────────────────────────────────────────────────────
@@ -58,11 +64,82 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Map<String, double> _langLevels = {'english': 10};
   bool _loading = true;
   bool _saving = false;
+  bool _speakerConsent = accountController.speakerIdConsent;
+  bool _speakerBusy = false;
+  bool _exporting = false;
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  // ── Privacy & data ────────────────────────────────────────────────────────
+
+  Future<void> _toggleSpeakerConsent(bool value) async {
+    setState(() => _speakerBusy = true);
+    try {
+      final policy = await apiClient.getPrivacyPolicy();
+      await apiClient.recordConsent(
+        version: policy['version']?.toString() ?? '',
+        speakerIdConsent: value,
+      );
+      accountController.setSpeakerIdConsent(value);
+      if (mounted) {
+        setState(() => _speakerConsent = value);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(value ? '화자 식별에 동의했어요' : '화자 식별 동의를 철회했어요')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('변경 실패: ${e.toString().replaceFirst('Exception: ', '')}')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _speakerBusy = false);
+    }
+  }
+
+  Future<void> _exportData() async {
+    setState(() => _exporting = true);
+    try {
+      final json = await apiClient.exportMyData();
+      final bytes = Uint8List.fromList(utf8.encode(json));
+      String? savedPath;
+      try {
+        savedPath = await FilePicker.platform.saveFile(
+          dialogTitle: '내 데이터 저장',
+          fileName: 'my-data.json',
+          bytes: bytes,
+        );
+      } catch (_) {
+        savedPath = null; // e.g. unsupported on this platform
+      }
+      if (!mounted) return;
+      if (savedPath != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('내 데이터를 파일로 저장했어요')),
+        );
+      } else {
+        // Universal fallback so the right is always exercisable.
+        await Clipboard.setData(ClipboardData(text: json));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('내 데이터를 클립보드에 복사했어요')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('내보내기 실패: ${e.toString().replaceFirst('Exception: ', '')}')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
   }
 
   Future<void> _load() async {
@@ -286,6 +363,46 @@ final rawLangs = profile['target_languages'];
                   ),
                   icon: const Icon(Icons.inventory_2_outlined),
                   label: const Text('내 퀴즈 큐 보러가기'),
+                ),
+                const SizedBox(height: AppSpacing.lg),
+
+                // ── 개인정보 및 데이터 ────────────────────────────────────────
+                Card(
+                  child: Column(children: [
+                    ListTile(
+                      leading: const Icon(Icons.description_outlined),
+                      title: const Text('개인정보 처리방침'),
+                      subtitle: const Text('수집 항목·국외 이전·보유기간·권리 안내'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const PrivacyPolicyScreen()),
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    SwitchListTile(
+                      secondary: const Icon(Icons.record_voice_over_outlined),
+                      title: const Text('음성 화자 식별 동의'),
+                      subtitle: const Text(
+                          '대화 속 화자를 구분(성문·생체정보). 끄면 이후 생성을 중단합니다.'),
+                      value: _speakerConsent,
+                      onChanged: _speakerBusy ? null : _toggleSpeakerConsent,
+                    ),
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.download_outlined),
+                      title: const Text('내 데이터 내보내기'),
+                      subtitle: const Text('보관 중인 전체 데이터를 JSON으로 저장'),
+                      trailing: _exporting
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.chevron_right),
+                      onTap: _exporting ? null : _exportData,
+                    ),
+                  ]),
                 ),
                 const SizedBox(height: AppSpacing.lg),
 

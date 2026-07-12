@@ -13,12 +13,22 @@ class AccountController extends ChangeNotifier {
   final Map<String, String> _tokens = {}; // handle -> bearer token
   String? _current;
 
+  // Consent state for the current account, fetched from /auth/me. `_consentKnown`
+  // gates the app until we know whether the onboarding consent is needed.
+  bool _consentKnown = false;
+  bool _consented = false;
+  bool _speakerIdConsent = false;
+
   static const _tokensKey = 'account_tokens';
   static const _currentKey = 'account_current';
 
   List<String> get handles => _tokens.keys.toList()..sort();
   String? get current => _current;
   bool get hasAccount => _current != null && _tokens[_current] != null;
+
+  bool get consentKnown => _consentKnown;
+  bool get needsConsent => hasAccount && _consentKnown && !_consented;
+  bool get speakerIdConsent => _speakerIdConsent;
 
   Future<void> load() async {
     try {
@@ -34,6 +44,7 @@ class AccountController extends ChangeNotifier {
       if (cur != null && _tokens.containsKey(cur)) {
         _current = cur;
         setApiAuthToken(_tokens[cur]);
+        await _refreshConsent();
       }
     } catch (_) {
       // Non-fatal — start with no accounts (entry screen will show).
@@ -46,9 +57,11 @@ class AccountController extends ChangeNotifier {
     final token = await apiClient.simpleLogin(h);
     _tokens[h] = token;
     _current = h;
+    _resetConsent();
     setApiAuthToken(token);
     await _persist();
     notifyListeners();
+    await _refreshConsent();
   }
 
   /// Switch to an already-saved account (re-uses its cached token).
@@ -58,9 +71,11 @@ class AccountController extends ChangeNotifier {
       return;
     }
     _current = handle;
+    _resetConsent();
     setApiAuthToken(_tokens[handle]);
     await _persist();
     notifyListeners();
+    await _refreshConsent();
   }
 
   /// Remove an account from this device (keeps its server data).
@@ -68,9 +83,49 @@ class AccountController extends ChangeNotifier {
     _tokens.remove(handle);
     if (_current == handle) {
       _current = null;
+      _resetConsent();
       setApiAuthToken(null);
     }
     await _persist();
+    notifyListeners();
+  }
+
+  // ── Consent ────────────────────────────────────────────────────────────────
+
+  void _resetConsent() {
+    _consentKnown = false;
+    _consented = false;
+    _speakerIdConsent = false;
+  }
+
+  /// Fetch consent state for the current account; never locks the user out on a
+  /// transient failure.
+  Future<void> _refreshConsent() async {
+    if (!hasAccount) return;
+    try {
+      final me = await apiClient.getMe();
+      _consented = me['consented_at'] != null;
+      _speakerIdConsent = me['speaker_id_consent_at'] != null;
+    } catch (_) {
+      _consented = true; // already authenticated; re-checked next launch
+      _speakerIdConsent = false;
+    } finally {
+      _consentKnown = true;
+      notifyListeners();
+    }
+  }
+
+  /// Called by the consent screen once /auth/consent succeeds.
+  void markConsented({required bool speakerIdConsent}) {
+    _consented = true;
+    _speakerIdConsent = speakerIdConsent;
+    _consentKnown = true;
+    notifyListeners();
+  }
+
+  /// Reflect a speaker-id consent toggle made from settings.
+  void setSpeakerIdConsent(bool value) {
+    _speakerIdConsent = value;
     notifyListeners();
   }
 
@@ -85,6 +140,7 @@ class AccountController extends ChangeNotifier {
   /// Sign out of the current account without deleting anything.
   Future<void> signOut() async {
     _current = null;
+    _resetConsent();
     setApiAuthToken(null);
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_currentKey);
