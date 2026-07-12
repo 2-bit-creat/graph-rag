@@ -95,6 +95,17 @@ Local dev runs over plain HTTP on `0.0.0.0`; production must not. Before shippin
   it with `--dart-define=API_BASE_URL=https://api.example.com`.
 - **Set `CORS_ORIGINS`** to your exact web origin(s) (comma-separated) — never `*`,
   since credentials are enabled. Leave empty for a native-only mobile client.
+- **Use a managed database with unique credentials.** The server refuses to boot in
+  production on the default `graphrag:graphrag` credentials.
+- **Encryption at rest:** use a managed Postgres with disk-level encryption
+  (RDS/Cloud SQL/Supabase) rather than the local `pgdata` volume. Column-level
+  encryption is intentionally *not* applied to `nodes.name_embedding` /
+  `speaker_profiles.embedding` — encrypting those would break pgvector similarity
+  search, which the graph RAG depends on. Disk-level encryption covers all columns
+  without that cost.
+- **Replace `edge-tts` before public launch.** It calls Microsoft's unofficial
+  free endpoint (no terms/SLA for commercial use); switch quiz audio to Azure
+  Speech or on-device `flutter_tts`.
 
-The AWS SAM template (`template.yaml`) wires these as stack parameters and serves the
-API over HTTPS via API Gateway.
+The AWS SAM template (`template.yaml`) wires the auth/CORS parameters as stack
+inputs and serves the API over HTTPS via API Gateway.
