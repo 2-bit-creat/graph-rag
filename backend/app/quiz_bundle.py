@@ -229,6 +229,12 @@ async def generate_quiz_bundle(
     tracer.finish_step(step, output={"seed_node_id": seed_node_id, "content": seed.get("content_ko")})
 
     system = _build_system_prompt(native_label, target_label, level, lang_guide(language))
+    system += (
+        "\n\nPRODUCT RULE: Generate only one cloze word quiz. Do not generate or return "
+        "composition, scramble, or multiple-choice content. The native-language "
+        "meaning must be a complete sentence and must never be replaced by the "
+        "target answer."
+    )
     user_content = (
         "SEED — the learner wrote this in their diary (native language). Build the "
         f"quiz bundle from it, staying true to its meaning:\n「{seed.get('content_ko')}」"
@@ -264,45 +270,8 @@ async def generate_quiz_bundle(
     source_meta = {"node_id": seed_node_id, "bundle_id": str(bundle_id), "mode": "bundle"}
     to_create: list[dict] = []
 
-    # composition (exactly one)
-    comp = raw.get("composition")
-    if isinstance(comp, dict) and (comp.get("prompt") or "").strip():
-        qd = _compose_quiz_data(comp, language, level)
-        qd["_source"] = dict(source_meta)
-        to_create.append({
-            "quiz_type": "composition",
-            "question_ko": str(comp.get("prompt")).strip(),
-            "sentence_en": None,
-            "quiz_data": qd,
-        })
-
-    # scramble (exactly one)
-    scr = raw.get("scramble")
-    if isinstance(scr, dict) and (scr.get("sentence_target") or "").strip():
-        try:
-            validated = validate_quiz_payload(
-                "scramble",
-                {
-                    "question_ko": scr.get("question_ko") or _default_question_ko("scramble", language),
-                    "quiz_data": {"sentence_en": str(scr.get("sentence_target")).strip()},
-                },
-                target_level=level,
-                target_language=language,
-            )
-            qd = dict(validated["quiz_data"])
-            qd["language"] = language
-            qd["_source"] = dict(source_meta)
-            to_create.append({
-                "quiz_type": "scramble",
-                "question_ko": validated["question_ko"],
-                "sentence_en": validated["sentence_en"],
-                "quiz_data": qd,
-            })
-        except ValueError:
-            pass  # skip a malformed variant rather than fail the whole bundle
-
-    # cloze (1-3 variants)
-    for item in (raw.get("cloze") or [])[:3]:
+    # cloze only: one focused word quiz per generation request.
+    for item in (raw.get("cloze") or [])[:1]:
         if not isinstance(item, dict):
             continue
         sentence = str(item.get("sentence_target") or "").strip()
@@ -327,6 +296,8 @@ async def generate_quiz_bundle(
                         "blank": blank,
                         "accepted_answers": accepted or [blank],
                         "sentence_en": sentence,
+                        "context_ko": str(item.get("context_ko") or "").strip(),
+                        "hint_ko": str(item.get("hint_ko") or "").strip(),
                     },
                 },
                 target_level=level,
@@ -337,40 +308,6 @@ async def generate_quiz_bundle(
             qd["_source"] = dict(source_meta)
             to_create.append({
                 "quiz_type": "cloze",
-                "question_ko": validated["question_ko"],
-                "sentence_en": validated["sentence_en"],
-                "quiz_data": qd,
-            })
-        except ValueError:
-            continue
-
-    # mcq_nuance (1-3 variants)
-    for item in (raw.get("mcq") or [])[:3]:
-        if not isinstance(item, dict):
-            continue
-        options = item.get("options") or []
-        if not isinstance(options, list) or len(options) != 4:
-            continue
-        try:
-            validated = validate_quiz_payload(
-                "mcq_nuance",
-                {
-                    "question_ko": item.get("question_ko") or _default_question_ko("mcq_nuance", language),
-                    "quiz_data": {
-                        "prompt_ko": str(item.get("prompt_ko") or "").strip(),
-                        "options": [str(o).strip() for o in options],
-                        "correct_index": item.get("correct_index"),
-                        "explanation": str(item.get("explanation") or "").strip(),
-                    },
-                },
-                target_level=level,
-                target_language=language,
-            )
-            qd = dict(validated["quiz_data"])
-            qd["language"] = language
-            qd["_source"] = dict(source_meta)
-            to_create.append({
-                "quiz_type": "mcq_nuance",
                 "question_ko": validated["question_ko"],
                 "sentence_en": validated["sentence_en"],
                 "quiz_data": qd,

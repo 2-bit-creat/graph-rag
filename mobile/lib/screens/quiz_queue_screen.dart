@@ -55,7 +55,12 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
       );
       if (mounted) {
         setState(() {
-          _items = data['items'] as List<dynamic>? ?? [];
+          _items = ((data['items'] as List<dynamic>?) ?? [])
+              .where((item) {
+                final type = (item as Map)['quiz_type']?.toString();
+                return type == 'cloze' || type == 'composition';
+              })
+              .toList();
           _total = (data['total'] as num?)?.toInt() ?? _items.length;
           _loading = false;
         });
@@ -154,7 +159,9 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
-                  for (final chip in _typeChips)
+                  for (final chip in _typeChips.where(
+                    (chip) => chip.$1 == null || chip.$1 == 'cloze' || chip.$1 == 'composition',
+                  ))
                     Padding(
                       padding: const EdgeInsets.only(right: 6),
                       child: FilterChip(
@@ -252,8 +259,8 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                                                       style: const TextStyle(fontSize: 10)),
                                                   visualDensity: VisualDensity.compact,
                                                   padding: EdgeInsets.zero,
-                                                  backgroundColor:
-                                                      Colors.deepPurple.shade50,
+                                                backgroundColor: Theme.of(context)
+                                                    .colorScheme.surfaceContainerHighest,
                                                 ),
                                               if (_queueKind == 'review') ...[
                                                 Text(

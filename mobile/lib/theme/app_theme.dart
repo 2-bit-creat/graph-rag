@@ -9,7 +9,7 @@ class AppColors {
   static const accentWarm = Color(0xFFF59E0B);
   static const surfaceLight = Color(0xFFF8F9FC);
   static const surfaceCard = Color(0xFFFFFFFF);
-  static const textMuted = Color(0xFF64748B);
+  static const textMuted = Color(0xFF94A3B8);
   static const graphBg = Color(0xFFF5F7FA);
   static const graphBgDark = Color(0xFF08080C);
   // Subtle radial "nebula" glow at the viewport center of the graph canvas.
@@ -214,7 +214,7 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
     bodySmall: TextStyle(
       fontSize: 12,
       height: 1.35,
-      color: AppColors.textMuted,
+      color: scheme.onSurfaceVariant,
     ),
     labelLarge: TextStyle(
       fontSize: 14,
@@ -297,7 +297,13 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(20),
       ),
-      labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+      backgroundColor: scheme.surfaceContainerHighest.withValues(alpha: isDark ? 0.6 : 0.5),
+      side: BorderSide(color: scheme.outlineVariant),
+      labelStyle: TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w500,
+        color: scheme.onSurfaceVariant,
+      ),
     ),
     progressIndicatorTheme: ProgressIndicatorThemeData(
       color: scheme.primary,

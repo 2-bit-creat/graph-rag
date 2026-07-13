@@ -101,7 +101,7 @@ async def get_profile(
 async def list_queue_items(
     background: BackgroundTasks,
     queue_kind: Literal["new", "review"] = Query(...),
-    quiz_type: Literal["cloze", "scramble", "mcq_nuance", "composition"] | None = None,
+    quiz_type: Literal["cloze", "composition"] | None = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user: User = Depends(request_user_dep),
@@ -178,7 +178,7 @@ async def list_generations(
 
 @router.get("/history", response_model=QuizQueueListOut)
 async def list_quiz_history(
-    quiz_type: Literal["cloze", "scramble", "mcq_nuance", "composition"] | None = None,
+    quiz_type: Literal["cloze", "composition"] | None = None,
     language: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -219,7 +219,7 @@ async def get_quiz_flow_blueprint() -> dict:
 
 @router.post("/generate", response_model=QuizGenerateOut)
 async def generate_quiz_graph(
-    quiz_type: Literal["cloze", "scramble", "mcq_nuance", "composition"] = Query(...),
+    quiz_type: Literal["cloze", "composition"] = Query(...),
     language: str | None = Query(None, description="Target language for this quiz (overrides profile default)"),
     body: QuizGenerateRequest | None = None,
     user: User = Depends(request_user_dep),
@@ -423,12 +423,16 @@ async def start_session(
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> QuizSessionOut:
+    # The chat's legacy "word" alias now means the single supported word quiz.
+    if payload.quiz_type == "word":
+        payload = payload.model_copy(update={"quiz_type": "cloze"})
+
     # "word" fans out into a single mixed session over the three word types so
     # the chat "단어 퀴즈" serves cloze/scramble/mcq_nuance interleaved.
     if payload.quiz_type == "word":
         quiz_type = "word"
         merged: list = []
-        for wt in ("cloze", "scramble", "mcq_nuance"):
+        for wt in ("cloze",):
             merged.extend(
                 await build_session(
                     session,

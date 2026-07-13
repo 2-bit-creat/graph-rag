@@ -19,7 +19,7 @@ from app.tutor import DrillSeedError, generate_drill
 
 def test_all_quiz_types_enabled():
     assert ENABLED_QUIZ_TYPES == frozenset(
-        {"cloze", "scramble", "mcq_nuance", "composition"}
+        {"cloze", "composition"}
     )
 
 

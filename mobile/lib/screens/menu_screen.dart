@@ -12,7 +12,6 @@ import 'quiz_generation_screen.dart';
 import 'quiz_pipeline_hub_screen.dart';
 import 'quiz_queue_screen.dart';
 import 'settings_screen.dart';
-import 'tutor_vocab_screen.dart';
 import 'vocabulary_hub_screen.dart';
 
 /// Consolidated "더보기" menu. Everything the app can do that isn't the chat home
@@ -106,14 +105,6 @@ class _MenuScreenState extends State<MenuScreen> {
             // ── 학습 ──────────────────────────────────────────────────────
             const AppSectionHeader(title: '학습', subtitle: '표현 · 단어장 · 복습 큐'),
             const SizedBox(height: AppSpacing.md),
-            AppHubTile(
-              icon: Icons.style_rounded,
-              title: '튜터와 배운 표현',
-              subtitle: '헷갈렸던 표현 모음 · 복습 출제 재료',
-              color: AppColors.accentWarm,
-              onTap: () => _open(const TutorVocabScreen()),
-            ),
-            const SizedBox(height: AppSpacing.sm),
             AppHubTile(
               icon: Icons.menu_book_rounded,
               title: '단어장 · 표현 은행',

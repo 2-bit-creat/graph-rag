@@ -4,6 +4,7 @@ import '../api/client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/quiz/cloze_quiz_card.dart';
 import '../widgets/quiz/mcq_quiz_card.dart';
+import '../widgets/quiz/quiz_audio_button.dart';
 import '../widgets/quiz/scramble_quiz_card.dart';
 
 /// Light "sheet" wrapper so the light-themed quiz/draft cards stay legible
@@ -231,6 +232,32 @@ class CompositionDrillCard extends StatefulWidget {
 
 class _CompositionDrillCardState extends State<CompositionDrillCard> {
   bool _saving = false;
+  Set<String> _savedExpressions = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVocabStatus();
+  }
+
+  Future<void> _loadVocabStatus() async {
+    try {
+      final res = await apiClient.getTutorVocab();
+      final items = (res['items'] as List?) ?? [];
+      if (!mounted) return;
+      setState(() {
+        _savedExpressions = items
+            .map((e) => (e is Map ? (e['expression'] ?? '') : '')
+                .toString()
+                .trim()
+                .toLowerCase())
+            .where((s) => s.isNotEmpty)
+            .toSet();
+      });
+    } catch (_) {
+      // Non-fatal — glossary chips just fall back to showing the add button.
+    }
+  }
 
   Future<void> _save(String expression) async {
     if (_saving || expression.trim().isEmpty) return;
@@ -241,6 +268,7 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
         promptKo: widget.quiz['question_ko']?.toString() ?? '',
       );
       if (mounted) {
+        setState(() => _savedExpressions.add(expression.trim().toLowerCase()));
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('복습 단어장에 담았어요.')),
         );
@@ -254,6 +282,21 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  Widget _glossaryChip(dynamic g) {
+    final term = g is Map
+        ? '${g['term'] ?? g['expression'] ?? ''}'
+        : g.toString();
+    final target = g is Map ? (g['target']?.toString() ?? '') : '';
+    final expression = target.isNotEmpty ? target : term;
+    return _GlossaryChip(
+      term: term,
+      expression: expression,
+      saved: _savedExpressions.contains(expression.trim().toLowerCase()),
+      busy: _saving,
+      onAdd: _save,
+    );
   }
 
   @override
@@ -279,15 +322,7 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
               runSpacing: 6,
               children: [
                 for (final g in glossary.take(6))
-                  Chip(
-                    visualDensity: VisualDensity.compact,
-                    label: Text(
-                      g is Map
-                          ? '${g['term'] ?? g['expression'] ?? ''}'
-                          : g.toString(),
-                      style: const TextStyle(fontSize: 11),
-                    ),
-                  ),
+                  _glossaryChip(g),
               ],
             ),
           ],
@@ -325,6 +360,61 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
               ],
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _GlossaryChip extends StatelessWidget {
+  const _GlossaryChip({
+    required this.term,
+    required this.expression,
+    required this.saved,
+    required this.busy,
+    required this.onAdd,
+  });
+
+  final String term;
+  final String expression;
+  final bool saved;
+  final bool busy;
+  final Future<void> Function(String expression) onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.only(left: 10, right: 4, top: 2, bottom: 2),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(term,
+              style:
+                  TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
+          const SizedBox(width: 2),
+          if (saved)
+            Padding(
+              padding: const EdgeInsets.all(4),
+              child: Icon(Icons.check_circle_rounded,
+                  size: 15, color: Colors.green),
+            )
+          else
+            InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: busy || expression.trim().isEmpty
+                  ? null
+                  : () => onAdd(expression),
+              child: const Padding(
+                padding: EdgeInsets.all(4),
+                child: Icon(Icons.add_circle_outline_rounded, size: 15),
+              ),
+            ),
         ],
       ),
     );
@@ -440,11 +530,29 @@ class WordQuizCard extends StatefulWidget {
 
 class _WordQuizCardState extends State<WordQuizCard> {
   Map<String, dynamic>? _result;
+  bool _solved = false;
+  final _audioKey = GlobalKey<QuizAudioButtonState>();
 
-  Future<void> _grade({String? answer, List<int>? order, int? selectedIndex}) async {
-    final res = await widget.onSubmit(
-        answer: answer, order: order, selectedIndex: selectedIndex);
-    if (res != null && mounted) setState(() => _result = res);
+  /// mcq / scramble: single-shot grading — the correct choice/order isn't
+  /// known client-side, so there's no way to let the learner retry locally.
+  /// Right or wrong, the attempt is final and "다음 문제" unlocks immediately.
+  Future<void> _grade({List<int>? order, int? selectedIndex}) async {
+    final res =
+        await widget.onSubmit(order: order, selectedIndex: selectedIndex);
+    if (res == null || !mounted) return;
+    setState(() => _result = res);
+    _audioKey.currentState?.play(showError: false);
+  }
+
+  /// cloze: first attempt goes to the backend; the card itself then allows
+  /// the learner to retype the revealed answer until it matches, without
+  /// hitting the backend again (a second submit would double-grade the SM2
+  /// review).
+  Future<bool> _gradeCloze(String answer) async {
+    final res = await widget.onSubmit(answer: answer);
+    if (res == null) return false;
+    if (mounted) setState(() => _result = res);
+    return res['is_correct'] == true;
   }
 
   @override
@@ -452,6 +560,8 @@ class _WordQuizCardState extends State<WordQuizCard> {
     final type = widget.quiz['quiz_type']?.toString() ?? 'cloze';
     final qd = (widget.quiz['quiz_data'] as Map?)?.cast<String, dynamic>() ?? {};
     final answered = _result != null;
+    final audioUrl = widget.quiz['audio_url']?.toString() ??
+        qd['audio_url']?.toString();
 
     Widget card;
     switch (type) {
@@ -459,6 +569,8 @@ class _WordQuizCardState extends State<WordQuizCard> {
         card = ScrambleQuizCard(
           quizData: qd,
           enabled: !answered,
+          audioUrl: audioUrl,
+          audioButtonKey: _audioKey,
           onSubmit: (order) => _grade(order: order),
         );
         break;
@@ -467,6 +579,8 @@ class _WordQuizCardState extends State<WordQuizCard> {
         card = McqQuizCard(
           quizData: qd,
           enabled: !answered,
+          audioUrl: audioUrl,
+          audioButtonKey: _audioKey,
           onSubmit: (i) => _grade(selectedIndex: i),
         );
         break;
@@ -474,11 +588,18 @@ class _WordQuizCardState extends State<WordQuizCard> {
       default:
         card = ClozeQuizCard(
           quizData: qd,
-          enabled: !answered,
-          showCorrectAnswer: answered,
-          onSubmit: (a) => _grade(answer: a),
+          audioUrl: audioUrl,
+          audioButtonKey: _audioKey,
+          onSubmit: _gradeCloze,
+          onSolved: () => setState(() => _solved = true),
         );
     }
+
+    // cloze retries locally until correct; mcq/scramble grade once and move on
+    // regardless of the outcome (see _grade above).
+    final isCloze = type != 'scramble' && type != 'mcq' && type != 'mcq_nuance';
+    final isCorrect = isCloze ? _solved : _result?['is_correct'] == true;
+    final readyForNext = isCloze ? _solved : answered;
 
     return _CardShell(
       title: '단어 퀴즈',
@@ -493,24 +614,32 @@ class _WordQuizCardState extends State<WordQuizCard> {
             Row(
               children: [
                 Icon(
-                  _result!['is_correct'] == true
+                  isCorrect
                       ? Icons.check_circle_rounded
-                      : Icons.cancel_rounded,
+                      : (isCloze
+                          ? Icons.edit_note_rounded
+                          : Icons.cancel_rounded),
                   size: 18,
-                  color: _result!['is_correct'] == true
+                  color: isCorrect
                       ? Colors.green
-                      : Colors.redAccent,
+                      : (isCloze ? Colors.orange : Colors.redAccent),
                 ),
                 const SizedBox(width: 6),
-                Text(_result!['is_correct'] == true ? '정답!' : '오답',
+                Expanded(
+                  child: Text(
+                    isCorrect
+                        ? '정답!'
+                        : (isCloze ? '정답을 직접 입력해서 완성해보세요' : '오답'),
                     style: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w700)),
-                const Spacer(),
-                FilledButton.icon(
-                  onPressed: widget.onNext,
-                  icon: const Icon(Icons.arrow_forward_rounded, size: 16),
-                  label: const Text('다음 문제'),
+                        fontSize: 13, fontWeight: FontWeight.w700),
+                  ),
                 ),
+                if (readyForNext)
+                  FilledButton.icon(
+                    onPressed: widget.onNext,
+                    icon: const Icon(Icons.arrow_forward_rounded, size: 16),
+                    label: const Text('다음 문제'),
+                  ),
               ],
             ),
           ],

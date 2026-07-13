@@ -215,7 +215,7 @@ async def count_queues(
     now = datetime.now(UTC)
     result: dict[str, dict[str, int]] = {
         t: {"new": 0, "review": 0}
-        for t in ("cloze", "scramble", "mcq_nuance", "composition")
+        for t in ("cloze", "composition")
     }
     q = select(Quiz).where(Quiz.user_id == user_id, Quiz.queue_kind != "archived")
     for quiz in (await session.execute(q)).scalars().all():

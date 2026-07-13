@@ -46,7 +46,12 @@ class _QuizPipelineHubScreenState extends State<QuizPipelineHubScreen> {
       } catch (_) {}
       if (!mounted) return;
       setState(() {
-        _items = data['items'] as List<dynamic>? ?? [];
+        _items = ((data['items'] as List<dynamic>?) ?? [])
+            .where((item) {
+              final type = (item as Map)['quiz_type']?.toString();
+              return type == 'cloze' || type == 'composition';
+            })
+            .toList();
         _profile = profile;
         _vocabularies = vocabs;
         _loading = false;
@@ -65,7 +70,14 @@ class _QuizPipelineHubScreenState extends State<QuizPipelineHubScreen> {
     try {
       final data = await apiClient.listQuizGenerations();
       if (!mounted) return;
-      setState(() => _items = data['items'] as List<dynamic>? ?? []);
+      setState(() {
+        _items = ((data['items'] as List<dynamic>?) ?? [])
+            .where((item) {
+              final type = (item as Map)['quiz_type']?.toString();
+              return type == 'cloze' || type == 'composition';
+            })
+            .toList();
+      });
       await _select(quizId);
     } catch (_) {}
   }
@@ -135,7 +147,7 @@ class _QuizPipelineHubScreenState extends State<QuizPipelineHubScreen> {
           : QuizPipelinePanel(
               items: _items,
               profile: _profile,
-              vocabularies: _vocabularies,
+              vocabularies: const [],
               selected: _selected,
               trace: _trace,
               traceLoading: _traceLoading,

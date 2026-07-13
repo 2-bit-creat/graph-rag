@@ -34,6 +34,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
   bool _loading = true;
   bool _answered = false;
   bool? _lastCorrect;
+  bool _clozeSolved = false;
   String? _feedback;
   String? _revealedAnswer;
 
@@ -119,6 +120,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
         _index++;
         _answered = false;
         _lastCorrect = null;
+        _clozeSolved = false;
         _feedback = null;
         _revealedAnswer = null;
       });
@@ -127,7 +129,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
     }
   }
 
-  Future<void> _submitCloze(String answer) async {
+  Future<bool> _submitCloze(String answer) async {
     final item = _current!;
     final result = await apiClient.submitQuizAnswer(
       quizId: item['id'].toString(),
@@ -135,6 +137,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
       entryId: widget.entryId,
     );
     await _handleResult(result);
+    return result['correct'] == true;
   }
 
   Future<void> _submitScramble(List<int> order) async {
@@ -346,10 +349,11 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
                                           ),
                                           label: const Text('다시 듣기'),
                                         ),
-                                      FilledButton.tonal(
-                                        onPressed: _goNext,
-                                        child: const Text('다음 문제'),
-                                      ),
+                                      if (_lastCorrect == true || _clozeSolved)
+                                        FilledButton.tonal(
+                                          onPressed: _goNext,
+                                          child: const Text('다음 문제'),
+                                        ),
                                     ],
                                   ),
                                 ],
@@ -377,9 +381,12 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
           quizData: quizData,
           audioUrl: audioUrl,
           audioButtonKey: _audioKey,
-          showCorrectAnswer: _answered && _lastCorrect == false,
-          enabled: enabled,
           onSubmit: _submitCloze,
+          // The next button remains hidden after a wrong first attempt until
+          // the learner retypes the revealed answer correctly.
+          onSolved: () {
+            if (mounted) setState(() => _clozeSolved = true);
+          },
         );
       case 'scramble':
         return ScrambleQuizCard(

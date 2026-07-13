@@ -38,6 +38,7 @@ class ChatSessionController extends ChangeNotifier {
   final List<Map<String, dynamic>> _quizItems = [];
   int _quizIndex = 0;
   String _quizType = 'composition';
+  String? _quizLanguage; // sticky across "더보기" retries within the same mode
   Map<String, dynamic>? _quizFeedback; // composition tutor feedback for current item
 
   // Distill (chat → journal) draft state.
@@ -459,9 +460,12 @@ class ChatSessionController extends ChangeNotifier {
 
   /// Enter a quiz mode and pull a small session of items into the feed.
   /// [quizType]: 'composition' (typed drill) | 'cloze' | 'scramble' | 'mcq_nuance'.
-  Future<void> startQuiz(String quizType) async {
+  /// [language]: which target language to draw from when the learner has more
+  /// than one configured (null = backend default).
+  Future<void> startQuiz(String quizType, {String? language}) async {
     await _ensureSession();
     _quizType = quizType;
+    _quizLanguage = language ?? _quizLanguage;
     _mode = quizType == 'composition'
         ? ChatMode.quizComposition
         : ChatMode.quizWord;
@@ -471,7 +475,8 @@ class ChatSessionController extends ChangeNotifier {
     _busy = true;
     notifyListeners();
     try {
-      final data = await apiClient.startQuizSession(quizType: quizType, size: 5);
+      final data = await apiClient.startQuizSession(
+          quizType: quizType, size: 5, language: _quizLanguage);
       final items = ((data['items'] as List?) ?? [])
           .map((e) => Map<String, dynamic>.from(e as Map))
           .toList();

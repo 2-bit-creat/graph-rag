@@ -584,8 +584,7 @@ class QuizGenerateOut(BaseModel):
 
 
 class QuizSessionRequest(BaseModel):
-    # "word" = a mixed session across cloze/scramble/mcq_nuance.
-    quiz_type: Literal["cloze", "scramble", "mcq_nuance", "composition", "word"]
+    quiz_type: Literal["cloze", "composition", "word"]
     size: int = 10
     entry_id: uuid.UUID | None = None
     quiz_ids: list[uuid.UUID] | None = None

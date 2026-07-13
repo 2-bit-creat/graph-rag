@@ -98,6 +98,12 @@ class Settings(BaseSettings):
     # write-time resolution threshold.
     graph_chat_identity_seed_limit: int = 3
     graph_chat_identity_max_distance: float = 0.5
+    # Deterministic name-scan (name_match.scan_identity_mentions) hit → Statements
+    # this identity actually SPOKE_OR_PUBLISHED, added regardless of embedding
+    # distance (a compound query like "누가 X에 대해 뭐라 했지?" dilutes the
+    # sentence embedding below the cutoff even though the speaker is unambiguous
+    # from the text alone). 0 disables the feature without touching code.
+    graph_chat_speaker_seed_limit: int = 8
     graph_chat_max_triples: int = 30
     graph_chat_max_completion_tokens: int = 500
     chat_timezone: str = "Asia/Seoul"

@@ -510,11 +510,82 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
         chatSession.startDistill();
         break;
       case 'composition':
-        chatSession.startQuiz('composition');
+        _startQuizWithLanguagePrompt('composition');
         break;
       case 'word':
-        chatSession.startQuiz('word');
+        _startQuizWithLanguagePrompt('word');
         break;
+    }
+  }
+
+  // Learnable target languages — kept in sync with settings_screen.dart's
+  // _kLanguages (the quiz engine is only tuned for these three).
+  static const _quizLanguages = [
+    (key: 'english', label: '영어', flag: '🇺🇸'),
+    (key: 'german', label: '독일어', flag: '🇩🇪'),
+    (key: 'korean', label: '한국어', flag: '🇰🇷'),
+  ];
+
+  /// When the learner has more than one target language configured in their
+  /// profile, ask which one this quiz session should draw from before
+  /// starting it. With zero or one configured, skip the prompt entirely.
+  Future<void> _startQuizWithLanguagePrompt(String quizType) async {
+    List<String> langs = const ['english'];
+    try {
+      final profile = await apiClient.getUserProfile();
+      final raw = profile['target_languages'];
+      if (raw is List && raw.isNotEmpty) {
+        langs = raw.map((e) => e.toString()).toList();
+      } else {
+        final single = profile['target_language']?.toString();
+        if (single != null && single.isNotEmpty) langs = [single];
+      }
+    } catch (_) {
+      // Profile fetch failed — fall back to the backend's own default.
+    }
+
+    if (langs.length <= 1) {
+      chatSession.startQuiz(
+          quizType, language: langs.isNotEmpty ? langs.first : null);
+      return;
+    }
+    if (!mounted) return;
+    final chosen = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 16, 20, 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('어떤 언어로 퀴즈를 풀까요?',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+              ),
+            ),
+            for (final code in langs)
+              ListTile(
+                leading: Text(
+                  _quizLanguages
+                      .firstWhere((l) => l.key == code,
+                          orElse: () => (key: code, label: code, flag: '🌐'))
+                      .flag,
+                  style: const TextStyle(fontSize: 20),
+                ),
+                title: Text(_quizLanguages
+                    .firstWhere((l) => l.key == code,
+                        orElse: () => (key: code, label: code, flag: '🌐'))
+                    .label),
+                onTap: () => Navigator.pop(ctx, code),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (chosen != null) {
+      chatSession.startQuiz(quizType, language: chosen);
     }
   }
 
@@ -1190,7 +1261,7 @@ class _ChatPanelResizeHandleState extends State<_ChatPanelResizeHandle> {
               height: double.infinity,
               color: active
                   ? AppColors.hubGraph.withValues(alpha: 0.65)
-                  : const Color(0xFF3A3A48),
+                  : context.shell.panelBorder,
             ),
           ),
         ),

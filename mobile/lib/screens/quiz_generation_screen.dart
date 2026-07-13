@@ -25,6 +25,7 @@ class _QuizGenerationScreenState extends State<QuizGenerationScreen> {
   String _language = 'english';
   int _count = 3;
   String _difficulty = 'normal';
+  String _sourceMode = 'journal';
 
   List<Map<String, dynamic>> _queue = [];
   int _reviewDue = 0;
@@ -84,6 +85,7 @@ class _QuizGenerationScreenState extends State<QuizGenerationScreen> {
     try {
       await apiClient.generateCompositionQuizzes(
         language: _language,
+        sourceMode: _sourceMode,
         count: _count,
         difficulty: _difficulty,
       );
@@ -240,6 +242,28 @@ class _QuizGenerationScreenState extends State<QuizGenerationScreen> {
                       ? null
                       : (_) => setState(() => _difficulty = d.value),
                 ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          _chipRowLabel('출제 원본'),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: AppSpacing.xs,
+            children: [
+              ChoiceChip(
+                label: const Text('내 일기'),
+                selected: _sourceMode == 'journal',
+                onSelected: _generating
+                    ? null
+                    : (_) => setState(() => _sourceMode = 'journal'),
+              ),
+              ChoiceChip(
+                label: const Text('튜터와 배운 표현'),
+                selected: _sourceMode == 'review',
+                onSelected: _generating
+                    ? null
+                    : (_) => setState(() => _sourceMode = 'review'),
+              ),
             ],
           ),
           const SizedBox(height: AppSpacing.lg),

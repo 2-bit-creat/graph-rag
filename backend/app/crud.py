@@ -33,6 +33,7 @@ from .graph_schema import (
     NODE_SPEAKER,
     REL_NEXT_TURN,
     REL_SPOKE_BY,
+    REL_SPOKE_OR_PUBLISHED,
     contains_relation,
 )
 from .schemas import NodeOut, StagedEdge, StagedNode
@@ -558,6 +559,43 @@ async def find_statements_by_time_window(
         .order_by(func.coalesce(Node.occurred_at, node_local_date).desc())
         .limit(limit)
     )
+    return list((await session.execute(stmt)).scalars().unique().all())
+
+
+async def find_statements_by_speaker(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    speaker_node_id: uuid.UUID,
+    *,
+    limit: int = 12,
+    query_embedding: list[float] | None = None,
+) -> list[Node]:
+    """Statement nodes this identity node actually spoke/published (SPOKE_OR_PUBLISHED
+    edges only) — never statements that merely MENTION the identity.
+
+    When ``query_embedding`` is given, orders by topical relevance (nearest
+    ``name_embedding`` first, statements without one last); otherwise orders by
+    most recent (``occurred_at``, falling back to creation date)."""
+    node_local_date = func.date(Node.created_at)
+    base = (
+        select(Node)
+        .join(Edge, Edge.target_id == Node.id)
+        .where(
+            Edge.user_id == user_id,
+            Edge.source_id == speaker_node_id,
+            Edge.relation == REL_SPOKE_OR_PUBLISHED,
+            Node.type == "Statement",
+            Node.deleted_at.is_(None),
+        )
+        .limit(limit)
+    )
+    if query_embedding is not None:
+        dist = Node.name_embedding.cosine_distance(query_embedding)
+        stmt = base.order_by(dist.nulls_last())
+    else:
+        stmt = base.order_by(
+            func.coalesce(Node.occurred_at, node_local_date).desc()
+        )
     return list((await session.execute(stmt)).scalars().unique().all())
 
 
@@ -2763,6 +2801,35 @@ async def find_identity_node_by_name_or_alias(
     return None
 
 
+async def find_identity_candidates_by_base_name(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    name: str,
+) -> list[tuple[Node, bool]]:
+    """All identity nodes whose canonical name or an alias shares ``name``'s
+    :func:`~app.name_match.base_name_key` (honorific/whitespace-normalized),
+    self-first. Each result also reports whether it's a *whitespace-only*
+    variant of an exact match (``_norm_surface`` equal once compacted) — that
+    case is safe to auto-link; two matches, or a match that only agrees after
+    stripping a title/honorific, are the homonym-risk cases the caller should
+    downgrade to a suggestion instead of auto-linking.
+    """
+    from .name_match import base_name_key, norm_compact
+
+    key = base_name_key(name)
+    if not key:
+        return []
+    compact = norm_compact(name)
+    results: list[tuple[Node, bool]] = []
+    for node in await _identity_nodes_self_first(session, user_id):
+        surfaces = [node.name, *node_alias_keys(node)]
+        if not any(base_name_key(s) == key for s in surfaces):
+            continue
+        whitespace_only_variant = any(norm_compact(s) == compact for s in surfaces)
+        results.append((node, whitespace_only_variant))
+    return results
+
+
 async def list_identity_reference_candidates(
     session: AsyncSession,
     user_id: uuid.UUID,
@@ -3419,6 +3486,7 @@ async def list_quiz_queue_items(
     filters = [
         Quiz.user_id == user_id,
         Quiz.queue_kind != "archived",
+        Quiz.quiz_type.in_(("cloze", "composition")),
     ]
     if queue_kind == "new":
         filters.extend([Quiz.queue_kind == "new", Quiz.repetitions == 0])
@@ -3456,7 +3524,11 @@ async def list_quiz_history(
     """Answered quizzes, most-recently-answered first — the 'review past quizzes' feed."""
     from sqlalchemy import func
 
-    filters = [Quiz.user_id == user_id, Quiz.is_solved.is_(True)]
+    filters = [
+        Quiz.user_id == user_id,
+        Quiz.is_solved.is_(True),
+        Quiz.quiz_type.in_(("cloze", "composition")),
+    ]
     if quiz_type is not None:
         filters.append(Quiz.quiz_type == quiz_type)
     if language is not None:

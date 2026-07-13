@@ -33,7 +33,7 @@ async def _min_new_count(session, user_id: uuid.UUID, language: str) -> int:
     from sqlalchemy import func, select
     from ..models import Quiz
 
-    counts: dict[str, int] = {t: 0 for t in ("cloze", "scramble", "mcq_nuance", "composition")}
+    counts: dict[str, int] = {t: 0 for t in ("cloze", "composition")}
     rows = await session.execute(
         select(Quiz.quiz_type, func.count())
         .where(

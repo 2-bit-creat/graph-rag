@@ -513,13 +513,34 @@ async def _enrich_person_concepts(
         name = str(c.get("name") or "").strip()
         if not name:
             continue
-        match = await crud.find_identity_node_by_name_or_alias(session, user_id, name)
-        if match is not None:
-            c["kind"] = "person"  # a known identity is always identity-kind
+        candidates = await crud.find_identity_candidates_by_base_name(
+            session, user_id, name
+        )
+        if len(candidates) == 1 and candidates[0][1]:
+            # Exactly one identity shares this name, and it agrees down to
+            # whitespace (covers both an exact match and a pure spacing variant
+            # like "하승목 연구원" vs "하승목연구원") — safe to auto-link.
+            match = candidates[0][0]
+            c["kind"] = "person"
             c["resolution"] = {
                 "action": "link",
                 "node_id": str(match.id),
                 "matched_name": match.name,
+                "is_self": bool(match.is_self),
+            }
+        elif candidates:
+            # Either >=2 identities share this base name (homonym risk) or the
+            # single match only agrees after stripping a title/honorific —
+            # both are surface-level ambiguity the reviewer should confirm,
+            # never a silent auto-merge. Self-first ordering already puts the
+            # owner's own identity first when it's among the candidates.
+            match = candidates[0][0]
+            c["kind"] = "person"
+            c["resolution"] = {
+                "action": "suggest",
+                "node_id": str(match.id),
+                "matched_name": match.name,
+                "matched_alias": match.name,
                 "is_self": bool(match.is_self),
             }
         else:

@@ -21,15 +21,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import get_settings
 from .crud import (
+    _identity_nodes_self_first,
     backfill_alias_embeddings,
     find_identities_by_alias_embedding,
     find_similar_nodes_with_distance,
+    find_statements_by_speaker,
     find_statements_by_time_window,
     get_neighborhood,
     user_has_alias_embeddings,
 )
 from .entity_types import is_identity_type
+from .graph_schema import REL_MENTIONS, REL_SPOKE_OR_PUBLISHED
 from .models import Edge, Node, User
+from .name_match import scan_identity_mentions
 from .rag import _get_client, embed_text, ensure_statement_embeddings
 from .temporal import format_time_window_label, parse_time_window
 
@@ -79,7 +83,11 @@ def _node_memory_text(node: Node) -> str:
 
 
 async def _retrieve_seeds(
-    session: AsyncSession, user_id: uuid.UUID, message: str
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    message: str,
+    *,
+    query_vec: list[float] | None = None,
 ) -> list[Node]:
     """Seed nodes for the answer, from two text-embedding indexes:
 
@@ -90,13 +98,18 @@ async def _retrieve_seeds(
 
     One embedding call feeds both searches. Results are merged by node id keeping
     the best (lowest) cosine distance, then sorted nearest-first.
+
+    ``query_vec`` lets a caller that already embedded the (possibly residual,
+    speaker-stripped) message reuse that vector instead of paying for a second
+    embedding call.
     """
     settings = get_settings()
-    try:
-        query_vec = await embed_text(message)
-    except Exception as exc:  # noqa: BLE001 — chat should still answer without memories
-        logger.warning("graph_chat: embedding failed for user %s: %s", user_id, exc)
-        return []
+    if query_vec is None:
+        try:
+            query_vec = await embed_text(message)
+        except Exception as exc:  # noqa: BLE001 — chat should still answer without memories
+            logger.warning("graph_chat: embedding failed for user %s: %s", user_id, exc)
+            return []
 
     scored: list[tuple[Node, float]] = []
 
@@ -136,6 +149,82 @@ async def _retrieve_seeds(
     return [node for node, _dist in sorted(best.values(), key=lambda x: x[1])][:10]
 
 
+def _split_speaker_residual(message: str, matches: list) -> str:
+    """Message text with each matched speaker span removed — the topic-only
+    remainder, so a compound query like "하승목 연구원이 성장성 모형 관련해서
+    뭘 물었지?" embeds as "성장성 모형 관련해서 뭘 물었지?" instead of diluting
+    the vector with a name the embedding search would fail on anyway."""
+    residual = message
+    for m in sorted(matches, key=lambda m: m.start, reverse=True):
+        residual = residual[: m.start] + residual[m.end :]
+    residual = " ".join(residual.split())
+    return residual if len(residual) >= 4 else message
+
+
+async def _scan_speaker_matches(
+    session: AsyncSession, user_id: uuid.UUID, message: str
+) -> tuple[list, str]:
+    """Deterministic (zero LLM/embedding cost) speaker detection: scan the raw
+    message text for identity names/aliases the user already has in their
+    graph, tolerating whitespace and honorific-suffix variants ("하승목 연구원"
+    == "하승목연구원"). Returns ``(matches, residual_message)`` — ``matches`` is
+    ``[]`` and residual is the original message when nothing is detected or the
+    feature is disabled (``graph_chat_speaker_seed_limit <= 0``)."""
+    settings = get_settings()
+    if settings.graph_chat_speaker_seed_limit <= 0:
+        return [], message
+    try:
+        identities = await _identity_nodes_self_first(session, user_id)
+        matches = scan_identity_mentions(message, identities)
+    except Exception as exc:  # noqa: BLE001 — never block the embedding-only path
+        logger.warning("graph_chat: speaker scan failed for user %s: %s", user_id, exc)
+        return [], message
+    if not matches:
+        return [], message
+    return matches, _split_speaker_residual(message, matches)
+
+
+async def _retrieve_speaker_seeds(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    matches: list,
+    *,
+    query_vec: list[float] | None,
+) -> list[Node]:
+    """For each detected speaker, the identity node itself plus every Statement
+    it actually SPOKE_OR_PUBLISHED — independent of embedding distance, so a
+    compound query no longer silently drops the exact-named speaker's
+    statements when the sentence embedding is diluted below the similarity
+    cutoff. Statements are ranked by topical relevance to ``query_vec`` (the
+    same vector already computed for the residual/topic embedding search) when
+    given, else by recency."""
+    settings = get_settings()
+    seeds: list[Node] = []
+    seen_ids: set[uuid.UUID] = set()
+    for match in matches[:2]:  # a chat turn realistically names at most 1-2 people
+        if match.node.id not in seen_ids:
+            seen_ids.add(match.node.id)
+            seeds.append(match.node)
+        try:
+            stmts = await find_statements_by_speaker(
+                session,
+                user_id,
+                match.node.id,
+                limit=settings.graph_chat_speaker_seed_limit,
+                query_embedding=query_vec,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "graph_chat: speaker statement lookup failed for user %s: %s", user_id, exc
+            )
+            continue
+        for s in stmts:
+            if s.id not in seen_ids:
+                seen_ids.add(s.id)
+                seeds.append(s)
+    return seeds
+
+
 async def _build_context(
     session: AsyncSession,
     user_id: uuid.UUID,
@@ -143,13 +232,14 @@ async def _build_context(
     *,
     time_window: tuple[date, date] | None = None,
     time_window_label: str | None = None,
+    has_speaker_match: bool = False,
 ) -> str:
     if not seeds:
         return ""
     settings = get_settings()
     seed_limit = (
         settings.graph_chat_temporal_seed_limit
-        if time_window is not None
+        if time_window is not None or has_speaker_match
         else 10
     )
     seed_ids = {n.id for n in seeds}
@@ -194,8 +284,45 @@ async def _build_context(
                     seen_stmt.add(other)
                     related_stmt_ids.append(other)
 
+    # Speaker/mentioned-target lookup for Statement nodes about to be rendered,
+    # so the LLM sees WHO actually said each line (SPOKE_OR_PUBLISHED) versus who
+    # is merely a character in it (MENTIONS) — without this, a statement like
+    # "김태연상무님이 말함: 모형공학부 부장님이 ~에 꽂히셨다" reads as ambiguous
+    # triples and the model conflates the mentioned person with the speaker.
+    render_stmt_ids = {n.id for n in seeds[:seed_limit] if n.type == "Statement"}
+    render_stmt_ids.update(related_stmt_ids[:12])
+    speaker_by_stmt: dict[uuid.UUID, Node] = {}
+    mentions_by_stmt: dict[uuid.UUID, list[str]] = {}
+    if render_stmt_ids:
+        speaker_rows = await session.execute(
+            select(Edge.target_id, Node)
+            .join(Node, Node.id == Edge.source_id)
+            .where(
+                Edge.user_id == user_id,
+                Edge.target_id.in_(render_stmt_ids),
+                Edge.relation == REL_SPOKE_OR_PUBLISHED,
+                Node.deleted_at.is_(None),
+            )
+        )
+        for stmt_id, speaker_node in speaker_rows.all():
+            speaker_by_stmt.setdefault(stmt_id, speaker_node)
+
+        mention_rows = await session.execute(
+            select(Edge.source_id, Node.name)
+            .join(Node, Node.id == Edge.target_id)
+            .where(
+                Edge.user_id == user_id,
+                Edge.source_id.in_(render_stmt_ids),
+                Edge.relation == REL_MENTIONS,
+                Node.deleted_at.is_(None),
+            )
+        )
+        for stmt_id, mentioned_name in mention_rows.all():
+            mentions_by_stmt.setdefault(stmt_id, []).append(mentioned_name)
+
     memory_lines: list[str] = []
     seen_lines: set[str] = set()
+    seen_stmt_ids: set[uuid.UUID] = set()
 
     def _add(text: str, when: str = "") -> None:
         text = text.strip()
@@ -205,17 +332,42 @@ async def _build_context(
         prefix = f"[{when}] " if when else ""
         memory_lines.append(f"- {prefix}{text}")
 
+    def _render_statement(node: Node) -> None:
+        if node.id in seen_stmt_ids:
+            return
+        seen_stmt_ids.add(node.id)
+        content = _statement_content(node)
+        speaker = speaker_by_stmt.get(node.id)
+        if speaker is not None:
+            label = "나의 기록" if speaker.is_self else f"{speaker.name}의 말"
+            text = f'{label}: "{content}"'
+        else:
+            text = content
+        mention_names = mentions_by_stmt.get(node.id) or []
+        if mention_names:
+            text = f"{text} (언급된 대상: {', '.join(mention_names)})"
+        _add(text, _node_date_prefix(node))
+
     for node in seeds[:seed_limit]:
-        _add(_node_memory_text(node), _node_date_prefix(node))
+        if node.type == "Statement":
+            _render_statement(node)
+        else:
+            _add(_node_memory_text(node), _node_date_prefix(node))
 
     for sid in related_stmt_ids[:12]:
-        node = node_by_id[sid]
-        _add(_statement_content(node), _node_date_prefix(node))
+        _render_statement(node_by_id[sid])
 
     seen_triples: set[str] = set()
     triple_lines: list[str] = []
     for e in edges:
         if e.source_id not in name_by_id or e.target_id not in name_by_id:
+            continue
+        # Already expressed in natural language above — skip the raw triple to
+        # avoid contradicting/duplicating it, but keep it as fallback info for
+        # any SPOKE/MENTIONS edge whose statement wasn't otherwise rendered.
+        if e.relation == REL_SPOKE_OR_PUBLISHED and e.target_id in seen_stmt_ids:
+            continue
+        if e.relation == REL_MENTIONS and e.source_id in seen_stmt_ids:
             continue
         line = (
             f"({name_by_id[e.source_id]}) -[{e.relation}]-> ({name_by_id[e.target_id]})"
@@ -248,6 +400,11 @@ def _build_system_prompt(native_label: str = "Korean (한국어)") -> str:
         "아닙니다 — 요약을 일기 기억처럼 인용하지 마세요. "
         "일기 기억 각 줄 앞의 [날짜]는 사건이 일어난 날(있으면) 또는 일기에 기록된 "
         "날입니다 — '언제 …했지?' 같은 질문에는 이 날짜로 답하세요. "
+        "'X의 말: \"...\"' 형식의 줄은 X가 그 날짜에 실제로 한 말입니다. 그 말 "
+        "속에 다른 사람 이름이 등장하거나 줄 끝에 '(언급된 대상: Y)'가 붙어 있어도, "
+        "Y는 그 말을 한 사람이 아니라 이야기에 등장하는 인물일 뿐입니다 — Y가 "
+        "그 날짜에 무언가를 말했다거나 행동했다고 답하지 마세요. 발화자와 "
+        "언급된 인물을 절대 혼동하지 마세요. "
         "요청 기간이 명시되어 있고 그 기간의 기록이 없으면 지어내지 말고 "
         "그 기간의 기록이 없다고 말하세요. "
         "답변은 수다 톤으로 짧고 편하게 — 강의하지 마세요."
@@ -328,11 +485,38 @@ async def graph_chat_answer(
             logger.warning("graph_chat: embedding backfill failed: %s", exc)
             await session.rollback()
 
-    embedding_seeds = await _retrieve_seeds(session, user.id, message)
+    # Deterministic, zero-cost scan for an identity name/alias literally present
+    # in the message ("하승목 연구원이 ...") — a compound query dilutes the
+    # sentence embedding below the similarity cutoff even when the speaker is
+    # unambiguous from the text itself. When found, the speaker's name is
+    # stripped from the text that gets embedded so the remaining vector is a
+    # sharper topic-only query (질의 분해), and both searches share that one
+    # embedding call.
+    speaker_matches, residual_message = await _scan_speaker_matches(
+        session, user.id, message
+    )
+
+    query_vec: list[float] | None = None
+    speaker_seeds: list[Node] = []
+    if speaker_matches:
+        try:
+            query_vec = await embed_text(residual_message)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "graph_chat: residual embedding failed for user %s: %s", user.id, exc
+            )
+            query_vec = None
+        speaker_seeds = await _retrieve_speaker_seeds(
+            session, user.id, speaker_matches, query_vec=query_vec
+        )
+
+    embedding_seeds = await _retrieve_seeds(
+        session, user.id, residual_message, query_vec=query_vec
+    )
 
     seen: set[uuid.UUID] = set()
     seeds: list[Node] = []
-    for node in temporal_seeds + embedding_seeds:
+    for node in temporal_seeds + speaker_seeds + embedding_seeds:
         if node.id in seen:
             continue
         seen.add(node.id)
@@ -345,6 +529,7 @@ async def graph_chat_answer(
             seeds,
             time_window=time_window,
             time_window_label=time_window_label,
+            has_speaker_match=bool(speaker_matches),
         )
     except Exception as exc:  # noqa: BLE001 — degrade to a memory-less answer, never 500
         logger.warning("graph_chat: context build failed for user %s: %s", user.id, exc)

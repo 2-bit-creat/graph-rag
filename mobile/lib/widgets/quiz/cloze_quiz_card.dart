@@ -7,18 +7,22 @@ class ClozeQuizCard extends StatefulWidget {
     super.key,
     required this.quizData,
     required this.onSubmit,
+    required this.onSolved,
     this.audioUrl,
     this.audioButtonKey,
-    this.showCorrectAnswer = false,
-    this.enabled = true,
   });
 
   final Map<String, dynamic> quizData;
-  final Future<void> Function(String answer) onSubmit;
+
+  /// First-attempt grading — hits the backend and reports whether it was correct.
+  final Future<bool> Function(String answer) onSubmit;
+
+  /// Fired once the blank has been answered correctly, whether on the first
+  /// try or after retyping the revealed answer.
+  final VoidCallback onSolved;
+
   final String? audioUrl;
   final GlobalKey<QuizAudioButtonState>? audioButtonKey;
-  final bool showCorrectAnswer;
-  final bool enabled;
 
   @override
   State<ClozeQuizCard> createState() => _ClozeQuizCardState();
@@ -30,13 +34,9 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
   bool _hintRevealed = false;
   bool _answerRevealed = false;
 
-  @override
-  void didUpdateWidget(covariant ClozeQuizCard oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.showCorrectAnswer && !oldWidget.showCorrectAnswer) {
-      _revealAnswer(fillField: true);
-    }
-  }
+  /// null = not graded yet; true/false = result of the first attempt.
+  bool? _graded;
+  bool _solved = false;
 
   @override
   void dispose() {
@@ -44,10 +44,27 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
     super.dispose();
   }
 
-  // Only reveal the speaker once the answer is exposed (answered/disabled, or
-  // the user tapped "정답 보기"). Hearing the sentence before answering would
-  // give the blank away.
-  bool get _showAudio => _answerRevealed || !widget.enabled;
+  bool get _locked => _solved;
+
+  // Reveal the speaker once the first attempt has been graded (or the user
+  // gave up and asked to see the answer) — hearing it beforehand gives the
+  // blank away.
+  bool get _showAudio => _graded != null || _answerRevealed;
+
+  bool _isAnswerOnlyContext(String raw) {
+    final plain = raw
+        .replaceAll(RegExp(r'<[^>]+>'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim()
+        .toLowerCase();
+    if (plain.isEmpty) return true;
+    final accepted = (widget.quizData['accepted_answers'] as List?)
+            ?.map((e) => e.toString().trim().toLowerCase())
+            .where((e) => e.isNotEmpty)
+            .toSet() ??
+        <String>{};
+    return plain == _blank || accepted.contains(plain);
+  }
 
   String get _blank =>
       (widget.quizData['blank']?.toString() ??
@@ -76,19 +93,52 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
         _controller.text = blank;
       }
     });
+    widget.audioButtonKey?.currentState?.play(showError: false);
   }
 
   Future<void> _submit() async {
-    if (_submitting || !widget.enabled) return;
-    setState(() => _submitting = true);
-    try {
-      await widget.onSubmit(_controller.text.trim());
-    } finally {
-      if (mounted) setState(() => _submitting = false);
+    if (_submitting || _locked) return;
+    final text = _controller.text.trim();
+    if (text.isEmpty) return;
+
+    if (_graded == null) {
+      setState(() => _submitting = true);
+      bool correct = false;
+      try {
+        correct = await widget.onSubmit(text);
+      } finally {
+        if (mounted) setState(() => _submitting = false);
+      }
+      if (!mounted) return;
+      setState(() {
+        _graded = correct;
+        _answerRevealed = true;
+        _hintRevealed = true;
+        _solved = correct;
+        if (!correct) _controller.clear();
+      });
+      widget.audioButtonKey?.currentState?.play(showError: false);
+      if (correct) widget.onSolved();
+      return;
+    }
+
+    // First attempt was wrong — check the retype locally. No second grading
+    // call: re-submitting to the backend would double-count the SM2 review.
+    if (text.toLowerCase() == _blank) {
+      setState(() => _solved = true);
+      widget.onSolved();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('아직 정답과 달라요. 다시 입력해보세요.'),
+          duration: Duration(seconds: 1),
+        ),
+      );
     }
   }
 
   Widget _buildContextKo(String raw) {
+    final mutedColor = Theme.of(context).colorScheme.onSurfaceVariant;
     final spanRe = RegExp(
       "<span\\s+color=['\"]#FFA500['\"][^>]*>(.*?)</span>",
       caseSensitive: false,
@@ -96,14 +146,14 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
     );
     final match = spanRe.firstMatch(raw);
     if (match == null) {
-      return Text(raw, style: TextStyle(fontSize: 14, color: Colors.grey[800]));
+      return Text(raw, style: TextStyle(fontSize: 14, color: mutedColor));
     }
     final before = raw.substring(0, match.start);
     final highlight = match.group(1) ?? '';
     final after = raw.substring(match.end);
     return RichText(
       text: TextSpan(
-        style: TextStyle(fontSize: 14, color: Colors.grey[800]),
+        style: TextStyle(fontSize: 14, color: mutedColor),
         children: [
           TextSpan(text: before),
           TextSpan(
@@ -121,19 +171,17 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final prompt = widget.quizData['prompt_en']?.toString() ?? '';
     final hint = widget.quizData['blank_display']?.toString() ?? '';
     final contextKo = widget.quizData['context_ko']?.toString() ?? '';
     final hintKo = widget.quizData['hint_ko']?.toString() ?? '';
     final blank = _blank;
+    final wrongFirstTry = _graded == false && !_solved;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (contextKo.isNotEmpty) ...[
-          _buildContextKo(contextKo),
-          const SizedBox(height: 12),
-        ],
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -155,6 +203,10 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
             ),
           ],
         ),
+        if (contextKo.isNotEmpty && !_isAnswerOnlyContext(contextKo)) ...[
+          const SizedBox(height: 12),
+          _buildContextKo(contextKo),
+        ],
         if (hint.isNotEmpty) ...[
           const SizedBox(height: 12),
           Text(
@@ -173,7 +225,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
               fontSize: 18,
               letterSpacing: 3,
               fontWeight: FontWeight.w300,
-              color: Colors.grey.shade500,
+              color: scheme.onSurfaceVariant,
               fontFamily: 'monospace',
             ),
           ),
@@ -182,18 +234,25 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
           const SizedBox(height: 8),
           Text(
             '정답: $blank',
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w600,
-              color: Colors.green.shade700,
+              color: Colors.green,
             ),
+          ),
+        ],
+        if (wrongFirstTry) ...[
+          const SizedBox(height: 4),
+          Text(
+            '오답이에요. 위 정답을 보고 직접 입력해서 완성해보세요.',
+            style: TextStyle(fontSize: 12.5, color: Colors.redAccent.shade100),
           ),
         ],
         if (hintKo.isNotEmpty) ...[
           const SizedBox(height: 8),
-          Text(hintKo, style: TextStyle(fontSize: 13, color: Colors.grey[700])),
+          Text(hintKo, style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
         ],
-        if (widget.enabled && !_answerRevealed) ...[
+        if (_graded == null) ...[
           const SizedBox(height: 12),
           Row(
             children: [
@@ -205,12 +264,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
               TextButton.icon(
                 onPressed: _answerRevealed
                     ? null
-                    : () {
-                        _revealAnswer(fillField: true);
-                        // Answer is now on screen — play the audio immediately.
-                        widget.audioButtonKey?.currentState
-                            ?.play(showError: false);
-                      },
+                    : () => _revealAnswer(fillField: true),
                 icon: const Icon(Icons.visibility_outlined, size: 18),
                 label: const Text('정답 보기'),
               ),
@@ -220,25 +274,25 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
         const SizedBox(height: 16),
         TextField(
           controller: _controller,
-          enabled: widget.enabled && !_submitting,
-          decoration: const InputDecoration(
+          enabled: !_locked && !_submitting,
+          decoration: InputDecoration(
             labelText: '영어 단어 입력',
             hintText: 'e.g. restaurant',
-            border: OutlineInputBorder(),
+            border: const OutlineInputBorder(),
           ),
           textInputAction: TextInputAction.done,
           onSubmitted: (_) => _submit(),
         ),
         const SizedBox(height: 16),
         FilledButton(
-          onPressed: widget.enabled && !_submitting ? _submit : null,
+          onPressed: !_locked && !_submitting ? _submit : null,
           child: _submitting
               ? const SizedBox(
                   height: 20,
                   width: 20,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('확인'),
+              : Text(wrongFirstTry ? '다시 확인' : '확인'),
         ),
       ],
     );

@@ -15,8 +15,6 @@ _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from .quiz_vocab_bank import ensure_vocab_files
-    from .ielts_vocab_bank import ensure_ielts_vocab_file
     from .extraction_queue import start_worker, stop_worker
 
     settings = get_settings()
@@ -35,9 +33,6 @@ async def lifespan(app: FastAPI):
     Path(settings.debug_runs_dir).mkdir(parents=True, exist_ok=True)
     _STATIC_DIR.mkdir(parents=True, exist_ok=True)
     (_STATIC_DIR / "audio").mkdir(parents=True, exist_ok=True)
-    ensure_vocab_files()
-    ensure_ielts_vocab_file()
-
     from .pipeline_trace import cleanup_old_debug_runs
 
     cleanup_old_debug_runs(settings.debug_runs_retention_days)

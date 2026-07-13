@@ -112,4 +112,5 @@ async def test_build_context_surfaces_identity_and_neighbor_statement(db_session
     ctx = await graph_chat._build_context(db_session, iso_user.id, [maya])
     assert "내 고양이" in ctx                    # identity description surfaced
     assert "병원에 갔다" in ctx                   # neighbour statement BODY, not just label
-    assert "MENTIONS" in ctx                     # relationship triple retained
+    assert "언급된 대상: 마야" in ctx              # MENTIONS relation rendered as natural language
+    assert "MENTIONS" not in ctx                 # not left as a raw/ambiguous triple

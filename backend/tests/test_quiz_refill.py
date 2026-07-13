@@ -14,7 +14,7 @@ from app.db import async_session_factory
 from app.models import Quiz
 from app.workers import quiz_refill
 
-_TYPES = ("cloze", "scramble", "mcq_nuance", "composition")
+_TYPES = ("cloze", "composition")
 
 
 def _make_fake_bundle(counter: list[int]):

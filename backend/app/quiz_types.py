@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-QUIZ_TYPES = frozenset({"cloze", "scramble", "mcq_nuance", "composition"})
+QUIZ_TYPES = frozenset({"cloze", "composition"})
 QUEUE_KINDS = frozenset({"new", "review", "archived"})
 
-# All four types are servable. They are generated together as a bundle from a
-# single Statement (see quiz_bundle.py) and queued per target language.
-ENABLED_QUIZ_TYPES = frozenset({"cloze", "scramble", "mcq_nuance", "composition"})
+ENABLED_QUIZ_TYPES = frozenset({"cloze", "composition"})
 
 
 def validate_quiz_type(quiz_type: str) -> str:

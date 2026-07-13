@@ -217,7 +217,9 @@ async def run_quiz_generate_pipeline(
     # ── Vocab-based mode: selected_vocab_id determines behavior ─────────────
     # statement_bank:* → use graph-extracted expression (old "freedom OFF")
     # default:* or user vocab → use CEFR random seed (old "freedom ON")
-    selected_vocab = selected_vocab_id or "default:english"
+    # The legacy entry endpoint now defaults to graph statements. External
+    # vocabulary pools are no longer valid quiz seeds.
+    selected_vocab = "graph"
     # legacy "default" → english
     if selected_vocab == "default":
         selected_vocab = "default:english"
@@ -244,7 +246,7 @@ async def run_quiz_generate_pipeline(
     target_level = get_language_level(user, lang)
     use_statement_bank = selected_vocab.startswith("statement_bank:")
     # For tracing we keep this name; effectively replaces old is_freedom_on
-    effective_freedom = not use_statement_bank
+    effective_freedom = False if selected_vocab == "graph" else not use_statement_bank
 
     # Pick expression (statement bank mode) or vocab seed (default/custom mode)
     statement_expr: dict | None = None
@@ -253,6 +255,9 @@ async def run_quiz_generate_pipeline(
     if use_statement_bank:
         from .node_expression_store import pick_random_expression_for_quiz
         statement_expr = await pick_random_expression_for_quiz(user_id, lang, target_level=target_level)
+    elif selected_vocab == "graph":
+        # No external vocabulary fallback: use the entry/graph selector below.
+        vocab_seed = None
     else:
         from .user_vocab_store import VocabularyNotFoundError, get_vocab_seed
         try:
@@ -467,6 +472,8 @@ async def run_quiz_generate_pipeline(
         source_mode = "statement"
     elif selected_vocab.startswith("default:"):
         source_mode = "default"
+    elif selected_vocab == "graph":
+        source_mode = "graph"
     else:
         source_mode = "custom"
     source_meta: dict = {

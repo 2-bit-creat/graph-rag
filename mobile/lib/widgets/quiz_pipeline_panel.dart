@@ -213,7 +213,7 @@ class _QuizPipelinePanelState extends State<QuizPipelinePanel> {
     try {
       final result = await apiClient.generateQuizGraph(
         quizType,
-        selectedVocabId: _selectedVocabId,
+        selectedVocabId: null,
         language: _selectedLanguage,
       );
       final quizId = result['quiz_id']?.toString();
@@ -566,16 +566,18 @@ class QuizGraphGenerateCard extends StatelessWidget {
 
   /// Vocab sets for the currently selected language.
   List<Map<String, dynamic>> _vocabsForLang(String lang) {
+    // Quiz generation is graph-only now; vocabulary lists are not quiz seeds.
+    return const [];
+    /*
     final result = <Map<String, dynamic>>[];
     for (final raw in vocabularies) {
       if (raw is! Map) continue;
       final id = raw['id']?.toString() ?? '';
+      if (id.startsWith('statement_bank:')) continue;
       final vocabLang = raw['language']?.toString() ?? 'english';
       // Match language explicitly or infer from id prefix
       String inferredLang = vocabLang;
-      if (id.startsWith('statement_bank:')) {
-        inferredLang = id.split(':')[1];
-      } else if (id.startsWith('default:')) {
+      if (id.startsWith('default:')) {
         inferredLang = id.split(':')[1];
       }
       if (inferredLang == lang) {
@@ -583,6 +585,7 @@ class QuizGraphGenerateCard extends StatelessWidget {
       }
     }
     return result;
+    */
   }
 
   @override
@@ -684,7 +687,7 @@ class QuizGraphGenerateCard extends StatelessWidget {
             ),
           const SizedBox(height: AppSpacing.sm),
           // ── Quiz type buttons ────────────────────────────────────────────
-          for (final b in _buttons) ...[
+          for (final b in _buttons.take(1)) ...[
             _QuizTypeRow(
               icon: b.icon,
               label: b.label,

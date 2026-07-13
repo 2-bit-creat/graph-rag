@@ -37,6 +37,7 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
       final items = raw
           .whereType<Map>()
           .map((e) => VocabularySummary.fromJson(Map<String, dynamic>.from(e)))
+          .where((v) => !v.id.startsWith('statement_bank:'))
           .toList();
       if (mounted) {
         setState(() {

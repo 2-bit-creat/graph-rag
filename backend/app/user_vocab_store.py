@@ -190,7 +190,9 @@ def _statement_vocab_summary(store: dict[str, Any]) -> dict[str, Any]:
 def _sorted_user_vocabularies(store: dict[str, Any]) -> list[dict[str, Any]]:
     vocabs = [
         v for v in store.get("vocabularies") or []
-        if isinstance(v, dict) and v.get("id")
+        if isinstance(v, dict)
+        and v.get("id")
+        and v.get("id") != IELTS_VOCAB_ID
     ]
     vocabs.sort(
         key=lambda v: (
@@ -202,7 +204,7 @@ def _sorted_user_vocabularies(store: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 async def list_vocabularies(user_id: uuid.UUID) -> list[dict[str, Any]]:
-    store = await asyncio.to_thread(_ensure_ielts_vocab_sync, user_id)
+    store = await asyncio.to_thread(_read_store_sync, user_id)
     # Skip legacy statement_expressions (replaced by node_expression_store per-language)
     custom = [
         _vocab_summary(v) for v in _sorted_user_vocabularies(store)
@@ -210,7 +212,7 @@ async def list_vocabularies(user_id: uuid.UUID) -> list[dict[str, Any]]:
     ]
     # Return both language defaults + user-created custom sets
     # statement_bank:* entries are appended by the router (vocabulary.py)
-    result = [_default_english_summary(), _default_german_summary(), *custom]
+    result = [*custom]
     # Surface the tutor vocabulary once it has collected anything — one entry
     # per language so learners never see mixed-language word lists.
     result.extend(_tutor_vocab_summaries(store))
@@ -238,15 +240,10 @@ def _default_words_german() -> list[dict[str, Any]]:
 
 
 async def get_vocabulary(user_id: uuid.UUID, vocab_id: str) -> dict[str, Any]:
-    if vocab_id in _DEFAULT_IDS:
-        is_german = vocab_id == DEFAULT_VOCAB_ID_GERMAN
-        summary = _default_german_summary() if is_german else _default_english_summary()
-        summary["words"] = await asyncio.to_thread(
-            _default_words_german if is_german else _default_words_english
-        )
-        return summary
+    if vocab_id in _DEFAULT_IDS or vocab_id == IELTS_VOCAB_ID:
+        raise VocabularyNotFoundError("External vocabulary banks are no longer available")
 
-    store = await asyncio.to_thread(_ensure_ielts_vocab_sync, user_id)
+    store = await asyncio.to_thread(_read_store_sync, user_id)
 
     if vocab_id == STATEMENT_VOCAB_ID:
         words = store.get("statement_expressions") or []
@@ -287,7 +284,7 @@ async def create_vocabulary(
         raise ValueError("Vocabulary name is required")
 
     def _create() -> dict[str, Any]:
-        store = _ensure_ielts_vocab_sync(user_id)
+        store = _read_store_sync(user_id)
         vocab_id = str(uuid.uuid4())
         vocab = {
             "id": vocab_id,
@@ -312,7 +309,7 @@ async def upsert_statement_expressions(
         return
 
     def _upsert() -> None:
-        store = _ensure_ielts_vocab_sync(user_id)
+        store = _read_store_sync(user_id)
         existing: list[dict[str, Any]] = store.get("statement_expressions") or []
         seen_exprs = {e.get("expression", "").lower() for e in existing if isinstance(e, dict)}
         now = _utc_now()
@@ -569,7 +566,7 @@ async def update_vocabulary(
         description = description.strip()
 
     def _update() -> dict[str, Any]:
-        store = _ensure_ielts_vocab_sync(user_id)
+        store = _read_store_sync(user_id)
         vocab = _find_vocab(store, vocab_id)
         if vocab is None:
             raise VocabularyNotFoundError(f"Vocabulary not found: {vocab_id}")
@@ -602,7 +599,7 @@ async def add_word(
         raise ValueError("Meaning is required")
 
     def _add() -> dict[str, Any]:
-        store = _ensure_ielts_vocab_sync(user_id)
+        store = _read_store_sync(user_id)
         vocab = _find_vocab(store, vocab_id)
         if vocab is None:
             raise VocabularyNotFoundError(f"Vocabulary not found: {vocab_id}")
@@ -633,7 +630,7 @@ async def delete_word(user_id: uuid.UUID, vocab_id: str, word: str) -> None:
         raise ValueError("Word is required")
 
     def _delete() -> None:
-        store = _ensure_ielts_vocab_sync(user_id)
+        store = _read_store_sync(user_id)
         vocab = _find_vocab(store, vocab_id)
         if vocab is None:
             raise VocabularyNotFoundError(f"Vocabulary not found: {vocab_id}")
@@ -668,7 +665,7 @@ async def update_word(
         raise ValueError("Meaning is required")
 
     def _update() -> dict[str, Any]:
-        store = _ensure_ielts_vocab_sync(user_id)
+        store = _read_store_sync(user_id)
         vocab = _find_vocab(store, vocab_id)
         if vocab is None:
             raise VocabularyNotFoundError(f"Vocabulary not found: {vocab_id}")
@@ -684,7 +681,7 @@ async def update_word(
 
 
 def _pick_custom_seed_sync(user_id: uuid.UUID, vocab_id: str) -> dict[str, str]:
-    store = _ensure_ielts_vocab_sync(user_id)
+    store = _read_store_sync(user_id)
     vocab = _find_vocab(store, vocab_id)
     if vocab is None:
         raise VocabularyNotFoundError(f"Vocabulary not found: {vocab_id}")
@@ -704,18 +701,6 @@ async def get_vocab_seed(
     user_level: int,
     language: str = "english",
 ) -> dict[str, str]:
-    if vocab_id in _DEFAULT_IDS:
-        # Derive language from vocab_id first, then fall back to caller-supplied language
-        if vocab_id == DEFAULT_VOCAB_ID_GERMAN:
-            from .german_vocab_bank import get_random_vocab_seed
-        elif vocab_id == DEFAULT_VOCAB_ID_ENGLISH or vocab_id == DEFAULT_VOCAB_ID:
-            from .quiz_vocab_bank import get_random_vocab_seed
-        elif language.lower() == "german":
-            from .german_vocab_bank import get_random_vocab_seed
-        else:
-            from .quiz_vocab_bank import get_random_vocab_seed
-
-        seed = get_random_vocab_seed(user_level)
-        seed["vocab_id"] = vocab_id
-        return seed
+    if vocab_id in _DEFAULT_IDS or vocab_id == IELTS_VOCAB_ID:
+        raise VocabularyNotFoundError("External vocabulary banks are no longer available")
     return await asyncio.to_thread(_pick_custom_seed_sync, user_id, vocab_id)

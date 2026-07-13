@@ -386,9 +386,9 @@ def _is_english_blank(text: str) -> bool:
 
 
 def _validate_malheoboca_cloze(quiz_data: dict, blank: str, difficulty: int) -> None:
-    context_ko = _ensure_malheoboca_span(
-        quiz_data.get("context_ko") or "", fallback=blank
-    )
+    # Never use the target answer as a fallback for the native-language
+    # meaning. That leaks the answer before the learner submits.
+    context_ko = _ensure_malheoboca_span(quiz_data.get("context_ko") or "")
     quiz_data["context_ko"] = context_ko
     quiz_data["blank_display"] = generate_malheoboca_hint(blank, difficulty)
 
@@ -429,9 +429,7 @@ def _apply_freedom_seed(
         quiz_data["sentence_en"] = sentence_en
     _sync_prompt_en_with_blank(quiz_data, seed)
     quiz_data["blank_display"] = generate_malheoboca_hint(seed, target_level)
-    quiz_data["context_ko"] = _ensure_malheoboca_span(
-        quiz_data.get("context_ko") or "", fallback=seed
-    )
+    quiz_data["context_ko"] = _ensure_malheoboca_span(quiz_data.get("context_ko") or "")
 
 
 def _is_valid_blank(text: str, *, target_language: str = "english") -> bool:
