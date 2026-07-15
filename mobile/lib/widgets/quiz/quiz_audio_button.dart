@@ -87,6 +87,7 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
         await _player.play(DeviceFileSource(_cachedFilePath!));
       }
     } on MissingPluginException {
+      if (mounted) setState(() => _playing = false);
       if (showError && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -98,6 +99,7 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
         );
       }
     } on TimeoutException {
+      if (mounted) setState(() => _playing = false);
       if (showError && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

@@ -27,7 +27,8 @@ class AppLocaleController extends ChangeNotifier {
 
   /// Map a native-language key ('korean'/'english') to a UI locale and persist.
   Future<void> setFromNativeLanguage(String? nativeLanguage) async {
-    final next = (nativeLanguage ?? '').toLowerCase() == 'english' ? 'en' : 'ko';
+    final next =
+        (nativeLanguage ?? '').toLowerCase() == 'english' ? 'en' : 'ko';
     await _set(next);
   }
 
@@ -73,7 +74,7 @@ const Map<String, String> _ko = {
   'chat.mode.journal': '일기 쓰기',
   'chat.hint.distill': '고칠 부분을 말해보세요. 예) 첫 문장 빼줘',
   'chat.hint.composition': '영어로 작문해서 보내기',
-  'chat.hint.word': '카드에서 답을 선택하세요',
+  'chat.hint.word': '빈칸에 들어갈 표현을 입력하세요',
   'chat.hint.journal': '일기를 작성하세요…',
   'graph.emptyTitle': '아직 지식그래프가 비어 있어요',
   'graph.emptyBody': '+ 버튼으로 첫 일기를 써보세요. 기록이 지식그래프가 됩니다.',
@@ -112,7 +113,8 @@ const Map<String, String> _en = {
   'shell.collapseChat': 'Collapse chat panel',
   'shell.expandChat': 'Expand chat panel',
   'chat.inputHint': 'Say anything…',
-  'chat.emptyTitle': 'Ask right here while you look at your graph.\nThe AI remembers your journal and answers.',
+  'chat.emptyTitle':
+      'Ask right here while you look at your graph.\nThe AI remembers your journal and answers.',
   'chat.menu.journal': 'Write a journal',
   'chat.menu.distill': 'Turn this chat into a journal',
   'chat.menu.composition': 'Writing quiz',
@@ -123,19 +125,23 @@ const Map<String, String> _en = {
   'chat.mode.journal': 'Journal',
   'chat.hint.distill': 'Tell me what to fix. e.g. "drop the first sentence"',
   'chat.hint.composition': 'Write your answer and send',
-  'chat.hint.word': 'Pick your answer on the card',
+  'chat.hint.word': 'Type the expression for the blank',
   'chat.hint.journal': 'Write your journal…',
   'graph.emptyTitle': 'Your knowledge graph is empty',
-  'graph.emptyBody': 'Tap + to write your first journal. Your entries become a knowledge graph.',
-  'journal.failed': "Couldn't process the journal. Please try again in a moment.",
-  'quiz.empty': 'No questions yet. I just started generating some — try again in a moment.',
+  'graph.emptyBody':
+      'Tap + to write your first journal. Your entries become a knowledge graph.',
+  'journal.failed':
+      "Couldn't process the journal. Please try again in a moment.",
+  'quiz.empty':
+      'No questions yet. I just started generating some — try again in a moment.',
   'quiz.sessionDone': 'You finished this session! 👏',
   'quiz.close': 'Close',
   'quiz.more': 'More',
   'settings.title': 'Settings',
   'settings.nativeLanguage': 'Native language',
   'settings.targetLanguages': 'Languages you\'re learning',
-  'settings.nativeNote': 'Changing your native language switches new knowledge graphs and the app language to it.',
+  'settings.nativeNote':
+      'Changing your native language switches new knowledge graphs and the app language to it.',
   'common.save': 'Save',
   'common.saved': 'Saved.',
   'common.cancel': 'Cancel',
@@ -149,6 +155,7 @@ const Map<String, String> _en = {
   'account.signOut': 'Sign out',
   'account.forget': 'Remove from this device',
   'account.deleteData': 'Delete account & data',
-  'account.deleteConfirm': 'This permanently deletes all journals, graph, and quizzes for this account. Continue?',
+  'account.deleteConfirm':
+      'This permanently deletes all journals, graph, and quizzes for this account. Continue?',
   'account.mainHint': 'Your existing data opens under the ID "main".',
 };

@@ -1,7 +1,9 @@
+import json
 import uuid
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
@@ -17,6 +19,8 @@ from .models import (
     Ontology,
     OntologyVersion,
     Quiz,
+    QuizGenerationState,
+    QuizSourceExploration,
     ReviewSchedule,
     SpeakerEntryAppearance,
     SpeakerProfile,
@@ -3304,6 +3308,10 @@ async def create_quiz(
     source_nodes: list[uuid.UUID] | None = None,
     pipeline_trace: dict | None = None,
     debug_run_dir: str | None = None,
+    track: str = "daily",
+    batch_id: uuid.UUID | None = None,
+    source_kind: str | None = None,
+    generation_key: str | None = None,
 ) -> Quiz:
     # Keep the dedicated column and the quiz_data mirror in sync so the
     # per-language queue filter and legacy JSON readers agree.
@@ -3315,6 +3323,7 @@ async def create_quiz(
         quiz_type=quiz_type,
         language=(language or "").lower() or None,
         source_nodes=source_nodes,
+        generation_key=generation_key,
         question_ko=question_ko,
         sentence_en=sentence_en,
         quiz_data=quiz_data,
@@ -3322,6 +3331,9 @@ async def create_quiz(
         queue_kind=queue_kind,
         pipeline_trace=pipeline_trace,
         debug_run_dir=debug_run_dir,
+        track=track,
+        batch_id=batch_id,
+        source_kind=source_kind,
     )
     session.add(quiz)
     await session.commit()
@@ -3359,6 +3371,9 @@ async def update_user_profile_settings(
     target_languages: list[str] | None = None,
     native_language: str | None = None,
     language_levels: dict[str, int] | None = None,
+    daily_cloze_target: int | None = None,
+    daily_composition_target: int | None = None,
+    quiz_review_ratio: float | None = None,
 ) -> User:
     from .level_guidelines import clamp_level
 
@@ -3384,6 +3399,12 @@ async def update_user_profile_settings(
         # Sync global current_level if English is among the updated languages
         if "english" in merged:
             user.current_level = merged["english"]
+    if daily_cloze_target is not None:
+        user.daily_cloze_target = max(0, min(100, int(daily_cloze_target)))
+    if daily_composition_target is not None:
+        user.daily_composition_target = max(0, min(100, int(daily_composition_target)))
+    if quiz_review_ratio is not None:
+        user.quiz_review_ratio = max(0.0, min(1.0, float(quiz_review_ratio)))
     await session.commit()
     await session.refresh(user)
     return user
@@ -3442,6 +3463,7 @@ async def get_all_statement_nodes(
             "node_name": n.name,
             "content_ko": content_ko,
             "translation_en": "",
+            "created_at": n.created_at.isoformat() if n.created_at else None,
         })
     return out
 
@@ -3476,6 +3498,7 @@ async def list_quiz_queue_items(
     queue_kind: str,
     *,
     quiz_type: str | None = None,
+    track: str | None = None,
     limit: int = 50,
     offset: int = 0,
     order: str = "desc",
@@ -3497,19 +3520,153 @@ async def list_quiz_queue_items(
 
     if quiz_type is not None:
         filters.append(Quiz.quiz_type == quiz_type)
+    if track is not None:
+        filters.append(Quiz.track == track)
 
     count_q = select(func.count()).select_from(Quiz).where(*filters)
     total = int((await session.execute(count_q)).scalar_one())
 
-    order_col = Quiz.created_at.asc() if order == "asc" else Quiz.created_at.desc()
+    if queue_kind == "review":
+        # Match quiz_queue.build_session: previous vocabulary misses first,
+        # then low-scoring composition, then correct vocabulary. Oldest wins a
+        # tie, making the rule visible and deterministic to learners.
+        review_group = case(
+            (and_(Quiz.quiz_type != "composition", Quiz.times_wrong > 0), 0),
+            (Quiz.quiz_type == "composition", 1),
+            else_=2,
+        )
+        review_quality = case(
+            (Quiz.quiz_type == "composition", func.coalesce(Quiz.last_quality, 5)),
+            else_=5,
+        )
+        ordering = (
+            review_group.asc(),
+            review_quality.asc(),
+            Quiz.last_answered_at.asc().nullsfirst(),
+            Quiz.created_at.asc(),
+        )
+    else:
+        ordering = (Quiz.created_at.asc() if order == "asc" else Quiz.created_at.desc(),)
     result = await session.execute(
         select(Quiz)
         .where(*filters)
-        .order_by(order_col)
+        .order_by(*ordering)
         .offset(offset)
         .limit(limit)
     )
     return list(result.scalars().all()), total
+
+
+async def list_quiz_source_explorations(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    language: str | None = None,
+) -> list[dict]:
+    """List every usable Statement source with its exploration state.
+
+    A missing exploration row is meaningful: the graph node exists but has not
+    yet been visited by the quiz-generation pipeline.
+    """
+    lang = (language or "english").lower()
+    rows = await session.execute(
+        select(Node, QuizSourceExploration)
+        .outerjoin(
+            QuizSourceExploration,
+            and_(
+                QuizSourceExploration.user_id == user_id,
+                QuizSourceExploration.node_id == Node.id,
+                QuizSourceExploration.language == lang,
+            ),
+        )
+        .where(
+            Node.user_id == user_id,
+            Node.type == "Statement",
+            Node.deleted_at.is_(None),
+        )
+        .order_by(Node.created_at.desc())
+    )
+    result: list[dict] = []
+    for node, exploration in rows.all():
+        content = ""
+        if node.description:
+            try:
+                content = (json.loads(node.description).get("content") or "").strip()
+            except (ValueError, AttributeError):
+                content = node.description.split("\n", 1)[-1].strip()
+        result.append(
+            {
+                "node_id": node.id,
+                "node_name": node.name,
+                "content_ko": content,
+                # Existing rows may use the legacy ``completed`` value. Keep
+                # the API contract stable while still honoring an explicit
+                # queue-reset ``unexplored`` state.
+                "status": (
+                    "explored"
+                    if exploration and exploration.status in {"completed", "explored"}
+                    else "unexplored"
+                ),
+                "cloze_status": exploration.cloze_status if exploration else "available",
+                "word_count": exploration.word_count if exploration else 0,
+                "expression_count": exploration.expression_count if exploration else 0,
+                "composition_count": exploration.composition_count if exploration else 0,
+                "updated_at": exploration.updated_at if exploration else None,
+            }
+        )
+    return result
+
+
+async def count_new_quiz_types(
+    session: AsyncSession, user_id: uuid.UUID, language: str
+) -> dict[str, int]:
+    """Count active new quizzes by type for refill threshold checks."""
+    from sqlalchemy import func
+
+    result = await session.execute(
+        select(Quiz.quiz_type, func.count())
+        .where(
+            Quiz.user_id == user_id,
+            Quiz.language == language,
+            Quiz.queue_kind == "new",
+            Quiz.repetitions == 0,
+            Quiz.quiz_type.in_(("cloze", "composition")),
+        )
+        .group_by(Quiz.quiz_type)
+    )
+    return {str(kind): int(count) for kind, count in result.all()}
+
+
+async def count_today_completed_quiz_types(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    languages: list[str],
+) -> dict[str, dict[str, int]]:
+    """Count distinct daily-set quizzes first answered today, per language/type."""
+    korea = ZoneInfo("Asia/Seoul")
+    today_start = datetime.now(korea).replace(hour=0, minute=0, second=0, microsecond=0)
+    start_utc = today_start.astimezone(UTC)
+    progress = {
+        language.lower(): {"cloze_completed": 0, "composition_completed": 0}
+        for language in languages
+    }
+    result = await session.execute(
+        select(Quiz.language, Quiz.quiz_type, func.count())
+        .where(
+            Quiz.user_id == user_id,
+            Quiz.track == "daily",
+            Quiz.first_answered_at.is_not(None),
+            Quiz.first_answered_at >= start_utc,
+            Quiz.quiz_type.in_(("cloze", "composition")),
+        )
+        .group_by(Quiz.language, Quiz.quiz_type)
+    )
+    for language, quiz_type, count in result.all():
+        lang = str(language or "english").lower()
+        row = progress.setdefault(lang, {"cloze_completed": 0, "composition_completed": 0})
+        key = "cloze_completed" if quiz_type == "cloze" else "composition_completed"
+        row[key] = int(count)
+    return progress
 
 
 async def list_quiz_history(
@@ -3554,6 +3711,12 @@ async def archive_quiz(
     if quiz is None:
         return None
     quiz.queue_kind = "archived"
+    # Archived test cards must not reserve their source/expression identity.
+    # Otherwise deleting a card and immediately regenerating it appears to do
+    # nothing because the durable duplicate guard still sees the old card.
+    quiz.generation_key = None
+    await _reset_cloze_source_exploration(session, quiz)
+    await invalidate_quiz_generation_state(session, user_id, quiz.language)
     await session.commit()
     await session.refresh(quiz)
     return quiz
@@ -3565,9 +3728,91 @@ async def delete_quiz_permanent(
     quiz = await get_quiz(session, quiz_id, user_id)
     if quiz is None:
         return False
+    language = quiz.language
+    await _reset_cloze_source_exploration(session, quiz)
     await session.delete(quiz)
+    await invalidate_quiz_generation_state(session, user_id, language)
     await session.commit()
     return True
+
+
+async def reset_quiz_queue(session: AsyncSession, user_id: uuid.UUID) -> int:
+    """Archive the full learning queue and reset every source circuit breaker.
+
+    This is intentionally broader than deleting visible cards: sources that
+    produced no renderable card have no quiz to select, but their exploration rows must also be
+    cleared for a genuine clean-slate regeneration test.
+    """
+    result = await session.execute(
+        select(Quiz.id).where(
+            Quiz.user_id == user_id,
+            Quiz.queue_kind != "archived",
+            Quiz.quiz_type.in_(("cloze", "composition")),
+        )
+    )
+    ids = list(result.scalars().all())
+    if ids:
+        await session.execute(
+            update(Quiz).where(Quiz.id.in_(ids)).values(
+                queue_kind="archived", generation_key=None
+            )
+        )
+    await session.execute(
+        update(QuizSourceExploration)
+        .where(QuizSourceExploration.user_id == user_id)
+        .values(
+            status="unexplored",
+            composition_count=0,
+            word_count=0,
+            expression_count=0,
+            cloze_status="available",
+            cloze_generator_version=None,
+        )
+    )
+    await session.execute(
+        update(QuizGenerationState)
+        .where(QuizGenerationState.user_id == user_id)
+        .values(status="available")
+    )
+    # The Statement bank is generated from the same exploration run. Keeping
+    # it would mix old prompt output into a clean regeneration test. Manual
+    # vocabularies use a different store and remain untouched.
+    from .node_expression_store import clear_user_node_expressions
+
+    await clear_user_node_expressions(user_id)
+    await session.commit()
+    return len(ids)
+
+
+async def _reset_cloze_source_exploration(session: AsyncSession, quiz: Quiz) -> None:
+    """Deleting a cloze explicitly makes its Statement eligible again."""
+    if quiz.quiz_type != "cloze" or not quiz.language or not quiz.source_nodes:
+        return
+    await session.execute(
+        update(QuizSourceExploration)
+        .where(
+            QuizSourceExploration.user_id == quiz.user_id,
+            QuizSourceExploration.language == quiz.language.lower(),
+            QuizSourceExploration.node_id.in_(list(quiz.source_nodes)),
+        )
+        .values(cloze_status="available", cloze_generator_version=None)
+    )
+
+
+async def invalidate_quiz_generation_state(
+    session: AsyncSession, user_id: uuid.UUID, language: str | None
+) -> None:
+    """Allow deleted quiz sources to be regenerated on the next refill."""
+    if not language:
+        return
+    await session.execute(
+        update(QuizGenerationState)
+        .where(
+            QuizGenerationState.user_id == user_id,
+            QuizGenerationState.language == language.lower(),
+        )
+        .values(status="available")
+    )
 
 
 async def list_quiz_generations(

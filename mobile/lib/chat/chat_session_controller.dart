@@ -39,7 +39,9 @@ class ChatSessionController extends ChangeNotifier {
   int _quizIndex = 0;
   String _quizType = 'composition';
   String? _quizLanguage; // sticky across "더보기" retries within the same mode
-  Map<String, dynamic>? _quizFeedback; // composition tutor feedback for current item
+  Map<String, dynamic>?
+      _quizFeedback; // composition tutor feedback for current item
+  bool _wordQuizSolved = false;
 
   // Distill (chat → journal) draft state.
   final List<Map<String, dynamic>> _distillSentences = [];
@@ -63,7 +65,15 @@ class ChatSessionController extends ChangeNotifier {
   Map<String, dynamic>? get activeQuiz =>
       _quizIndex < _quizItems.length ? _quizItems[_quizIndex] : null;
   Map<String, dynamic>? get quizFeedback => _quizFeedback;
-  bool get quizExhausted => _quizItems.isNotEmpty && _quizIndex >= _quizItems.length;
+  bool get wordQuizSolved => _wordQuizSolved;
+  bool get wordQuizUsesComposer {
+    if (_mode != ChatMode.quizWord) return false;
+    final type = activeQuiz?['quiz_type']?.toString() ?? 'cloze';
+    return type == 'cloze';
+  }
+
+  bool get quizExhausted =>
+      _quizItems.isNotEmpty && _quizIndex >= _quizItems.length;
 
   // Distill getters
   List<Map<String, dynamic>> get distillSentences =>
@@ -256,6 +266,7 @@ class ChatSessionController extends ChangeNotifier {
       _quizItems.clear();
       _quizIndex = 0;
       _quizFeedback = null;
+      _wordQuizSolved = false;
       _distillSentences.clear();
     }
     notifyListeners();
@@ -277,8 +288,7 @@ class ChatSessionController extends ChangeNotifier {
     final msg = GraphChatMessage(
       role: 'assistant',
       kind: 'journal_mode',
-      content:
-          '📔 일기 쓰기 모드\n'
+      content: '📔 일기 쓰기 모드\n'
           '@화자로 작성한 뒤 저장하면, 받아쓰기 → 화자 확인 → 그래프 검토 순으로 '
           '아래에서 진행 상황을 확인할 수 있어요.',
     );
@@ -316,14 +326,17 @@ class ChatSessionController extends ChangeNotifier {
         // Save is a dedicated button on ChatJournalComposeBar; Enter = newline.
         break;
       case ChatMode.normal:
-      case ChatMode.quizWord:
         await sendMessage(text);
+        break;
+      case ChatMode.quizWord:
+        if (wordQuizUsesComposer) await answerWordQuiz(text);
         break;
     }
   }
 
   /// Persist user echo + journal_progress card and hand work to [journalTask].
-  Future<void> saveJournalText(String labeledText, {String? displayText}) async {
+  Future<void> saveJournalText(String labeledText,
+      {String? displayText}) async {
     if (journalTask.isBusy) {
       errors.value = '이미 일기 처리가 진행 중이에요. 완료된 뒤 다시 저장해 주세요.';
       return;
@@ -472,6 +485,7 @@ class ChatSessionController extends ChangeNotifier {
     _quizItems.clear();
     _quizIndex = 0;
     _quizFeedback = null;
+    _wordQuizSolved = false;
     _busy = true;
     notifyListeners();
     try {
@@ -522,6 +536,47 @@ class ChatSessionController extends ChangeNotifier {
 
   /// Submit a word-quiz answer from a self-contained card. Returns the raw
   /// result so the card can reveal correctness; the caller then calls [nextQuiz].
+  Future<void> answerWordQuiz(String answer) async {
+    final quiz = activeQuiz;
+    if (quiz == null || !wordQuizUsesComposer || _wordQuizSolved) return;
+    final normalized =
+        answer.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+    if (normalized.isEmpty) return;
+
+    _messages.add(GraphChatMessage(role: 'user', content: answer.trim()));
+    if (_quizFeedback != null) {
+      final qd = (quiz['quiz_data'] as Map?)?.cast<String, dynamic>() ?? {};
+      final accepted = <String>{
+        if ((qd['blank']?.toString() ?? '').trim().isNotEmpty)
+          qd['blank'].toString().trim().toLowerCase(),
+        for (final value in (qd['accepted_answers'] as List? ?? const []))
+          value.toString().trim().toLowerCase(),
+      }.map((value) => value.replaceAll(RegExp(r'\s+'), ' ')).toSet();
+      if (accepted.contains(normalized)) {
+        _wordQuizSolved = true;
+      } else {
+        errors.value = '정답과 철자를 비교한 뒤 다시 입력해 보세요.';
+      }
+      notifyListeners();
+      return;
+    }
+
+    _busy = true;
+    notifyListeners();
+    try {
+      final result = await submitWordQuiz(answer: answer.trim());
+      if (result != null) {
+        _quizFeedback = result;
+        _wordQuizSolved = result['is_correct'] == true;
+      }
+    } finally {
+      _busy = false;
+      notifyListeners();
+    }
+  }
+
+  /// Submit choices made directly on non-cloze cards. Cloze text normally
+  /// enters through [answerWordQuiz] and therefore through the shared composer.
   Future<Map<String, dynamic>?> submitWordQuiz({
     String? answer,
     List<int>? order,
@@ -536,7 +591,8 @@ class ChatSessionController extends ChangeNotifier {
         order: order,
         selectedIndex: selectedIndex,
       );
-      final summary = answer ?? order?.join(' ') ?? selectedIndex?.toString() ?? '';
+      final summary =
+          answer ?? order?.join(' ') ?? selectedIndex?.toString() ?? '';
       await _persistQuizEvent(quiz, summary, resp);
       return resp;
     } catch (e) {
@@ -549,6 +605,7 @@ class ChatSessionController extends ChangeNotifier {
   void nextQuiz() {
     _quizIndex++;
     _quizFeedback = null;
+    _wordQuizSolved = false;
     notifyListeners();
   }
 

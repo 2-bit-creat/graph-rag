@@ -144,6 +144,8 @@ async def save_node_expressions(
                 "expression": expr_key,
                 "meaning": (item.get("meaning_ko") or item.get("meaning") or "").strip(),
                 "example": (item.get("example_en") or item.get("example") or "").strip(),
+                "surface_form": (item.get("surface_form") or "").strip(),
+                "meaning_parts": item.get("meaning_parts") or [],
                 "cefr": cefr,
                 "added_at": now,
             })
@@ -225,6 +227,27 @@ async def get_pending_node_language_pairs(
                     pairs.append((node_id, lang))
         return pairs
     return await asyncio.to_thread(_get)
+
+
+async def clear_user_node_expressions(user_id: uuid.UUID) -> int:
+    """Clear only Statement-derived expressions and extraction completion flags.
+
+    Manually managed vocabularies live in ``user_vocab_store`` and are therefore
+    intentionally outside this reset.
+    """
+    def _clear() -> int:
+        store = _read_store_sync(user_id)
+        deleted = sum(
+            len(items)
+            for language_map in store.get("expressions", {}).values()
+            if isinstance(language_map, dict)
+            for items in language_map.values()
+            if isinstance(items, list)
+        )
+        _write_store_sync(user_id, _empty_store())
+        return deleted
+
+    return await asyncio.to_thread(_clear)
 
 
 async def delete_node_expression(

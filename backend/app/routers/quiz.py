@@ -31,6 +31,8 @@ from ..quiz_pipeline import (
 )
 from ..quiz_presenter import quiz_queue_item_dict
 from ..quiz_queue import build_session, count_queues, grade_answer, pick_quizzes_by_ids, record_quiz_result
+from ..quiz_batch import create_extra_daily_batch, fill_user_daily_batches
+from ..quiz_audio_engine import resolve_quiz_tts_text, synthesize_quiz_audio
 from ..quiz_settings import quiz_selection_settings
 from ..quiz_types import ENABLED_QUIZ_TYPES, validate_quiz_type
 from ..tutor import DrillSeedError, evaluate_attempt_against_reference
@@ -44,6 +46,7 @@ from ..schemas import (
     QuizGenerateRequest,
     QuizGenerationListOut,
     QuizGenerationTraceOut,
+    QuizExplorationListOut,
     QuizItemOut,
     QuizQueueItemOut,
     QuizQueueListOut,
@@ -73,6 +76,8 @@ def _quiz_out(quiz) -> QuizItemOut:
         quiz_data=quiz.quiz_data,
         audio_url=_quiz_audio_url(quiz),
         associated_entry_id=quiz.associated_entry_id,
+        track=quiz.track,
+        batch_id=quiz.batch_id,
     )
 
 
@@ -82,6 +87,11 @@ async def get_profile(
     session: AsyncSession = Depends(get_session),
 ) -> LearningProfileOut:
     counts = await count_queues(session, user.id)
+    target_languages = crud.get_effective_target_languages(user)
+    daily_progress = await crud.count_today_completed_quiz_types(
+        session, user.id, target_languages
+    )
+
     lo, hi = window_for_level(user.current_level)
     return LearningProfileOut(
         current_level=user.current_level,
@@ -91,17 +101,46 @@ async def get_profile(
         queue_counts={k: QueueCounts(**v) for k, v in counts.items()},
         selection_settings=quiz_selection_settings(user.current_level),
         target_language=getattr(user, "target_language", "english") or "english",
-        target_languages=crud.get_effective_target_languages(user),
+        target_languages=target_languages,
         native_language=getattr(user, "native_language", "korean") or "korean",
         language_levels=dict(getattr(user, "language_levels", None) or {}),
+        daily_cloze_target=user.daily_cloze_target,
+        daily_composition_target=user.daily_composition_target,
+        quiz_review_ratio=user.quiz_review_ratio,
+        daily_progress_by_language=daily_progress,
     )
+
+
+async def _ensure_cloze_audio(session: AsyncSession, quizzes: list) -> None:
+    """Backfill TTS for legacy bundle quizzes that were created without audio."""
+    changed = False
+    for quiz in quizzes:
+        if quiz.quiz_type != "cloze":
+            continue
+        qd = dict(quiz.quiz_data or {})
+        if qd.get("audio_url"):
+            continue
+        text = resolve_quiz_tts_text(
+            "cloze", {"sentence_en": quiz.sentence_en, "quiz_data": qd}
+        )
+        audio_url, _ = await synthesize_quiz_audio(
+            quiz.id,
+            text,
+            language=quiz.language or qd.get("language") or "english",
+        )
+        if audio_url:
+            qd["audio_url"] = audio_url
+            quiz.quiz_data = qd
+            changed = True
+    if changed:
+        await session.commit()
 
 
 @router.get("/queue/items", response_model=QuizQueueListOut)
 async def list_queue_items(
-    background: BackgroundTasks,
     queue_kind: Literal["new", "review"] = Query(...),
     quiz_type: Literal["cloze", "composition"] | None = None,
+    track: Literal["daily", "pinned"] | None = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user: User = Depends(request_user_dep),
@@ -112,18 +151,14 @@ async def list_queue_items(
         user.id,
         queue_kind,
         quiz_type=quiz_type,
+        track=track,
         limit=limit,
         offset=offset,
     )
-    # Top up in the background when the new queue is running low, so the learner
-    # rarely hits an empty queue. Cheap no-op when auto-refill is off or full.
-    settings = get_settings()
-    if (
-        queue_kind == "new"
-        and settings.quiz_auto_enabled
-        and total < settings.quiz_min_new_queue
-    ):
-        background.add_task(refill_user_quizzes, user.id)
+    # Listing a queue must be read-only.  Scheduling LLM refills from this GET
+    # endpoint made page refreshes repeatedly spend API budget when a source
+    # could not produce a valid vocabulary item.  Refill is now triggered by a
+    # graph update or an explicit learner action only.
     node_ids: set[uuid.UUID] = set()
     for quiz in items:
         if quiz.source_nodes:
@@ -135,6 +170,90 @@ async def list_queue_items(
         queue_kind=queue_kind,
         quiz_type=quiz_type,
     )
+
+
+@router.get("/queue/explorations", response_model=QuizExplorationListOut)
+async def list_queue_explorations(
+    language: str | None = Query(None),
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> QuizExplorationListOut:
+    """Show Statement coverage, including per-language quiz-type counts."""
+    languages = (
+        [language.lower()]
+        if language
+        else crud.get_effective_target_languages(user)
+    )
+    rows_by_language = {
+        lang: await crud.list_quiz_source_explorations(session, user.id, language=lang)
+        for lang in languages
+    }
+    merged: dict[str, dict] = {}
+    for lang, rows in rows_by_language.items():
+        for row in rows:
+            node_id = str(row["node_id"])
+            item = merged.setdefault(
+                node_id,
+                {
+                    "node_id": row["node_id"],
+                    "node_name": row["node_name"],
+                    "content_ko": row["content_ko"],
+                    "status": "unexplored",
+                    "cloze_status": "available",
+                    "word_count": 0,
+                    "expression_count": 0,
+                    "composition_count": 0,
+                    "updated_at": None,
+                    "language_stats": [],
+                },
+            )
+            item["language_stats"].append({
+                "language": lang,
+                "status": row["status"],
+                "cloze_status": row["cloze_status"],
+                "generated_counts": {
+                    "cloze": row["word_count"],
+                    "composition": row["composition_count"],
+                },
+                "word_count": row["word_count"],
+                "expression_count": row["expression_count"],
+                "composition_count": row["composition_count"],
+                "updated_at": row["updated_at"],
+            })
+            item["word_count"] += row["word_count"]
+            item["expression_count"] += row["expression_count"]
+            item["composition_count"] += row["composition_count"]
+            if row["updated_at"] and (
+                item["updated_at"] is None or row["updated_at"] > item["updated_at"]
+            ):
+                item["updated_at"] = row["updated_at"]
+    items = list(merged.values())
+    for item in items:
+        explored_languages = sum(
+            1 for stat in item["language_stats"] if stat["status"] == "explored"
+        )
+        if explored_languages == len(languages):
+            item["status"] = "explored"
+        elif explored_languages:
+            item["status"] = "partial"
+    explored = sum(1 for item in items if item["status"] == "explored")
+    partial = sum(1 for item in items if item["status"] == "partial")
+    return QuizExplorationListOut(
+        items=items,
+        explored_count=explored,
+        partial_count=partial,
+        unexplored_count=len(items) - explored - partial,
+        languages=languages,
+    )
+
+
+@router.delete("/queue/reset")
+async def reset_quiz_queue(
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    archived = await crud.reset_quiz_queue(session, user.id)
+    return {"status": "reset", "archived": archived}
 
 
 @router.delete("/{quiz_id}", response_model=QuizDeleteOut)
@@ -407,6 +526,9 @@ async def update_profile_settings(
         target_languages=payload.target_languages,
         native_language=payload.native_language,
         language_levels=payload.language_levels,
+        daily_cloze_target=payload.daily_cloze_target,
+        daily_composition_target=payload.daily_composition_target,
+        quiz_review_ratio=payload.quiz_review_ratio,
     )
     if payload.level is not None and payload.level != prev_level:
         await reclassify_queue_by_level(session, user.id, payload.level)
@@ -478,6 +600,7 @@ async def start_session(
                 language=payload.language,
             )
     if picked:
+        await _ensure_cloze_audio(session, picked)
         lo, hi = window_for_level(user.current_level)
         await trace_quiz_queue_pick(
             session,
@@ -519,7 +642,10 @@ async def submit_quiz(
             target_expressions=qd.get("target_expressions"),
             key_expressions=qd.get("key_expressions"),
         )
-        correct, quality = verdict_to_sm2(eval_result.get("verdict", "understandable"))
+        correct, quality = verdict_to_sm2(
+            eval_result.get("verdict", "understandable"),
+            eval_result.get("quality"),
+        )
         quiz = await record_quiz_result(session, quiz, correct=correct, quality=quality)
         await trace_quiz_sm2_update(
             session, quiz_id, user.id, quiz, correct=correct, quality=quality,
@@ -559,6 +685,29 @@ async def submit_quiz(
 
 @router.post("/refill")
 async def manual_refill(
+    background: BackgroundTasks,
     user: User = Depends(request_user_dep),
 ) -> dict:
-    return await refill_user_quizzes(user.id)
+    # A refill can include several LLM + TTS calls.  Return immediately so the
+    # client connection never waits for the entire batch and times out.
+    background.add_task(refill_user_quizzes, user.id)
+    return {"status": "scheduled"}
+
+
+async def _fill_now(user_id: uuid.UUID) -> dict:
+    from ..db import async_session_factory
+    async with async_session_factory() as session:
+        user = await session.get(User, user_id)
+        if user is None:
+            return {"status": "skipped", "reason": "user not found"}
+        return {"status": "ok", "batches": await fill_user_daily_batches(session, user)}
+
+
+@router.post("/batch/more")
+async def generate_more_batch(
+    language: str | None = Query(None),
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    lang = (language or crud.get_effective_target_languages(user)[0]).lower()
+    return await create_extra_daily_batch(session, user, language=lang)

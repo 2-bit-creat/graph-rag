@@ -14,7 +14,7 @@ from ..deps import request_user_dep
 
 from ..db import get_session
 
-from ..models import User
+from ..models import Node, User
 
 from ..schemas import (
 
@@ -51,6 +51,34 @@ from ..speaker_confirmation import confirm_speaker_identity, recommend_speaker_n
 router = APIRouter(prefix="/graph", tags=["graph"])
 
 v1_router = APIRouter(prefix="/api/v1/graphs", tags=["graph"])
+
+
+@router.patch("/nodes/{node_id}/pin", response_model=NodeOut)
+async def set_node_pin(
+    node_id: uuid.UUID,
+    pinned: bool = Query(...),
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> NodeOut:
+    """Pin/unpin a Statement for an isolated priority mini-batch."""
+    node = await session.get(Node, node_id)
+    if node is None or node.user_id != user.id:
+        raise HTTPException(status_code=404, detail="node not found")
+    if node.type.lower() != "statement":
+        raise HTTPException(status_code=400, detail="only Statement nodes can be pinned")
+    node.is_pinned = pinned
+    await session.commit()
+    if pinned:
+        from ..quiz_batch import create_pinned_batch
+        language = (crud.get_effective_target_languages(user) or ["english"])[0]
+        await create_pinned_batch(
+            session, user, node_id=node_id, language=language
+        )
+    out = await crud.get_node_out(session, node_id, user.id)
+    assert out is not None
+    # The response model remains the node; the generated mini-batch is available
+    # through the pinned queue immediately after this request.
+    return out
 
 
 # 2026-07-06 정책 변경: 확정 그래프도 지식그래프 화면에서 사후 수정(이름·타입·설명,
@@ -735,4 +763,3 @@ async def unlink_node_voice(
     if out is None:
         raise HTTPException(status_code=404, detail="node not found")
     return out
-

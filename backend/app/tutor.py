@@ -105,6 +105,7 @@ async def _pick_journal_seed(
     session: AsyncSession,
     user: User,
     exclude_node_ids: set[str] | None = None,
+    seed_node_ids: set[str] | None = None,
 ) -> dict[str, Any] | None:
     """A random real Statement the user wrote, with Korean content long enough to drill.
 
@@ -114,6 +115,8 @@ async def _pick_journal_seed(
     """
     stmts = await crud.get_all_statement_nodes(session, user.id)
     usable = [s for s in stmts if len((s.get("content_ko") or "").strip()) >= 6]
+    if seed_node_ids:
+        usable = [s for s in usable if str(s.get("node_id")) in seed_node_ids]
     if not usable:
         return None
     if exclude_node_ids:
@@ -182,6 +185,7 @@ async def generate_drill(
     language: str,
     source_mode: SourceMode = "journal",
     exclude_node_ids: set[str] | None = None,
+    seed_node_ids: set[str] | None = None,
     difficulty: str = "normal",
 ) -> dict[str, Any]:
     """Produce one drill: a native-language sentence to translate + hidden targets.
@@ -208,7 +212,7 @@ async def generate_drill(
     seed_block = ""
 
     if source_mode == "journal":
-        seed = await _pick_journal_seed(session, user, exclude_node_ids)
+        seed = await _pick_journal_seed(session, user, exclude_node_ids, seed_node_ids)
         if seed is None:
             raise DrillSeedError("일기에서 출제할 문장이 없어요. 먼저 일기를 작성해 주세요.")
         seed_node_id = seed.get("node_id")
@@ -241,8 +245,15 @@ async def generate_drill(
         f"NATIVE language: {native_label}. TARGET language: {target_label}. "
         f"{_level_line(level, target_label)} "
         f"TARGET-LANGUAGE TEACHING FOCUS: {_lang_guide(language)} "
-        "Produce a single drill sentence that is natural, concrete, and worth "
-        "practicing — avoid textbook blandness. "
+        "Produce a single drill sentence that a real person would actually say, "
+        "with one clear situation and one teachable target expression. "
+        "The native prompt must be a complete, concrete sentence — never a topic "
+        "label, encyclopedia heading, or vague assignment such as 'explain X'. "
+        "Do not stack proper nouns or corporate jargon. If the seed is an awkward "
+        "fragment or a knowledge-graph fact, preserve its core meaning but rewrite "
+        "it into a natural everyday observation or action without inventing facts. "
+        "The target answer must sound like idiomatic contemporary language, not a "
+        "word-for-word translation; prefer a simple natural sentence over a fancy one. "
         f"VARIATION for this drill (bend the seed toward it while staying true to "
         f"its meaning): focus on {style['focus']}; register: {style['register']}; "
         f"shape: {style['length']}. "
@@ -276,7 +287,7 @@ async def generate_drill(
             {"role": "system", "content": system},
             {"role": "user", "content": seed_block},
         ],
-        temperature=0.8,
+        temperature=0.55,
         response_format={"type": "json_object"},
         timeout=settings.openai_timeout_sec,
     )
@@ -359,6 +370,7 @@ async def generate_drill(
 
 _REFERENCE_EVAL_SCHEMA_HINT = (
     '{"verdict": "natural|understandable|awkward|off", '
+    '"quality": "integer 1-5 (grammar and naturalness)", '
     '"verdict_label": "<short native-language label>", '
     '"encouragement": "<one warm native-language line>", '
     '"attempt_note": "<native-language note on the learner attempt only>", '
@@ -373,6 +385,7 @@ _REFERENCE_EVAL_SCHEMA_HINT = (
 def _empty_eval(native_hint: str) -> dict[str, Any]:
     return {
         "verdict": "understandable",
+        "quality": 3,
         "verdict_label": "확인 완료",
         "encouragement": "좋아요, 계속 해봐요!",
         "natural_versions": [],
@@ -473,9 +486,15 @@ async def evaluate_attempt_against_reference(
     verdict = str(data.get("verdict") or "understandable").strip().lower()
     if verdict not in ("natural", "understandable", "awkward", "off"):
         verdict = "understandable"
+    fallback_quality = {"natural": 5, "understandable": 3, "awkward": 2, "off": 1}[verdict]
+    try:
+        quality = max(1, min(5, int(data.get("quality", fallback_quality))))
+    except (TypeError, ValueError):
+        quality = fallback_quality
 
     return {
         "verdict": verdict,
+        "quality": quality,
         "verdict_label": str(data.get("verdict_label") or "").strip(),
         "encouragement": str(data.get("encouragement") or "").strip(),
         "attempt_note": str(data.get("attempt_note") or "").strip(),

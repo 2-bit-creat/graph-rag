@@ -525,8 +525,21 @@ def validate_quiz_payload(
             blank,
             sentence_en=(payload.get("sentence_en") or quiz_data.get("sentence_en") or ""),
         )
-        if complete:
-            quiz_data["sentence_en_complete"] = complete
+        if not complete or re.search(r"_{2,}", complete):
+            raise ValueError("cloze requires a complete sentence without blank markers")
+        prompt_en = (quiz_data.get("prompt_en") or "").strip()
+        answer_re = re.compile(
+            r"(?<![A-Za-z0-9])" + re.escape(blank) + r"(?![A-Za-z0-9])",
+            re.IGNORECASE,
+        )
+        if prompt_en.count("___") != 1 or answer_re.search(prompt_en):
+            raise ValueError("cloze prompt leaks the answer or has an invalid blank")
+        reconstructed = prompt_en.replace("___", blank, 1)
+        if re.sub(r"\s+", " ", reconstructed).strip().casefold() != re.sub(
+            r"\s+", " ", complete
+        ).strip().casefold():
+            raise ValueError("cloze prompt and complete sentence do not match")
+        quiz_data["sentence_en_complete"] = complete
     elif quiz_type == "scramble":
         sentence = (
             quiz_data.get("sentence_en") or payload.get("sentence_en") or ""

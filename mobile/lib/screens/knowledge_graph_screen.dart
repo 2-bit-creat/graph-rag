@@ -81,7 +81,9 @@ class _KnowledgeGraphScreenState extends State<KnowledgeGraphScreen> {
                   'API: GET /graph',
                 ),
                 actions: [
-                  TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('닫기')),
+                  TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('닫기')),
                 ],
               ),
             ),
@@ -198,12 +200,12 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
       inputHint: _inputHint,
       inputBarOverride: _journalInputBar(),
       pipelineLocked: journalTask.systemProcessing,
-      pipelineLockLabel: journalTask.stageLabel.isEmpty
-          ? '일기 처리 중'
-          : journalTask.stageLabel,
-      pipelineReviewLabel: journalTask.blocksChat && !journalTask.systemProcessing
-          ? journalTask.stageLabel
-          : null,
+      pipelineLockLabel:
+          journalTask.stageLabel.isEmpty ? '일기 처리 중' : journalTask.stageLabel,
+      pipelineReviewLabel:
+          journalTask.blocksChat && !journalTask.systemProcessing
+              ? journalTask.stageLabel
+              : null,
     );
   }
 
@@ -253,8 +255,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     _load();
     _prevJournalPhase = journalTask.phase;
     _prevComposePhase = composeSession.phase;
-    _prevJournalGraphStatus =
-        journalTask.entry?['graph_status']?.toString();
+    _prevJournalGraphStatus = journalTask.entry?['graph_status']?.toString();
     composeSession.entriesChanged.addListener(_onEntriesChanged);
     chatSession.onReferencedNodes = _onReferencedNodes;
     chatSession.addListener(_onChatChanged);
@@ -368,16 +369,21 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
                 controller: nameCtrl,
                 autofocus: true,
                 decoration: const InputDecoration(
-                    labelText: '이름', isDense: true, border: OutlineInputBorder()),
+                    labelText: '이름',
+                    isDense: true,
+                    border: OutlineInputBorder()),
                 onSubmitted: (_) => Navigator.pop(ctx, true),
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 initialValue: type,
                 decoration: const InputDecoration(
-                    labelText: '타입', isDense: true, border: OutlineInputBorder()),
+                    labelText: '타입',
+                    isDense: true,
+                    border: OutlineInputBorder()),
                 items: const [
-                  DropdownMenuItem(value: 'Concept', child: Text('개념 (Concept)')),
+                  DropdownMenuItem(
+                      value: 'Concept', child: Text('개념 (Concept)')),
                   DropdownMenuItem(
                       value: 'Identity', child: Text('정체성 (Identity)')),
                   DropdownMenuItem(value: 'Person', child: Text('사람 (Person)')),
@@ -488,9 +494,11 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
         content: const Text('이 채팅방의 대화를 모두 지울까요?\n지식그래프는 그대로 유지돼요.'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('취소')),
           FilledButton(
-              onPressed: () => Navigator.pop(ctx, true), child: const Text('삭제')),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('삭제')),
         ],
       ),
     );
@@ -545,8 +553,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     }
 
     if (langs.length <= 1) {
-      chatSession.startQuiz(
-          quizType, language: langs.isNotEmpty ? langs.first : null);
+      chatSession.startQuiz(quizType,
+          language: langs.isNotEmpty ? langs.first : null);
       return;
     }
     if (!mounted) return;
@@ -561,7 +569,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text('어떤 언어로 퀴즈를 풀까요?',
-                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                    style:
+                        TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
               ),
             ),
             for (final code in langs)
@@ -605,7 +614,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   }
 
   bool get _inputEnabled =>
-      chatSession.mode != ChatMode.quizWord && !journalTask.blocksChat;
+      (chatSession.mode != ChatMode.quizWord ||
+          (chatSession.wordQuizUsesComposer && !chatSession.wordQuizSolved)) &&
+      !journalTask.blocksChat;
 
   String get _inputHint {
     switch (chatSession.mode) {
@@ -666,6 +677,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
                   answer: answer, order: order, selectedIndex: selectedIndex),
           onNext: chatSession.nextQuiz,
           onExit: chatSession.exitMode,
+          externalResult: chatSession.quizFeedback,
+          clozeSolved: chatSession.wordQuizSolved,
         );
       case ChatMode.normal:
       case ChatMode.journal:
@@ -739,7 +752,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   /// Tap flow: select → camera glides to the node + compact info card at the
   /// bottom (the 2-hop highlight stays visible). The full inspector sheet
   /// only opens from the card's "자세히" button (or [showSheet]).
-  Future<void> _selectNode(Map<String, dynamic>? node, {bool showSheet = false}) async {
+  Future<void> _selectNode(Map<String, dynamic>? node,
+      {bool showSheet = false}) async {
     if (node == null) {
       _clearSelection();
       return;
@@ -767,7 +781,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     await _showInspectorSheet();
   }
 
-  Future<void> _selectEdge(Map<String, dynamic>? edge, {bool showSheet = false}) async {
+  Future<void> _selectEdge(Map<String, dynamic>? edge,
+      {bool showSheet = false}) async {
     setState(() {
       _selectedEdge = edge;
       _selectedEdgeId = edge?['id']?.toString();
@@ -911,7 +926,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
           '일기 번역본은 유지됩니다. GraphRAG를 다시 실행하면 새 그래프가 만들어집니다.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('취소')),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(ctx, true),
@@ -1127,7 +1144,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
           padding: const EdgeInsets.only(bottom: 6),
           decoration: BoxDecoration(
             color: context.shell.toolbarBackground,
-            border: Border(bottom: BorderSide(color: context.shell.toolbarBorder)),
+            border:
+                Border(bottom: BorderSide(color: context.shell.toolbarBorder)),
           ),
           child: OntologyLegendBar(
             entityTypes: _legendEntityTypes(entityTypes),
@@ -1190,8 +1208,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
             ),
             onTrash: () => Navigator.push(
               context,
-              MaterialPageRoute<void>(
-                  builder: (_) => const GraphTrashScreen()),
+              MaterialPageRoute<void>(builder: (_) => const GraphTrashScreen()),
             ).then((_) => _load()),
             onClearGraph: _clearGraph,
             onAddNode: _addNode,
@@ -1200,7 +1217,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
             padding: const EdgeInsets.only(bottom: 6),
             decoration: BoxDecoration(
               color: context.shell.toolbarBackground,
-              border: Border(bottom: BorderSide(color: context.shell.toolbarBorder)),
+              border: Border(
+                  bottom: BorderSide(color: context.shell.toolbarBorder)),
             ),
             child: OntologyLegendBar(
               entityTypes: _legendEntityTypes(entityTypes),
@@ -1306,11 +1324,14 @@ class _CompactGraphHeader extends StatelessWidget {
               decoration: InputDecoration(
                 hintText: '노드 검색…',
                 hintStyle: TextStyle(color: shell.mutedText, fontSize: 13),
-                prefixIcon: Icon(Icons.search, size: 18, color: shell.mutedText),
+                prefixIcon:
+                    Icon(Icons.search, size: 18, color: shell.mutedText),
                 suffixText: matchCount == null ? null : '$matchCount개',
                 suffixStyle: TextStyle(
                   fontSize: 11,
-                  color: matchCount == 0 ? const Color(0xFFFF7A7A) : AppColors.accent,
+                  color: matchCount == 0
+                      ? const Color(0xFFFF7A7A)
+                      : AppColors.accent,
                 ),
                 filled: true,
                 fillColor: shell.subtleSurface,
@@ -1400,7 +1421,9 @@ class _GraphToolbar extends StatelessWidget {
                 suffixText: matchCount == null ? null : '$matchCount개 일치',
                 suffixStyle: TextStyle(
                   fontSize: 11,
-                  color: matchCount == 0 ? const Color(0xFFFF7A7A) : AppColors.accent,
+                  color: matchCount == 0
+                      ? const Color(0xFFFF7A7A)
+                      : AppColors.accent,
                 ),
                 filled: true,
                 fillColor: fieldFill,
@@ -1427,7 +1450,8 @@ class _GraphToolbar extends StatelessWidget {
           IconButton(
             tooltip: '온톨로지',
             onPressed: onOntology,
-            icon: const Icon(Icons.category_outlined, color: AppColors.textMuted),
+            icon:
+                const Icon(Icons.category_outlined, color: AppColors.textMuted),
           ),
           IconButton(
             tooltip: '새로고침',
@@ -1451,7 +1475,8 @@ class _GraphToolbar extends StatelessWidget {
                 child: ListTile(
                   dense: true,
                   contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.add_circle_outline, color: AppColors.textMuted),
+                  leading: const Icon(Icons.add_circle_outline,
+                      color: AppColors.textMuted),
                   title: Text('노드 추가',
                       style: TextStyle(color: shell.primaryText, fontSize: 13)),
                 ),
@@ -1461,7 +1486,8 @@ class _GraphToolbar extends StatelessWidget {
                 child: ListTile(
                   dense: true,
                   contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.delete_outline, color: AppColors.textMuted),
+                  leading: const Icon(Icons.delete_outline,
+                      color: AppColors.textMuted),
                   title: Text('휴지통',
                       style: TextStyle(color: shell.primaryText, fontSize: 13)),
                 ),
@@ -1502,9 +1528,8 @@ class _HideHeadsToggle extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
         child: Tooltip(
-          message: active
-              ? '기본 모드로 — 화자 노드 다시 표시'
-              : '화자 숨기기 — Statement를 화자색으로 표시',
+          message:
+              active ? '기본 모드로 — 화자 노드 다시 표시' : '화자 숨기기 — Statement를 화자색으로 표시',
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
@@ -1596,10 +1621,13 @@ class _SelectionInfoCard extends StatelessWidget {
       final id = n['id'].toString();
       final type = n['type']?.toString() ?? '';
       final color = colorForType(type, typeColors);
-      final degree = edges.where((ed) =>
-          ed['source_id'].toString() == id ||
-          ed['target_id'].toString() == id).length;
-      final isStatement = canonicalEntityType(type).toLowerCase() == 'statement';
+      final degree = edges
+          .where((ed) =>
+              ed['source_id'].toString() == id ||
+              ed['target_id'].toString() == id)
+          .length;
+      final isStatement =
+          canonicalEntityType(type).toLowerCase() == 'statement';
       final stmtPreview = isStatement ? _statementPreview(n) : null;
       final preview = stmtPreview?.content ?? '';
       // Statement 귀속 head: 화자 숨김 모드에서 노드가 안 보여도 여기서
@@ -1731,7 +1759,8 @@ class _SelectionInfoCard extends StatelessWidget {
               ),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: Icon(Icons.arrow_forward, size: 13, color: shell.mutedText),
+                child:
+                    Icon(Icons.arrow_forward, size: 13, color: shell.mutedText),
               ),
               Flexible(
                 child: Text(

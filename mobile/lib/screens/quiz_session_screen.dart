@@ -6,6 +6,7 @@ import '../api/client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import '../widgets/quiz/cloze_quiz_card.dart';
+import '../widgets/quiz/composition_quiz_card.dart';
 import '../widgets/quiz/mcq_quiz_card.dart';
 import '../widgets/quiz/quiz_audio_button.dart';
 import '../widgets/quiz/scramble_quiz_card.dart';
@@ -37,11 +38,13 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
   bool _clozeSolved = false;
   String? _feedback;
   String? _revealedAnswer;
+  int? _lastQuality;
 
   final _audioKey = GlobalKey<QuizAudioButtonState>();
 
   static const _typeLabels = {
     'cloze': '단어 완성',
+    'composition': '작문',
     'scramble': '문장 배열',
     'mcq_nuance': '뉘앙스 선택',
   };
@@ -92,6 +95,26 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
     return null;
   }
 
+  String? _compositionFeedback(dynamic raw) {
+    if (raw is! Map) return null;
+    final parts = <String>[];
+    for (final key in ['verdict_label', 'encouragement', 'attempt_note', 'thinking_tip']) {
+      final value = raw[key]?.toString().trim() ?? '';
+      if (value.isNotEmpty) parts.add(value);
+    }
+    final corrections = raw['corrections'];
+    if (corrections is List) {
+      for (final correction in corrections.whereType<Map>()) {
+        final issue = correction['issue']?.toString().trim() ?? '';
+        final suggestion = correction['suggestion']?.toString().trim() ?? '';
+        if (issue.isNotEmpty || suggestion.isNotEmpty) {
+          parts.add('• $issue${issue.isNotEmpty && suggestion.isNotEmpty ? ' → ' : ''}$suggestion');
+        }
+      }
+    }
+    return parts.isEmpty ? null : parts.join('\n');
+  }
+
   Future<void> _handleResult(Map<String, dynamic> result) async {
     final correct = result['correct'] == true;
     final item = _current!;
@@ -102,7 +125,9 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
     setState(() {
       _answered = true;
       _lastCorrect = correct;
-      _feedback = result['explanation']?.toString();
+      _lastQuality = (result['quality'] as num?)?.toInt();
+      final tutorFeedback = result['tutor_feedback'];
+      _feedback = result['explanation']?.toString() ?? _compositionFeedback(tutorFeedback);
       if (!correct && widget.quizType == 'cloze') {
         _revealedAnswer = _clozeAnswer(quizData);
       }
@@ -123,6 +148,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
         _clozeSolved = false;
         _feedback = null;
         _revealedAnswer = null;
+        _lastQuality = null;
       });
     } else {
       Navigator.pop(context, true);
@@ -277,7 +303,9 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    _lastCorrect! ? '정답!' : '오답',
+                                    widget.quizType == 'composition' && _lastQuality != null
+                                        ? '작문 점수 $_lastQuality/5'
+                                        : (_lastCorrect! ? '정답!' : '오답'),
                                     style: TextStyle(
                                       fontWeight: FontWeight.bold,
                                       color: _lastCorrect!
@@ -297,7 +325,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
                                         ),
                                       ),
                                     ),
-                                  if (_lastCorrect! && _feedback != null && _feedback!.isNotEmpty)
+                                  if (_feedback != null && _feedback!.isNotEmpty)
                                     Padding(
                                       padding: const EdgeInsets.only(top: 8),
                                       child: Container(
@@ -349,7 +377,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
                                           ),
                                           label: const Text('다시 듣기'),
                                         ),
-                                      if (_lastCorrect == true || _clozeSolved)
+                                      if (_lastCorrect == true || _clozeSolved || widget.quizType == 'composition')
                                         FilledButton.tonal(
                                           onPressed: _goNext,
                                           child: const Text('다음 문제'),
@@ -387,6 +415,12 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
           onSolved: () {
             if (mounted) setState(() => _clozeSolved = true);
           },
+        );
+      case 'composition':
+        return CompositionQuizCard(
+          quizData: quizData,
+          question: questionKo ?? '',
+          onSubmit: _submitCloze,
         );
       case 'scramble':
         return ScrambleQuizCard(

@@ -57,6 +57,7 @@ class NodeOut(BaseModel):
     deleted_context: dict | None = None
     importance_score: int = 0
     is_self: bool = False
+    is_pinned: bool = False
     source_entry_id: uuid.UUID | None = None
     source_transcript_ko: str | None = None
     source_transcript_clean_ko: str | None = None
@@ -619,6 +620,11 @@ class QueueCounts(BaseModel):
     review: int = 0
 
 
+class DailyLanguageProgressOut(BaseModel):
+    cloze_completed: int = 0
+    composition_completed: int = 0
+
+
 class LearningProfileOut(BaseModel):
     current_level: int
     is_freedom_on: bool = False
@@ -630,6 +636,10 @@ class LearningProfileOut(BaseModel):
     target_languages: list[str] = ["english"]
     native_language: str = "korean"
     language_levels: dict[str, int] = {}
+    daily_cloze_target: int = 20
+    daily_composition_target: int = 5
+    quiz_review_ratio: float = 0.5
+    daily_progress_by_language: dict[str, DailyLanguageProgressOut] = {}
 
 
 class QuizQueueItemOut(BaseModel):
@@ -646,8 +656,51 @@ class QuizQueueItemOut(BaseModel):
     streak: int = 0
     times_correct: int = 0
     times_wrong: int = 0
+    last_quality: int | None = None
+    last_answered_at: datetime | None = None
+    review_priority: int | None = None
+    review_reason: str | None = None
     created_at: datetime
     associated_entry_id: uuid.UUID | None = None
+    track: str = "daily"
+    batch_id: uuid.UUID | None = None
+    source_kind: str | None = None
+    language: str = "english"
+
+
+class QuizExplorationLanguageOut(BaseModel):
+    language: str
+    status: Literal["explored", "unexplored"]
+    cloze_status: str = "available"
+    # Actual cards kept from this source after exploration, keyed by quiz type.
+    # This is distinct from expression_count, which counts only candidates found
+    # during the exploration pass.
+    generated_counts: dict[str, int] = Field(default_factory=dict)
+    word_count: int = 0
+    expression_count: int = 0
+    composition_count: int = 0
+    updated_at: datetime | None = None
+
+
+class QuizExplorationNodeOut(BaseModel):
+    node_id: uuid.UUID
+    node_name: str
+    content_ko: str = ""
+    status: Literal["explored", "partial", "unexplored"]
+    cloze_status: str = "available"
+    word_count: int = 0
+    expression_count: int = 0
+    composition_count: int = 0
+    updated_at: datetime | None = None
+    language_stats: list[QuizExplorationLanguageOut] = []
+
+
+class QuizExplorationListOut(BaseModel):
+    items: list[QuizExplorationNodeOut]
+    explored_count: int = 0
+    partial_count: int = 0
+    unexplored_count: int = 0
+    languages: list[str] = []
 
 
 class QuizQueueListOut(BaseModel):
@@ -687,6 +740,9 @@ class ProfileSettingsUpdateRequest(BaseModel):
     target_languages: list[str] | None = None
     native_language: str | None = None
     language_levels: dict[str, int] | None = None
+    daily_cloze_target: int | None = Field(default=None, ge=0, le=100)
+    daily_composition_target: int | None = Field(default=None, ge=0, le=100)
+    quiz_review_ratio: float | None = Field(default=None, ge=0, le=1)
 
     @model_validator(mode="after")
     def at_least_one_field(self) -> "ProfileSettingsUpdateRequest":
@@ -694,7 +750,8 @@ class ProfileSettingsUpdateRequest(BaseModel):
             v is None
             for v in [self.level, self.is_freedom_on, self.target_language,
                        self.target_languages, self.native_language,
-                       self.language_levels]
+                       self.language_levels, self.daily_cloze_target,
+                       self.daily_composition_target, self.quiz_review_ratio]
         ):
             raise ValueError("At least one field must be provided")
         return self

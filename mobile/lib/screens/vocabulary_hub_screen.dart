@@ -37,7 +37,6 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
       final items = raw
           .whereType<Map>()
           .map((e) => VocabularySummary.fromJson(Map<String, dynamic>.from(e)))
-          .where((v) => !v.id.startsWith('statement_bank:'))
           .toList();
       if (mounted) {
         setState(() {
@@ -84,9 +83,12 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
               ],
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('취소')),
               FilledButton(
-                onPressed: () => Navigator.pop(ctx, nameCtrl.text.trim().isNotEmpty),
+                onPressed: () =>
+                    Navigator.pop(ctx, nameCtrl.text.trim().isNotEmpty),
                 child: const Text('만들기'),
               ),
             ],
@@ -123,8 +125,12 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
             title: const Text('단어장 삭제'),
             content: Text('「${vocab.name}」 단어장을 삭제할까요?'),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
-              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('삭제')),
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('취소')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('삭제')),
             ],
           ),
         ) ??
@@ -159,10 +165,13 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
               '새로 추출된 표현에는 CEFR 난이도가 포함됩니다.',
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('취소')),
               FilledButton(
                 onPressed: () => Navigator.pop(ctx, true),
-                style: FilledButton.styleFrom(backgroundColor: Colors.orange.shade700),
+                style: FilledButton.styleFrom(
+                    backgroundColor: Colors.orange.shade700),
                 child: const Text('삭제 후 재추출'),
               ),
             ],
@@ -175,7 +184,8 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
       final result = await apiClient.deleteAndReextractLanguage(langKey);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(result['message']?.toString() ?? '재추출이 시작됐습니다')),
+          SnackBar(
+              content: Text(result['message']?.toString() ?? '재추출이 시작됐습니다')),
         );
         await _load(silent: true);
       }
@@ -236,7 +246,8 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
                     )
                   else
                     ..._items.map((vocab) {
-                      final isStatementBank = vocab.id.startsWith('statement_bank:');
+                      final isStatementBank =
+                          vocab.id.startsWith('statement_bank:');
                       final langKey = isStatementBank
                           ? vocab.id.substring('statement_bank:'.length)
                           : null;
@@ -297,7 +308,8 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
                                     await Navigator.push(
                                       context,
                                       MaterialPageRoute(
-                                        builder: (_) => StatementBankScreen(language: langKey),
+                                        builder: (_) => StatementBankScreen(
+                                            language: langKey),
                                       ),
                                     );
                                   } else {

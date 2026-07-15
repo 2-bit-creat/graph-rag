@@ -42,15 +42,15 @@ def _source_label(quiz: Quiz) -> str:
         return ""
     mode = src.get("mode")
     lang = _LANG_LABEL.get(str(src.get("language") or "").lower(), "")
-    if mode == "statement":
-        return f"{lang} 학습 표현".strip()
+    if mode in ("statement", "bundle"):
+        return "지식그래프 문장 기반"
     if mode == "default":
         return f"{lang} 기본 단어장".strip()
     # custom user list
     vocab_id = str(src.get("vocab_id") or "")
     if vocab_id == "ielts":
         return "IELTS"
-    return "내 단어장"
+    return "저장한 표현"
 
 
 def _context_sentence(quiz: Quiz) -> str:
@@ -75,6 +75,20 @@ def quiz_queue_item_dict(
     if not target_node:
         target_node = _target_from_quiz_data(quiz)
 
+    priority: int | None = None
+    reason: str | None = None
+    if quiz.queue_kind == "review":
+        if quiz.quiz_type == "composition":
+            quality = quiz.last_quality if quiz.last_quality is not None else 5
+            priority = 100 + quality
+            reason = f"작문 점수 {quality}/5 · 같은 점수에서는 오래 푼 문제 우선"
+        elif quiz.times_wrong > 0:
+            priority = 1
+            reason = "이전 오답 · 회복 복습 우선"
+        else:
+            priority = 200
+            reason = "정답 이력 · 오래 푼 문제부터 복습"
+
     return {
         "id": quiz.id,
         "quiz_type": quiz.quiz_type,
@@ -90,6 +104,14 @@ def quiz_queue_item_dict(
         "streak": quiz.repetitions,
         "times_correct": quiz.times_correct,
         "times_wrong": quiz.times_wrong,
+        "last_quality": quiz.last_quality,
+        "last_answered_at": quiz.last_answered_at,
+        "review_priority": priority,
+        "review_reason": reason,
         "created_at": quiz.created_at,
         "associated_entry_id": quiz.associated_entry_id,
+        "track": quiz.track,
+        "batch_id": quiz.batch_id,
+        "source_kind": quiz.source_kind,
+        "language": quiz.language or str((quiz.quiz_data or {}).get("language") or "english"),
     }

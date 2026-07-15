@@ -6,7 +6,7 @@ import math
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import get_settings
@@ -67,6 +67,17 @@ async def build_session(
             )
         )
 
+    # Review order: prior vocabulary misses → writing (lowest score first) →
+    # correct vocabulary. Within each bucket, the oldest answered item wins.
+    review_group = case(
+        (and_(Quiz.quiz_type != "composition", Quiz.times_wrong > 0), 0),
+        (Quiz.quiz_type == "composition", 1),
+        else_=2,
+    )
+    review_quality = case(
+        (Quiz.quiz_type == "composition", func.coalesce(Quiz.last_quality, 5)),
+        else_=5,
+    )
     review_q = _source_filter(
         _language_filter(select(Quiz))
         .where(
@@ -77,7 +88,12 @@ async def build_session(
             Quiz.difficulty_level <= hi,
             or_(Quiz.next_review_at.is_(None), Quiz.next_review_at <= now),
         )
-        .order_by(Quiz.next_review_at.asc().nullsfirst())
+        .order_by(
+            review_group.asc(),
+            review_quality.asc(),
+            Quiz.last_answered_at.asc().nullsfirst(),
+            Quiz.created_at.asc(),
+        )
         .limit(review_count)
     )
     new_q = (
@@ -180,12 +196,18 @@ async def record_quiz_result(
         quiz.times_correct += 1
     else:
         quiz.times_wrong += 1
-    quiz.last_answered_at = datetime.now(UTC)
+    answered_at = datetime.now(UTC)
+    if quiz.first_answered_at is None:
+        quiz.first_answered_at = answered_at
+    quiz.last_answered_at = answered_at
     quiz.is_solved = True
+    quiz.last_quality = max(0, min(5, int(quality)))
 
     if quality < 3:
         quiz.repetitions = 0
-        quiz.interval_days = 1.0
+        # Failed items re-enter the review pool after three days, while the
+        # daily batch remains an immutable snapshot.
+        quiz.interval_days = 3.0
     else:
         if quiz.repetitions == 0:
             quiz.interval_days = 1.0

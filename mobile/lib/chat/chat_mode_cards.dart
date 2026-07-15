@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../api/client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/quiz/cloze_quiz_card.dart';
 import '../widgets/quiz/mcq_quiz_card.dart';
@@ -231,77 +230,10 @@ class CompositionDrillCard extends StatefulWidget {
 }
 
 class _CompositionDrillCardState extends State<CompositionDrillCard> {
-  bool _saving = false;
-  Set<String> _savedExpressions = {};
-
-  @override
-  void initState() {
-    super.initState();
-    _loadVocabStatus();
-  }
-
-  Future<void> _loadVocabStatus() async {
-    try {
-      final res = await apiClient.getTutorVocab();
-      final items = (res['items'] as List?) ?? [];
-      if (!mounted) return;
-      setState(() {
-        _savedExpressions = items
-            .map((e) => (e is Map ? (e['expression'] ?? '') : '')
-                .toString()
-                .trim()
-                .toLowerCase())
-            .where((s) => s.isNotEmpty)
-            .toSet();
-      });
-    } catch (_) {
-      // Non-fatal — glossary chips just fall back to showing the add button.
-    }
-  }
-
-  Future<void> _save(String expression) async {
-    if (_saving || expression.trim().isEmpty) return;
-    setState(() => _saving = true);
-    try {
-      await apiClient.saveTutorExpression(
-        expression: expression,
-        promptKo: widget.quiz['question_ko']?.toString() ?? '',
-      );
-      if (mounted) {
-        setState(() => _savedExpressions.add(expression.trim().toLowerCase()));
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('복습 단어장에 담았어요.')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  Widget _glossaryChip(dynamic g) {
-    final term = g is Map
-        ? '${g['term'] ?? g['expression'] ?? ''}'
-        : g.toString();
-    final target = g is Map ? (g['target']?.toString() ?? '') : '';
-    final expression = target.isNotEmpty ? target : term;
-    return _GlossaryChip(
-      term: term,
-      expression: expression,
-      saved: _savedExpressions.contains(expression.trim().toLowerCase()),
-      busy: _saving,
-      onAdd: _save,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final qd = (widget.quiz['quiz_data'] as Map?)?.cast<String, dynamic>() ?? {};
+    final qd =
+        (widget.quiz['quiz_data'] as Map?)?.cast<String, dynamic>() ?? {};
     final prompt = widget.quiz['question_ko']?.toString() ?? '';
     final glossary = (qd['glossary'] as List?) ?? [];
     final fb = widget.feedback;
@@ -314,7 +246,8 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(prompt,
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+              style:
+                  const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
           if (glossary.isNotEmpty) ...[
             const SizedBox(height: 8),
             Wrap(
@@ -322,7 +255,14 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
               runSpacing: 6,
               children: [
                 for (final g in glossary.take(6))
-                  _glossaryChip(g),
+                  Chip(
+                    label: Text(
+                      g is Map
+                          ? '${g['term'] ?? g['expression'] ?? ''}'
+                          : g.toString(),
+                    ),
+                    visualDensity: VisualDensity.compact,
+                  ),
               ],
             ),
           ],
@@ -346,7 +286,7 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
               ],
             )
           else
-            _FeedbackBody(feedback: fb, saving: _saving, onSave: _save),
+            _FeedbackBody(feedback: fb),
           if (fb != null) ...[
             const SizedBox(height: 10),
             Row(
@@ -366,76 +306,16 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
   }
 }
 
-class _GlossaryChip extends StatelessWidget {
-  const _GlossaryChip({
-    required this.term,
-    required this.expression,
-    required this.saved,
-    required this.busy,
-    required this.onAdd,
-  });
-
-  final String term;
-  final String expression;
-  final bool saved;
-  final bool busy;
-  final Future<void> Function(String expression) onAdd;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.only(left: 10, right: 4, top: 2, bottom: 2),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: scheme.outlineVariant),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(term,
-              style:
-                  TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
-          const SizedBox(width: 2),
-          if (saved)
-            Padding(
-              padding: const EdgeInsets.all(4),
-              child: Icon(Icons.check_circle_rounded,
-                  size: 15, color: Colors.green),
-            )
-          else
-            InkWell(
-              borderRadius: BorderRadius.circular(20),
-              onTap: busy || expression.trim().isEmpty
-                  ? null
-                  : () => onAdd(expression),
-              child: const Padding(
-                padding: EdgeInsets.all(4),
-                child: Icon(Icons.add_circle_outline_rounded, size: 15),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
 class _FeedbackBody extends StatelessWidget {
-  const _FeedbackBody({
-    required this.feedback,
-    required this.saving,
-    required this.onSave,
-  });
+  const _FeedbackBody({required this.feedback});
 
   final Map<String, dynamic> feedback;
-  final bool saving;
-  final Future<void> Function(String expression) onSave;
 
   @override
   Widget build(BuildContext context) {
     final verdictLabel = feedback['verdict_label']?.toString() ?? '';
     final naturalVersions = (feedback['natural_versions'] as List?) ?? [];
+    final saveSuggestions = (feedback['save_suggestions'] as List?) ?? [];
     final attemptNote = feedback['attempt_note']?.toString() ?? '';
 
     return Column(
@@ -450,7 +330,21 @@ class _FeedbackBody extends StatelessWidget {
                   color: AppColors.accent)),
         if (attemptNote.isNotEmpty) ...[
           const SizedBox(height: 4),
-          Text(attemptNote, style: const TextStyle(fontSize: 12.5, height: 1.35)),
+          Text(attemptNote,
+              style: const TextStyle(fontSize: 12.5, height: 1.35)),
+        ],
+        if (saveSuggestions.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text('유용한 표현',
+              style: TextStyle(fontSize: 11.5, color: AppColors.textMuted)),
+          const SizedBox(height: 4),
+          for (final item in saveSuggestions)
+            if (item is Map &&
+                (item['expression'] ?? '').toString().trim().isNotEmpty)
+              _SaveSuggestionRow(
+                expression: item['expression'].toString().trim(),
+                meaning: item['meaning']?.toString() ?? '',
+              ),
         ],
         if (naturalVersions.isNotEmpty) ...[
           const SizedBox(height: 8),
@@ -460,8 +354,6 @@ class _FeedbackBody extends StatelessWidget {
           for (final v in naturalVersions)
             _NaturalRow(
               text: v is Map ? (v['text'] ?? '').toString() : v.toString(),
-              saving: saving,
-              onSave: onSave,
             ),
         ],
       ],
@@ -470,32 +362,42 @@ class _FeedbackBody extends StatelessWidget {
 }
 
 class _NaturalRow extends StatelessWidget {
-  const _NaturalRow(
-      {required this.text, required this.saving, required this.onSave});
+  const _NaturalRow({required this.text});
 
   final String text;
-  final bool saving;
-  final Future<void> Function(String expression) onSave;
 
   @override
   Widget build(BuildContext context) {
     if (text.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
+      child: Text(text, style: const TextStyle(fontSize: 13, height: 1.35)),
+    );
+  }
+}
+
+class _SaveSuggestionRow extends StatelessWidget {
+  const _SaveSuggestionRow({
+    required this.expression,
+    required this.meaning,
+  });
+
+  final String expression;
+  final String meaning;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Text(text,
-                style: const TextStyle(fontSize: 13, height: 1.35)),
-          ),
-          IconButton(
-            tooltip: '복습 단어장에 담기',
-            visualDensity: VisualDensity.compact,
-            iconSize: 18,
-            onPressed: saving ? null : () => onSave(text),
-            icon: const Icon(Icons.bookmark_add_outlined),
-          ),
+          Text(expression,
+              style:
+                  const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          if (meaning.trim().isNotEmpty)
+            Text(meaning,
+                style: TextStyle(fontSize: 11.5, color: AppColors.textMuted)),
         ],
       ),
     );
@@ -511,6 +413,8 @@ class WordQuizCard extends StatefulWidget {
     required this.onSubmit,
     required this.onNext,
     required this.onExit,
+    this.externalResult,
+    this.clozeSolved = false,
   });
 
   final Map<String, dynamic> quiz;
@@ -523,6 +427,8 @@ class WordQuizCard extends StatefulWidget {
   }) onSubmit;
   final VoidCallback onNext;
   final VoidCallback onExit;
+  final Map<String, dynamic>? externalResult;
+  final bool clozeSolved;
 
   @override
   State<WordQuizCard> createState() => _WordQuizCardState();
@@ -558,10 +464,12 @@ class _WordQuizCardState extends State<WordQuizCard> {
   @override
   Widget build(BuildContext context) {
     final type = widget.quiz['quiz_type']?.toString() ?? 'cloze';
-    final qd = (widget.quiz['quiz_data'] as Map?)?.cast<String, dynamic>() ?? {};
-    final answered = _result != null;
-    final audioUrl = widget.quiz['audio_url']?.toString() ??
-        qd['audio_url']?.toString();
+    final qd =
+        (widget.quiz['quiz_data'] as Map?)?.cast<String, dynamic>() ?? {};
+    final effectiveResult = widget.externalResult ?? _result;
+    final answered = effectiveResult != null;
+    final audioUrl =
+        widget.quiz['audio_url']?.toString() ?? qd['audio_url']?.toString();
 
     Widget card;
     switch (type) {
@@ -592,14 +500,19 @@ class _WordQuizCardState extends State<WordQuizCard> {
           audioButtonKey: _audioKey,
           onSubmit: _gradeCloze,
           onSolved: () => setState(() => _solved = true),
+          externalInput: true,
+          externalResult: widget.externalResult,
+          externalSolved: widget.clozeSolved,
         );
     }
 
     // cloze retries locally until correct; mcq/scramble grade once and move on
     // regardless of the outcome (see _grade above).
     final isCloze = type != 'scramble' && type != 'mcq' && type != 'mcq_nuance';
-    final isCorrect = isCloze ? _solved : _result?['is_correct'] == true;
-    final readyForNext = isCloze ? _solved : answered;
+    final clozeComplete = widget.clozeSolved || _solved;
+    final isCorrect =
+        isCloze ? clozeComplete : effectiveResult?['is_correct'] == true;
+    final readyForNext = isCloze ? clozeComplete : answered;
 
     return _CardShell(
       title: '단어 퀴즈',
@@ -609,7 +522,14 @@ class _WordQuizCardState extends State<WordQuizCard> {
         mainAxisSize: MainAxisSize.min,
         children: [
           card,
-          if (answered) ...[
+          if (isCloze && readyForNext) ...[
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: widget.onNext,
+              icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+              label: const Text('다음 문제'),
+            ),
+          ] else if (answered && !isCloze) ...[
             const SizedBox(height: 10),
             Row(
               children: [
@@ -627,9 +547,7 @@ class _WordQuizCardState extends State<WordQuizCard> {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    isCorrect
-                        ? '정답!'
-                        : (isCloze ? '정답을 직접 입력해서 완성해보세요' : '오답'),
+                    isCorrect ? '정답!' : (isCloze ? '정답을 직접 입력해서 완성해보세요' : '오답'),
                     style: const TextStyle(
                         fontSize: 13, fontWeight: FontWeight.w700),
                   ),

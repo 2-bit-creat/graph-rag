@@ -106,6 +106,18 @@ class _QuizGenerationScreenState extends State<QuizGenerationScreen> {
     }
   }
 
+  Future<void> _generateMoreBatch() async {
+    setState(() => _generating = true);
+    try {
+      await apiClient.generateMoreQuizBatch(language: _language);
+      if (mounted) await _load();
+    } catch (e) {
+      if (mounted) _showError(e);
+    } finally {
+      if (mounted) setState(() => _generating = false);
+    }
+  }
+
   void _showNoSeedDialog() {
     showDialog<void>(
       context: context,
@@ -284,6 +296,15 @@ class _QuizGenerationScreenState extends State<QuizGenerationScreen> {
                     )
                   : const Icon(Icons.bolt_rounded, size: 20),
               label: Text(_generating ? '생성 중… (문제당 몇 초 걸려요)' : '문제 생성'),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _generating ? null : _generateMoreBatch,
+              icon: const Icon(Icons.add_task_rounded, size: 18),
+              label: const Text('더 공부하기 — 오늘 목표만큼 추가'),
             ),
           ),
         ],

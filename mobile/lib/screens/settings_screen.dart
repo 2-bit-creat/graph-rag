@@ -62,6 +62,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _nativeLanguage = 'korean';
   // Per-language level: {english: 50, german: 10}
   Map<String, double> _langLevels = {'english': 10};
+  double _dailyClozeTarget = 20;
+  double _dailyCompositionTarget = 5;
+  double _quizReviewRatio = 0.5;
   bool _loading = true;
   bool _saving = false;
   bool _speakerConsent = accountController.speakerIdConsent;
@@ -154,6 +157,10 @@ final rawLangs = profile['target_languages'];
             _targetLanguages = {profile['target_language']?.toString() ?? 'english'};
           }
           _nativeLanguage = profile['native_language']?.toString() ?? 'korean';
+          _dailyClozeTarget = (profile['daily_cloze_target'] as num?)?.toDouble() ?? 20;
+          _dailyCompositionTarget =
+              (profile['daily_composition_target'] as num?)?.toDouble() ?? 5;
+          _quizReviewRatio = (profile['quiz_review_ratio'] as num?)?.toDouble() ?? 0.5;
           // Sync the app UI language to the loaded native language.
           appLocaleController.setFromNativeLanguage(_nativeLanguage);
 
@@ -192,6 +199,11 @@ final rawLangs = profile['target_languages'];
         apiClient.updateTargetLanguages(langs),
         apiClient.updateNativeLanguage(_nativeLanguage),
         apiClient.updateLanguageLevels(levelsInt),
+        apiClient.updateQuizProfileSettings(
+          dailyClozeTarget: _dailyClozeTarget.round(),
+          dailyCompositionTarget: _dailyCompositionTarget.round(),
+          quizReviewRatio: _quizReviewRatio,
+        ),
       ]);
 
       // Switch the app UI language immediately on save.
@@ -343,6 +355,59 @@ final rawLangs = profile['target_languages'];
                 ),
                 const SizedBox(height: AppSpacing.md),
 
+                _SectionCard(
+                  title: '하루 퀴즈 목표',
+                  subtitle: '오늘의 세트에 자동으로 채울 문제 수입니다.',
+                  child: Column(
+                    children: [
+                      _QuotaSlider(
+                        label: '단어 빈칸',
+                        value: _dailyClozeTarget,
+                        max: 100,
+                        onChanged: (v) => setState(() => _dailyClozeTarget = v),
+                      ),
+                      _QuotaSlider(
+                        label: '작문',
+                        value: _dailyCompositionTarget,
+                        max: 50,
+                        onChanged: (v) => setState(() => _dailyCompositionTarget = v),
+                      ),
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '복습 ${(_quizReviewRatio * 100).round()}%  ·  랜덤 탐험 ${(100 - _quizReviewRatio * 100).round()}%',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text('복습: 저장한 튜터 표현·오답  /  랜덤 탐험: 최근 일기 Statement'),
+                      ),
+                      Slider(
+                        value: _quizReviewRatio,
+                        onChanged: _saving
+                            ? null
+                            : (v) => setState(() => _quizReviewRatio = v),
+                      ),
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          for (final preset in [(0.25, '복습 25%'), (0.5, '균형 50%'), (0.75, '복습 75%')])
+                            ChoiceChip(
+                              label: Text(preset.$2),
+                              selected: (_quizReviewRatio - preset.$1).abs() < 0.01,
+                              onSelected: _saving
+                                  ? null
+                                  : (_) => setState(() => _quizReviewRatio = preset.$1),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
                 const SizedBox(height: AppSpacing.lg),
 
                 FilledButton(
@@ -430,6 +495,25 @@ final rawLangs = profile['target_languages'];
 }
 
 // ─── Reusable sub-widgets ─────────────────────────────────────────────────────
+
+class _QuotaSlider extends StatelessWidget {
+  const _QuotaSlider({required this.label, required this.value, required this.max, required this.onChanged});
+  final String label;
+  final double value;
+  final double max;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SizedBox(width: 72, child: Text(label)),
+        Expanded(child: Slider(value: value, min: 0, max: max, divisions: max.round(), onChanged: onChanged)),
+        SizedBox(width: 30, child: Text('${value.round()}')),
+      ],
+    );
+  }
+}
 
 class _SectionCard extends StatelessWidget {
   const _SectionCard({

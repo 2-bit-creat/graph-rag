@@ -78,7 +78,22 @@ bool isGraphReviewPending(Map<String, dynamic>? entry) {
 
 bool hasSpeakerScript(Map<String, dynamic>? entry) {
   final segments = entry?['transcript_segments'] as List<dynamic>? ?? [];
-  return segments.isNotEmpty;
+  if (segments.isNotEmpty) return true;
+
+  // Precision-text entries also have a speaker: their lines are owned by the
+  // person chosen while the text was saved (normally "나").  The entry response
+  // can briefly omit transcript_segments while the server refreshes it.  Treating
+  // that short-lived response as speaker-less acknowledges the speaker step and
+  // lets the automatic graph build skip both review gates.
+  //
+  // Keep the checkpoint for every text entry until the user explicitly advances
+  // it, even when its derived segments have not arrived yet.
+  final source = entry?['entry_source']?.toString();
+  if (source == 'precision_text') {
+    return (entry?['transcript_clean_ko']?.toString().trim().isNotEmpty ?? false) ||
+        (entry?['transcript_ko']?.toString().trim().isNotEmpty ?? false);
+  }
+  return false;
 }
 
 ({

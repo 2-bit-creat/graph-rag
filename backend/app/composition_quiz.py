@@ -36,6 +36,7 @@ async def generate_composition_quiz(
     language: str,
     source_mode: SourceMode = "journal",
     exclude_node_ids: set[str] | None = None,
+    seed_node_ids: set[str] | None = None,
     difficulty: str = "normal",
 ) -> tuple[Quiz, dict]:
     """Generate one queued composition quiz and return (quiz, trace).
@@ -81,6 +82,7 @@ async def generate_composition_quiz(
         language=language,
         source_mode=source_mode,
         exclude_node_ids=exclude_node_ids,
+        seed_node_ids=seed_node_ids,
         difficulty=difficulty,
     )
     tracer.finish_step(
@@ -150,8 +152,11 @@ async def generate_composition_quiz(
     return quiz, trace
 
 
-def verdict_to_sm2(verdict: str) -> tuple[bool, int]:
-    """Map composition verdict to SM-2 (correct, quality 0-5)."""
+def verdict_to_sm2(verdict: str, quality: int | None = None) -> tuple[bool, int]:
+    """Map a composition evaluation to SM-2 while retaining the full 1-5 score."""
+    if quality is not None:
+        score = max(1, min(5, int(quality)))
+        return score >= 3, score
     v = (verdict or "").strip().lower()
     if v == "natural":
         return True, 5
@@ -168,6 +173,7 @@ def merge_composition_feedback(
     """Merge pre-generated drill content with attempt-specific coaching."""
     return {
         "verdict": eval_result.get("verdict", "understandable"),
+        "quality": eval_result.get("quality", 3),
         "verdict_label": eval_result.get("verdict_label", ""),
         "encouragement": eval_result.get("encouragement", ""),
         "natural_versions": quiz_data.get("model_answers") or [],

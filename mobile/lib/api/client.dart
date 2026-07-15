@@ -16,7 +16,10 @@ class ApiClient {
       baseUrl: resolvedApiBaseUrl,
       connectTimeout: const Duration(seconds: 30),
       receiveTimeout: const Duration(minutes: 2),
-      headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
     ));
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) {
@@ -113,11 +116,13 @@ class ApiClient {
   Exception _friendlyError(DioException e, String action) {
     final status = e.response?.statusCode;
     final detail = e.response?.data?.toString();
-    if (e.type == DioExceptionType.connectionError || e.type == DioExceptionType.unknown) {
+    if (e.type == DioExceptionType.connectionError ||
+        e.type == DioExceptionType.unknown) {
       return Exception('서버에 연결할 수 없어요. 잠시 후 다시 시도해 주세요.');
     }
     if (status != null) {
-      return Exception('$action 실패 (HTTP $status)${detail != null ? ': $detail' : ''}');
+      return Exception(
+          '$action 실패 (HTTP $status)${detail != null ? ': $detail' : ''}');
     }
     return Exception('$action 실패: ${e.message}');
   }
@@ -206,7 +211,8 @@ class ApiClient {
     String? sourceType,
   }) async {
     final fields = <String, dynamic>{
-      'file': MultipartFile.fromBytes(bytes, filename: filename, contentType: DioMediaType.parse(mimeType)),
+      'file': MultipartFile.fromBytes(bytes,
+          filename: filename, contentType: DioMediaType.parse(mimeType)),
     };
     if (sourceType != null) fields['source_type'] = sourceType;
     final formData = FormData.fromMap(fields);
@@ -310,7 +316,8 @@ class ApiClient {
     }
   }
 
-  Future<Map<String, dynamic>> listQuizGenerations({int limit = 50, int offset = 0}) async {
+  Future<Map<String, dynamic>> listQuizGenerations(
+      {int limit = 50, int offset = 0}) async {
     final resp = await _dio.get('/quiz/generations', queryParameters: {
       'limit': limit,
       'offset': offset,
@@ -323,7 +330,8 @@ class ApiClient {
     return resp.data as Map<String, dynamic>;
   }
 
-  Future<String> fetchQuizArtifactText(String quizId, String relativePath) async {
+  Future<String> fetchQuizArtifactText(
+      String quizId, String relativePath) async {
     final resp = await _dio.get<String>(
       '/quiz/generations/$quizId/artifacts/$relativePath',
       options: Options(responseType: ResponseType.plain),
@@ -343,6 +351,7 @@ class ApiClient {
   Future<Map<String, dynamic>> listQuizQueueItems({
     required String queueKind,
     String? quizType,
+    String? track,
     int limit = 50,
     int offset = 0,
     String order = 'desc',
@@ -351,6 +360,7 @@ class ApiClient {
       final resp = await _dio.get('/quiz/queue/items', queryParameters: {
         'queue_kind': queueKind,
         if (quizType != null) 'quiz_type': quizType,
+        if (track != null) 'track': track,
         'limit': limit,
         'offset': offset,
         'order': order,
@@ -358,6 +368,18 @@ class ApiClient {
       return resp.data as Map<String, dynamic>;
     } on DioException catch (e) {
       throw _friendlyError(e, '퀴즈 큐');
+    }
+  }
+
+  /// Graph Statement nodes visited (or still waiting) by quiz generation.
+  Future<Map<String, dynamic>> listQuizExplorations({String? language}) async {
+    try {
+      final resp = await _dio.get('/quiz/queue/explorations', queryParameters: {
+        if (language != null && language.isNotEmpty) 'language': language,
+      });
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '노드 탐색 이력');
     }
   }
 
@@ -383,11 +405,18 @@ class ApiClient {
   Future<Map<String, dynamic>> updateQuizProfileSettings({
     int? level,
     bool? isFreedomOn,
+    int? dailyClozeTarget,
+    int? dailyCompositionTarget,
+    double? quizReviewRatio,
   }) async {
     try {
       final resp = await _dio.patch('/quiz/profile/settings', data: {
         if (level != null) 'level': level,
         if (isFreedomOn != null) 'is_freedom_on': isFreedomOn,
+        if (dailyClozeTarget != null) 'daily_cloze_target': dailyClozeTarget,
+        if (dailyCompositionTarget != null)
+          'daily_composition_target': dailyCompositionTarget,
+        if (quizReviewRatio != null) 'quiz_review_ratio': quizReviewRatio,
       });
       return resp.data as Map<String, dynamic>;
     } on DioException catch (e) {
@@ -419,12 +448,36 @@ class ApiClient {
   }
 
   /// Kick off a background quiz-queue top-up (generates from the graph).
-  Future<void> refillQuizzes() async {
+  Future<Map<String, dynamic>> refillQuizzes() async {
     try {
-      await _dio.post('/quiz/refill');
+      final resp = await _dio.post('/quiz/refill');
+      return Map<String, dynamic>.from(resp.data as Map);
     } on DioException catch (e) {
       throw _friendlyError(e, '문제 생성');
     }
+  }
+
+  Future<Map<String, dynamic>> resetQuizQueue() async {
+    try {
+      final resp = await _dio.delete('/quiz/queue/reset');
+      return resp.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw _friendlyError(e, '퀴즈 큐 전체 초기화');
+    }
+  }
+
+  Future<Map<String, dynamic>> generateMoreQuizBatch({String? language}) async {
+    final resp = await _dio.post('/quiz/batch/more', queryParameters: {
+      if (language != null && language.isNotEmpty) 'language': language,
+    });
+    return resp.data as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> setNodePinned(String nodeId, bool pinned) async {
+    final resp = await _dio.patch('/graph/nodes/$nodeId/pin', queryParameters: {
+      'pinned': pinned,
+    });
+    return resp.data as Map<String, dynamic>;
   }
 
   Future<Map<String, dynamic>> submitQuizAnswer({
@@ -447,7 +500,8 @@ class ApiClient {
     }
   }
 
-  Future<Map<String, dynamic>> buildGraph(String entryId, {bool force = false}) async {
+  Future<Map<String, dynamic>> buildGraph(String entryId,
+      {bool force = false}) async {
     try {
       final resp = await _dio.post(
         '/journal/entries/$entryId/graph',
@@ -615,7 +669,8 @@ class ApiClient {
   }
 
   /// Confirm/override the entry's content type (the LLM-suggested label).
-  Future<Map<String, dynamic>> setSourceType(String entryId, String sourceType) async {
+  Future<Map<String, dynamic>> setSourceType(
+      String entryId, String sourceType) async {
     try {
       final resp = await _dio.patch(
         '/journal/entries/$entryId/source-type',
@@ -795,8 +850,10 @@ class ApiClient {
     }
   }
 
-  Future<Map<String, dynamic>> updateEdge(String edgeId, {required String relation}) async {
-    final resp = await _dio.patch('/graph/edges/$edgeId', data: {'relation': relation});
+  Future<Map<String, dynamic>> updateEdge(String edgeId,
+      {required String relation}) async {
+    final resp =
+        await _dio.patch('/graph/edges/$edgeId', data: {'relation': relation});
     return resp.data as Map<String, dynamic>;
   }
 
@@ -850,7 +907,8 @@ class ApiClient {
     try {
       final resp = await _dio.post('/vocabularies', data: {
         'name': name,
-        if (description != null && description.isNotEmpty) 'description': description,
+        if (description != null && description.isNotEmpty)
+          'description': description,
       });
       return resp.data as Map<String, dynamic>;
     } on DioException catch (e) {
@@ -902,7 +960,8 @@ class ApiClient {
 
   Future<void> deleteVocabularyWord(String vocabId, String word) async {
     try {
-      await _dio.delete('/vocabularies/$vocabId/words/${Uri.encodeComponent(word)}');
+      await _dio
+          .delete('/vocabularies/$vocabId/words/${Uri.encodeComponent(word)}');
     } on DioException catch (e) {
       throw _friendlyError(e, '단어 삭제');
     }
@@ -1051,11 +1110,11 @@ class ApiClient {
     }
   }
 
-
   /// Update native language (모국어 — explanations generated in this language).
   Future<void> updateNativeLanguage(String language) async {
     try {
-      await _dio.patch('/quiz/profile/settings', data: {'native_language': language});
+      await _dio
+          .patch('/quiz/profile/settings', data: {'native_language': language});
     } on DioException catch (e) {
       throw _friendlyError(e, '모국어 저장');
     }
@@ -1064,16 +1123,19 @@ class ApiClient {
   /// Update per-language levels map {english: 50, german: 10}.
   Future<void> updateLanguageLevels(Map<String, int> levels) async {
     try {
-      await _dio.patch('/quiz/profile/settings', data: {'language_levels': levels});
+      await _dio
+          .patch('/quiz/profile/settings', data: {'language_levels': levels});
     } on DioException catch (e) {
       throw _friendlyError(e, '레벨 저장');
     }
   }
 
   /// Delete all expressions for a language and trigger re-extraction.
-  Future<Map<String, dynamic>> deleteAndReextractLanguage(String language) async {
+  Future<Map<String, dynamic>> deleteAndReextractLanguage(
+      String language) async {
     try {
-      final resp = await _dio.delete('/vocabularies/statement-bank/language/$language');
+      final resp =
+          await _dio.delete('/vocabularies/statement-bank/language/$language');
       return resp.data as Map<String, dynamic>;
     } on DioException catch (e) {
       throw _friendlyError(e, '표현 재추출');
@@ -1163,9 +1225,11 @@ class ApiClient {
   // --- Tutor (작문 드릴) -----------------------------------------------------
 
   /// Save several tutor expressions at once. Returns the count saved.
-  Future<int> saveTutorExpressionsBatch(List<Map<String, dynamic>> items) async {
+  Future<int> saveTutorExpressionsBatch(
+      List<Map<String, dynamic>> items) async {
     try {
-      final resp = await _dio.post('/tutor/vocab/batch', data: {'items': items});
+      final resp =
+          await _dio.post('/tutor/vocab/batch', data: {'items': items});
       return (resp.data as Map<String, dynamic>)['saved'] as int? ?? 0;
     } on DioException catch (e) {
       throw _friendlyError(e, '표현 저장');
@@ -1175,7 +1239,8 @@ class ApiClient {
   /// Recent completed drill rounds (activity log), most-recent-first.
   Future<List<Map<String, dynamic>>> getTutorHistory({int limit = 20}) async {
     try {
-      final resp = await _dio.get('/tutor/history', queryParameters: {'limit': limit});
+      final resp =
+          await _dio.get('/tutor/history', queryParameters: {'limit': limit});
       final items = (resp.data as Map<String, dynamic>)['items'] as List? ?? [];
       return items.map((e) => Map<String, dynamic>.from(e as Map)).toList();
     } on DioException catch (e) {
@@ -1255,10 +1320,11 @@ class ApiClient {
     }
   }
 
-  Future<Map<String, dynamic>> renameChatSession(String id, String? title) async {
+  Future<Map<String, dynamic>> renameChatSession(
+      String id, String? title) async {
     try {
-      final resp = await _dio
-          .patch('/graph/chat/sessions/$id', data: {'title': title});
+      final resp =
+          await _dio.patch('/graph/chat/sessions/$id', data: {'title': title});
       return resp.data as Map<String, dynamic>;
     } on DioException catch (e) {
       throw _friendlyError(e, '채팅방 이름 변경');
@@ -1289,7 +1355,8 @@ class ApiClient {
 
   /// Send one message; the answer is grounded in the user's journal graph.
   /// Returns {answer, referenced_node_ids, user_message_id, assistant_message_id}.
-  Future<Map<String, dynamic>> sendChatMessage(String id, String message) async {
+  Future<Map<String, dynamic>> sendChatMessage(
+      String id, String message) async {
     try {
       final resp = await _dio.post(
         '/graph/chat/sessions/$id/messages',
@@ -1341,7 +1408,8 @@ class ApiClient {
   }
 
   /// Conversationally rewrite the current draft ("첫 문단 빼줘" 등).
-  Future<Map<String, dynamic>> distillRefine(String id, String instruction) async {
+  Future<Map<String, dynamic>> distillRefine(
+      String id, String instruction) async {
     try {
       final resp = await _dio.post(
         '/graph/chat/sessions/$id/distill/refine',
@@ -1357,8 +1425,8 @@ class ApiClient {
   Future<Map<String, dynamic>> updateDistillState(
       String id, List<bool> included) async {
     try {
-      final resp = await _dio
-          .patch('/graph/chat/sessions/$id/distill', data: {'included': included});
+      final resp = await _dio.patch('/graph/chat/sessions/$id/distill',
+          data: {'included': included});
       return resp.data as Map<String, dynamic>;
     } on DioException catch (e) {
       throw _friendlyError(e, '초안 상태 저장');
@@ -1396,9 +1464,8 @@ class ApiClient {
         order: 'asc',
       );
       final items = (resp['items'] as List?) ?? [];
-      final mapped = items
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .toList();
+      final mapped =
+          items.map((e) => Map<String, dynamic>.from(e as Map)).toList();
       if (language == null || language.isEmpty) return mapped;
       return mapped
           .where((q) =>

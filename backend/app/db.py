@@ -109,6 +109,9 @@ _MIGRATIONS = [
     # Quiz MVP v2
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS current_level INTEGER NOT NULL DEFAULT 10",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_freedom_on BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_cloze_target INTEGER NOT NULL DEFAULT 20",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_composition_target INTEGER NOT NULL DEFAULT 5",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS quiz_review_ratio DOUBLE PRECISION NOT NULL DEFAULT 0.5",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS level_stats JSONB",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS difficulty_level INTEGER NOT NULL DEFAULT 10",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS queue_kind TEXT NOT NULL DEFAULT 'new'",
@@ -117,7 +120,64 @@ _MIGRATIONS = [
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS interval_days DOUBLE PRECISION NOT NULL DEFAULT 0",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS times_correct INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS times_wrong INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS track TEXT NOT NULL DEFAULT 'daily'",
+    "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS batch_id UUID",
+    "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS source_kind TEXT",
+    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE",
+    "CREATE INDEX IF NOT EXISTS idx_quizzes_user_track_batch ON quizzes (user_id, track, batch_id)",
+    "CREATE INDEX IF NOT EXISTS idx_nodes_user_pinned ON nodes (user_id, is_pinned)",
+    """
+    CREATE TABLE IF NOT EXISTS quiz_source_explorations (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        node_id UUID NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+        language TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'completed',
+        composition_count INTEGER NOT NULL DEFAULT 0,
+        word_count INTEGER NOT NULL DEFAULT 0,
+        expression_count INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (user_id, node_id, language)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_quiz_source_explorations_user_lang ON quiz_source_explorations (user_id, language, status)",
+    "ALTER TABLE quiz_source_explorations ADD COLUMN IF NOT EXISTS cloze_status TEXT NOT NULL DEFAULT 'available'",
+    "ALTER TABLE quiz_source_explorations ADD COLUMN IF NOT EXISTS cloze_generator_version TEXT",
+    "ALTER TABLE quiz_source_explorations ADD COLUMN IF NOT EXISTS expression_count INTEGER NOT NULL DEFAULT 0",
+    """
+    CREATE TABLE IF NOT EXISTS quiz_generation_states (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        language TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'available',
+        source_count INTEGER NOT NULL DEFAULT 0,
+        latest_source_at TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (user_id, language)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS quiz_batches (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        batch_date DATE NOT NULL,
+        track TEXT NOT NULL DEFAULT 'daily',
+        language TEXT NOT NULL DEFAULT 'english',
+        cloze_target INTEGER NOT NULL DEFAULT 0,
+        composition_target INTEGER NOT NULL DEFAULT 0,
+        review_ratio DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+        sequence INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (user_id, batch_date, track, language, sequence)
+    )
+    """,
+    "ALTER TABLE quiz_batches ADD COLUMN IF NOT EXISTS sequence INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS last_answered_at TIMESTAMPTZ",
+    "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS first_answered_at TIMESTAMPTZ",
+    "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS last_quality INTEGER",
+    "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS generation_key TEXT",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_quizzes_generation_key ON quizzes (generation_key) WHERE generation_key IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_quizzes_user_type_queue ON quizzes (user_id, quiz_type, queue_kind, difficulty_level)",
     "CREATE INDEX IF NOT EXISTS idx_quizzes_user_type_review ON quizzes (user_id, quiz_type, next_review_at)",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS pipeline_trace JSONB",

@@ -474,6 +474,34 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
               overflow: TextOverflow.ellipsis,
             ),
           ),
+          if (node != null && _isStatementNode(node))
+            OutlinedButton.icon(
+              icon: Icon(
+                node['is_pinned'] == true ? Icons.push_pin : Icons.push_pin_outlined,
+                size: 16,
+              ),
+              label: Text(node['is_pinned'] == true ? '핀 해제' : '핀'),
+              onPressed: _saving
+                  ? null
+                  : () async {
+                      setState(() => _saving = true);
+                      try {
+                        await apiClient.setNodePinned(
+                          node['id'].toString(), node['is_pinned'] != true,
+                        );
+                        widget.onUpdated?.call();
+                      } finally {
+                        if (mounted) setState(() => _saving = false);
+                      }
+                    },
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                foregroundColor: node['is_pinned'] == true
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
           IconButton(
             icon: const Icon(Icons.close),
             onPressed: widget.onClose,

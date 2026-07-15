@@ -52,6 +52,23 @@ async def _min_new_count(session, user_id: uuid.UUID, language: str) -> int:
 
 async def refill_user_quizzes(user_id: uuid.UUID) -> dict:
     """Top up quiz queues for all of a user's active target languages."""
+    # This is the only production refill path.  The in-flight guard must wrap
+    # it as well; previously it sat below an early return and did not prevent
+    # repeated button taps/page events from starting overlapping LLM jobs.
+    if user_id in _IN_FLIGHT:
+        return {"status": "skipped", "reason": "already running"}
+    _IN_FLIGHT.add(user_id)
+    try:
+        from ..quiz_batch import fill_user_daily_batches
+        async with async_session_factory() as session:
+            user = await session.get(User, user_id)
+            if user is None:
+                return {"status": "skipped", "reason": "user not found"}
+            return {"status": "ok", "batches": await fill_user_daily_batches(session, user)}
+    finally:
+        _IN_FLIGHT.discard(user_id)
+
+    # Legacy bundle refill implementation (unreachable after migration).
     settings = get_settings()
     if not settings.quiz_auto_enabled:
         return {"status": "skipped", "reason": "quiz_auto_enabled=False"}

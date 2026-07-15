@@ -28,6 +28,10 @@ class User(Base):
     target_languages: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     native_language: Mapped[str] = mapped_column(String, nullable=False, default="korean")
     language_levels: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Daily personalized quiz targets and source mix (review share 0.0-1.0).
+    daily_cloze_target: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+    daily_composition_target: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    quiz_review_ratio: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
     # Consent (PIPA): the privacy-policy/terms version the user accepted and when.
     # speaker_id_consent_at is the SEPARATE consent required to derive a voiceprint
     # (a biometric feature = sensitive info); null means not consented / withdrawn.
@@ -182,6 +186,7 @@ class Node(Base):
     # Cumulative LLM-assigned importance (1-5 per mention, summed across mentions).
     # Recurring concepts naturally outweigh one-off mentions — see _get_or_create_node.
     importance_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Canonical "self" / diary-owner node. Exactly one per user (enforced by a
     # partial unique index). The diary "나" and any conversation speaker the user
     # confirms as themselves all resolve to this node, regardless of its name.
@@ -356,6 +361,9 @@ class Quiz(Base):
     source_nodes: Mapped[list[uuid.UUID] | None] = mapped_column(
         ARRAY(UUID(as_uuid=True)), nullable=True
     )
+    # Stable per-source/per-expression identity.  It prevents a refill race or
+    # repeated click from storing the same learning target twice.
+    generation_key: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
     question_ko: Mapped[str | None] = mapped_column(Text, nullable=True)
     sentence_en: Mapped[str | None] = mapped_column(Text, nullable=True)
     quiz_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
@@ -366,7 +374,13 @@ class Quiz(Base):
     interval_days: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     times_correct: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     times_wrong: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Retains the latest 1-5 composition evaluation independently of SM-2 so
+    # review ordering can be both stable and explainable.
+    last_quality: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_answered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    first_answered_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     is_solved: Mapped[bool] = mapped_column(nullable=False, default=False)
@@ -378,6 +392,82 @@ class Quiz(Base):
     )
     pipeline_trace: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     debug_run_dir: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ``daily`` and ``pinned`` are isolated learning tracks. A batch id makes
+    # daily progress immutable and prevents pinned drills from counting toward it.
+    track: Mapped[str] = mapped_column(String, nullable=False, default="daily")
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    source_kind: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class QuizBatch(Base):
+    """Immutable generation unit for the daily and pinned learning tracks."""
+
+    __tablename__ = "quiz_batches"
+    __table_args__ = (
+        UniqueConstraint("user_id", "batch_date", "track", "language", "sequence", name="uq_quiz_batch_day_track_lang_seq"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    batch_date: Mapped[date] = mapped_column(Date, nullable=False)
+    track: Mapped[str] = mapped_column(String, nullable=False, default="daily")
+    language: Mapped[str] = mapped_column(String, nullable=False, default="english")
+    cloze_target: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    composition_target: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    review_ratio: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class QuizSourceExploration(Base):
+    """Per-Statement generation coverage and source-exhaustion guard."""
+
+    __tablename__ = "quiz_source_explorations"
+    __table_args__ = (
+        UniqueConstraint("user_id", "node_id", "language", name="uq_quiz_source_exploration"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False
+    )
+    language: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="completed")
+    composition_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    word_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expression_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cloze_status: Mapped[str] = mapped_column(String, nullable=False, default="available")
+    cloze_generator_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class QuizGenerationState(Base):
+    """Cached source inventory state used to stop futile refill attempts."""
+
+    __tablename__ = "quiz_generation_states"
+    __table_args__ = (
+        UniqueConstraint("user_id", "language", name="uq_quiz_generation_state"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    language: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="available")
+    source_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    latest_source_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class Ontology(Base):
