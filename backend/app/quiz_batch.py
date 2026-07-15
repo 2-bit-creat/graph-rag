@@ -412,7 +412,13 @@ async def create_pinned_batch(
             session, user, language=language, track="pinned", sequence=sequence
         )
         seed = {str(node_id)}
-        created = {"cloze": 0, "composition": 0, "batch_id": str(batch.id)}
+        created = {
+            "cloze": 0,
+            "composition": 0,
+            "batch_id": str(batch.id),
+            "language": language,
+            "quiz_ids": {"cloze": [], "composition": []},
+        }
         try:
             quizzes, _ = await generate_quiz_bundle(
                 session, user, language=language, seed_node_ids=seed
@@ -421,8 +427,10 @@ async def create_pinned_batch(
                 await _stamp(session, quiz, batch, "pinned")
                 if quiz.quiz_type == "cloze":
                     created["cloze"] += 1
+                    created["quiz_ids"]["cloze"].append(str(quiz.id))
                 elif quiz.quiz_type == "composition":
                     created["composition"] += 1
+                    created["quiz_ids"]["composition"].append(str(quiz.id))
         except BundleSeedError:
             pass
         await session.commit()

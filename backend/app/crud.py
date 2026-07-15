@@ -97,6 +97,8 @@ def build_node_out(
         deleted_at=getattr(node, "deleted_at", None),
         deleted_context=getattr(node, "deleted_context", None),
         importance_score=getattr(node, "importance_score", 0) or 0,
+        is_self=getattr(node, "is_self", False) or False,
+        is_pinned=getattr(node, "is_pinned", False) or False,
         source_entry_id=source_entry_id,
         source_transcript_ko=source_transcript_ko,
         source_transcript_clean_ko=source_transcript_clean_ko,

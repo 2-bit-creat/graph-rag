@@ -35,6 +35,7 @@ class GraphChatPanel extends StatelessWidget {
     this.pipelineLocked = false,
     this.pipelineLockLabel,
     this.pipelineReviewLabel,
+    this.inputFocusNode,
   });
 
   final List<GraphChatMessage> messages;
@@ -75,6 +76,10 @@ class GraphChatPanel extends StatelessWidget {
   /// User-review step (speaker confirm / graph review) — no spinner.
   final String? pipelineReviewLabel;
 
+  /// Owned by the screen so it can re-request focus after a tap elsewhere
+  /// in the tree (e.g. a quiz card's "다음 문제" button) steals it away.
+  final FocusNode? inputFocusNode;
+
   @override
   Widget build(BuildContext context) {
     final shell = context.shell;
@@ -114,6 +119,7 @@ class GraphChatPanel extends StatelessWidget {
                   onSend: onSend,
                   onModeSelected:
                       pipelineLocked ? null : onModeSelected,
+                  focusNode: inputFocusNode,
                 ),
           ],
         ),
@@ -365,6 +371,7 @@ class _InputBar extends StatefulWidget {
     required this.hint,
     required this.onSend,
     required this.onModeSelected,
+    this.focusNode,
   });
 
   final TextEditingController controller;
@@ -374,16 +381,22 @@ class _InputBar extends StatefulWidget {
   final ValueChanged<String> onSend;
   final ValueChanged<String>? onModeSelected;
 
+  /// Owned by the screen (not this widget) so it can be re-requested after
+  /// an action elsewhere in the tree — e.g. tapping a quiz card's "다음
+  /// 문제" button — steals focus away from the composer.
+  final FocusNode? focusNode;
+
   @override
   State<_InputBar> createState() => _InputBarState();
 }
 
 class _InputBarState extends State<_InputBar> {
-  final FocusNode _focusNode = FocusNode();
+  FocusNode? _ownedFocusNode;
+  FocusNode get _focusNode => widget.focusNode ?? (_ownedFocusNode ??= FocusNode());
 
   @override
   void dispose() {
-    _focusNode.dispose();
+    _ownedFocusNode?.dispose();
     super.dispose();
   }
 

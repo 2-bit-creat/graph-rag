@@ -13,6 +13,9 @@ class ClozeQuizCard extends StatefulWidget {
     this.externalInput = false,
     this.externalResult,
     this.externalSolved = false,
+    this.externalCompletedWords = const [],
+    this.externalLiveDraft = '',
+    this.onHintRequested,
   });
 
   final Map<String, dynamic> quizData;
@@ -24,6 +27,18 @@ class ClozeQuizCard extends StatefulWidget {
   final Map<String, dynamic>? externalResult;
   final bool externalSolved;
 
+  /// externalInput only: words matched live so far (in order), and the
+  /// in-progress text for the word currently being typed in the composer.
+  final List<String> externalCompletedWords;
+  final String externalLiveDraft;
+
+  /// externalInput only: fired after the hint or "정답 보기" buttons are
+  /// tapped — both steal keyboard focus from the shared chat composer, which
+  /// is the only place this mode actually accepts typing. The callback both
+  /// clears a stale mismatched attempt (so a hint isn't hidden behind it) and
+  /// returns focus to the composer so typing keeps working afterward.
+  final VoidCallback? onHintRequested;
+
   @override
   State<ClozeQuizCard> createState() => _ClozeQuizCardState();
 }
@@ -32,7 +47,10 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
   bool _submitting = false;
-  int _hintStep = 0;
+  // Hint is scoped to whichever box is currently active: 0 = none,
+  // 1 = first letter, 2 = the whole word (still has to be typed in).
+  // Reset in didUpdateWidget whenever the active box advances.
+  int _hintLevel = 0;
   bool _answerRevealed = false;
   bool? _graded;
   bool _solved = false;
@@ -44,6 +62,24 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(covariant ClozeQuizCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The live word-by-word matcher (ChatSessionController.updateClozeDraft)
+    // flips externalSolved the instant every word matches, with no button
+    // press involved — play the same confirmation sound the button-driven
+    // (non-external) path plays on a correct answer.
+    if (widget.externalInput && !oldWidget.externalSolved && widget.externalSolved) {
+      widget.audioButtonKey?.currentState?.play(showError: false);
+    }
+    if (widget.externalInput &&
+        oldWidget.externalCompletedWords.length !=
+            widget.externalCompletedWords.length) {
+      // Moved to a new blank — hints don't carry over from the last one.
+      _hintLevel = 0;
+    }
+  }
+
   bool? get _effectiveGrade => widget.externalInput
       ? (widget.externalSolved
           ? true
@@ -53,10 +89,10 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
   bool get _effectiveSolved =>
       widget.externalInput ? widget.externalSolved : _solved;
 
-  bool get _effectiveAnswerRevealed =>
-      _answerRevealed ||
-      (widget.externalInput && widget.externalResult != null) ||
-      _effectiveSolved;
+  // Revealing the blank is either an explicit "정답 보기" tap or having solved
+  // it correctly — a wrong attempt must never auto-reveal the answer, so the
+  // learner keeps guessing (with hints) instead of just being handed it.
+  bool get _effectiveAnswerRevealed => _answerRevealed || _effectiveSolved;
 
   bool get _showAudio => _effectiveGrade != null || _effectiveAnswerRevealed;
 
@@ -65,6 +101,78 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
           '')
       .trim()
       .toLowerCase();
+
+  /// One box per word, sized off that word's letter count, so the learner
+  /// can see how many words the answer has (and roughly how long each is)
+  /// before typing anything — mirrors 말해보카's multi-slot blank. A word
+  /// already matched (live, externalInput mode only) turns green; the word
+  /// currently being typed shows the live draft text plus a blinking cursor
+  /// and grows if the attempt runs longer than the real word.
+  Widget _wordSlot({
+    required String display,
+    required String targetWord,
+    required bool completed,
+    required bool active,
+    required ColorScheme scheme,
+    String? hintText,
+  }) {
+    final sizingLength =
+        active && display.length > targetWord.length ? display.length : targetWord.length;
+    final width = (sizingLength * 11.0 + 20.0).clamp(36.0, 200.0);
+    final showHint = active && display.isEmpty && hintText != null;
+    return InkWell(
+      onTap: widget.externalInput ? null : () => _focusNode.requestFocus(),
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        width: width,
+        height: 32,
+        margin: const EdgeInsets.symmetric(horizontal: 1, vertical: 2),
+        padding: active ? const EdgeInsets.only(left: 8) : EdgeInsets.zero,
+        // The active (currently-typed) box aligns its content — cursor,
+        // hint letter, typed text — to the left like a real text caret,
+        // not centered; completed/upcoming boxes keep a centered look.
+        alignment: active ? Alignment.centerLeft : Alignment.center,
+        decoration: BoxDecoration(
+          color: scheme.primary.withValues(alpha: completed ? 0.10 : 0.08),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: scheme.primary.withValues(alpha: completed ? 0.2 : 0.36),
+          ),
+        ),
+        child: display.isEmpty && !active
+            ? null
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (display.isNotEmpty)
+                    Text(
+                      display,
+                      style: TextStyle(
+                        color: completed
+                            ? const Color(0xFF22C55E)
+                            : scheme.primary,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 17,
+                      ),
+                    )
+                  else if (showHint)
+                    Text(
+                      hintText,
+                      style: TextStyle(
+                        color: scheme.primary.withValues(alpha: 0.45),
+                        fontWeight: FontWeight.w700,
+                        fontSize: 17,
+                      ),
+                    ),
+                  if (active) ...[
+                    if (display.isNotEmpty || showHint) const SizedBox(width: 2),
+                    _BlinkingCursor(color: scheme.primary, height: 18),
+                  ],
+                ],
+              ),
+      ),
+    );
+  }
 
   Widget _buildClozeSentence(String prompt, String blank) {
     final match = RegExp(r'_{3,}').firstMatch(prompt);
@@ -82,69 +190,88 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
         );
     final maxBlankWidth =
         (MediaQuery.sizeOf(context).width * 0.68).clamp(180.0, 340.0);
+    final words = blank.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+
+    final List<InlineSpan> blankSpans;
+    if (visible) {
+      blankSpans = [
+        WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: Container(
+            constraints: BoxConstraints(
+              minWidth: 132,
+              maxWidth: maxBlankWidth,
+            ),
+            margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            decoration: BoxDecoration(
+              color: scheme.primary.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: scheme.primary.withValues(alpha: 0.5)),
+            ),
+            child: Text(
+              blank,
+              softWrap: true,
+              textAlign: TextAlign.center,
+              style: baseStyle?.copyWith(color: scheme.primary, height: 1.28),
+            ),
+          ),
+        ),
+      ];
+    } else if (widget.externalInput) {
+      // Composer keystrokes are matched word-by-word live (see
+      // ChatSessionController.updateClozeDraft) — show real progress.
+      final completedWords = widget.externalCompletedWords;
+      final liveDraft = widget.externalLiveDraft;
+      final activeIndex = completedWords.length;
+      blankSpans = [
+        for (var i = 0; i < words.length; i++) ...[
+          if (i > 0) const TextSpan(text: ' '),
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: _wordSlot(
+              display: i < activeIndex
+                  ? completedWords[i]
+                  : (i == activeIndex ? liveDraft : ''),
+              targetWord: words[i],
+              completed: i < activeIndex,
+              active: i == activeIndex,
+              scheme: scheme,
+              hintText: i == activeIndex && words[i].isNotEmpty
+                  ? (_hintLevel == 1
+                      ? words[i][0]
+                      : (_hintLevel >= 2 ? words[i] : null))
+                  : null,
+            ),
+          ),
+        ],
+      ];
+    } else {
+      // Internal mode types the whole phrase into the field below and
+      // submits it at once — just show each word's shape up front.
+      blankSpans = [
+        for (var i = 0; i < words.length; i++) ...[
+          if (i > 0) const TextSpan(text: ' '),
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: _wordSlot(
+              display: '',
+              targetWord: words[i],
+              completed: false,
+              active: false,
+              scheme: scheme,
+            ),
+          ),
+        ],
+      ];
+    }
+
     return RichText(
       text: TextSpan(
         style: baseStyle,
         children: [
           TextSpan(text: prompt.substring(0, match.start)),
-          WidgetSpan(
-            alignment: PlaceholderAlignment.middle,
-            child: InkWell(
-              onTap: visible || widget.externalInput
-                  ? null
-                  : () => _focusNode.requestFocus(),
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                constraints: BoxConstraints(
-                  minWidth: 132,
-                  maxWidth: maxBlankWidth,
-                ),
-                margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                decoration: BoxDecoration(
-                  color:
-                      scheme.primary.withValues(alpha: visible ? 0.14 : 0.08),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color:
-                        scheme.primary.withValues(alpha: visible ? 0.5 : 0.36),
-                  ),
-                ),
-                child: visible
-                    ? Text(
-                        blank,
-                        softWrap: true,
-                        textAlign: TextAlign.center,
-                        style: baseStyle?.copyWith(
-                          color: scheme.primary,
-                          height: 1.28,
-                        ),
-                      )
-                    : Row(
-                        mainAxisSize: MainAxisSize.min,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.edit_rounded,
-                              size: 17, color: scheme.primary),
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              '정답 입력',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodyLarge
-                                  ?.copyWith(
-                                    color: scheme.primary,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                            ),
-                          ),
-                        ],
-                      ),
-              ),
-            ),
-          ),
+          ...blankSpans,
           TextSpan(text: prompt.substring(match.end)),
         ],
       ),
@@ -166,22 +293,16 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
     return plain == _blank || accepted.contains(plain);
   }
 
-  void _revealHint() =>
-      setState(() => _hintStep = (_hintStep + 1).clamp(0, 2).toInt());
-
-  List<String> _letterHintTokens(String answer) {
-    final revealCount = _hintStep == 1 ? 1 : 2;
-    return answer
-        .split(RegExp(r'\s+'))
-        .where((word) => word.isNotEmpty)
-        .map((word) {
-      final visible =
-          word.substring(0, revealCount.clamp(1, word.length).toInt());
-      final concealed = word.length - visible.length;
-      // The sentence already shows exact blank lengths. Keep this hint
-      // compact so a long phrase does not turn into a second wall of lines.
-      return '$visible${concealed > 0 ? '·' * concealed.clamp(1, 3).toInt() : ''}';
-    }).toList();
+  void _revealHint() {
+    setState(() => _hintLevel = (_hintLevel + 1).clamp(0, 2).toInt());
+    // Tapping this button steals keyboard focus from the chat composer below —
+    // the only place externalInput mode actually types. Always ping the
+    // callback (which clears a stale mismatched attempt AND returns focus to
+    // the composer) so typing keeps working after the tap, not just when a
+    // draft happened to be sitting in the box.
+    if (widget.externalInput) {
+      widget.onHintRequested?.call();
+    }
   }
 
   void _revealAnswer({bool fillField = false}) {
@@ -191,6 +312,11 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
       if (fillField && blank.isNotEmpty) _controller.text = blank;
     });
     widget.audioButtonKey?.currentState?.play(showError: false);
+    // Same focus-stealing issue as the hint button — hand focus back to the
+    // composer so the learner can retype the revealed answer immediately.
+    if (widget.externalInput) {
+      widget.onHintRequested?.call();
+    }
   }
 
   Future<void> _submit() async {
@@ -209,9 +335,14 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
       if (!mounted) return;
       setState(() {
         _graded = correct;
-        _answerRevealed = true;
         _solved = correct;
-        if (!correct) _controller.clear();
+        // Only reveal on a correct answer — a wrong first try should still
+        // let the learner use hints/retype rather than being handed it.
+        if (correct) {
+          _answerRevealed = true;
+        } else {
+          _controller.clear();
+        }
       });
       widget.audioButtonKey?.currentState?.play(showError: false);
       if (correct) widget.onSolved();
@@ -224,7 +355,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('정답과 철자를 비교한 뒤 다시 입력해 보세요.'),
+          content: Text('오답이에요. 힌트를 참고하거나 정답 보기를 눌러 확인해 보세요.'),
           duration: Duration(seconds: 1),
         ),
       );
@@ -380,54 +511,6 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
           const SizedBox(height: 4),
           _buildContextKo(contextKo),
         ],
-        if (_hintStep > 0 && !_effectiveAnswerRevealed && blank.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _hintStep == 1 ? '철자 힌트 · 첫 글자' : '철자 힌트 · 앞 글자',
-                  style: TextStyle(
-                    color: scheme.onSurfaceVariant,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    for (final token in _letterHintTokens(blank))
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 9, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: scheme.primary.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(7),
-                        ),
-                        child: Text(
-                          token,
-                          style: TextStyle(
-                            color: scheme.primary,
-                            fontFamily: 'monospace',
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.8,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
         if (_effectiveAnswerRevealed && blank.isNotEmpty) ...[
           const SizedBox(height: 14),
           _answerPanel(blank: blank, wrongFirstTry: wrongFirstTry),
@@ -435,9 +518,13 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
         if (wrongFirstTry) ...[
           const SizedBox(height: 7),
           Text(
-            widget.externalInput
-                ? '오답이에요. 위 정답을 확인한 뒤 아래 채팅 입력창에 다시 입력해 보세요.'
-                : '오답이에요. 위 정답을 보고 직접 입력해 완료해 보세요.',
+            _effectiveAnswerRevealed
+                ? (widget.externalInput
+                    ? '위 정답을 보고 아래 채팅 입력창에 다시 입력해 완료해 보세요.'
+                    : '위 정답을 보고 직접 입력해 완료해 보세요.')
+                : (widget.externalInput
+                    ? '오답이에요. 힌트를 참고해서 아래 채팅 입력창에 다시 입력해 보세요.'
+                    : '오답이에요. 힌트를 참고해서 다시 입력해 보세요.'),
             style: const TextStyle(fontSize: 13, color: Color(0xFFFF8A80)),
           ),
         ],
@@ -446,7 +533,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
           Text(hintKo,
               style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
         ],
-        if (_effectiveGrade == null) ...[
+        if (!_effectiveAnswerRevealed) ...[
           const SizedBox(height: 14),
           Wrap(
             spacing: 8,
@@ -454,10 +541,10 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
             children: [
               _actionButton(
                 icon: Icons.tips_and_updates_outlined,
-                label: _hintStep == 0
+                label: _hintLevel == 0
                     ? '글자 힌트'
-                    : (_hintStep == 1 ? '글자 하나 더' : '힌트 확인됨'),
-                onPressed: _hintStep >= 2 ? null : _revealHint,
+                    : (_hintLevel == 1 ? '단어 보기' : '힌트 확인됨'),
+                onPressed: _hintLevel >= 2 ? null : _revealHint,
               ),
               _actionButton(
                 icon: Icons.visibility_outlined,
@@ -534,6 +621,39 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
           ),
         ],
       ],
+    );
+  }
+}
+
+/// A simple blinking text-cursor bar for the word currently being typed.
+class _BlinkingCursor extends StatefulWidget {
+  const _BlinkingCursor({required this.color, required this.height});
+
+  final Color color;
+  final double height;
+
+  @override
+  State<_BlinkingCursor> createState() => _BlinkingCursorState();
+}
+
+class _BlinkingCursorState extends State<_BlinkingCursor>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 500),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _controller,
+      child: Container(width: 2, height: widget.height, color: widget.color),
     );
   }
 }

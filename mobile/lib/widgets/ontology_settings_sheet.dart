@@ -95,20 +95,68 @@ class _OntologySettingsSheetState extends State<OntologySettingsSheet> {
             const SizedBox(height: 8),
             Text('엔티티 타입', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
-            ...entityTypes.map((et) {
+            ...(() {
+              // Parents first, each immediately followed by its children
+              // (e.g. Identity, then Person/Source indented under it) so the
+              // 정체성 하위분류 구조가 목록 순서로도 드러나게 한다.
+              final parents = entityTypes
+                  .where((et) => (et['parent']?.toString() ?? '').isEmpty)
+                  .toList();
+              final ordered = <Map<String, dynamic>>[];
+              for (final p in parents) {
+                ordered.add(p);
+                final parentName = p['name']?.toString() ?? '';
+                ordered.addAll(entityTypes.where(
+                    (et) => et['parent']?.toString() == parentName));
+              }
+              // Anything whose declared parent wasn't in the list (shouldn't
+              // normally happen) still needs to render somewhere.
+              for (final et in entityTypes) {
+                if (!ordered.contains(et)) ordered.add(et);
+              }
+              return ordered;
+            })().map((et) {
               final name = et['name']?.toString() ?? '';
+              final parent = et['parent']?.toString() ?? '';
+              final isChild = parent.isNotEmpty;
               final color = typeColors[name] ?? parseHexColor('#64748b');
-              return Card(
-                margin: const EdgeInsets.only(bottom: 6),
-                child: ListTile(
-                  dense: true,
-                  leading: Container(
-                    width: 14,
-                    height: 14,
-                    decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+              return Padding(
+                padding: EdgeInsets.only(left: isChild ? 20 : 0, bottom: 6),
+                child: Card(
+                  margin: EdgeInsets.zero,
+                  child: ListTile(
+                    dense: true,
+                    leading: isChild
+                        ? Icon(Icons.subdirectory_arrow_right,
+                            size: 16, color: Colors.grey[500])
+                        : Container(
+                            width: 14,
+                            height: 14,
+                            decoration: BoxDecoration(
+                                color: color, shape: BoxShape.circle),
+                          ),
+                    title: Row(
+                      children: [
+                        if (isChild)
+                          Container(
+                            width: 10,
+                            height: 10,
+                            margin: const EdgeInsets.only(right: 6),
+                            decoration: BoxDecoration(
+                                color: color, shape: BoxShape.circle),
+                          ),
+                        Text(name,
+                            style: const TextStyle(fontWeight: FontWeight.w600)),
+                        if (isChild) ...[
+                          const SizedBox(width: 6),
+                          Text('· $parent 하위',
+                              style: TextStyle(
+                                  fontSize: 11, color: Colors.grey[500])),
+                        ],
+                      ],
+                    ),
+                    subtitle: Text(et['description']?.toString() ?? ''),
                   ),
-                  title: Text(name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: Text(et['description']?.toString() ?? ''),
                 ),
               );
             }),

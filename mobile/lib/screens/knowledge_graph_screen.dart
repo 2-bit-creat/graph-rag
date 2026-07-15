@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
@@ -132,15 +134,18 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   // 화자 숨김(Speaker-to-Color) 모드: head 노드를 물리에서 제거하고
   // Statement를 화자색으로 인코딩 — 슈퍼노드(성게) 뭉침 해소용.
   bool _hideHeads = false;
+  bool _pinning = false;
 
   // ── 그래프 대화 (전역 chatSession 컨트롤러 구독) ─────────────────────────
   final _chatInputController = TextEditingController();
+  final _chatInputFocusNode = FocusNode();
   final _chatScrollController = ScrollController();
   Set<String> _glowIds = const {};
   int _glowSeq = 0;
   int _lastMsgCount = 0;
   ChatMode _lastChatMode = ChatMode.normal;
   bool _lastDistillLoading = false;
+  String? _lastActiveQuizId;
   ComposePhase? _prevJournalPhase;
   ComposePhase? _prevComposePhase;
   String? _prevJournalGraphStatus;
@@ -206,6 +211,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
           journalTask.blocksChat && !journalTask.systemProcessing
               ? journalTask.stageLabel
               : null,
+      inputFocusNode: _chatInputFocusNode,
     );
   }
 
@@ -261,6 +267,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     chatSession.addListener(_onChatChanged);
     chatSession.errors.addListener(_onChatError);
     journalTask.addListener(_onJournalTaskChanged);
+    _chatInputController.addListener(_onChatInputChanged);
     chatSession.init();
   }
 
@@ -273,9 +280,21 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     if (chatSession.onReferencedNodes == _onReferencedNodes) {
       chatSession.onReferencedNodes = null;
     }
+    _chatInputController.removeListener(_onChatInputChanged);
     _chatInputController.dispose();
+    _chatInputFocusNode.dispose();
     _chatScrollController.dispose();
     super.dispose();
+  }
+
+  /// Forward every composer keystroke to the live word-by-word cloze matcher
+  /// while a word quiz is active — a match clears the composer for the next
+  /// blank instead of waiting for the learner to hit send.
+  void _onChatInputChanged() {
+    if (chatSession.mode != ChatMode.quizWord) return;
+    unawaited(chatSession.updateClozeDraft(_chatInputController.text).then((clear) {
+      if (clear && mounted) _chatInputController.clear();
+    }));
   }
 
   void _onChatChanged() {
@@ -284,16 +303,32 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
       _scrollChatToBottom();
     }
     final mode = chatSession.mode;
-    final enteredDistill =
-        mode == ChatMode.distill && _lastChatMode != ChatMode.distill;
+    // Quiz/distill cards render as the chat list's footer item (see
+    // _chatListFooter), not a fixed bar above the input — so switching into
+    // one of these modes, or loading a new card into an already-active mode,
+    // must scroll the list just like a new message would.
+    final enteredFooterMode = mode != _lastChatMode &&
+        (mode == ChatMode.distill ||
+            mode == ChatMode.quizComposition ||
+            mode == ChatMode.quizWord);
     final distillReady = mode == ChatMode.distill &&
         _lastDistillLoading &&
         !chatSession.distillLoading;
-    if (enteredDistill || distillReady) {
+    final quizId = chatSession.activeQuiz?['id']?.toString();
+    final quizCardChanged =
+        (mode == ChatMode.quizComposition || mode == ChatMode.quizWord) &&
+            quizId != _lastActiveQuizId;
+    if (enteredFooterMode || distillReady || quizCardChanged) {
       _scrollChatToBottom();
+    }
+    // Defensive re-focus for word quizzes generally (covers entering the
+    // mode and any card change, not just the explicit "다음 문제" tap).
+    if (mode == ChatMode.quizWord && quizCardChanged) {
+      _chatInputFocusNode.requestFocus();
     }
     _lastChatMode = mode;
     _lastDistillLoading = chatSession.distillLoading;
+    _lastActiveQuizId = quizId;
     if (mounted) setState(() {});
   }
 
@@ -675,10 +710,24 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
           onSubmit: ({answer, order, selectedIndex}) =>
               chatSession.submitWordQuiz(
                   answer: answer, order: order, selectedIndex: selectedIndex),
-          onNext: chatSession.nextQuiz,
+          onNext: () {
+            chatSession.nextQuiz();
+            // "다음 문제" steals focus from the composer — the next blank
+            // needs typing to work immediately, not after a manual tap back.
+            _chatInputFocusNode.requestFocus();
+          },
           onExit: chatSession.exitMode,
           externalResult: chatSession.quizFeedback,
           clozeSolved: chatSession.wordQuizSolved,
+          clozeCompletedWords: chatSession.clozeCompletedWords,
+          clozeLiveDraft: chatSession.clozeLiveDraft,
+          onClozeHintRequested: () {
+            _chatInputController.clear();
+            // Hint/reveal-answer buttons steal focus from the composer — without
+            // this, typing goes nowhere once the hint button disables itself
+            // (힌트 확인됨) and there's nothing left to return focus to.
+            _chatInputFocusNode.requestFocus();
+          },
         );
       case ChatMode.normal:
       case ChatMode.journal:
@@ -848,6 +897,56 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     );
     // Closing the sheet keeps the selection (and its highlight/card) — the
     // user returns to the graph exactly where they were exploring.
+  }
+
+  /// Pin/unpin the selected Statement from the compact bottom card. Pinning
+  /// generates an isolated mini-batch immediately server-side; when it comes
+  /// back non-empty this jumps straight into the same inline quiz mode the
+  /// "단어 퀴즈" chat button uses, seeded with exactly those generated items
+  /// instead of the learner having to go find them in the queue.
+  Future<void> _togglePin(Map<String, dynamic> node) async {
+    if (_pinning) return;
+    final nodeId = node['id'].toString();
+    final nextPinned = node['is_pinned'] != true;
+    setState(() => _pinning = true);
+    try {
+      final result = await apiClient.setNodePinned(nodeId, nextPinned);
+      if (!mounted) return;
+      setState(() {
+        node['is_pinned'] = result['is_pinned'] ?? nextPinned;
+        if (_selectedNode != null && _selectedNode!['id'].toString() == nodeId) {
+          _selectedNode = {..._selectedNode!, 'is_pinned': node['is_pinned']};
+        }
+      });
+      if (nextPinned) {
+        final quizIds =
+            (result['generated_quiz_ids'] as Map?)?.cast<String, dynamic>();
+        final language = result['generated_language']?.toString();
+        final clozeIds = ((quizIds?['cloze'] as List?) ?? [])
+            .map((e) => e.toString())
+            .toList();
+        final compositionIds = ((quizIds?['composition'] as List?) ?? [])
+            .map((e) => e.toString())
+            .toList();
+        if (clozeIds.isNotEmpty) {
+          _expandChat();
+          await chatSession.startQuiz('cloze',
+              language: language, quizIds: clozeIds);
+        } else if (compositionIds.isNotEmpty) {
+          _expandChat();
+          await chatSession.startQuiz('composition',
+              language: language, quizIds: compositionIds);
+        } else {
+          chatSession.errors.value = tr('graph.pinEmpty');
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        chatSession.errors.value = e.toString();
+      }
+    } finally {
+      if (mounted) setState(() => _pinning = false);
+    }
   }
 
   /// 숨김 모드에서는 head 타입 칩(Person/Speaker/Source)이 필터해도 빈
@@ -1111,6 +1210,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
                     typeColors: typeColors,
                     onDetail: _showInspectorSheet,
                     onClose: _clearSelection,
+                    onPin: _togglePin,
+                    pinning: _pinning,
                   ),
           ),
         ),
@@ -1578,6 +1679,8 @@ class _SelectionInfoCard extends StatelessWidget {
     required this.typeColors,
     required this.onDetail,
     required this.onClose,
+    required this.onPin,
+    required this.pinning,
   });
 
   final Map<String, dynamic>? node;
@@ -1587,6 +1690,8 @@ class _SelectionInfoCard extends StatelessWidget {
   final Map<String, Color> typeColors;
   final VoidCallback onDetail;
   final VoidCallback onClose;
+  final ValueChanged<Map<String, dynamic>> onPin;
+  final bool pinning;
 
   /// "기록일" — when this happened, falling back to when it was written down.
   static String? _recordedDateLabel(Map<String, dynamic> n) {
@@ -1617,6 +1722,7 @@ class _SelectionInfoCard extends StatelessWidget {
     final e = edge;
 
     Widget body;
+    var isStatement = false;
     if (n != null) {
       final id = n['id'].toString();
       final type = n['type']?.toString() ?? '';
@@ -1626,8 +1732,7 @@ class _SelectionInfoCard extends StatelessWidget {
               ed['source_id'].toString() == id ||
               ed['target_id'].toString() == id)
           .length;
-      final isStatement =
-          canonicalEntityType(type).toLowerCase() == 'statement';
+      isStatement = canonicalEntityType(type).toLowerCase() == 'statement';
       final stmtPreview = isStatement ? _statementPreview(n) : null;
       final preview = stmtPreview?.content ?? '';
       // Statement 귀속 head: 화자 숨김 모드에서 노드가 안 보여도 여기서
@@ -1807,6 +1912,30 @@ class _SelectionInfoCard extends StatelessWidget {
           children: [
             Expanded(child: body),
             const SizedBox(width: 6),
+            if (n != null && isStatement)
+              IconButton(
+                tooltip: n['is_pinned'] == true ? '핀 해제' : '최우선 과제로 핀',
+                visualDensity: VisualDensity.compact,
+                onPressed: pinning ? null : () => onPin(n),
+                icon: pinning
+                    ? SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: shell.mutedText,
+                        ),
+                      )
+                    : Icon(
+                        n['is_pinned'] == true
+                            ? Icons.push_pin
+                            : Icons.push_pin_outlined,
+                        size: 18,
+                        color: n['is_pinned'] == true
+                            ? AppColors.accent
+                            : shell.mutedText,
+                      ),
+              ),
             TextButton(
               onPressed: onDetail,
               style: TextButton.styleFrom(

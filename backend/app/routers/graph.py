@@ -68,16 +68,18 @@ async def set_node_pin(
         raise HTTPException(status_code=400, detail="only Statement nodes can be pinned")
     node.is_pinned = pinned
     await session.commit()
+    generated: dict | None = None
     if pinned:
         from ..quiz_batch import create_pinned_batch
         language = (crud.get_effective_target_languages(user) or ["english"])[0]
-        await create_pinned_batch(
+        generated = await create_pinned_batch(
             session, user, node_id=node_id, language=language
         )
     out = await crud.get_node_out(session, node_id, user.id)
     assert out is not None
-    # The response model remains the node; the generated mini-batch is available
-    # through the pinned queue immediately after this request.
+    if generated is not None:
+        out.generated_quiz_ids = generated["quiz_ids"]
+        out.generated_language = generated["language"]
     return out
 
 

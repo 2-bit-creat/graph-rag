@@ -78,6 +78,7 @@ const Map<String, String> _ko = {
   'chat.hint.journal': '일기를 작성하세요…',
   'graph.emptyTitle': '아직 지식그래프가 비어 있어요',
   'graph.emptyBody': '+ 버튼으로 첫 일기를 써보세요. 기록이 지식그래프가 됩니다.',
+  'graph.pinEmpty': '이 진술에서는 문제를 만들지 못했어요. 표현이 너무 짧거나 반려됐을 수 있어요.',
   'journal.failed': '일기 처리에 실패했어요. 잠시 후 다시 시도해 주세요.',
   'quiz.empty': '아직 풀 문제가 없어요. 방금 문제를 만들기 시작했으니 잠시 후 다시 눌러 주세요.',
   'quiz.sessionDone': '이 세션을 다 풀었어요! 👏',
@@ -130,6 +131,8 @@ const Map<String, String> _en = {
   'graph.emptyTitle': 'Your knowledge graph is empty',
   'graph.emptyBody':
       'Tap + to write your first journal. Your entries become a knowledge graph.',
+  'graph.pinEmpty':
+      "Couldn't generate a quiz from this statement — the expression may be too short or was rejected.",
   'journal.failed':
       "Couldn't process the journal. Please try again in a moment.",
   'quiz.empty':

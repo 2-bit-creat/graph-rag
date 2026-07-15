@@ -493,12 +493,11 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
 
     _syncWorldFrame(viewport: viewport);
     final bounds = _layout!.boundingRect(padding: 48);
-    final graphRect = Rect.fromLTWH(
-      _worldTranslate.dx,
-      _worldTranslate.dy,
-      bounds.width,
-      bounds.height,
-    );
+    // _worldTranslate is an offset relative to bounds.topLeft (see
+    // _syncWorldFrame), not an absolute position — shift the bounds by it
+    // rather than replacing its origin, or the fit frames the wrong region
+    // whenever the layout isn't centered near (0, 0).
+    final graphRect = bounds.shift(_worldTranslate);
     const pad = 32.0;
     final scale = math.min(
       (viewport.width - pad * 2) / graphRect.width,
@@ -1518,10 +1517,20 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
                     _fitToView(viewport);
                   },
                   onRelayout: relayout,
-                  onToggleNodeLabels: () =>
-                      setState(() => _showNodeLabels = !_showNodeLabels),
-                  onToggleEdgeLabels: () =>
-                      setState(() => _showEdgeLabels = !_showEdgeLabels),
+                  // The scene is one CustomPainter repainted only via the
+                  // merged `_repaint` listenable (ticker/frame/anim ticks) —
+                  // shouldRepaint() can't see this toggle since it compares
+                  // the same mutable state object every rebuild. Bump
+                  // _frameNotifier so the label change actually redraws
+                  // instead of waiting for the next incidental repaint.
+                  onToggleNodeLabels: () => setState(() {
+                    _showNodeLabels = !_showNodeLabels;
+                    _frameNotifier.value++;
+                  }),
+                  onToggleEdgeLabels: () => setState(() {
+                    _showEdgeLabels = !_showEdgeLabels;
+                    _frameNotifier.value++;
+                  }),
                 ),
               ),
             ),

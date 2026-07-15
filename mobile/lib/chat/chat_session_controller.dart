@@ -43,6 +43,11 @@ class ChatSessionController extends ChangeNotifier {
       _quizFeedback; // composition tutor feedback for current item
   bool _wordQuizSolved = false;
 
+  // Live word-by-word cloze typing (composer feeds keystrokes here instead of
+  // grading the whole phrase at once — see [updateClozeDraft]).
+  final List<String> _clozeCompletedWords = [];
+  String _clozeLiveDraft = '';
+
   // Distill (chat → journal) draft state.
   final List<Map<String, dynamic>> _distillSentences = [];
   bool _distillLoading = false;
@@ -66,6 +71,8 @@ class ChatSessionController extends ChangeNotifier {
       _quizIndex < _quizItems.length ? _quizItems[_quizIndex] : null;
   Map<String, dynamic>? get quizFeedback => _quizFeedback;
   bool get wordQuizSolved => _wordQuizSolved;
+  List<String> get clozeCompletedWords => List.unmodifiable(_clozeCompletedWords);
+  String get clozeLiveDraft => _clozeLiveDraft;
   bool get wordQuizUsesComposer {
     if (_mode != ChatMode.quizWord) return false;
     final type = activeQuiz?['quiz_type']?.toString() ?? 'cloze';
@@ -267,6 +274,8 @@ class ChatSessionController extends ChangeNotifier {
       _quizIndex = 0;
       _quizFeedback = null;
       _wordQuizSolved = false;
+      _clozeCompletedWords.clear();
+      _clozeLiveDraft = '';
       _distillSentences.clear();
     }
     notifyListeners();
@@ -475,7 +484,11 @@ class ChatSessionController extends ChangeNotifier {
   /// [quizType]: 'composition' (typed drill) | 'cloze' | 'scramble' | 'mcq_nuance'.
   /// [language]: which target language to draw from when the learner has more
   /// than one configured (null = backend default).
-  Future<void> startQuiz(String quizType, {String? language}) async {
+  Future<void> startQuiz(
+    String quizType, {
+    String? language,
+    List<String>? quizIds,
+  }) async {
     await _ensureSession();
     _quizType = quizType;
     _quizLanguage = language ?? _quizLanguage;
@@ -486,11 +499,16 @@ class ChatSessionController extends ChangeNotifier {
     _quizIndex = 0;
     _quizFeedback = null;
     _wordQuizSolved = false;
+    _clozeCompletedWords.clear();
+    _clozeLiveDraft = '';
     _busy = true;
     notifyListeners();
     try {
       final data = await apiClient.startQuizSession(
-          quizType: quizType, size: 5, language: _quizLanguage);
+          quizType: quizType,
+          size: quizIds != null && quizIds.isNotEmpty ? quizIds.length : 5,
+          language: _quizLanguage,
+          quizIds: quizIds);
       final items = ((data['items'] as List?) ?? [])
           .map((e) => Map<String, dynamic>.from(e as Map))
           .toList();
@@ -554,8 +572,13 @@ class ChatSessionController extends ChangeNotifier {
       }.map((value) => value.replaceAll(RegExp(r'\s+'), ' ')).toSet();
       if (accepted.contains(normalized)) {
         _wordQuizSolved = true;
+        _quizFeedback = {..._quizFeedback!, 'is_correct': true};
       } else {
-        errors.value = '정답과 철자를 비교한 뒤 다시 입력해 보세요.';
+        // Keep this on the card itself (via is_correct) rather than only a
+        // transient snackbar — the learner is typing in the composer, not
+        // looking at where a snackbar appears.
+        _quizFeedback = {..._quizFeedback!, 'is_correct': false};
+        errors.value = '오답이에요. 힌트를 참고하거나 정답 보기를 눌러 확인해 보세요.';
       }
       notifyListeners();
       return;
@@ -601,11 +624,76 @@ class ChatSessionController extends ChangeNotifier {
     }
   }
 
+  /// Live per-keystroke update from the shared composer while a cloze word
+  /// quiz is active. Matches one word at a time instead of grading the whole
+  /// phrase at once: each keystroke is compared against the next unmatched
+  /// answer word, and a match commits that word (advancing the "cursor" to
+  /// the next blank) instead of waiting for an explicit submit. Returns true
+  /// when the composer should clear itself (a word just completed).
+  Future<bool> updateClozeDraft(String text) async {
+    if (_mode != ChatMode.quizWord || !wordQuizUsesComposer || _wordQuizSolved) {
+      return false;
+    }
+    final quiz = activeQuiz;
+    if (quiz == null) return false;
+    final qd = (quiz['quiz_data'] as Map?)?.cast<String, dynamic>() ?? {};
+    final words = (qd['blank']?.toString() ?? '')
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty)
+        .toList();
+    if (words.isEmpty || _clozeCompletedWords.length >= words.length) {
+      return false;
+    }
+
+    final normalized = text.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+    final target = words[_clozeCompletedWords.length].toLowerCase();
+    if (normalized.isEmpty || normalized != target) {
+      _clozeLiveDraft = text;
+      notifyListeners();
+      return false;
+    }
+
+    _clozeCompletedWords.add(words[_clozeCompletedWords.length]);
+    _clozeLiveDraft = '';
+    final allWordsMatched = _clozeCompletedWords.length == words.length;
+    if (allWordsMatched) {
+      // The learner already proved the answer letter-by-letter — mark it
+      // solved immediately instead of waiting on a network round trip.
+      // Otherwise "다음 문제"/audio only appear once the request returns (or
+      // never, if it fails), which looks like the quiz just froze.
+      _wordQuizSolved = true;
+    }
+    notifyListeners();
+    if (allWordsMatched) {
+      unawaited(_finalizeClozeSubmission());
+    }
+    return true;
+  }
+
+  /// Records the already-confirmed-correct cloze answer for real grading/SRS.
+  /// Runs after the UI has already moved on, so a slow or failed request
+  /// can't undo the learner-visible completion.
+  Future<void> _finalizeClozeSubmission() async {
+    final answer = _clozeCompletedWords.join(' ');
+    try {
+      final result = await submitWordQuiz(answer: answer);
+      if (result != null) {
+        _quizFeedback = result;
+        notifyListeners();
+      }
+    } catch (_) {
+      // Best-effort — the card already reflects success either way.
+    }
+  }
+
   /// Advance to the next quiz item, or leave quiz mode when the session is done.
   void nextQuiz() {
     _quizIndex++;
     _quizFeedback = null;
     _wordQuizSolved = false;
+    _clozeCompletedWords.clear();
+    _clozeLiveDraft = '';
     notifyListeners();
   }
 
@@ -614,13 +702,24 @@ class ChatSessionController extends ChangeNotifier {
     String answer,
     Map<String, dynamic>? result,
   ) async {
+    // Show it in the live feed immediately — this used to only persist to
+    // the backend, so every answer past the first (loaded on the next full
+    // history fetch) was invisible until the room was reopened.
+    final content = '📝 퀴즈: $answer';
+    _messages.add(GraphChatMessage(
+      role: 'assistant',
+      kind: 'quiz_result',
+      content: content,
+      meta: {'quiz_id': quiz['id'], 'quiz_type': _quizType},
+    ));
+    notifyListeners();
     if (_activeId == null) return;
     try {
       await apiClient.appendChatEvent(
         _activeId!,
         role: 'assistant',
         kind: 'quiz_result',
-        content: '📝 퀴즈: $answer',
+        content: content,
         meta: {'quiz_id': quiz['id'], 'quiz_type': _quizType},
       );
     } catch (_) {

@@ -415,6 +415,9 @@ class WordQuizCard extends StatefulWidget {
     required this.onExit,
     this.externalResult,
     this.clozeSolved = false,
+    this.clozeCompletedWords = const [],
+    this.clozeLiveDraft = '',
+    this.onClozeHintRequested,
   });
 
   final Map<String, dynamic> quiz;
@@ -429,6 +432,18 @@ class WordQuizCard extends StatefulWidget {
   final VoidCallback onExit;
   final Map<String, dynamic>? externalResult;
   final bool clozeSolved;
+
+  /// Words already matched live from the composer, in order (see
+  /// ChatSessionController.updateClozeDraft), and the in-progress text for
+  /// the word currently being typed.
+  final List<String> clozeCompletedWords;
+  final String clozeLiveDraft;
+
+  /// Fired after the hint or reveal-answer buttons are tapped — clears a
+  /// stale mismatched attempt from the shared composer and returns keyboard
+  /// focus to it (those buttons otherwise steal focus with nowhere for it to
+  /// go back to, breaking further typing).
+  final VoidCallback? onClozeHintRequested;
 
   @override
   State<WordQuizCard> createState() => _WordQuizCardState();
@@ -503,6 +518,9 @@ class _WordQuizCardState extends State<WordQuizCard> {
           externalInput: true,
           externalResult: widget.externalResult,
           externalSolved: widget.clozeSolved,
+          externalCompletedWords: widget.clozeCompletedWords,
+          externalLiveDraft: widget.clozeLiveDraft,
+          onHintRequested: widget.onClozeHintRequested,
         );
     }
 

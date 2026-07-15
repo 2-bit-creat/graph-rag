@@ -341,6 +341,7 @@ class MentionAutocompleteField extends StatefulWidget {
     this.initialText = '',
     this.enabled = true,
     this.showCounter = true,
+    this.openUpward = false,
   });
 
   final int minLines;
@@ -355,6 +356,11 @@ class MentionAutocompleteField extends StatefulWidget {
   final String initialText;
   final bool enabled;
   final bool showCounter;
+
+  /// Open the @-mention popup ABOVE the caret instead of below. Needed when the
+  /// field is docked at the bottom of the screen (e.g. the journal compose bar),
+  /// where a downward popup would render off-screen and be unreachable.
+  final bool openUpward;
 
   @override
   State<MentionAutocompleteField> createState() =>
@@ -574,7 +580,10 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     return KeyEventResult.ignored;
   }
 
-  Offset _caretMenuOffset({
+  /// Caret-anchored popup geometry, all relative to the field's top-left.
+  /// [belowY] is where the popup's top sits when opening downward; [aboveY] is
+  /// where its bottom sits when opening upward (just above the caret line).
+  ({double dx, double belowY, double aboveY}) _caretMenuGeometry({
     required double fieldWidth,
     required TextStyle textStyle,
     required EdgeInsets contentPadding,
@@ -592,9 +601,11 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
       TextPosition(offset: beforeCaret.length),
       Rect.zero,
     );
-    return Offset(
-      contentPadding.left + caret.dx,
-      contentPadding.top + caret.dy + painter.preferredLineHeight + 6,
+    final lineTop = contentPadding.top + caret.dy;
+    return (
+      dx: contentPadding.left + caret.dx,
+      belowY: lineTop + painter.preferredLineHeight + 6,
+      aboveY: lineTop - 6,
     );
   }
 
@@ -673,7 +684,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final popupOffset = _caretMenuOffset(
+        final geometry = _caretMenuGeometry(
           fieldWidth: constraints.maxWidth,
           textStyle: textStyle,
           contentPadding: contentPadding is EdgeInsets
@@ -683,7 +694,66 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
         final maxLeft = constraints.maxWidth > _popupWidth + 16
             ? constraints.maxWidth - _popupWidth - 8
             : 8.0;
-        final left = popupOffset.dx.clamp(8.0, maxLeft).toDouble();
+        final left = geometry.dx.clamp(8.0, maxLeft).toDouble();
+
+        final popupContent = SizedBox(
+          width: _popupWidth,
+          child: Material(
+            elevation: 10,
+            borderRadius: BorderRadius.circular(14),
+            color: theme.colorScheme.surface,
+            shadowColor: Colors.black.withValues(alpha: 0.18),
+            clipBehavior: Clip.antiAlias,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: theme.colorScheme.outlineVariant
+                      .withValues(alpha: 0.8),
+                ),
+              ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 220),
+                child: ListView(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  shrinkWrap: true,
+                  children: [
+                    for (var i = 0; i < _popupOptions.length; i++)
+                      _popupRow(
+                        icon: _popupOptions[i].name == '나'
+                            ? Icons.person_rounded
+                            : _popupOptions[i].isSource
+                                ? Icons.menu_book_rounded
+                                : Icons.person_outline_rounded,
+                        iconColor: _badges.contains(_popupOptions[i].name)
+                            ? colorFor(_popupOptions[i].name)
+                            : theme.colorScheme.primary,
+                        label: _popupOptions[i].name,
+                        trailing: !_badges.contains(_popupOptions[i].name)
+                            ? '그래프'
+                            : null,
+                        selected: i == _optionCursor,
+                        onTap: () => _applyMention(_popupOptions[i].name),
+                        onHover: () => setState(() => _optionCursor = i),
+                      ),
+                    if (_popupCanCreate)
+                      _popupRow(
+                        icon: Icons.add_circle_outline_rounded,
+                        iconColor: theme.colorScheme.primary,
+                        label: "'${ctx?.partial ?? ''}' 새 화자 만들기",
+                        trailing: 'Enter',
+                        selected: _optionCursor == _popupOptions.length,
+                        onTap: () => _applyMention(ctx?.partial ?? ''),
+                        onHover: () => setState(
+                          () => _optionCursor = _popupOptions.length,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
 
         return CompositedTransformTarget(
           link: _popupLink,
@@ -691,76 +761,20 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
             controller: _popupController,
             overlayChildBuilder: (context) {
               if (ctx == null) return const SizedBox.shrink();
+              // When docked at the bottom of the screen the popup opens upward:
+              // anchor the follower's BOTTOM to the caret line so it grows up,
+              // regardless of its measured height.
               return CompositedTransformFollower(
                 link: _popupLink,
                 showWhenUnlinked: false,
-                offset: Offset(left, popupOffset.dy),
-                child: Align(
-                  alignment: Alignment.topLeft,
-                  child: SizedBox(
-                    width: _popupWidth,
-                    child: Material(
-                      elevation: 10,
-                      borderRadius: BorderRadius.circular(14),
-                      color: theme.colorScheme.surface,
-                      shadowColor: Colors.black.withValues(alpha: 0.18),
-                      clipBehavior: Clip.antiAlias,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: theme.colorScheme.outlineVariant
-                                .withValues(alpha: 0.8),
-                          ),
-                        ),
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxHeight: 220),
-                          child: ListView(
-                            padding: const EdgeInsets.symmetric(vertical: 6),
-                            shrinkWrap: true,
-                            children: [
-                              for (var i = 0; i < _popupOptions.length; i++)
-                                _popupRow(
-                                  icon: _popupOptions[i].name == '나'
-                                      ? Icons.person_rounded
-                                      : _popupOptions[i].isSource
-                                          ? Icons.menu_book_rounded
-                                          : Icons.person_outline_rounded,
-                                  iconColor:
-                                      _badges.contains(_popupOptions[i].name)
-                                          ? colorFor(_popupOptions[i].name)
-                                          : theme.colorScheme.primary,
-                                  label: _popupOptions[i].name,
-                                  trailing:
-                                      !_badges.contains(_popupOptions[i].name)
-                                          ? '그래프'
-                                          : null,
-                                  selected: i == _optionCursor,
-                                  onTap: () =>
-                                      _applyMention(_popupOptions[i].name),
-                                  onHover: () =>
-                                      setState(() => _optionCursor = i),
-                                ),
-                              if (_popupCanCreate)
-                                _popupRow(
-                                  icon: Icons.add_circle_outline_rounded,
-                                  iconColor: theme.colorScheme.primary,
-                                  label: "'${ctx.partial}' 새 화자 만들기",
-                                  trailing: 'Enter',
-                                  selected:
-                                      _optionCursor == _popupOptions.length,
-                                  onTap: () => _applyMention(ctx.partial),
-                                  onHover: () => setState(
-                                    () => _optionCursor = _popupOptions.length,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
+                targetAnchor: Alignment.topLeft,
+                followerAnchor:
+                    widget.openUpward ? Alignment.bottomLeft : Alignment.topLeft,
+                offset: Offset(
+                  left,
+                  widget.openUpward ? geometry.aboveY : geometry.belowY,
                 ),
+                child: popupContent,
               );
             },
             child: Stack(

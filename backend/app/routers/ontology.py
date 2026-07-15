@@ -8,7 +8,7 @@ from ..db import (
     DEFAULT_RELATION_TYPES,
     get_session,
 )
-from ..ontology_presets import ONTOLOGY_PRESETS
+from ..ontology_presets import ONTOLOGY_PRESETS, ensure_identity_hierarchy
 from ..schemas import (
     OntologyOut,
     OntologyPresetOut,
@@ -26,12 +26,12 @@ async def read_ontology(session: AsyncSession = Depends(get_session)) -> Ontolog
     if ontology is None:
         return OntologyOut(
             name=DEFAULT_ONTOLOGY_NAME,
-            entity_types=DEFAULT_ENTITY_TYPES,
+            entity_types=ensure_identity_hierarchy(DEFAULT_ENTITY_TYPES),
             relation_types=DEFAULT_RELATION_TYPES,
         )
     return OntologyOut(
         name=ontology.name,
-        entity_types=ontology.entity_types,
+        entity_types=ensure_identity_hierarchy(ontology.entity_types),
         relation_types=ontology.relation_types,
     )
 

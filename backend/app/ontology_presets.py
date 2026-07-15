@@ -96,14 +96,32 @@ FINANCIAL_IT_KNOWLEDGE_GRAPH: OntologyPreset = {
 
 DAILY_LIFE_ENGLISH: OntologyPreset = {
     "ontology_name": "DailyLife_English",
-    "description": "일상 대화/일기 — Statement 3노드 구조 (Speaker · Statement · Concept)",
+    "description": "일상 대화/일기 — 정체성-진술-개념 3계층 (Identity · Statement · Concept)",
     "entity_types": [
-        {"name": "Speaker", "color": "#ff8c42", "description": "화자 · 인물"},
-        {"name": "Statement", "color": "#6366f1", "description": "화자의 발화 · 진술 단위"},
-        {"name": "Concept", "color": "#5b9dff", "description": "도메인 개념 · 고유명사"},
+        {
+            "name": "Identity",
+            "color": "#f07b5b",
+            "description": "정체성 카테고리 — 이름/별칭으로 재식별되는 반복 등장 개체 전체 "
+            "(Person·Source 포함 상위 분류이자, 사람도 매체도 아닌 반려동물·단체 등의 기본 타입)",
+        },
+        {
+            "name": "Person",
+            "color": "#ff8c42",
+            "description": "Identity의 하위 타입 — 실존 인물. 화자·음성 연결(피커 노출)이 가능한 유일한 타입",
+            "parent": "Identity",
+        },
+        {
+            "name": "Source",
+            "color": "#ffc53d",
+            "description": "Identity의 하위 타입 — 매체·기관·AI 등 발화 귀속처. "
+            "화자/음성 피커에서는 제외되며 사람과 병합되지 않음",
+            "parent": "Identity",
+        },
+        {"name": "Statement", "color": "#b07bff", "description": "화자(Identity)의 발화 · 진술 단위"},
+        {"name": "Concept", "color": "#5b9dff", "description": "진술이 언급하는 도메인 개념 · 고유명사"},
     ],
     "relation_types": [
-        "SPOKE",
+        "SPOKE_OR_PUBLISHED",
         "MENTIONS",
         "RELATED_TO",
     ],
@@ -114,3 +132,28 @@ ONTOLOGY_PRESETS: dict[str, OntologyPreset] = {
     FINANCIAL_IT_KNOWLEDGE_GRAPH["ontology_name"]: FINANCIAL_IT_KNOWLEDGE_GRAPH,
     DAILY_LIFE_ENGLISH["ontology_name"]: DAILY_LIFE_ENGLISH,
 }
+
+# Canonical Identity/Person/Source/Statement/Concept definitions from
+# DAILY_LIFE_ENGLISH, keyed lowercase for lookup by name.
+_IDENTITY_HIERARCHY_BY_KEY: dict[str, dict] = {
+    et["name"].lower(): et for et in DAILY_LIFE_ENGLISH["entity_types"]
+}
+
+
+def ensure_identity_hierarchy(entity_types: list[dict]) -> list[dict]:
+    """Backfill the Identity/Person/Source structural types for display.
+
+    Ontology rows seeded before the 정체성-진술-개념 model existed (or from an
+    older preset) may still say just "Speaker"/"Statement"/"Concept". The
+    Identity/Person/Source distinction is a structural given of the graph
+    model (see entity_types.py), not something the ontology editor invents,
+    so the settings sheet should always show it correctly regardless of what
+    happens to be stored — this only affects the returned response, never
+    what's persisted.
+    """
+    result = [dict(et) for et in entity_types]
+    present = {str(et.get("name", "")).lower() for et in result}
+    for key in ("identity", "person", "source"):
+        if key not in present:
+            result.append(dict(_IDENTITY_HIERARCHY_BY_KEY[key]))
+    return result

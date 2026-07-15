@@ -7,6 +7,8 @@ import '../compose/journal_phase.dart';
 import '../screens/graph_review_screen.dart';
 import '../screens/journal_hub_screen.dart';
 import '../theme/app_theme.dart';
+import 'graph_review_panel.dart';
+import 'transcript_speaker_view.dart';
 
 /// Inline journal pipeline card in the chat message stream.
 ///
@@ -64,11 +66,27 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
   }
 
   Future<void> _openSpeakerConfirm() async {
+    // Live entry whose speakers need no per-speaker assignment (single "나" or
+    // already-resolved): acknowledging is all that's needed — it kicks off the
+    // graph build immediately, with no detour to a separate screen and no
+    // lingering "graph pending" waiting state.
+    if (_isLive && !speakersPending(journalTask.entry)) {
+      await journalTask.confirmSpeakers();
+      return;
+    }
+    // Multiple / unassigned speakers still need the chip-assignment UI. Once
+    // they're assigned, acknowledging continues the pipeline into the auto-build.
     final nav = appNavigatorKey.currentContext;
     if (nav == null) return;
     await JournalHubScreen.openEntryDetail(nav, widget.entryId);
-    if (_isLive) await journalTask.refresh();
-    if (!_isLive && mounted) await _loadStatic();
+    if (_isLive) {
+      await journalTask.refresh();
+      if (!speakersPending(journalTask.entry)) {
+        await journalTask.confirmSpeakers();
+      }
+    } else if (mounted) {
+      await _loadStatic();
+    }
   }
 
   Future<void> _openGraphReview() async {
@@ -113,14 +131,34 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
     if (_isLive) {
       return AnimatedBuilder(
         animation: journalTask,
-        builder: (context, _) => _CardBody(
-          phase: journalTask.phase,
-          label: journalTask.stageLabel,
-          entry: journalTask.entry,
-          onSpeakerConfirm: _openSpeakerConfirm,
-          onGraphReview: _openGraphReview,
-          onDismiss: _dismiss,
-        ),
+        builder: (context, _) {
+          final phase = journalTask.phase;
+          // Speaker step wins over the graph-review step whenever the user has
+          // gone back to re-check speakers (reopenSpeakerConfirm keeps the stale
+          // staging around, so isGraphReviewPending(entry) would otherwise still
+          // be true).
+          final showSpeaker = phase == ComposePhase.needsInput &&
+              (journalTask.speakerReviewOverride ||
+                  journalTask.awaitingSpeakerAck);
+          final showGraph = phase == ComposePhase.needsInput &&
+              !showSpeaker &&
+              isGraphReviewPending(journalTask.entry);
+          return _CardBody(
+            entryId: widget.entryId,
+            isLive: true,
+            phase: phase,
+            label: journalTask.stageLabel,
+            entry: journalTask.entry,
+            showSpeakerConfirm: showSpeaker,
+            showGraphReview: showGraph,
+            onRefresh: () => journalTask.refresh(),
+            onConfirmSpeakers: () => journalTask.confirmSpeakers(),
+            onReopenSpeakers: () => journalTask.reopenSpeakerConfirm(),
+            onSpeakerFallback: _openSpeakerConfirm,
+            onGraphFallback: _openGraphReview,
+            onDismiss: _dismiss,
+          );
+        },
       );
     }
 
@@ -146,13 +184,26 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
         ),
       );
     }
-    final derived = deriveJournalPhase(_staticEntry);
+    // Use the chat-aware derivation (speakersAcknowledged: false) so a reloaded
+    // room shows the "화자 확인" action for an un-built entry instead of a
+    // phantom "완성" — matching the live card's gating.
+    final derived =
+        deriveChatJournalPhase(_staticEntry, speakersAcknowledged: false);
     return _CardBody(
+      entryId: widget.entryId,
+      isLive: false,
       phase: derived.phase,
       label: derived.label,
       entry: _staticEntry,
-      onSpeakerConfirm: _openSpeakerConfirm,
-      onGraphReview: _openGraphReview,
+      showSpeakerConfirm:
+          derived.phase == ComposePhase.needsInput && derived.awaitingSpeakerAck,
+      showGraphReview: derived.phase == ComposePhase.needsInput &&
+          derived.graphReviewPending,
+      onRefresh: () => _loadStatic(),
+      onConfirmSpeakers: null,
+      onReopenSpeakers: null,
+      onSpeakerFallback: _openSpeakerConfirm,
+      onGraphFallback: _openGraphReview,
       onDismiss: null,
     );
   }
@@ -179,19 +230,45 @@ class _Shell extends StatelessWidget {
 
 class _CardBody extends StatelessWidget {
   const _CardBody({
+    required this.entryId,
+    required this.isLive,
     required this.phase,
     required this.label,
     required this.entry,
-    required this.onSpeakerConfirm,
-    required this.onGraphReview,
+    required this.showSpeakerConfirm,
+    required this.showGraphReview,
+    required this.onRefresh,
+    required this.onConfirmSpeakers,
+    required this.onReopenSpeakers,
+    required this.onSpeakerFallback,
+    required this.onGraphFallback,
     required this.onDismiss,
   });
 
+  final String entryId;
+  final bool isLive;
   final ComposePhase phase;
   final String label;
   final Map<String, dynamic>? entry;
-  final VoidCallback onSpeakerConfirm;
-  final VoidCallback onGraphReview;
+
+  /// Which review step (if any) is active right now.
+  final bool showSpeakerConfirm;
+  final bool showGraphReview;
+
+  /// Reload the entry after an inline edit (chip assignment, etc.).
+  final Future<void> Function() onRefresh;
+
+  /// Acknowledge speakers → triggers the auto-build. Null for static cards.
+  final Future<void> Function()? onConfirmSpeakers;
+
+  /// Go back from graph review to re-check speakers. Null for static cards.
+  final VoidCallback? onReopenSpeakers;
+
+  /// Navigation fallbacks (used for static/reloaded cards where the live task
+  /// no longer owns the entry).
+  final VoidCallback onSpeakerFallback;
+  final VoidCallback onGraphFallback;
+
   final VoidCallback? onDismiss;
 
   static const _steps = [
@@ -213,7 +290,7 @@ class _CardBody extends StatelessWidget {
         }
         return 0;
       case ComposePhase.needsInput:
-        if (isGraphReviewPending(entry)) return 2;
+        if (showGraphReview) return 2;
         return 1;
       case ComposePhase.done:
         return 3;
@@ -234,10 +311,6 @@ class _CardBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final step = _activeStep;
-    final needsSpeaker =
-        phase == ComposePhase.needsInput && !isGraphReviewPending(entry);
-    final needsGraph =
-        phase == ComposePhase.needsInput && isGraphReviewPending(entry);
     final showDismiss =
         onDismiss != null &&
         (phase == ComposePhase.done || phase == ComposePhase.error);
@@ -300,14 +373,24 @@ class _CardBody extends StatelessWidget {
               ],
             ],
           ),
-          if (needsSpeaker || needsGraph) ...[
+          if (showSpeakerConfirm) ...[
             const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton.tonal(
-                onPressed: needsGraph ? onGraphReview : onSpeakerConfirm,
-                child: Text(needsGraph ? '그래프 검토' : '화자 확인'),
-              ),
+            _InlineSpeakerConfirm(
+              entryId: entryId,
+              entry: entry,
+              isLive: isLive,
+              onConfirm: onConfirmSpeakers,
+              onRefresh: onRefresh,
+              onFallback: onSpeakerFallback,
+            ),
+          ],
+          if (showGraphReview) ...[
+            const SizedBox(height: 12),
+            _InlineGraphReview(
+              entryId: entryId,
+              entry: entry,
+              onReopenSpeakers: onReopenSpeakers,
+              onFallback: onGraphFallback,
             ),
           ],
           if (phase == ComposePhase.error) ...[
@@ -322,6 +405,149 @@ class _CardBody extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// Inline speaker-confirmation, rendered right in the chat card — the user
+/// reviews the speaker script and confirms (or taps a chip to reassign) without
+/// leaving the feed. Confirming acknowledges speakers and kicks the auto-build.
+class _InlineSpeakerConfirm extends StatelessWidget {
+  const _InlineSpeakerConfirm({
+    required this.entryId,
+    required this.entry,
+    required this.isLive,
+    required this.onConfirm,
+    required this.onRefresh,
+    required this.onFallback,
+  });
+
+  final String entryId;
+  final Map<String, dynamic>? entry;
+  final bool isLive;
+  final Future<void> Function()? onConfirm;
+  final Future<void> Function() onRefresh;
+  final VoidCallback onFallback;
+
+  @override
+  Widget build(BuildContext context) {
+    final segments = entry?['transcript_segments'] as List<dynamic>? ?? [];
+    final summaries = entry?['speaker_summaries'] as List<dynamic>? ?? [];
+    final pending = speakersPending(entry);
+    final canConfirmInline = isLive && onConfirm != null;
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: context.shell.panelBackground,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: context.shell.panelBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            pending
+                ? '누가 쓴/말한 글인지 화자를 지정하세요.'
+                : '화자를 확인하고 그래프를 만들어요. 필요하면 화자를 탭해 바꿀 수 있어요.',
+            style: TextStyle(
+              fontSize: 11.5,
+              color: context.shell.mutedText,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (segments.isNotEmpty)
+            TranscriptSpeakerView(
+              entryId: entryId,
+              segments: segments,
+              speakerSummaries: summaries,
+              onConfirmed: onRefresh,
+              readOnly: false,
+              showHeader: false,
+              wrapInCard: false,
+            )
+          else
+            _plainScript(context),
+          const SizedBox(height: 10),
+          if (canConfirmInline)
+            FilledButton.icon(
+              onPressed: pending ? null : () => onConfirm!(),
+              icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
+              label: Text(pending ? '화자를 먼저 지정하세요' : '확인하고 그래프 만들기'),
+            )
+          else
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton.tonal(
+                onPressed: onFallback,
+                child: const Text('화자 확인'),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _plainScript(BuildContext context) {
+    final clean = entry?['transcript_clean_ko']?.toString().trim() ?? '';
+    final raw = entry?['transcript_ko']?.toString().trim() ?? '';
+    final text = clean.isNotEmpty ? clean : raw;
+    if (text.isEmpty) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: context.shell.subtleSurface,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 12.5,
+          height: 1.4,
+          color: context.shell.primaryText,
+        ),
+      ),
+    );
+  }
+}
+
+/// Inline graph-draft review, rendered in the chat card. Reuses the chat-mode
+/// [GraphReviewPanel] so the user edits/confirms claims in the feed instead of a
+/// pushed screen. The [ValueKey] keeps edits across the card's rebuilds.
+class _InlineGraphReview extends StatelessWidget {
+  const _InlineGraphReview({
+    required this.entryId,
+    required this.entry,
+    required this.onReopenSpeakers,
+    required this.onFallback,
+  });
+
+  final String entryId;
+  final Map<String, dynamic>? entry;
+  final VoidCallback? onReopenSpeakers;
+  final VoidCallback onFallback;
+
+  @override
+  Widget build(BuildContext context) {
+    final staging = entry?['graph_staging'];
+    if (staging is! Map) {
+      // Draft not in the current payload (brief race) — fall back to fetch+review.
+      return Align(
+        alignment: Alignment.centerRight,
+        child: FilledButton.tonal(
+          onPressed: onFallback,
+          child: const Text('그래프 검토'),
+        ),
+      );
+    }
+    return GraphReviewPanel(
+      key: ValueKey('graph-review-$entryId'),
+      entryId: entryId,
+      staging: Map<String, dynamic>.from(staging),
+      presentation: GraphReviewPresentation.chat,
+      maxBodyHeight: 420,
+      onReopenSpeakers: onReopenSpeakers,
     );
   }
 }

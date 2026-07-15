@@ -62,6 +62,9 @@ class NodeOut(BaseModel):
     source_transcript_ko: str | None = None
     source_transcript_clean_ko: str | None = None
 
+    generated_quiz_ids: dict[str, list[str]] | None = None
+    generated_language: str | None = None
+
     @model_validator(mode="after")
     def _populate_stmt_fields(self) -> "NodeOut":
         if self.type == "Statement" and self.context_type is None:
@@ -169,6 +172,9 @@ class EntityType(BaseModel):
     name: str
     color: str = "#6366f1"
     description: str | None = None
+    # Structural subtype link (e.g. Person/Source -> Identity). Informational only —
+    # matching/gating logic lives in entity_types.py, not this field.
+    parent: str | None = None
 
 
 class OntologyOut(BaseModel):

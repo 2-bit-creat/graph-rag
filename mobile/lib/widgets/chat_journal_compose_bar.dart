@@ -289,6 +289,9 @@ class _ChatJournalComposeBarState extends State<ChatJournalComposeBar> {
                 minLines: 3,
                 maxLines: maxLines,
                 showCounter: false,
+                // Docked at the bottom of the screen — open the @-mention popup
+                // upward so it isn't clipped below the viewport.
+                openUpward: true,
                 enabled: !_saving && !recording,
                 onChanged: (t) => setState(() => _charCount = t.length),
                 decoration: InputDecoration(

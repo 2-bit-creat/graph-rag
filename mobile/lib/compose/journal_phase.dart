@@ -119,20 +119,27 @@ bool hasSpeakerScript(Map<String, dynamic>? entry) {
 
   final status = entry['status']?.toString() ?? '';
   final graphStatus = entry['graph_status']?.toString() ?? '';
+  final graphBuilt = status == 'graph_ready' || graphStatus == 'graph_ready';
+  final graphInFlight =
+      status == 'graph_processing' || graphStatus == 'graph_processing';
 
-  if (base.phase == ComposePhase.needsInput && base.graphReviewPending) {
+  // 1) A committed graph is the ONLY "done". The inline pipeline used to treat a
+  //    bare `ready` entry (transcribed/cleaned, no graph yet) as done via the
+  //    deriveJournalPhase fallback — reporting "지식그래프 완성" for an entry whose
+  //    graph was never built. The pipeline is complete only once the draft has
+  //    actually been reviewed and applied.
+  if (graphBuilt) {
     return (
-      phase: base.phase,
+      phase: ComposePhase.done,
       label: base.label,
       speakersPending: base.speakersPending,
-      graphReviewPending: true,
+      graphReviewPending: false,
       awaitingSpeakerAck: false,
     );
   }
-  if (status == 'graph_processing' ||
-      graphStatus == 'graph_processing' ||
-      base.phase == ComposePhase.done ||
-      base.phase == ComposePhase.error) {
+
+  // 2) Hard failures surface as-is.
+  if (base.phase == ComposePhase.error) {
     return (
       phase: base.phase,
       label: base.label,
@@ -142,21 +149,72 @@ bool hasSpeakerScript(Map<String, dynamic>? entry) {
     );
   }
 
-  if (!speakersAcknowledged &&
-      status == 'ready' &&
-      hasSpeakerScript(entry)) {
-    final label = base.speakersPending
-        ? '화자 확인 필요'
-        : '화자 매칭 확인';
+  // 3) A draft is staged and waiting for the user's review/commit.
+  if (base.graphReviewPending) {
     return (
       phase: ComposePhase.needsInput,
-      label: label,
+      label: base.label,
       speakersPending: base.speakersPending,
-      graphReviewPending: false,
-      awaitingSpeakerAck: true,
+      graphReviewPending: true,
+      awaitingSpeakerAck: false,
     );
   }
 
+  // 4) The graph draft is being generated.
+  if (graphInFlight) {
+    return (
+      phase: ComposePhase.working,
+      label: '그래프 초안 생성 중',
+      speakersPending: base.speakersPending,
+      graphReviewPending: false,
+      awaitingSpeakerAck: false,
+    );
+  }
+
+  // 5) Still transcribing / cleaning up (status == 'processing').
+  if (base.phase == ComposePhase.working) {
+    return (
+      phase: ComposePhase.working,
+      label: base.label,
+      speakersPending: base.speakersPending,
+      graphReviewPending: false,
+      awaitingSpeakerAck: false,
+    );
+  }
+
+  // 6/7) A transcribed `ready` entry that has text but no graph yet. (Other
+  //    terminal-ish states like `ready_no_graph` — empty transcription with no
+  //    buildable text — fall through to the base phase below.)
+  if (status == 'ready') {
+    // Require an EXPLICIT speaker confirmation before building — always, even
+    // for single-speaker "나" entries the backend auto-confirms. Without this
+    // gate the `ready`→done fallback silently skipped confirmation and the
+    // graph was never built.
+    if (!speakersAcknowledged && hasSpeakerScript(entry)) {
+      final label = base.speakersPending
+          ? '화자 확인 필요'
+          : '화자 매칭 확인';
+      return (
+        phase: ComposePhase.needsInput,
+        label: label,
+        speakersPending: base.speakersPending,
+        graphReviewPending: false,
+        awaitingSpeakerAck: true,
+      );
+    }
+    // Speakers acknowledged (or none to confirm) but the graph draft hasn't
+    // started yet — the auto-build is about to run. Never report this
+    // intermediate state as "완성"; keep it as work-in-progress.
+    return (
+      phase: ComposePhase.working,
+      label: '그래프 초안 생성 중',
+      speakersPending: base.speakersPending,
+      graphReviewPending: false,
+      awaitingSpeakerAck: false,
+    );
+  }
+
+  // Anything else (e.g. `ready_no_graph`) — no graph to build; pass through.
   return (
     phase: base.phase,
     label: base.label,
