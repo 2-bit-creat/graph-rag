@@ -900,6 +900,83 @@ async def find_similar_nodes_with_distance(
     return [(row[0], float(row[1])) for row in result.all()]
 
 
+# --- Concept auto-linking (기존↔새 개념 연결) --------------------------------
+# Identities already get exact + honorific-normalized + fuzzy resolution
+# (find_identity_node_by_name_or_alias / find_identity_by_alias_embedding). Plain
+# Concepts historically only had exact-name dedup in _get_or_create_node, so
+# "면접" and "인터뷰" forked into separate nodes. These two helpers give the
+# KG-build draft the same "exact match → link, embedding hit → suggest" behavior
+# for Concepts, scoped to type=='Concept' so Statement/identity nodes never match.
+
+
+async def find_concept_node_by_name_or_alias(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    name: str,
+) -> Node | None:
+    """Exact resolution for a plain concept surface form: canonical name first,
+    then learned aliases (Node.aliases, stored lowercased by add_node_alias).
+    Concept-type only — the identity category has its own resolver."""
+    key = _norm_surface(name)
+    if not key:
+        return None
+    result = await session.execute(
+        select(Node).where(
+            Node.user_id == user_id,
+            func.lower(Node.type) == "concept",
+            Node.deleted_at.is_(None),
+        )
+    )
+    for node in result.scalars():
+        if _norm_surface(node.name) == key or key in node_alias_keys(node):
+            return node
+    return None
+
+
+async def find_similar_concepts_with_distance(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    embedding: list[float],
+    *,
+    limit: int = 3,
+    max_distance: float = 0.35,
+) -> list[tuple[Node, float]]:
+    """Concept-scoped sibling of find_similar_nodes_with_distance: nearest active
+    Concept nodes by name_embedding cosine distance, closest first. Used to
+    SUGGEST a link during review — never to auto-merge."""
+    dist_col = Node.name_embedding.cosine_distance(embedding).label("dist")
+    result = await session.execute(
+        select(Node, dist_col)
+        .where(
+            Node.user_id == user_id,
+            func.lower(Node.type) == "concept",
+            Node.name_embedding.isnot(None),
+            Node.deleted_at.is_(None),
+            dist_col <= max_distance,
+        )
+        .order_by(dist_col)
+        .limit(limit)
+    )
+    return [(row[0], float(row[1])) for row in result.all()]
+
+
+async def user_has_concept_embeddings(
+    session: AsyncSession, user_id: uuid.UUID
+) -> bool:
+    """Cheap gate: is fuzzy concept linking worth attempting for this user?"""
+    row = await session.execute(
+        select(Node.id)
+        .where(
+            Node.user_id == user_id,
+            func.lower(Node.type) == "concept",
+            Node.name_embedding.isnot(None),
+            Node.deleted_at.is_(None),
+        )
+        .limit(1)
+    )
+    return row.scalar_one_or_none() is not None
+
+
 async def upsert_weighted_edge(
     session: AsyncSession,
     user_id: uuid.UUID,
@@ -2532,7 +2609,11 @@ async def list_person_nodes(
     user_id: uuid.UUID,
     limit: int = 100,
 ) -> list[Node]:
-    """Speaker/Person-like graph nodes for voice identity picker."""
+    """Identity-category graph nodes (Person / Source / generic Identity) for the
+    화자 (speaker) picker. Any recurring identity can be attributed as a segment's
+    speaker — not just people — e.g. an external Source like "기업은행" publishing
+    a statement. Voice EMBEDDING binding still only makes sense for something with
+    an actual voice, but that's a user choice at confirm time, not a listing gate."""
     result = await session.execute(
         select(Node)
         .where(Node.user_id == user_id)
@@ -2540,20 +2621,27 @@ async def list_person_nodes(
         .limit(limit * 3)
     )
     speaker_type = normalize_entity_type(NODE_SPEAKER)
-    by_name: dict[str, Node] = {}
+    # Dedup key is (name, category) — NOT name alone. Person/Individual/Speaker
+    # collapse into one "person" bucket per name (legacy cleanup: these are
+    # different type strings for the SAME real person). But a same-name Person
+    # and Source must both survive as separate picker entries — they're
+    # deliberately distinct identities that never merge (see is_person_like_type).
+    by_key: dict[tuple[str, str], Node] = {}
     for node in result.scalars().all():
-        if not is_person_like_type(node.type):
+        if not is_identity_type(node.type):
             continue
-        key = (node.name or "").strip().lower()
-        if not key:
+        name_key = (node.name or "").strip().lower()
+        if not name_key:
             continue
-        existing = by_name.get(key)
+        category = "person" if is_person_like_type(node.type) else type_group_key(node.type)
+        key = (name_key, category)
+        existing = by_key.get(key)
         if existing is None:
-            by_name[key] = node
+            by_key[key] = node
             continue
         if normalize_entity_type(node.type) == speaker_type:
-            by_name[key] = node
-    nodes = sorted(by_name.values(), key=lambda n: (n.name or "").lower())
+            by_key[key] = node
+    nodes = sorted(by_key.values(), key=lambda n: (n.name or "").lower())
     return nodes[:limit]
 
 
@@ -2869,7 +2957,9 @@ async def list_person_nodes_for_speaker_picker(
     exclude_node_ids: set[uuid.UUID] | None = None,
     limit: int = 100,
 ) -> list[Node]:
-    """Speaker/Person-like nodes without voice embedding — for linking a new identity."""
+    """Identity-category nodes (see list_person_nodes) without a conflicting voice
+    embedding already bound — for linking a segment's speaker to a new or existing
+    identity."""
     nodes = await list_person_nodes(session, user_id, limit=limit * 2)
     if not nodes:
         return []

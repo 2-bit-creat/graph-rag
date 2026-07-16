@@ -257,6 +257,15 @@ _MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_version TEXT",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS consented_at TIMESTAMPTZ",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS speaker_id_consent_at TIMESTAMPTZ",
+    # Identity/Person/Source model backfill: "Speaker" was the pre-split name for
+    # what Person means now (see entity_types.is_person_like_type) — rename any
+    # node still carrying the old literal type string so the graph canvas and
+    # ontology settings show one consistent model instead of Speaker/Person as if
+    # they were two different things. Safe: is_person_like_type already treats
+    # them as interchangeable everywhere (matching, dedup, voice-linking), and
+    # uq_node_user_name_type (user_id, name, type) means this only fires where no
+    # same-named Person row already exists for that user.
+    "UPDATE nodes SET type = 'Person' WHERE type = 'Speaker'",
 ]
 
 

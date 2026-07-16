@@ -120,6 +120,7 @@ async def _entry_out(
                         RecommendedNodeOut(
                             id=s.confirmed_node.id,
                             name=s.confirmed_node.name,
+                            type=s.confirmed_node.type,
                         )
                         if s.confirmed_node is not None
                         else None
@@ -128,6 +129,7 @@ async def _entry_out(
                         RecommendedNodeOut(
                             id=s.suggested_node.id,
                             name=s.suggested_node.name,
+                            type=s.suggested_node.type,
                         )
                         if s.suggested_node is not None
                         else None

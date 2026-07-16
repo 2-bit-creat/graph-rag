@@ -5,6 +5,7 @@ import '../chat/journal_task_controller.dart';
 import '../compose/compose_session_controller.dart';
 import '../theme/app_theme.dart';
 import 'app_ui.dart';
+import 'concept_link_sheet.dart';
 import 'entity_identity_sheet.dart';
 
 /// Inline or full-screen graph draft review — edit claims, then confirm.
@@ -64,6 +65,8 @@ class _ConceptDraft {
     this.resNodeId,
     this.resName,
     this.resIsSelf = false,
+    this.resDistance,
+    this.candidates = const [],
   });
 
   String name;
@@ -73,6 +76,11 @@ class _ConceptDraft {
   String? resNodeId;
   String? resName;
   bool resIsSelf;
+
+  /// Concept auto-linking (Feature A): cosine distance to the best match and the
+  /// full candidate list, populated by the backend's suggest pass.
+  double? resDistance;
+  List<ConceptCandidate> candidates;
 
   bool get isPerson => kind == 'person';
 
@@ -89,6 +97,8 @@ class _ConceptDraft {
       String? nodeId;
       String? matchedName;
       var isSelf = false;
+      double? distance;
+      var candidates = const <ConceptCandidate>[];
       final res = raw['resolution'];
       if (res is Map) {
         action = (res['action'] ?? '').toString().trim();
@@ -98,6 +108,14 @@ class _ConceptDraft {
         final mn = (res['matched_name'] ?? '').toString().trim();
         matchedName = mn.isEmpty ? null : mn;
         isSelf = res['is_self'] == true;
+        distance = double.tryParse(res['distance']?.toString() ?? '');
+        final cands = res['candidates'];
+        if (cands is List) {
+          candidates = cands
+              .map(ConceptCandidate.fromRaw)
+              .where((c) => c.nodeId.isNotEmpty)
+              .toList();
+        }
       }
       return _ConceptDraft(
         name: name,
@@ -107,6 +125,8 @@ class _ConceptDraft {
         resNodeId: nodeId,
         resName: matchedName,
         resIsSelf: isSelf,
+        resDistance: distance,
+        candidates: candidates,
       );
     }
     return _ConceptDraft(name: raw.toString().trim());
@@ -125,6 +145,10 @@ class _ConceptDraft {
       };
     } else if (resAction == 'concept') {
       m['resolution'] = {'action': 'concept'};
+    } else if (resAction == 'link' && resNodeId != null) {
+      // Reviewer-confirmed concept link (Feature A). An unconfirmed 'suggest'
+      // is deliberately NOT round-tripped — it falls back to name-based commit.
+      m['resolution'] = {'action': 'link', 'node_id': resNodeId};
     }
     return m;
   }
@@ -142,6 +166,13 @@ class _ClaimDraft {
   final TextEditingController title;
   final TextEditingController statement;
   final List<_ConceptDraft> concepts;
+
+  /// Swipe-review state (Feature B). Approval is review progress only — commit
+  /// still sends every remaining claim. `dismissKey` is regenerated on undo so a
+  /// restored card never reuses a dismissed Dismissible's key (which crashes).
+  bool approved = false;
+  bool expanded = false;
+  Key dismissKey = UniqueKey();
 
   factory _ClaimDraft.fromMap(Map<String, dynamic> m) => _ClaimDraft(
         speaker: TextEditingController(text: (m['speaker'] ?? '').toString()),
@@ -188,19 +219,60 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
         .toList();
   }
 
+  /// Deleted claims held for undo — their TextEditingControllers must stay alive
+  /// until the panel disposes, so we never dispose them at delete time.
+  final List<_ClaimDraft> _removed = [];
+
   @override
   void dispose() {
     for (final c in _claims) {
       c.dispose();
     }
+    for (final c in _removed) {
+      c.dispose();
+    }
     super.dispose();
   }
 
-  void _deleteClaim(int i) {
-    setState(() {
-      _claims.removeAt(i).dispose();
-    });
+  void _deleteClaimWithUndo(int i) {
+    if (i < 0 || i >= _claims.length) return;
+    final claim = _claims[i];
+    setState(() => _claims.removeAt(i));
+    _removed.add(claim);
+    final snippet = claim.title.text.trim().isNotEmpty
+        ? claim.title.text.trim()
+        : claim.statement.text.trim();
+    final label = snippet.isEmpty
+        ? '항목'
+        : (snippet.length > 18 ? '${snippet.substring(0, 18)}…' : snippet);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text('「$label」 삭제됨'),
+        duration: const Duration(seconds: 5),
+        action: SnackBarAction(
+          label: '되돌리기',
+          onPressed: () {
+            if (!mounted || !_removed.remove(claim)) return;
+            claim.dismissKey = UniqueKey(); // reinsertion-safe
+            setState(() => _claims.insert(i.clamp(0, _claims.length), claim));
+          },
+        ),
+      ));
   }
+
+  int get _approvedCount => _claims.where((c) => c.approved).length;
+
+  /// Commit is gated on every claim being approved — that's what makes the
+  /// swipe-right/tap-check triage meaningful. Empty list can't commit.
+  bool get _allApproved => _claims.isNotEmpty && _claims.every((c) => c.approved);
+
+  void _approveAll() => setState(() {
+        for (final c in _claims) {
+          c.approved = true;
+          c.expanded = false;
+        }
+      });
 
   Future<void> _confirm() async {
     final claims = _claims
@@ -343,16 +415,7 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
           ),
           const SizedBox(height: AppSpacing.md),
           for (var i = 0; i < _claims.length; i++) ...[
-            _ClaimCard(
-              claim: _claims[i],
-              index: i + 1,
-              personCandidates: _personCandidates,
-              chatStyle: false,
-              onDelete: () => _deleteClaim(i),
-              onConceptsChanged: () => setState(() {}),
-              onReopenSpeakers:
-                  widget.onReopenSpeakers == null ? null : _handleReopenSpeakers,
-            ),
+            _swipeableClaim(context, i, chatStyle: false),
             const SizedBox(height: AppSpacing.md),
           ],
           if (_claims.isEmpty)
@@ -384,7 +447,10 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Row(
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -409,7 +475,6 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
                 ],
               ),
             ),
-            const SizedBox(width: 6),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
@@ -425,7 +490,22 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
                 ),
               ),
             ),
-            const Spacer(),
+            if (_approvedCount > 0)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF35C08A).withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  '$_approvedCount/${_claims.length} 승인',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF2E9E74),
+                  ),
+                ),
+              ),
             Text(
               '확정 후 수정 불가',
               style: TextStyle(
@@ -446,16 +526,8 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
             shrinkWrap: true,
             itemCount: _claims.length,
             separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (context, i) => _ClaimCard(
-              claim: _claims[i],
-              index: i + 1,
-              personCandidates: _personCandidates,
-              chatStyle: true,
-              onDelete: () => _deleteClaim(i),
-              onConceptsChanged: () => setState(() {}),
-              onReopenSpeakers:
-                  widget.onReopenSpeakers == null ? null : _handleReopenSpeakers,
-            ),
+            itemBuilder: (context, i) =>
+                _swipeableClaim(context, i, chatStyle: true),
           ),
         ),
         if (_claims.isEmpty)
@@ -472,7 +544,7 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
           ),
         const SizedBox(height: 8),
         Text(
-          '개념 탭 → 중요도 · 길게 → 정체성 · 👤 탭 → 연결',
+          '← 밀어서 삭제 · → 밀어서 승인 · 개념 탭=중요도 · 길게=정체성',
           style: TextStyle(
             fontSize: 10,
             color: context.shell.mutedText,
@@ -484,33 +556,138 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
     );
   }
 
+  /// A claim wrapped in swipe-to-triage (Feature B): swipe right = approve
+  /// (card collapses, stays in the list), swipe left = delete with undo.
+  Widget _swipeableClaim(BuildContext context, int i, {required bool chatStyle}) {
+    final claim = _claims[i];
+    final Widget child = (claim.approved && !claim.expanded)
+        ? _ApprovedRow(
+            claim: claim,
+            onTap: () => setState(() => claim.expanded = true),
+            onUnapprove: () => setState(() {
+              claim.approved = false;
+              claim.expanded = false;
+            }),
+          )
+        : _ClaimCard(
+            claim: claim,
+            index: i + 1,
+            personCandidates: _personCandidates,
+            chatStyle: chatStyle,
+            approved: claim.approved,
+            onDelete: () => _deleteClaimWithUndo(i),
+            onConceptsChanged: () => setState(() {}),
+            onToggleApproved: () => setState(() {
+              claim.approved = !claim.approved;
+              if (!claim.approved) claim.expanded = false;
+            }),
+            onReopenSpeakers:
+                widget.onReopenSpeakers == null ? null : _handleReopenSpeakers,
+          );
+    return Dismissible(
+      key: claim.dismissKey,
+      direction: DismissDirection.horizontal,
+      background: _swipeBg(approve: true),
+      secondaryBackground: _swipeBg(approve: false),
+      confirmDismiss: (dir) async {
+        if (dir == DismissDirection.startToEnd) {
+          // Swipe right = approve in place; never actually dismiss.
+          setState(() {
+            claim.approved = true;
+            claim.expanded = false;
+          });
+          return false;
+        }
+        return true; // swipe left = delete
+      },
+      onDismissed: (_) => _deleteClaimWithUndo(i),
+      child: child,
+    );
+  }
+
+  Widget _swipeBg({required bool approve}) {
+    final Color color = approve ? const Color(0xFF35C08A) : AppColors.accentWarm;
+    return Container(
+      alignment: approve ? Alignment.centerLeft : Alignment.centerRight,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(approve ? Icons.check_circle_rounded : Icons.delete_outline_rounded,
+              color: color, size: 20),
+          const SizedBox(width: 6),
+          Text(
+            approve ? '승인' : '삭제',
+            style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _confirmButton(BuildContext context, {bool chatStyle = false}) {
+    final enabled = !_submitting && _allApproved;
+    // "전체 승인" shortcut so gating never becomes a dead end — one tap approves
+    // everything and lights up the confirm button.
+    final approveAllRow = (!_allApproved && _claims.isNotEmpty && !_submitting)
+        ? Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: OutlinedButton.icon(
+              onPressed: _approveAll,
+              icon: const Icon(Icons.done_all_rounded, size: 18),
+              label: Text(
+                '전체 승인 ($_approvedCount/${_claims.length})',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF2E9E74),
+                side: const BorderSide(color: Color(0x6635C08A)),
+                padding: const EdgeInsets.symmetric(vertical: 11),
+              ),
+            ),
+          )
+        : const SizedBox.shrink();
+
+    final Widget button;
     if (chatStyle) {
-      return DecoratedBox(
+      button = DecoratedBox(
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [
-              AppColors.hubGraph,
-              AppColors.hubGraph.withValues(alpha: 0.82),
-            ],
+            colors: enabled
+                ? [
+                    AppColors.hubGraph,
+                    AppColors.hubGraph.withValues(alpha: 0.82),
+                  ]
+                : [
+                    AppColors.hubGraph.withValues(alpha: 0.3),
+                    AppColors.hubGraph.withValues(alpha: 0.25),
+                  ],
           ),
           borderRadius: BorderRadius.circular(10),
-          boxShadow: [
-            BoxShadow(
-              color: AppColors.hubGraph.withValues(alpha: 0.28),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
+          boxShadow: enabled
+              ? [
+                  BoxShadow(
+                    color: AppColors.hubGraph.withValues(alpha: 0.28),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ]
+              : null,
         ),
         child: FilledButton.icon(
           style: FilledButton.styleFrom(
             backgroundColor: Colors.transparent,
             shadowColor: Colors.transparent,
             foregroundColor: Colors.white,
+            disabledForegroundColor: Colors.white.withValues(alpha: 0.7),
             padding: const EdgeInsets.symmetric(vertical: 13),
           ),
-          onPressed: _submitting ? null : _confirm,
+          onPressed: enabled ? _confirm : null,
           icon: _submitting
               ? const SizedBox(
                   width: 18,
@@ -520,22 +697,51 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
                     color: Colors.white,
                   ),
                 )
-              : const Icon(Icons.check_circle_outline_rounded, size: 18),
-          label: Text(_submitting ? '확정 중…' : '지식그래프에 확정'),
+              : Icon(
+                  _allApproved
+                      ? Icons.check_circle_outline_rounded
+                      : Icons.lock_outline_rounded,
+                  size: 18),
+          label: Text(
+            _submitting ? '확정 중…' : _confirmLabel,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      );
+    } else {
+      button = FilledButton.icon(
+        onPressed: enabled ? _confirm : null,
+        icon: _submitting
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(_allApproved
+                ? Icons.check_circle_outline
+                : Icons.lock_outline_rounded),
+        label: Text(
+          _submitting ? '확정 중…' : _confirmLabel,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
       );
     }
-    return FilledButton.icon(
-      onPressed: _submitting ? null : _confirm,
-      icon: _submitting
-          ? const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : const Icon(Icons.check_circle_outline),
-      label: Text(_submitting ? '확정 중…' : '확정하고 지식그래프에 추가'),
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [approveAllRow, button],
     );
+  }
+
+  String get _confirmLabel {
+    final total = _claims.length;
+    final approved = _approvedCount;
+    if (total == 0) return '지식그래프에 확정';
+    if (approved == total) return '전체 승인 — 지식그래프에 확정';
+    return '모두 승인해야 확정 ($approved/$total)';
   }
 }
 
@@ -547,6 +753,8 @@ class _ClaimCard extends StatelessWidget {
     required this.chatStyle,
     required this.onDelete,
     required this.onConceptsChanged,
+    this.approved = false,
+    this.onToggleApproved,
     this.onReopenSpeakers,
   });
 
@@ -556,6 +764,8 @@ class _ClaimCard extends StatelessWidget {
   final bool chatStyle;
   final VoidCallback onDelete;
   final VoidCallback onConceptsChanged;
+  final bool approved;
+  final VoidCallback? onToggleApproved;
   final VoidCallback? onReopenSpeakers;
 
   List<EntityPersonCandidate> get _entityCandidates => personCandidates
@@ -591,6 +801,35 @@ class _ClaimCard extends StatelessWidget {
       c.resNodeId = null;
       c.resName = null;
       c.resIsSelf = false;
+    }
+    onConceptsChanged();
+  }
+
+  /// Concept auto-linking (Feature A): confirm/change/undo a link to an existing
+  /// Concept node. Candidates come from the backend suggest pass; for an already
+  /// linked concept we still offer the candidate list so the user can re-pick.
+  Future<void> _resolveConceptLink(BuildContext context, _ConceptDraft c) async {
+    var cands = c.candidates;
+    if (cands.isEmpty && c.resNodeId != null && (c.resName ?? '').isNotEmpty) {
+      cands = [ConceptCandidate(nodeId: c.resNodeId!, name: c.resName!)];
+    }
+    final result = await showConceptLinkSheet(
+      context: context,
+      conceptName: c.name,
+      candidates: cands,
+      currentNodeId: c.resNodeId,
+    );
+    if (result == null) return;
+    if (result.action == 'link') {
+      c.resAction = 'link';
+      c.resNodeId = result.nodeId;
+      c.resName = result.linkedName;
+    } else {
+      // keep as a new concept
+      c.resAction = null;
+      c.resNodeId = null;
+      c.resName = null;
+      c.candidates = const [];
     }
     onConceptsChanged();
   }
@@ -705,6 +944,58 @@ class _ClaimCard extends StatelessWidget {
     );
   }
 
+  Widget _fullConceptChip(BuildContext context, _ConceptDraft c) {
+    final suggested = c.resAction == 'suggest';
+    final linked = c.resAction == 'link';
+    final Color tone = suggested
+        ? const Color(0xFFB07BFF)
+        : linked
+            ? const Color(0xFF35C08A)
+            : AppColors.accent;
+    final Widget avatar = (suggested || linked)
+        ? CircleAvatar(
+            backgroundColor: tone.withValues(alpha: 0.2),
+            child: Icon(Icons.link_rounded, size: 14, color: tone),
+          )
+        : CircleAvatar(
+            backgroundColor:
+                AppColors.accent.withValues(alpha: 0.15 + 0.15 * c.importance),
+            child: Text(
+              '${c.importance}',
+              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
+            ),
+          );
+    final String label = suggested
+        ? '${c.name} ≈ ${c.resName ?? ''}?'
+        : linked
+            ? '${c.name} → ${c.resName ?? ''}'
+            : '${c.name} · ${c.importance}';
+    return GestureDetector(
+      onLongPress: () {
+        c.kind = 'person';
+        c.resAction = null;
+        onConceptsChanged();
+        _resolvePerson(context, c);
+      },
+      child: InputChip(
+        label: Text(label),
+        avatar: avatar,
+        onPressed: () {
+          if (suggested || linked) {
+            _resolveConceptLink(context, c);
+          } else {
+            c.importance = c.importance >= 5 ? 1 : c.importance + 1;
+            onConceptsChanged();
+          }
+        },
+        onDeleted: () {
+          claim.concepts.remove(c);
+          onConceptsChanged();
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (chatStyle) return _buildChatCard(context);
@@ -750,6 +1041,23 @@ class _ClaimCard extends StatelessWidget {
                   chatStyle: true,
                 ),
               ),
+              if (onToggleApproved != null)
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                  tooltip: approved ? '승인 해제' : '승인',
+                  onPressed: onToggleApproved,
+                  icon: Icon(
+                    approved
+                        ? Icons.check_circle_rounded
+                        : Icons.check_circle_outline_rounded,
+                    size: 17,
+                    color: approved
+                        ? const Color(0xFF35C08A)
+                        : context.shell.mutedText,
+                  ),
+                ),
               IconButton(
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
@@ -820,6 +1128,18 @@ class _ClaimCard extends StatelessWidget {
   }
 
   Widget _chatConceptChip(BuildContext context, _ConceptDraft c) {
+    final suggested = c.resAction == 'suggest';
+    final linked = c.resAction == 'link';
+    // Suggest = purple, confirmed link = green, plain = accent (importance-tinted).
+    final Color tone = suggested
+        ? const Color(0xFFB07BFF)
+        : linked
+            ? const Color(0xFF35C08A)
+            : AppColors.accent;
+    final Color bg = (suggested || linked)
+        ? tone.withValues(alpha: 0.16)
+        : AppColors.accent.withValues(alpha: 0.12 + 0.04 * c.importance);
+
     return GestureDetector(
       onLongPress: () {
         c.kind = 'person';
@@ -828,12 +1148,17 @@ class _ClaimCard extends StatelessWidget {
         _resolvePerson(context, c);
       },
       child: Material(
-        color: AppColors.accent.withValues(alpha: 0.12 + 0.04 * c.importance),
+        color: bg,
         borderRadius: BorderRadius.circular(7),
         child: InkWell(
           onTap: () {
-            c.importance = c.importance >= 5 ? 1 : c.importance + 1;
-            onConceptsChanged();
+            // Suggest/link → open the concept-link sheet; plain → cycle importance.
+            if (suggested || linked) {
+              _resolveConceptLink(context, c);
+            } else {
+              c.importance = c.importance >= 5 ? 1 : c.importance + 1;
+              onConceptsChanged();
+            }
           },
           borderRadius: BorderRadius.circular(7),
           child: Padding(
@@ -841,30 +1166,39 @@ class _ClaimCard extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  width: 16,
-                  height: 16,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: AppColors.accent.withValues(alpha: 0.25),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Text(
-                    '${c.importance}',
-                    style: const TextStyle(
-                      fontSize: 9,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.accent,
+                if (suggested)
+                  Icon(Icons.link_rounded, size: 13, color: tone)
+                else if (linked)
+                  Icon(Icons.link_rounded, size: 13, color: tone)
+                else
+                  Container(
+                    width: 16,
+                    height: 16,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: AppColors.accent.withValues(alpha: 0.25),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Text(
+                      '${c.importance}',
+                      style: const TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.accent,
+                      ),
                     ),
                   ),
-                ),
                 const SizedBox(width: 4),
                 Text(
-                  c.name,
-                  style: const TextStyle(
+                  suggested
+                      ? '${c.name} ≈ ${c.resName ?? ''}?'
+                      : linked
+                          ? '${c.name} → ${c.resName ?? ''}'
+                          : c.name,
+                  style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
-                    color: AppColors.accent,
+                    color: tone,
                   ),
                 ),
                 GestureDetector(
@@ -875,7 +1209,7 @@ class _ClaimCard extends StatelessWidget {
                   child: Padding(
                     padding: const EdgeInsets.only(left: 2),
                     child: Icon(Icons.close,
-                        size: 12, color: AppColors.accent.withValues(alpha: 0.7)),
+                        size: 12, color: tone.withValues(alpha: 0.7)),
                   ),
                 ),
               ],
@@ -979,6 +1313,19 @@ class _ClaimCard extends StatelessWidget {
           Row(
             children: [
               Expanded(child: _speakerBadge(context, claim.speaker.text, chatStyle: false)),
+              if (onToggleApproved != null)
+                IconButton(
+                  tooltip: approved ? '승인 해제' : '승인',
+                  onPressed: onToggleApproved,
+                  icon: Icon(
+                    approved
+                        ? Icons.check_circle_rounded
+                        : Icons.check_circle_outline_rounded,
+                    color: approved
+                        ? const Color(0xFF35C08A)
+                        : Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
               IconButton(
                 tooltip: '이 항목 삭제',
                 onPressed: onDelete,
@@ -1043,34 +1390,7 @@ class _ClaimCard extends StatelessWidget {
                 if (c.isPerson)
                   _personChip(context, c)
                 else
-                  GestureDetector(
-                    onLongPress: () {
-                      c.kind = 'person';
-                      c.resAction = null;
-                      onConceptsChanged();
-                      _resolvePerson(context, c);
-                    },
-                    child: InputChip(
-                      label: Text('${c.name} · ${c.importance}'),
-                      avatar: CircleAvatar(
-                        backgroundColor: AppColors.accent
-                            .withValues(alpha: 0.15 + 0.15 * c.importance),
-                        child: Text(
-                          '${c.importance}',
-                          style: const TextStyle(
-                              fontSize: 10, fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                      onPressed: () {
-                        c.importance = c.importance >= 5 ? 1 : c.importance + 1;
-                        onConceptsChanged();
-                      },
-                      onDeleted: () {
-                        claim.concepts.remove(c);
-                        onConceptsChanged();
-                      },
-                    ),
-                  ),
+                  _fullConceptChip(context, c),
               ActionChip(
                 avatar: const Icon(Icons.add, size: 16),
                 label: const Text('추가'),
@@ -1079,6 +1399,73 @@ class _ClaimCard extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Collapsed one-line view of an approved claim (Feature B). Tap to re-expand
+/// and edit; long-press to un-approve.
+class _ApprovedRow extends StatelessWidget {
+  const _ApprovedRow({
+    required this.claim,
+    required this.onTap,
+    required this.onUnapprove,
+  });
+
+  final _ClaimDraft claim;
+  final VoidCallback onTap;
+  final VoidCallback onUnapprove;
+
+  @override
+  Widget build(BuildContext context) {
+    const green = Color(0xFF35C08A);
+    final snippet = claim.title.text.trim().isNotEmpty
+        ? claim.title.text.trim()
+        : claim.statement.text.trim();
+    return Material(
+      color: green.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
+        onLongPress: onUnapprove,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: green.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.check_circle_rounded, size: 16, color: green),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  snippet.isEmpty ? '(내용 없음)' : snippet,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: context.shell.primaryText.withValues(alpha: 0.9),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                '승인됨',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: green.withValues(alpha: 0.9),
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(Icons.expand_more_rounded,
+                  size: 16, color: context.shell.mutedText),
+            ],
+          ),
+        ),
       ),
     );
   }

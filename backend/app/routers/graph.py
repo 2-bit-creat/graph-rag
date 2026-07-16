@@ -134,6 +134,8 @@ async def _speaker_recommend_handler(
 
             name=result.recommended_node.name,
 
+            type=result.recommended_node.type,
+
         )
 
     return SpeakerRecommendResponse(
@@ -152,6 +154,7 @@ async def _speaker_recommend_handler(
             RecommendedNodeOut(
                 id=result.confirmed_node.id,
                 name=result.confirmed_node.name,
+                type=result.confirmed_node.type,
             )
             if result.confirmed_node is not None
             else None
@@ -169,7 +172,8 @@ async def _speaker_recommend_handler(
         ],
 
         person_nodes=[
-            RecommendedNodeOut(id=n.id, name=n.name) for n in result.person_nodes
+            RecommendedNodeOut(id=n.id, name=n.name, type=n.type)
+            for n in result.person_nodes
         ],
 
     )
@@ -252,6 +256,8 @@ async def _speaker_confirm_handler(
             id=result.confirmed_node.id,
 
             name=result.confirmed_node.name,
+
+            type=result.confirmed_node.type,
 
         ),
 

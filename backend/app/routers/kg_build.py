@@ -47,6 +47,14 @@ from ..storage import save_audio, local_path
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/kg", tags=["kg-build"])
 
+# Concept auto-linking thresholds (see crud.find_similar_concepts_with_distance).
+# Identities use a dedicated alias index at 0.25; concept name_embeddings embed
+# "name\ndescription" which adds noise, so we start looser. Every hit is a
+# SUGGESTION gated by human review, so a loose threshold only costs noise — it
+# never merges nodes silently. Centralized here for one-line tuning.
+CONCEPT_SUGGEST_MAX_DISTANCE = 0.35
+CONCEPT_SUGGEST_TOP_K = 3
+
 # ─── In-memory run log (last 50 extract calls) ───────────────────────────────
 
 _run_log: deque[dict] = deque(maxlen=50)
@@ -125,8 +133,10 @@ class KgCommitRequest(BaseModel):
     journal_entry_id: _uuid.UUID | None = None  # optional link for transcript provenance
 
 
-# Allowed statement head-node types. Source (외부 출처) is deliberately not
-# person-like — it never enters voice/speaker pickers (see entity_types).
+# Allowed statement head-node types. Person and Source are distinct identity
+# subtypes that never merge by name alone (see entity_types.is_identity_type) —
+# both are valid "화자" (speaker) picks now, Source included, e.g. an external
+# entity like 기업은행 publishing a statement with no voice of its own.
 _HEAD_NODE_TYPES = frozenset({"Person", "Source"})
 
 
@@ -594,6 +604,91 @@ async def _suggest_identity_by_embedding(
         }
 
 
+async def _enrich_plain_concepts(
+    session: AsyncSession,
+    user_id: _uuid.UUID,
+    claims: list[dict],
+) -> None:
+    """Link plain concepts to existing Concept nodes, in place — the Concept-side
+    mirror of :func:`_enrich_person_concepts`. Runs AFTER it so identity resolution
+    always wins (a name resolved to an identity is left alone).
+
+    Two passes, both skipping any concept the reviewer/a prior pass already decided
+    (has ``resolution``):
+
+    1. EXACT (canonical name or learned alias) — a certain match. ``action="link"``.
+       An alias hit (surface differs from the node's canonical name) MUST be honored
+       at commit by node_id, otherwise name-based get_or_create would fork a node.
+    2. FUZZY (name-embedding similarity) — an uncertain guess for the rest.
+       ``action="suggest"`` with a candidate list; never auto-links (homonyms like
+       "면접"=interview vs a company named "면접" must not silently merge). One tap
+       confirms → the surface is learned as an alias for next time.
+    """
+    unresolved: list[dict] = []
+    for c in _iter_concepts(claims):
+        if isinstance(c.get("resolution"), dict):
+            continue  # identity pass / reviewer already decided
+        if str(c.get("kind") or "concept").strip().lower() != "concept":
+            continue  # only plain concepts (person mentions handled elsewhere)
+        name = str(c.get("name") or "").strip()
+        if not name:
+            continue
+        existing = await crud.find_concept_node_by_name_or_alias(session, user_id, name)
+        if existing is not None:
+            match = "exact" if crud._norm_surface(existing.name) == crud._norm_surface(
+                name
+            ) else "alias"
+            c["resolution"] = {
+                "action": "link",
+                "node_id": str(existing.id),
+                "matched_name": existing.name,
+                "match": match,
+            }
+        else:
+            unresolved.append(c)
+
+    if not unresolved:
+        return
+    if not await crud.user_has_concept_embeddings(session, user_id):
+        return
+
+    from ..rag import embed_texts
+
+    try:
+        vectors = await embed_texts(
+            [str(c.get("name") or "").strip() for c in unresolved]
+        )
+    except Exception:
+        return
+
+    for c, vec in zip(unresolved, vectors):
+        hits = await crud.find_similar_concepts_with_distance(
+            session,
+            user_id,
+            vec,
+            limit=CONCEPT_SUGGEST_TOP_K,
+            max_distance=CONCEPT_SUGGEST_MAX_DISTANCE,
+        )
+        if not hits:
+            continue
+        best, best_dist = hits[0]
+        c["resolution"] = {
+            "action": "suggest",
+            "node_id": str(best.id),
+            "matched_name": best.name,
+            "distance": round(best_dist, 4),
+            "candidates": [
+                {
+                    "node_id": str(n.id),
+                    "name": n.name,
+                    "distance": round(d, 4),
+                    "description": (n.description or "")[:120],
+                }
+                for n, d in hits
+            ],
+        }
+
+
 async def _person_candidates_payload(
     session: AsyncSession, user_id: _uuid.UUID
 ) -> list[dict]:
@@ -696,6 +791,7 @@ async def kg_extract(
         # ── Pre-resolve person mentions + attach picker candidates ──────────────
         claims_list = [c for c in (result.get("claims") or []) if isinstance(c, dict)]
         await _enrich_person_concepts(session, user.id, claims_list)
+        await _enrich_plain_concepts(session, user.id, claims_list)
         result["person_candidates"] = await _person_candidates_payload(session, user.id)
 
         latency_ms = int((time.monotonic() - t0) * 1000)
@@ -827,6 +923,14 @@ async def kg_commit(
             )
         except Exception as _link_exc:
             logger.warning("kg_commit: failed to record journal graph links: %s", _link_exc)
+
+    # ── Embed new Statement/Concept nodes so future drafts can fuzzy-link ──────
+    try:
+        from ..rag import ensure_statement_embeddings
+
+        await ensure_statement_embeddings(session, user.id)
+    except Exception:
+        logger.warning("kg_commit: embedding backfill failed", exc_info=True)
 
     # ── Enqueue expression extraction for newly committed Statement nodes ──────
     try:
@@ -964,53 +1068,73 @@ async def kg_reclassify_node(
 
 # ─── Shared claim persistence ─────────────────────────────────────────────────
 
+async def _confirmed_speaker_identity(
+    session: AsyncSession,
+    user_id: _uuid.UUID,
+    entry_id: _uuid.UUID,
+    session_label: str,
+) -> tuple[str | None, str | None]:
+    """Confirmed graph identity (name, entity type) for a diarization label, if any.
+
+    Prefers the linked node's name/type (the canonical identity — Person, Source,
+    or the self node), then a confirmed new-name display name with no type yet
+    (node doesn't exist until commit). (None, None) when still unconfirmed.
+    """
+    appearance = await crud.get_speaker_appearance_for_label(
+        session, entry_id, session_label
+    )
+    if appearance is None:
+        return None, None
+    profile = await session.get(SpeakerProfile, appearance.speaker_profile_id)
+    if profile is None or profile.user_id != user_id:
+        return None, None
+    if profile.node_id is not None:
+        node = await session.get(Node, profile.node_id)
+        if node is not None and node.user_id == user_id:
+            name = (node.name or "").strip() or None
+            return name, (normalize_entity_type(node.type) if name else None)
+    return (profile.display_name or "").strip() or None, None
+
+
 async def _confirmed_speaker_name(
     session: AsyncSession,
     user_id: _uuid.UUID,
     entry_id: _uuid.UUID,
     session_label: str,
 ) -> str | None:
-    """Confirmed graph identity for a diarization label on this entry, if any.
-
-    Prefers the linked node's name (the canonical identity, e.g. the self node),
-    then a confirmed new-person display name. None when still unconfirmed.
-    """
-    appearance = await crud.get_speaker_appearance_for_label(
-        session, entry_id, session_label
-    )
-    if appearance is None:
-        return None
-    profile = await session.get(SpeakerProfile, appearance.speaker_profile_id)
-    if profile is None or profile.user_id != user_id:
-        return None
-    if profile.node_id is not None:
-        node = await session.get(Node, profile.node_id)
-        if node is not None and node.user_id == user_id:
-            return (node.name or "").strip() or None
-    return (profile.display_name or "").strip() or None
+    """Confirmed graph identity NAME for a diarization label — see
+    _confirmed_speaker_identity for the (name, type) pair."""
+    name, _type = await _confirmed_speaker_identity(session, user_id, entry_id, session_label)
+    return name
 
 
 async def _entry_label_identity_map(
     session: AsyncSession,
     user_id: _uuid.UUID,
     entry_id: _uuid.UUID,
-) -> dict[str, str]:
-    """diarization label → confirmed identity name, for claim attribution.
+) -> tuple[dict[str, str], dict[str, str]]:
+    """diarization label → (confirmed identity name, confirmed identity type).
 
-    Lets statements attach to the CONFIRMED speaker (제니 / the self node) instead
-    of the raw 'Speaker_1' label the LLM sees in the transcript — so the statement
-    edge and the voice link land on the SAME node, not two split ones.
+    Lets statements attach to the CONFIRMED speaker (제니 / the self node / an
+    external Source like 기업은행) instead of the raw 'Speaker_1' label the LLM
+    sees in the transcript — so the statement edge and the voice link land on the
+    SAME node, not two split ones. The type map lets a multi-speaker entry build a
+    Source head for a confirmed Source speaker instead of defaulting every claim
+    to Person (see _claim_head_type / _resolve_head_node).
     """
     appearances = await crud.list_speaker_appearances_for_entry(session, entry_id)
-    mapping: dict[str, str] = {}
+    names: dict[str, str] = {}
+    types: dict[str, str] = {}
     for app in appearances:
         label = (app.session_label or "").strip()
         if not label:
             continue
-        name = await _confirmed_speaker_name(session, user_id, entry_id, label)
+        name, node_type = await _confirmed_speaker_identity(session, user_id, entry_id, label)
         if name:
-            mapping[label] = name
-    return mapping
+            names[label] = name
+        if node_type:
+            types[label] = node_type
+    return names, types
 
 
 async def _link_confirmed_voices_to_nodes(
@@ -1139,6 +1263,35 @@ async def _resolve_person_concept(
     return node
 
 
+async def _resolve_linked_concept(
+    session: AsyncSession,
+    user_id: _uuid.UUID,
+    name: str,
+    node_id: str | None,
+) -> Node | None:
+    """The existing Concept node a reviewer-confirmed concept link points at, or
+    None on a stale/foreign/non-concept id (caller falls back to name-based
+    get_or_create). Learns this surface form as an alias so the next extraction
+    exact-matches it. Unlike identities, concepts are NOT indexed in
+    NodeAliasEmbedding — they already carry name_embedding for fuzzy hits."""
+    if not node_id:
+        return None
+    try:
+        target = await session.get(Node, _uuid.UUID(str(node_id)))
+    except (ValueError, TypeError):
+        return None
+    if (
+        target is None
+        or target.user_id != user_id
+        or target.deleted_at is not None
+        or normalize_entity_type(target.type) != "Concept"
+    ):
+        return None
+    crud.add_node_alias(target, name)
+    await session.flush()
+    return target
+
+
 async def _persist_concept(
     session: AsyncSession,
     user_id: _uuid.UUID,
@@ -1156,41 +1309,65 @@ async def _persist_concept(
 
     person (정체성) → resolve to an identity node, Statement --MENTIONS--> identity.
     concept        → Concept node, Statement --CONTEXT--> Concept.
-    Importance accumulates on BOTH: recurring identities matter like recurring themes.
+    Importance accumulates on ALL: recurring nodes matter like recurring themes.
 
-    Stickiness: a kind=concept name that already resolved to an identity keeps
-    converging there — LLM tagging is inconsistent across entries, so one
-    promotion (review sheet / reclassify) must hold permanently. The single
-    opt-out is an EXPLICIT reviewer decision (action="concept"), which always
-    yields a plain Concept node.
+    Two kinds of resolution can point this surface form at an EXISTING node:
+      - identity_target: a person mention, or a kind=concept name that already
+        resolved to an identity (stickiness). Edge = MENTIONS.
+      - concept_target: a reviewer-confirmed link to an existing Concept node
+        (Feature A auto-linking). Edge = CONTEXT — a linked concept is still a
+        concept, so it must NOT get an identity-style MENTIONS edge.
+
+    Precedence: an explicit reviewer concept-link (action="link" on a concept)
+    wins over the implicit sticky-identity check. Stickiness otherwise holds:
+    LLM tagging is inconsistent, so one promotion (review sheet / reclassify)
+    must persist. The single opt-out is an EXPLICIT reviewer decision
+    (action="concept"), which always yields a plain Concept node.
     """
     name = (name or "").strip()
     if not name:
         return
     explicit_concept = action == "concept"
 
-    target: Node | None = None
-    if kind == "person" and not explicit_concept:
-        target = await _resolve_person_concept(session, user_id, name, action, node_id)
-    elif not explicit_concept:
-        # kind=concept without a reviewer decision: sticky identity check.
-        target = await crud.find_identity_node_by_name_or_alias(session, user_id, name)
+    identity_target: Node | None = None
+    concept_target: Node | None = None
 
-    if target is not None:
-        target.importance_score = (target.importance_score or 0) + importance
-        node_ids.add(str(target.id))
+    if kind == "person" and not explicit_concept:
+        identity_target = await _resolve_person_concept(
+            session, user_id, name, action, node_id
+        )
+    elif not explicit_concept:
+        # kind=concept: an explicit reviewer link to an existing concept wins;
+        # otherwise fall back to the sticky-identity check.
+        if action == "link":
+            concept_target = await _resolve_linked_concept(
+                session, user_id, name, node_id
+            )
+        if concept_target is None:
+            identity_target = await crud.find_identity_node_by_name_or_alias(
+                session, user_id, name
+            )
+
+    if identity_target is not None:
+        identity_target.importance_score = (identity_target.importance_score or 0) + importance
+        node_ids.add(str(identity_target.id))
         m_edge = await crud.create_edge(
-            session, source_id=stmt_node.id, target_id=target.id,
+            session, source_id=stmt_node.id, target_id=identity_target.id,
             relation="MENTIONS", user_id=user_id,
         )
         if m_edge:
             edge_ids.add(str(m_edge.id))
         return
 
-    concept_node = await crud._get_or_create_node(
-        session, name=name, type_="Concept", user_id=user_id,
-        importance_delta=importance,
-    )
+    # Plain concept: a reviewer-linked existing node, else get-or-create by name.
+    if concept_target is not None:
+        concept_target.importance_score = (concept_target.importance_score or 0) + importance
+        concept_node = concept_target
+    else:
+        concept_node = await crud._get_or_create_node(
+            session, name=name, type_="Concept", user_id=user_id,
+            importance_delta=importance,
+        )
     node_ids.add(str(concept_node.id))
     c_edge = await crud.create_edge(
         session, source_id=stmt_node.id, target_id=concept_node.id,
@@ -1357,10 +1534,18 @@ async def extract_statement_graph_draft(
         # genuinely unconfirmed cases — never spuriously for a named speaker.
         lone_label = speakers[0] if speakers else None
         resolved = None
+        resolved_type = None
         if lone_label and lone_label != "나":
-            resolved = await _confirmed_speaker_name(session, user_id, entry_id, lone_label)
+            resolved, resolved_type = await _confirmed_speaker_identity(
+                session, user_id, entry_id, lone_label
+            )
         if resolved:
             speaker_name = resolved
+            # Head-node entity type follows the confirmed node — a lone confirmed
+            # Source (e.g. reading aloud "기업은행" material) must not default to
+            # Person just because the single-speaker branch usually means a human.
+            if resolved_type and is_source_like_type(resolved_type):
+                speaker_type = "Source"
         else:
             self_node = await crud.get_or_create_self_node(session, user_id)
             speaker_name = self_node.name
@@ -1414,17 +1599,27 @@ async def extract_statement_graph_draft(
     if not claims:
         raise ValueError("LLM produced no statements")
 
-    # Remap raw diarization labels (Speaker_1) to confirmed identities (제니 / self)
-    # so the statement and the voice link converge on one node — never split.
-    identity_map = await _entry_label_identity_map(session, user_id, entry_id)
-    if identity_map:
+    # Remap raw diarization labels (Speaker_1) to confirmed identities (제니 / self /
+    # an external Source like 기업은행) so the statement and the voice link
+    # converge on one node — never split. The head type follows the confirmed
+    # node's actual type instead of defaulting every multi-speaker claim to
+    # Person (a diary/attributed-paste claim's speaker never matches a raw label
+    # here, so this is a no-op for those branches — see speaker_type above).
+    identity_names, identity_types = await _entry_label_identity_map(session, user_id, entry_id)
+    if identity_names:
         for c in claims:
             sp = (c.get("speaker") or "").strip()
-            c["speaker"] = identity_map.get(sp, sp)
+            if sp not in identity_names:
+                continue
+            c["speaker"] = identity_names[sp]
+            node_type = identity_types.get(sp)
+            if node_type and is_source_like_type(node_type):
+                c["speaker_type"] = "Source"
 
     # Pre-resolve person-kind mentions against existing identities so the review
     # UI can pre-select a match; offer the full person roster as picker candidates.
     await _enrich_person_concepts(session, user_id, claims)
+    await _enrich_plain_concepts(session, user_id, claims)
     person_candidates = await _person_candidates_payload(session, user_id)
 
     return {
@@ -1481,6 +1676,16 @@ async def persist_entry_claims(
         )
     except Exception as link_exc:
         logger.warning("persist_entry_claims: link recording failed: %s", link_exc)
+
+    # Embed freshly-created Statement/Concept nodes now (not lazily on next chat) so
+    # tomorrow's journal draft can fuzzy-link against today's concepts. Best-effort;
+    # ensure_statement_embeddings filters name_embedding IS NULL and commits itself.
+    try:
+        from ..rag import ensure_statement_embeddings
+
+        await ensure_statement_embeddings(session, user_id)
+    except Exception:
+        logger.warning("persist_entry_claims: embedding backfill failed", exc_info=True)
 
     statement_count = sum(1 for c in claims if c.get("statement"))
     return {

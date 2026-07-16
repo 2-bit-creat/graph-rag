@@ -32,9 +32,7 @@ class GraphChatPanel extends StatelessWidget {
     this.inputEnabled = true,
     this.inputHint = '아무 얘기나 해보세요…',
     this.inputBarOverride,
-    this.pipelineLocked = false,
-    this.pipelineLockLabel,
-    this.pipelineReviewLabel,
+    this.statusPill,
     this.inputFocusNode,
   });
 
@@ -69,12 +67,10 @@ class GraphChatPanel extends StatelessWidget {
   /// When non-null, replaces the default [_InputBar] (e.g. journal compose).
   final Widget? inputBarOverride;
 
-  /// 일기 파이프라인 처리·확인 중 — 일반 대화 입력 잠금.
-  final bool pipelineLocked;
-  final String? pipelineLockLabel;
-
-  /// User-review step (speaker confirm / graph review) — no spinner.
-  final String? pipelineReviewLabel;
+  /// Floating status pill overlaid at the top of the chat feed while a journal
+  /// pipeline runs (Feature C — non-invasive background processing). Chat stays
+  /// usable; the pill reports progress and, when tapped, opens review.
+  final Widget? statusPill;
 
   /// Owned by the screen so it can re-request focus after a tap elsewhere
   /// in the tree (e.g. a quiz card's "다음 문제" button) steals it away.
@@ -97,28 +93,37 @@ class GraphChatPanel extends StatelessWidget {
               onCollapse: onCollapse,
               onClear: onClearHistory,
             ),
-            Expanded(child: _buildMessageList(context)),
+            Expanded(
+              child: Stack(
+                children: [
+                  Positioned.fill(child: _buildMessageList(context)),
+                  if (statusPill != null)
+                    Positioned(
+                      top: 8,
+                      left: 0,
+                      right: 0,
+                      child: Align(
+                        alignment: Alignment.topCenter,
+                        child: statusPill,
+                      ),
+                    ),
+                ],
+              ),
+            ),
             if (activeCard != null) activeCard!,
             if (modeLabel != null)
               _ModeChip(
                 label: modeLabel!,
-                onExit: pipelineLocked ? null : onExitMode,
+                onExit: onExitMode,
               ),
-            if (pipelineLocked && inputBarOverride == null)
-              _PipelineLockBar(label: pipelineLockLabel ?? '일기 처리 중'),
-            if (!pipelineLocked &&
-                pipelineReviewLabel != null &&
-                inputBarOverride == null)
-              _PipelineReviewBar(label: pipelineReviewLabel!),
             inputBarOverride ??
                 _InputBar(
                   controller: inputController,
                   busy: busy,
-                  enabled: inputEnabled && !pipelineLocked,
-                  hint: pipelineLocked ? '일기 처리가 끝날 때까지 대기…' : inputHint,
+                  enabled: inputEnabled,
+                  hint: inputHint,
                   onSend: onSend,
-                  onModeSelected:
-                      pipelineLocked ? null : onModeSelected,
+                  onModeSelected: onModeSelected,
                   focusNode: inputFocusNode,
                 ),
           ],
@@ -484,10 +489,10 @@ class _InputBarState extends State<_InputBar> {
                 ),
               Expanded(
                 child: Focus(
-                  focusNode: _focusNode,
                   onKeyEvent: _onKey,
                   child: TextField(
                     controller: widget.controller,
+                    focusNode: _focusNode,
                     enabled: canType,
                     minLines: 1,
                     maxLines: 4,
@@ -901,81 +906,3 @@ class _JournalSubmitBubble extends StatelessWidget {
   }
 }
 
-class _PipelineReviewBar extends StatelessWidget {
-  const _PipelineReviewBar({required this.label});
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final shell = context.shell;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      decoration: BoxDecoration(
-        color: shell.barBackground,
-        border: Border(top: BorderSide(color: shell.panelBorder)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.touch_app_rounded,
-              size: 16, color: AppColors.accentWarm.withValues(alpha: 0.9)),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              label,
-              style: TextStyle(
-                color: shell.primaryText.withValues(alpha: 0.85),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          Icon(Icons.lock_outline_rounded,
-              size: 14,
-              color: shell.mutedText),
-        ],
-      ),
-    );
-  }
-}
-
-class _PipelineLockBar extends StatelessWidget {
-  const _PipelineLockBar({required this.label});
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final shell = context.shell;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      decoration: BoxDecoration(
-        color: shell.barBackground,
-        border: Border(top: BorderSide(color: shell.panelBorder)),
-      ),
-      child: Row(
-        children: [
-          const SizedBox(
-            width: 14,
-            height: 14,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              label,
-              style: TextStyle(
-                color: shell.primaryText.withValues(alpha: 0.85),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          Icon(Icons.lock_outline_rounded,
-              size: 14,
-              color: shell.mutedText),
-        ],
-      ),
-    );
-  }
-}

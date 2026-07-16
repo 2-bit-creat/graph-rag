@@ -25,8 +25,13 @@ _PERSON_LIKE = frozenset(
 )
 
 # Attribution head for pasted/external content (매체·기관·AI·책 등). Deliberately
-# NOT person-like: Source nodes must never appear in voice/speaker pickers or be
-# merged with Person identities — they only anchor SPOKE_OR_PUBLISHED edges.
+# NOT person-like: Source nodes never merge with Person identities of the same
+# name (see is_person_like_type) — they anchor SPOKE_OR_PUBLISHED edges just like
+# Person, but as a distinct category. They DO appear in the 화자 (speaker) picker
+# alongside every other identity type — any recurring identity can be attributed
+# as a segment's speaker, not just people (e.g. "기업은행" publishing a
+# statement). Voice EMBEDDING binding is a per-confirmation user choice, not a
+# type-based gate — most Source identities simply won't have one.
 SOURCE_ENTITY_TYPE = "Source"
 
 _SOURCE_LIKE = frozenset({"source", "media", "publication", "출처"})
@@ -45,11 +50,14 @@ def is_source_like_type(type_: str | None) -> bool:
 # ─── Identity category (정체성 계층) ──────────────────────────────────────────
 # The graph's top conceptual tier is 정체성–진술–개념 (Identity–Statement–Concept).
 # "Identity" is the CATEGORY: any named being/thing that recurs and accumulates
-# statements — resolved by name/alias, never forked into duplicate Concepts.
-# Its stored subtypes stay distinct because they gate different behavior:
-#   - Person   : humans — the only voice-linkable subtype (speaker pickers).
-#   - Source   : 매체·기관·AI attribution heads — deliberately excluded from pickers.
-#   - Identity : everything else with a persistent identity (반려동물·단체 등).
+# statements — resolved by name/alias, never forked into duplicate Concepts. Any
+# identity in this whole category can be a segment's 화자 (speaker) — the
+# 화자/speaker picker spans Person ∪ Source ∪ Identity. Its stored subtypes stay
+# distinct because they gate MERGE behavior, not picker visibility:
+#   - Person   : humans — same-name Person/Source pairs never merge into one node.
+#   - Source   : 매체·기관·AI attribution heads — same rule, other direction.
+#   - Identity : everything else with a persistent identity (반려동물·단체 등),
+#                promoted to Person the moment it's confirmed to have a voice.
 
 IDENTITY_ENTITY_TYPE = "Identity"
 
@@ -61,8 +69,10 @@ _IDENTITY_EXTRA = frozenset(
 def is_identity_type(type_: str | None) -> bool:
     """정체성 카테고리 전체: Person류 ∪ Source류 ∪ Identity류.
 
-    Mention-resolution / alias-matching scope. NOT a voice gate — voice linking
-    stays restricted to is_person_like_type.
+    Mention-resolution / alias-matching scope, AND the 화자 (speaker) picker/link
+    scope — any identity can be attributed as a segment's speaker. Voice
+    EMBEDDING binding itself isn't type-gated either; it's just that most
+    non-Person identities won't realistically have a recorded voice.
     """
     key = type_group_key(type_)
     return key in _PERSON_LIKE or key in _SOURCE_LIKE or key in _IDENTITY_EXTRA

@@ -14,6 +14,8 @@ import '../utils/statement_display.dart';
 import '../widgets/chat_journal_compose_bar.dart';
 import '../widgets/graph_chat_panel.dart';
 import '../widgets/graph_inspector_panel.dart';
+import '../widgets/journal_progress_card.dart';
+import '../widgets/journal_status_pill.dart';
 import '../widgets/knowledge_graph_canvas.dart';
 import '../widgets/ontology_settings_sheet.dart';
 import 'graph_trash_screen.dart';
@@ -144,6 +146,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   int _glowSeq = 0;
   int _lastMsgCount = 0;
   ChatMode _lastChatMode = ChatMode.normal;
+  bool _lastChatBusy = false;
   bool _lastDistillLoading = false;
   String? _lastActiveQuizId;
   ComposePhase? _prevJournalPhase;
@@ -200,19 +203,32 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
       listFooter: _chatListFooter(),
       modeLabel: _modeLabel(),
       onExitMode: chatSession.exitMode,
-      onModeSelected: journalTask.blocksChat ? null : _onModeSelected,
+      onModeSelected: _onModeSelected,
       inputEnabled: _inputEnabled,
       inputHint: _inputHint,
       inputBarOverride: _journalInputBar(),
-      pipelineLocked: journalTask.systemProcessing,
-      pipelineLockLabel:
-          journalTask.stageLabel.isEmpty ? '일기 처리 중' : journalTask.stageLabel,
-      pipelineReviewLabel:
-          journalTask.blocksChat && !journalTask.systemProcessing
-              ? journalTask.stageLabel
-              : null,
+      statusPill: journalTask.showsPill
+          ? JournalStatusPill(onTap: _onStatusPillTap)
+          : null,
       inputFocusNode: _chatInputFocusNode,
     );
+  }
+
+  /// Tap the floating status pill: scroll to the inline progress card if it's in
+  /// the feed, otherwise open the review surface directly.
+  void _onStatusPillTap() {
+    final entryId = journalTask.entryId;
+    final hasCard = entryId != null &&
+        chatSession.messages.any((m) =>
+            m.kind == 'journal_progress' &&
+            (m.meta?['entry_id']?.toString() == entryId));
+    if (hasCard) {
+      _scrollChatToBottom();
+      return;
+    }
+    if (entryId != null) {
+      openJournalReviewFallback(context, entryId);
+    }
   }
 
   Widget _layoutGraphWithChat({
@@ -326,7 +342,15 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     if (mode == ChatMode.quizWord && quizCardChanged) {
       _chatInputFocusNode.requestFocus();
     }
+    // A reply landing can leave the composer looking enabled but no longer
+    // holding real editing focus (the field re-enables after busy, but
+    // Flutter doesn't auto-restore focus) — return it to the composer so the
+    // next message can be typed immediately, same as the quiz re-focus above.
+    if (mode == ChatMode.normal && _lastChatBusy && !chatSession.busy) {
+      _chatInputFocusNode.requestFocus();
+    }
     _lastChatMode = mode;
+    _lastChatBusy = chatSession.busy;
     _lastDistillLoading = chatSession.distillLoading;
     _lastActiveQuizId = quizId;
     if (mounted) setState(() {});
@@ -547,6 +571,16 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   void _onModeSelected(String action) {
     switch (action) {
       case 'journal':
+        // One journal at a time: block only a NEW journal while one is busy.
+        // Quiz/distill modes stay reachable during background processing.
+        if (journalTask.isBusy) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('일기 처리가 진행 중이에요 — 완료 후 새 일기를 저장할 수 있어요.'),
+            ),
+          );
+          return;
+        }
         chatSession.enterJournalMode();
         break;
       case 'distill':
@@ -649,9 +683,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   }
 
   bool get _inputEnabled =>
-      (chatSession.mode != ChatMode.quizWord ||
-          (chatSession.wordQuizUsesComposer && !chatSession.wordQuizSolved)) &&
-      !journalTask.blocksChat;
+      chatSession.mode != ChatMode.quizWord ||
+      (chatSession.wordQuizUsesComposer && !chatSession.wordQuizSolved);
 
   String get _inputHint {
     switch (chatSession.mode) {
@@ -669,7 +702,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   }
 
   Widget? _journalInputBar() =>
-      chatSession.mode == ChatMode.journal && !journalTask.blocksChat
+      chatSession.mode == ChatMode.journal && !journalTask.isBusy
           ? const ChatJournalComposeBar()
           : null;
 

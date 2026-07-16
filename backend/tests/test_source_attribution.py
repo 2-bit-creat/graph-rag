@@ -1,7 +1,9 @@
 """외부 출처(Source) 귀속: 붙여넣은 소스 자료의 진술 head는 Person이 아닌
 Source 노드가 된다.
 
-- Source는 person-like가 아니므로 음성/화자 피커에 절대 노출되지 않는다.
+- Source는 person-like가 아니므로 동명의 Person과 병합되지 않는다 — 그래도
+  둘 다 화자 피커에는 노출된다: 정체성 전체(Person·Source·Identity)가 화자가
+  될 수 있다는 것이 이 그래프 모델의 핵심 컨셉이다.
 - 리뷰 클라이언트가 claims에서 speaker_type을 떨어뜨려도, 엔트리의
   attribution_kind='source'에서 head 타입이 복원된다 (Person 오염 방지).
 - content-type 게이트: 출처 귀속 텍스트는 단일 화자여도 개인일기가 될 수 없다.
@@ -10,6 +12,7 @@ Source 노드가 된다.
 from __future__ import annotations
 
 import pytest
+from fastapi import BackgroundTasks
 
 from app import crud
 from app.entity_types import is_person_like_type, is_source_like_type
@@ -122,16 +125,18 @@ async def test_source_attributed_apply_creates_source_head(db_session, iso_user)
         }],
     )
 
-    out = await apply_entry_graph(entry.id, None, iso_user, db_session)
+    out = await apply_entry_graph(entry.id, None, iso_user, db_session, background_tasks=BackgroundTasks())
     assert out.status == "graph_ready"
 
     nodes = await crud.get_all_nodes(db_session, iso_user.id)
     head = next(n for n in nodes if n.name == "Claude")
     assert head.type == "Source"
 
-    # Source head는 화자 피커에 절대 나오지 않는다.
+    # Source head도 다른 정체성과 마찬가지로 화자 피커에 나온다 — 다만 타입은
+    # Source로 남아, 동명의 Person과 절대 하나로 합쳐지지 않는다.
     picker = await crud.list_person_nodes(db_session, iso_user.id)
-    assert all(n.name != "Claude" for n in picker)
+    picked = next(n for n in picker if n.name == "Claude")
+    assert picked.type == "Source"
 
 
 @pytest.mark.asyncio
@@ -159,7 +164,7 @@ async def test_speaker_type_restored_when_client_drops_it(db_session, iso_user):
         context_type="뉴스",
     )
 
-    out = await apply_entry_graph(entry.id, payload, iso_user, db_session)
+    out = await apply_entry_graph(entry.id, payload, iso_user, db_session, background_tasks=BackgroundTasks())
     assert out.status == "graph_ready"
 
     nodes = await crud.get_all_nodes(db_session, iso_user.id)
@@ -178,8 +183,8 @@ async def test_person_and_source_same_name_stay_distinct(db_session, iso_user):
     )
     assert person.id != source.id
 
-    # 피커에는 Person 쪽만 노출.
+    # 둘 다 피커에 노출되지만, 병합되지 않은 별개 노드로 남는다.
     picker = await crud.list_person_nodes(db_session, iso_user.id)
     picked = [n for n in picker if n.name == "제니"]
-    assert len(picked) == 1
-    assert picked[0].id == person.id
+    assert {n.id for n in picked} == {person.id, source.id}
+    assert {n.type for n in picked} == {"Person", "Source"}

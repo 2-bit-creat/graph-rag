@@ -197,6 +197,7 @@ async def test_recommend_already_confirmed_includes_match_score():
     node.id = node_id
     node.user_id = user_id
     node.name = "장세영"
+    node.type = "Person"
     _link_voice(profile, node)
 
     appearance = MagicMock()
@@ -250,6 +251,7 @@ async def test_recommend_linked_profile_suggests_until_human_confirm():
     node.id = node_id
     node.user_id = user_id
     node.name = "제니퍼"
+    node.type = "Person"
     _link_voice(profile, node)
 
     appearance = MagicMock()
@@ -309,6 +311,7 @@ async def test_build_summary_linked_profile_suggested_not_confirmed():
     node.id = node_id
     node.user_id = user_id
     node.name = "장세영"
+    node.type = "Person"
     _link_voice(profile, node)
 
     async def _get(model, obj_id):

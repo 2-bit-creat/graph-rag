@@ -923,8 +923,10 @@ bool isSpeakerLikeType(String? raw) {
 }
 
 /// Statement head-node types (Speaker → Statement → Concept 체인의 최상위 계층).
-/// Source(외부 출처: 매체·기관·AI)는 head지만 사람이 아니므로 화자 피커에는
-/// 절대 노출되지 않는다 — isSpeakerLikeType에 포함하지 말 것.
+/// Source(외부 출처: 매체·기관·AI)도 화자로 지정할 수 있는 head지만 사람이
+/// 아니므로 isSpeakerLikeType에는 절대 포함하지 말 것 — Person과 동명이어도
+/// 병합되지 않는 별개 정체성이라는 구분이 여기 달려 있다. 피커에서는 노출하되
+/// (SpeakerOption.isSource) 항상 Person과 시각적으로 구분해서 보여준다.
 bool isStatementHeadType(String? raw) {
   if (isSpeakerLikeType(raw)) return true;
   return canonicalEntityType(raw ?? '').toLowerCase() == 'source';

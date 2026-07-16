@@ -9,6 +9,7 @@ edge (concepts use CONTEXT). See app.routers.kg_build._persist_concept.
 from __future__ import annotations
 
 import pytest
+from fastapi import BackgroundTasks
 
 from app import crud
 from app.models import JournalEntry, NodeAliasEmbedding
@@ -54,7 +55,9 @@ async def _apply(db_session, user, entry, concepts):
         }],
         context_type="개인일기",
     )
-    return await apply_entry_graph(entry.id, payload, user, db_session)
+    return await apply_entry_graph(
+        entry.id, payload, user, db_session, background_tasks=BackgroundTasks()
+    )
 
 
 async def _nodes_by_name(db_session, user_id):

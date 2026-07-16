@@ -1,10 +1,9 @@
 """_enrich_person_concepts Pass 1 (EXACT) homonym safety.
 
 Exercises app.routers.kg_build._enrich_person_concepts directly rather than
-going through the /apply endpoint (test_person_mention_resolution.py's `_apply`
-helper is broken against the current apply_entry_graph signature — a pre-
-existing, unrelated issue). A single exact/whitespace-only name match still
-auto-links; anything ambiguous (2+ candidates, or only a title/honorific-
+going through the /apply endpoint — keeps this file's assertions independent of
+the apply_entry_graph call signature. A single exact/whitespace-only name match
+still auto-links; anything ambiguous (2+ candidates, or only a title/honorific-
 stripped match) must downgrade to a reviewer suggestion instead of silently
 merging two different people.
 """

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import crud
 from .config import get_settings
-from .entity_types import is_person_like_type
+from .entity_types import is_identity_type, is_source_like_type, normalize_entity_type
 from .models import JournalEntry, Node, SpeakerProfile
 
 # Written to speaker_entry_appearances.match_score after the user confirms in UI.
@@ -41,6 +41,9 @@ def _has_valid_voice_node_link(
 class RecommendedNode:
     id: uuid.UUID | None
     name: str
+    # Entity type (Person / Source / Identity / …) — lets the client distinguish
+    # a person from an external source in the picker instead of assuming Person.
+    type: str | None = None
 
 
 @dataclass
@@ -159,6 +162,9 @@ async def build_speaker_summaries_for_entry(
                         confirmed_node=RecommendedNode(
                             id=self_node.id if self_node is not None else None,
                             name=self_node.name if self_node is not None else "나",
+                            type=normalize_entity_type(self_node.type)
+                            if self_node is not None
+                            else "Person",
                         ),
                         suggested_node=None,
                         auto_assigned=True,
@@ -183,6 +189,7 @@ async def build_speaker_summaries_for_entry(
                     confirmed = RecommendedNode(
                         id=node.id,
                         name=_linked_speaker_display_name(node, profile),
+                        type=normalize_entity_type(node.type),
                     )
                     claimed_node_ids.add(node.id)
                 else:
@@ -207,6 +214,9 @@ async def build_speaker_summaries_for_entry(
                     confirmed = RecommendedNode(
                         id=self_node.id if self_node is not None else None,
                         name=self_node.name if self_node is not None else "나",
+                        type=normalize_entity_type(self_node.type)
+                        if self_node is not None
+                        else "Person",
                     )
                 elif name:
                     confirmed = RecommendedNode(id=None, name=name)
@@ -297,6 +307,7 @@ async def _suggested_node_candidates(
                     RecommendedNode(
                         id=node.id,
                         name=_linked_speaker_display_name(node, profile),
+                        type=normalize_entity_type(node.type),
                     ),
                     1.0,
                 )
@@ -335,6 +346,7 @@ async def _suggested_node_candidates(
                 RecommendedNode(
                     id=node.id,
                     name=_linked_speaker_display_name(node, matched_profile),
+                    type=normalize_entity_type(node.type),
                 ),
                 score,
             )
@@ -431,7 +443,7 @@ async def recommend_speaker_node(
             match_score = (
                 round(float(appearance.match_score), 4) if appearance else None
             )
-            person = RecommendedNode(id=node.id, name=display)
+            person = RecommendedNode(id=node.id, name=display, type=normalize_entity_type(node.type))
             human_confirmed = (
                 appearance is not None
                 and _is_human_confirmed_match_score(float(appearance.match_score or 0.0))
@@ -512,7 +524,7 @@ async def recommend_speaker_node(
         candidate = SpeakerCandidate(id=node.id, name=display, match_score=score)
         candidates.append(candidate)
         if recommended is None:
-            recommended = RecommendedNode(id=node.id, name=display)
+            recommended = RecommendedNode(id=node.id, name=display, type=normalize_entity_type(node.type))
             best_score = score
 
     above = (
@@ -571,7 +583,10 @@ async def _list_person_nodes(
         user_id,
         exclude_node_ids=exclude_node_ids,
     )
-    return [RecommendedNode(id=n.id, name=n.name) for n in nodes]
+    return [
+        RecommendedNode(id=n.id, name=n.name, type=normalize_entity_type(n.type))
+        for n in nodes
+    ]
 
 
 async def _resolve_profile_for_session(
@@ -647,9 +662,11 @@ async def confirm_speaker_identity(
     identity — no duplicate node even if the user later renames the self node.
 
     When as_source is set, this "speaker" is not a person but an external source
-    (책·AI·기사·매체): the profile is confirmed under the source name and the entry's
-    attribution is set to kind='source' so the graph builds a Source head — the
-    post-hoc counterpart of the compose-time 외부 출처 mode.
+    (책·AI·기사·매체): a Source-typed node is resolved/created for the given name
+    immediately (same as picking an existing node) and the profile is bound to it.
+    This is per-LABEL — unlike the old entry-wide attribution_kind hack, it's safe
+    inside a multi-speaker entry where only some speakers are external sources
+    (e.g. a dialogue that quotes "기업은행" alongside human speakers).
     """
     entry = await crud.get_journal_entry(session, journal_entry_id, user_id)
     if entry is None:
@@ -662,9 +679,18 @@ async def confirm_speaker_identity(
         profile, session_label = await _resolve_profile_for_session(
             session, user_id, journal_entry_id, speaker_profile_id, session_label
         )
-        profile.display_name = name
-        profile.label = name
-        await session.flush()
+        # Never fork: reuse an existing Source node under this name if one exists
+        # (mirrors kg_build._resolve_head_node's dedup rule for Source heads).
+        source_type = normalize_entity_type("Source")
+        node = await crud.find_identity_node_by_name_or_alias(session, user_id, name)
+        if node is None or not is_source_like_type(node.type):
+            node = await crud._get_or_create_node(
+                session, name=name, type_=source_type, user_id=user_id
+            )
+        await crud.index_identity_alias(session, user_id, node, name)
+        profile = await crud.assign_exclusive_voice_profile_to_node(
+            session, user_id, profile, node, display_name=name
+        )
         session_label = (session_label or "").strip() or await _session_label_for_profile(
             session, journal_entry_id, profile.id
         )
@@ -677,14 +703,12 @@ async def confirm_speaker_identity(
             replacements = _replace_speaker_label_in_entry_texts(
                 entry, session_label, name
             )
-        # 그래프 head를 Source 노드로 만들 근거 — kg_build가 이 컬럼을 읽는다.
-        entry.attribution_kind = "source"
-        entry.attribution_name = name
         await session.commit()
         await session.refresh(entry)
+        await session.refresh(node)
         return SpeakerConfirmResult(
             speaker_profile_id=profile.id,
-            confirmed_node=RecommendedNode(id=None, name=name),
+            confirmed_node=RecommendedNode(id=node.id, name=name, type=source_type),
             transcript_replacements=replacements,
             edges_reassigned=0,
         )
@@ -720,8 +744,8 @@ async def confirm_speaker_identity(
         linked_node = await session.get(Node, node_id)
         if linked_node is None or linked_node.user_id != user_id:
             raise ValueError("node not found")
-        if not is_person_like_type(linked_node.type):
-            raise ValueError("voice link requires a Speaker node")
+        if not is_identity_type(linked_node.type):
+            raise ValueError("speaker link requires an identity node")
         canonical_name = (
             new_node_name or linked_node.name or profile.display_name or ""
         ).strip()
@@ -800,6 +824,7 @@ async def confirm_speaker_identity(
         confirmed_node=RecommendedNode(
             id=linked_node.id if linked_node is not None else None,
             name=confirmed_name,
+            type=normalize_entity_type(linked_node.type) if linked_node is not None else None,
         ),
         transcript_replacements=replacements,
         edges_reassigned=0,

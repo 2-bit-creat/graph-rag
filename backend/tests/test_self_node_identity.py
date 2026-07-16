@@ -308,9 +308,9 @@ async def test_multispeaker_statements_and_voice_converge_on_confirmed_nodes(
     self_node = await crud.get_self_node(db_session, user_id)
 
     # Claims would attribute to confirmed identities, not raw labels.
-    imap = await _entry_label_identity_map(db_session, user_id, entry.id)
-    assert imap["Speaker_1"] == "제니"
-    assert imap["Speaker_2"] == self_node.name
+    names, _types = await _entry_label_identity_map(db_session, user_id, entry.id)
+    assert names["Speaker_1"] == "제니"
+    assert names["Speaker_2"] == self_node.name
 
     # Voice binds to those same nodes — '제니' node carries Speaker_1's voice.
     await _link_confirmed_voices_to_nodes(db_session, user_id, entry.id)

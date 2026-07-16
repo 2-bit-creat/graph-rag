@@ -368,6 +368,9 @@ class PipelineTraceOut(BaseModel):
 class RecommendedNodeOut(BaseModel):
     id: uuid.UUID | None = None
     name: str
+    # Entity type (Person / Source / Identity / …) — lets the client render a
+    # distinct icon and avoid assuming every speaker candidate is a person.
+    type: str | None = None
 
 
 class SpeakerCandidateOut(BaseModel):

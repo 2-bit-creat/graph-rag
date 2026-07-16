@@ -614,3 +614,35 @@ class _StepDot extends StatelessWidget {
     );
   }
 }
+
+/// Open the right review surface for an entry when its inline progress card is
+/// not reachable in the feed (e.g. the status pill tapped after a room switch).
+/// Graph draft ready → GraphReviewScreen; speakers still pending → entry detail.
+Future<void> openJournalReviewFallback(
+    BuildContext context, String entryId) async {
+  Map<String, dynamic> fresh;
+  try {
+    fresh = await apiClient.getEntry(entryId);
+  } catch (_) {
+    return;
+  }
+  if (!context.mounted) return;
+  final staging = fresh['graph_staging'];
+  if (staging is Map) {
+    final committed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => GraphReviewScreen(
+          entryId: entryId,
+          staging: Map<String, dynamic>.from(staging),
+        ),
+      ),
+    );
+    if (committed == true && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('지식그래프 확정 완료')),
+      );
+    }
+    return;
+  }
+  await JournalHubScreen.openEntryDetail(context, entryId);
+}

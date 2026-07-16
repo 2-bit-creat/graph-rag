@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TypedDict
 
+from .entity_types import is_person_like_type, is_source_like_type, type_group_key
+
 
 class OntologyPreset(TypedDict):
     ontology_name: str
@@ -107,14 +109,14 @@ DAILY_LIFE_ENGLISH: OntologyPreset = {
         {
             "name": "Person",
             "color": "#ff8c42",
-            "description": "Identity의 하위 타입 — 실존 인물. 화자·음성 연결(피커 노출)이 가능한 유일한 타입",
+            "description": "Identity의 하위 타입 — 실존 인물. 동명이인이어도 Source와는 병합되지 않음",
             "parent": "Identity",
         },
         {
             "name": "Source",
             "color": "#ffc53d",
             "description": "Identity의 하위 타입 — 매체·기관·AI 등 발화 귀속처. "
-            "화자/음성 피커에서는 제외되며 사람과 병합되지 않음",
+            "화자로 지정할 수 있지만 사람과는 병합되지 않음",
             "parent": "Identity",
         },
         {"name": "Statement", "color": "#b07bff", "description": "화자(Identity)의 발화 · 진술 단위"},
@@ -150,9 +152,29 @@ def ensure_identity_hierarchy(entity_types: list[dict]) -> list[dict]:
     so the settings sheet should always show it correctly regardless of what
     happens to be stored — this only affects the returned response, never
     what's persisted.
+
+    A stored legacy alias for Person/Source (e.g. "Speaker", the pre-split
+    name for what Person means now) is MIGRATED in place to the canonical
+    entry rather than left alongside a separately-appended "Person" — showing
+    both "Speaker" and "Person" as if they were two different types is exactly
+    the same role twice, which reads as a duplicate/confusing list rather than
+    an update.
     """
-    result = [dict(et) for et in entity_types]
-    present = {str(et.get("name", "")).lower() for et in result}
+    result: list[dict] = []
+    present: set[str] = set()
+    for et in entity_types:
+        name = str(et.get("name", ""))
+        key = type_group_key(name)
+        if key != "person" and is_person_like_type(name):
+            result.append(dict(_IDENTITY_HIERARCHY_BY_KEY["person"]))
+            present.add("person")
+            continue
+        if key != "source" and is_source_like_type(name):
+            result.append(dict(_IDENTITY_HIERARCHY_BY_KEY["source"]))
+            present.add("source")
+            continue
+        result.append(dict(et))
+        present.add(key)
     for key in ("identity", "person", "source"):
         if key not in present:
             result.append(dict(_IDENTITY_HIERARCHY_BY_KEY[key]))
