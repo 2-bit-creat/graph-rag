@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from .models import (
     ChatMessage,
@@ -35,6 +36,8 @@ from .entity_types import (
 from .graph_schema import (
     NODE_CHUNK,
     NODE_SPEAKER,
+    REL_CONTEXT,
+    REL_MENTIONS,
     REL_NEXT_TURN,
     REL_SPOKE_BY,
     REL_SPOKE_OR_PUBLISHED,
@@ -575,34 +578,222 @@ async def find_statements_by_speaker(
     *,
     limit: int = 12,
     query_embedding: list[float] | None = None,
+    start: date | None = None,
+    end: date | None = None,
+    concept_ids: set[uuid.UUID] | None = None,
 ) -> list[Node]:
     """Statement nodes this identity node actually spoke/published (SPOKE_OR_PUBLISHED
     edges only) — never statements that merely MENTION the identity.
 
-    When ``query_embedding`` is given, orders by topical relevance (nearest
-    ``name_embedding`` first, statements without one last); otherwise orders by
-    most recent (``occurred_at``, falling back to creation date)."""
+    Signals COMPOSE rather than override each other (graph_retrieval.py Case B):
+    an explicit ``start``/``end`` window is a hard pre-filter (the user named a
+    time range, so a statement outside it is not a candidate at all); within that
+    filtered set, statements linked to ``concept_ids`` via CONTEXT come first,
+    then the nearest by ``query_embedding``, then plain recency fills any
+    remaining slots — each tier excludes what the previous tier already picked."""
     node_local_date = func.date(Node.created_at)
-    base = (
+    base_filters = [
+        Edge.user_id == user_id,
+        Edge.source_id == speaker_node_id,
+        Edge.relation == REL_SPOKE_OR_PUBLISHED,
+        Node.type == "Statement",
+        Node.deleted_at.is_(None),
+    ]
+    if start is not None and end is not None:
+        base_filters.append(func.coalesce(Node.occurred_at, node_local_date) >= start)
+        base_filters.append(func.coalesce(Node.occurred_at, node_local_date) <= end)
+
+    picked: list[Node] = []
+    picked_ids: set[uuid.UUID] = set()
+
+    def _remaining() -> int:
+        return limit - len(picked)
+
+    if concept_ids:
+        concept_edge = aliased(Edge)
+        stmt = (
+            select(Node)
+            .join(Edge, Edge.target_id == Node.id)
+            .join(concept_edge, concept_edge.source_id == Node.id)
+            .where(
+                *base_filters,
+                concept_edge.user_id == user_id,
+                concept_edge.relation == REL_CONTEXT,
+                concept_edge.target_id.in_(concept_ids),
+            )
+            .order_by(func.coalesce(Node.occurred_at, node_local_date).desc())
+            .limit(limit)
+        )
+        for node in (await session.execute(stmt)).scalars().unique().all():
+            if node.id not in picked_ids:
+                picked.append(node)
+                picked_ids.add(node.id)
+
+    if _remaining() > 0 and query_embedding is not None:
+        exclude_filters = [*base_filters, Node.id.notin_(picked_ids)] if picked_ids else base_filters
+        dist = Node.name_embedding.cosine_distance(query_embedding)
+        stmt = (
+            select(Node)
+            .join(Edge, Edge.target_id == Node.id)
+            .where(*exclude_filters)
+            .order_by(dist.nulls_last())
+            .limit(_remaining())
+        )
+        for node in (await session.execute(stmt)).scalars().unique().all():
+            if node.id not in picked_ids:
+                picked.append(node)
+                picked_ids.add(node.id)
+
+    if _remaining() > 0:
+        exclude_filters = [*base_filters, Node.id.notin_(picked_ids)] if picked_ids else base_filters
+        stmt = (
+            select(Node)
+            .join(Edge, Edge.target_id == Node.id)
+            .where(*exclude_filters)
+            .order_by(func.coalesce(Node.occurred_at, node_local_date).desc())
+            .limit(_remaining())
+        )
+        for node in (await session.execute(stmt)).scalars().unique().all():
+            if node.id not in picked_ids:
+                picked.append(node)
+                picked_ids.add(node.id)
+
+    return picked
+
+
+async def find_statements_mentioning(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    identity_node_id: uuid.UUID,
+    *,
+    limit: int = 3,
+) -> list[Node]:
+    """Statement nodes that MENTION this identity (not necessarily spoke it),
+    most recent first. An Identity like a pet is never a speaker, so asking
+    "who is 마야?" must still surface the statements that talk about her —
+    graph_retrieval.py Case B falls back to this when SPOKE_OR_PUBLISHED is empty."""
+    node_local_date = func.date(Node.created_at)
+    stmt = (
         select(Node)
-        .join(Edge, Edge.target_id == Node.id)
+        .join(Edge, Edge.source_id == Node.id)
         .where(
             Edge.user_id == user_id,
-            Edge.source_id == speaker_node_id,
-            Edge.relation == REL_SPOKE_OR_PUBLISHED,
+            Edge.target_id == identity_node_id,
+            Edge.relation == REL_MENTIONS,
             Node.type == "Statement",
             Node.deleted_at.is_(None),
         )
+        .order_by(func.coalesce(Node.occurred_at, node_local_date).desc())
         .limit(limit)
     )
-    if query_embedding is not None:
-        dist = Node.name_embedding.cosine_distance(query_embedding)
-        stmt = base.order_by(dist.nulls_last())
-    else:
-        stmt = base.order_by(
-            func.coalesce(Node.occurred_at, node_local_date).desc()
-        )
     return list((await session.execute(stmt)).scalars().unique().all())
+
+
+async def find_statements_by_concept(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    concept_node_id: uuid.UUID,
+    *,
+    limit: int = 3,
+) -> list[Node]:
+    """Statement nodes that carry this Concept (CONTEXT edges only), most
+    recent first — graph_retrieval.py Case A (Concept seed -> its Statements)."""
+    node_local_date = func.date(Node.created_at)
+    stmt = (
+        select(Node)
+        .join(Edge, Edge.source_id == Node.id)
+        .where(
+            Edge.user_id == user_id,
+            Edge.target_id == concept_node_id,
+            Edge.relation == REL_CONTEXT,
+            Node.type == "Statement",
+            Node.deleted_at.is_(None),
+        )
+        .order_by(func.coalesce(Node.occurred_at, node_local_date).desc())
+        .limit(limit)
+    )
+    return list((await session.execute(stmt)).scalars().unique().all())
+
+
+async def get_speakers_for_statements(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    statement_ids: set[uuid.UUID],
+) -> dict[uuid.UUID, Node]:
+    """Batch lookup: Statement id -> the Identity node that SPOKE_OR_PUBLISHED it."""
+    if not statement_ids:
+        return {}
+    rows = await session.execute(
+        select(Edge.target_id, Node)
+        .join(Node, Node.id == Edge.source_id)
+        .where(
+            Edge.user_id == user_id,
+            Edge.target_id.in_(statement_ids),
+            Edge.relation == REL_SPOKE_OR_PUBLISHED,
+            Node.deleted_at.is_(None),
+        )
+    )
+    result: dict[uuid.UUID, Node] = {}
+    for stmt_id, speaker_node in rows.all():
+        result.setdefault(stmt_id, speaker_node)
+    return result
+
+
+async def get_concepts_for_statements(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    statement_ids: set[uuid.UUID],
+    *,
+    limit_per_statement: int = 5,
+) -> dict[uuid.UUID, list[Node]]:
+    """Batch lookup: Statement id -> its CONTEXT-linked Concept nodes."""
+    if not statement_ids:
+        return {}
+    rows = await session.execute(
+        select(Edge.source_id, Node)
+        .join(Node, Node.id == Edge.target_id)
+        .where(
+            Edge.user_id == user_id,
+            Edge.source_id.in_(statement_ids),
+            Edge.relation == REL_CONTEXT,
+            Node.deleted_at.is_(None),
+        )
+    )
+    result: dict[uuid.UUID, list[Node]] = {}
+    for stmt_id, concept_node in rows.all():
+        bucket = result.setdefault(stmt_id, [])
+        if len(bucket) < limit_per_statement:
+            bucket.append(concept_node)
+    return result
+
+
+async def get_mentions_for_statements(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    statement_ids: set[uuid.UUID],
+    *,
+    limit_per_statement: int = 5,
+) -> dict[uuid.UUID, list[Node]]:
+    """Batch lookup: Statement id -> the Identity nodes it MENTIONS (people it
+    talks about, distinct from who SPOKE it — never conflate the two)."""
+    if not statement_ids:
+        return {}
+    rows = await session.execute(
+        select(Edge.source_id, Node)
+        .join(Node, Node.id == Edge.target_id)
+        .where(
+            Edge.user_id == user_id,
+            Edge.source_id.in_(statement_ids),
+            Edge.relation == REL_MENTIONS,
+            Node.deleted_at.is_(None),
+        )
+    )
+    result: dict[uuid.UUID, list[Node]] = {}
+    for stmt_id, mentioned_node in rows.all():
+        bucket = result.setdefault(stmt_id, [])
+        if len(bucket) < limit_per_statement:
+            bucket.append(mentioned_node)
+    return result
 
 
 async def get_user_by_email(session: AsyncSession, email: str) -> User | None:

@@ -52,6 +52,14 @@ async def iso_user(db_session: AsyncSession):
     try:
         yield user
     finally:
+        # pytest tears fixtures down LIFO, so THIS runs before db_session's own
+        # `finally: await session.rollback()`. If the test flush()ed (but never
+        # committed) a change on db_session, that row lock is still held here —
+        # the cascading DELETE below would block on it forever, and db_session
+        # can't roll back until this generator finishes: a guaranteed deadlock.
+        # Rolling back db_session first releases those locks before we touch
+        # the same rows from a fresh session.
+        await db_session.rollback()
         # Clean up in a FRESH session — the yielded one is mid-teardown.
         async with async_session_factory() as cleanup:
             await cleanup.execute(sa_delete(User).where(User.id == user.id))

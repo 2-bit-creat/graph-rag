@@ -47,11 +47,13 @@ async def test_speaker_rendered_as_natural_language_with_date(db_session, iso_us
     )
     await db_session.commit()
 
-    ctx = await graph_chat._build_context(db_session, iso_user.id, [speaker])
+    ranked = await graph_chat._build_context(db_session, iso_user.id, [speaker])
+    ctx = ranked.text
 
-    assert '김태연상무님의 말: "모형공학부 부장님이' in ctx
-    assert "[2026-07-09]" in ctx
-    assert "언급된 대상: 모형공학부 부장님" in ctx
+    assert "화자: 김태연상무님" in ctx
+    assert '모형공학부 부장님이 기업은행이' in ctx
+    assert "2026-07-09" in ctx
+    assert "언급된 인물: 모형공학부 부장님" in ctx
     # The raw ambiguous triple must not also appear once it's been rendered in
     # natural language — that duplication is exactly what let the LLM conflate
     # the mentioned person with the actual speaker.
@@ -71,9 +73,11 @@ async def test_self_speaker_rendered_as_my_record(db_session, iso_user):
     )
     await db_session.commit()
 
-    ctx = await graph_chat._build_context(db_session, iso_user.id, [self_node])
+    ranked = await graph_chat._build_context(db_session, iso_user.id, [self_node])
+    ctx = ranked.text
 
-    assert '나의 기록: "오늘 산책을 다녀왔다."' in ctx
+    assert "화자: 나" in ctx
+    assert '"오늘 산책을 다녀왔다."' in ctx
 
 
 @pytest.mark.asyncio
@@ -92,7 +96,8 @@ async def test_statement_without_speaker_edge_renders_plain_content(db_session, 
     )
     await db_session.commit()
 
-    ctx = await graph_chat._build_context(db_session, iso_user.id, [identity])
+    ranked = await graph_chat._build_context(db_session, iso_user.id, [identity])
+    ctx = ranked.text
 
     assert "화자 없는 진술 내용" in ctx
     assert "의 말:" not in ctx

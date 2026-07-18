@@ -8,7 +8,6 @@ Cost per turn: one embedding call + one chat call.
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -16,7 +15,6 @@ from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import get_settings
@@ -27,12 +25,10 @@ from .crud import (
     find_similar_nodes_with_distance,
     find_statements_by_speaker,
     find_statements_by_time_window,
-    get_neighborhood,
     user_has_alias_embeddings,
 )
-from .entity_types import is_identity_type
-from .graph_schema import REL_MENTIONS, REL_SPOKE_OR_PUBLISHED
-from .models import Edge, Node, User
+from .graph_retrieval import RankedContext, build_ranked_context
+from .models import Node, User
 from .name_match import scan_identity_mentions
 from .rag import _get_client, embed_text, ensure_statement_embeddings
 from .temporal import format_time_window_label, parse_time_window
@@ -48,47 +44,13 @@ class GraphChatResult:
     referenced_node_ids: list[str] = field(default_factory=list)
 
 
-def _statement_content(node: Node) -> str:
-    desc = (node.description or "").strip()
-    if not desc:
-        return node.name
-    if node.type == "Statement":
-        try:
-            content = (json.loads(desc).get("content") or "").strip()
-            if content:
-                return content
-        except (ValueError, AttributeError):
-            pass
-        parts = desc.split("\n", 1)
-        return (parts[1] if len(parts) > 1 else parts[0]).strip() or node.name
-    return node.name
-
-
-def _node_date_prefix(node: Node) -> str:
-    if getattr(node, "occurred_at", None):
-        return node.occurred_at.isoformat()
-    if node.created_at:
-        return node.created_at.date().isoformat()
-    return ""
-
-
-def _node_memory_text(node: Node) -> str:
-    """One readable memory line for a seed node. A Statement contributes its
-    sentence; an identity/concept contributes ``name — description`` (who/what it
-    is) so an identity seed like 마야 isn't reduced to a bare label."""
-    if node.type == "Statement":
-        return _statement_content(node)
-    desc = (node.description or "").strip()
-    return f"{node.name} — {desc}" if desc else node.name
-
-
 async def _retrieve_seeds(
     session: AsyncSession,
     user_id: uuid.UUID,
     message: str,
     *,
     query_vec: list[float] | None = None,
-) -> list[Node]:
+) -> tuple[list[Node], list[float] | None]:
     """Seed nodes for the answer, from two text-embedding indexes:
 
     - Statement/Concept via ``Node.name_embedding`` (sentence-level similarity), and
@@ -101,15 +63,16 @@ async def _retrieve_seeds(
 
     ``query_vec`` lets a caller that already embedded the (possibly residual,
     speaker-stripped) message reuse that vector instead of paying for a second
-    embedding call.
-    """
+    embedding call. Returns ``(seeds, query_vec)`` — the caller needs the actual
+    vector used (even when it computed it locally here) to feed the shared
+    Context Package builder's similarity ranking downstream."""
     settings = get_settings()
     if query_vec is None:
         try:
             query_vec = await embed_text(message)
         except Exception as exc:  # noqa: BLE001 — chat should still answer without memories
             logger.warning("graph_chat: embedding failed for user %s: %s", user_id, exc)
-            return []
+            return [], None
 
     scored: list[tuple[Node, float]] = []
 
@@ -146,7 +109,8 @@ async def _retrieve_seeds(
         if prev is None or dist < prev[1]:
             best[node.id] = (node, dist)
 
-    return [node for node, _dist in sorted(best.values(), key=lambda x: x[1])][:10]
+    seeds = [node for node, _dist in sorted(best.values(), key=lambda x: x[1])][:10]
+    return seeds, query_vec
 
 
 def _split_speaker_residual(message: str, matches: list) -> str:
@@ -230,161 +194,22 @@ async def _build_context(
     user_id: uuid.UUID,
     seeds: list[Node],
     *,
+    query_vec: list[float] | None = None,
     time_window: tuple[date, date] | None = None,
     time_window_label: str | None = None,
-    has_speaker_match: bool = False,
-) -> str:
+) -> RankedContext:
+    """Delegate 1-hop expansion + RRF rerank + prompt rendering to the shared
+    :mod:`graph_retrieval` core (Context Packages, Case A/B/C seed handling)."""
     if not seeds:
-        return ""
-    settings = get_settings()
-    seed_limit = (
-        settings.graph_chat_temporal_seed_limit
-        if time_window is not None or has_speaker_match
-        else 10
+        return RankedContext(text=time_window_label or "")
+    ranked = await build_ranked_context(
+        session, user_id, seeds, query_vec=query_vec, time_window=time_window
     )
-    seed_ids = {n.id for n in seeds}
-    node_ids = await get_neighborhood(session, user_id, seed_ids, depth=1)
-
-    nodes = (
-        (await session.execute(select(Node).where(Node.id.in_(node_ids)))).scalars().all()
-    )
-    active = [n for n in nodes if n.deleted_at is None]
-    name_by_id = {n.id: n.name for n in active}
-    node_by_id = {n.id: n for n in active}
-
-    edges = (
-        (
-            await session.execute(
-                select(Edge)
-                .where(
-                    Edge.user_id == user_id,
-                    or_(Edge.source_id.in_(node_ids), Edge.target_id.in_(node_ids)),
-                )
-                .order_by(Edge.weight.desc())
-                .limit(settings.graph_chat_max_triples)
-            )
-        )
-        .scalars()
-        .all()
-    )
-
-    # Statements adjacent to an identity seed carry the "who they are / what
-    # happened" detail that answers "마야가 누구야?"; the triples below only expose
-    # node NAMES (short labels), so pull those statements' full content in too.
-    identity_seed_ids = {n.id for n in seeds if is_identity_type(n.type)}
-    related_stmt_ids: list[uuid.UUID] = []
-    if identity_seed_ids:
-        seen_stmt: set[uuid.UUID] = set()
-        for e in edges:
-            for anchor, other in ((e.source_id, e.target_id), (e.target_id, e.source_id)):
-                if anchor not in identity_seed_ids or other in seen_stmt:
-                    continue
-                nb = node_by_id.get(other)
-                if nb is not None and nb.type == "Statement":
-                    seen_stmt.add(other)
-                    related_stmt_ids.append(other)
-
-    # Speaker/mentioned-target lookup for Statement nodes about to be rendered,
-    # so the LLM sees WHO actually said each line (SPOKE_OR_PUBLISHED) versus who
-    # is merely a character in it (MENTIONS) — without this, a statement like
-    # "김태연상무님이 말함: 모형공학부 부장님이 ~에 꽂히셨다" reads as ambiguous
-    # triples and the model conflates the mentioned person with the speaker.
-    render_stmt_ids = {n.id for n in seeds[:seed_limit] if n.type == "Statement"}
-    render_stmt_ids.update(related_stmt_ids[:12])
-    speaker_by_stmt: dict[uuid.UUID, Node] = {}
-    mentions_by_stmt: dict[uuid.UUID, list[str]] = {}
-    if render_stmt_ids:
-        speaker_rows = await session.execute(
-            select(Edge.target_id, Node)
-            .join(Node, Node.id == Edge.source_id)
-            .where(
-                Edge.user_id == user_id,
-                Edge.target_id.in_(render_stmt_ids),
-                Edge.relation == REL_SPOKE_OR_PUBLISHED,
-                Node.deleted_at.is_(None),
-            )
-        )
-        for stmt_id, speaker_node in speaker_rows.all():
-            speaker_by_stmt.setdefault(stmt_id, speaker_node)
-
-        mention_rows = await session.execute(
-            select(Edge.source_id, Node.name)
-            .join(Node, Node.id == Edge.target_id)
-            .where(
-                Edge.user_id == user_id,
-                Edge.source_id.in_(render_stmt_ids),
-                Edge.relation == REL_MENTIONS,
-                Node.deleted_at.is_(None),
-            )
-        )
-        for stmt_id, mentioned_name in mention_rows.all():
-            mentions_by_stmt.setdefault(stmt_id, []).append(mentioned_name)
-
-    memory_lines: list[str] = []
-    seen_lines: set[str] = set()
-    seen_stmt_ids: set[uuid.UUID] = set()
-
-    def _add(text: str, when: str = "") -> None:
-        text = text.strip()
-        if not text or text in seen_lines:
-            return
-        seen_lines.add(text)
-        prefix = f"[{when}] " if when else ""
-        memory_lines.append(f"- {prefix}{text}")
-
-    def _render_statement(node: Node) -> None:
-        if node.id in seen_stmt_ids:
-            return
-        seen_stmt_ids.add(node.id)
-        content = _statement_content(node)
-        speaker = speaker_by_stmt.get(node.id)
-        if speaker is not None:
-            label = "나의 기록" if speaker.is_self else f"{speaker.name}의 말"
-            text = f'{label}: "{content}"'
-        else:
-            text = content
-        mention_names = mentions_by_stmt.get(node.id) or []
-        if mention_names:
-            text = f"{text} (언급된 대상: {', '.join(mention_names)})"
-        _add(text, _node_date_prefix(node))
-
-    for node in seeds[:seed_limit]:
-        if node.type == "Statement":
-            _render_statement(node)
-        else:
-            _add(_node_memory_text(node), _node_date_prefix(node))
-
-    for sid in related_stmt_ids[:12]:
-        _render_statement(node_by_id[sid])
-
-    seen_triples: set[str] = set()
-    triple_lines: list[str] = []
-    for e in edges:
-        if e.source_id not in name_by_id or e.target_id not in name_by_id:
-            continue
-        # Already expressed in natural language above — skip the raw triple to
-        # avoid contradicting/duplicating it, but keep it as fallback info for
-        # any SPOKE/MENTIONS edge whose statement wasn't otherwise rendered.
-        if e.relation == REL_SPOKE_OR_PUBLISHED and e.target_id in seen_stmt_ids:
-            continue
-        if e.relation == REL_MENTIONS and e.source_id in seen_stmt_ids:
-            continue
-        line = (
-            f"({name_by_id[e.source_id]}) -[{e.relation}]-> ({name_by_id[e.target_id]})"
-        )
-        if line in seen_triples:
-            continue
-        seen_triples.add(line)
-        triple_lines.append(line)
-
-    parts = []
     if time_window_label:
-        parts.append(time_window_label)
-    if memory_lines:
-        parts.append("사용자의 일기 기억:\n" + "\n".join(memory_lines))
-    if triple_lines:
-        parts.append("지식그래프 사실:\n" + "\n".join(triple_lines))
-    return "\n\n".join(parts)
+        ranked.text = (
+            f"{time_window_label}\n\n{ranked.text}" if ranked.text else time_window_label
+        )
+    return ranked
 
 
 def _build_system_prompt(native_label: str = "Korean (한국어)") -> str:
@@ -393,18 +218,18 @@ def _build_system_prompt(native_label: str = "Korean (한국어)") -> str:
         "편하게 수다를 떨러 오는 공간이에요. "
         f"기본적으로 사용자의 모국어({native_label})로 따뜻하고 자연스럽게 대화하세요 "
         "(사용자가 다른 언어로 물으면 그 언어에 맞춰주세요). "
-        "아래에 제공되는 '일기 기억'과 '지식그래프 사실'은 사용자가 실제로 쓴 일기에서 "
-        "나온 것입니다. 관련이 있을 때 자연스럽게 언급하며 대화하되, 기억에 없는 내용을 "
-        "지어내지 마세요. 관련 기억이 없으면 솔직하게 모른다고 하고 가볍게 되물어보세요. "
+        "아래에 '기록 1, 기록 2, ...' 형태로 제공되는 항목들은 사용자가 실제로 쓴 "
+        "일기에서 나온 것입니다. 관련이 있을 때 자연스럽게 언급하며 대화하되, 기억에 "
+        "없는 내용을 지어내지 마세요. 관련 기억이 없으면 솔직하게 모른다고 하고 가볍게 "
+        "되물어보세요. "
         "'지금까지의 대화 요약'은 이 채팅방의 이전 대화를 압축한 것이지 일기 기억이 "
         "아닙니다 — 요약을 일기 기억처럼 인용하지 마세요. "
-        "일기 기억 각 줄 앞의 [날짜]는 사건이 일어난 날(있으면) 또는 일기에 기록된 "
-        "날입니다 — '언제 …했지?' 같은 질문에는 이 날짜로 답하세요. "
-        "'X의 말: \"...\"' 형식의 줄은 X가 그 날짜에 실제로 한 말입니다. 그 말 "
-        "속에 다른 사람 이름이 등장하거나 줄 끝에 '(언급된 대상: Y)'가 붙어 있어도, "
-        "Y는 그 말을 한 사람이 아니라 이야기에 등장하는 인물일 뿐입니다 — Y가 "
-        "그 날짜에 무언가를 말했다거나 행동했다고 답하지 마세요. 발화자와 "
-        "언급된 인물을 절대 혼동하지 마세요. "
+        "각 기록의 '일시'는 그 사건이 일어난 날(또는 일기에 기록된 날)입니다 — "
+        "'언제 …했지?' 같은 질문에는 이 날짜로 답하세요. "
+        "'화자'는 그 '진술'을 실제로 말한 사람입니다. '언급된 인물'은 그 진술 "
+        "속에 이름이 등장할 뿐 그 말을 한 사람이 아닙니다 — 언급된 인물이 그 날짜에 "
+        "무언가를 말했다거나 행동했다고 답하지 마세요. 화자와 언급된 인물을 절대 "
+        "혼동하지 마세요. "
         "요청 기간이 명시되어 있고 그 기간의 기록이 없으면 지어내지 말고 "
         "그 기간의 기록이 없다고 말하세요. "
         "답변은 수다 톤으로 짧고 편하게 — 강의하지 마세요."
@@ -510,7 +335,7 @@ async def graph_chat_answer(
             session, user.id, speaker_matches, query_vec=query_vec
         )
 
-    embedding_seeds = await _retrieve_seeds(
+    embedding_seeds, query_vec = await _retrieve_seeds(
         session, user.id, residual_message, query_vec=query_vec
     )
 
@@ -522,20 +347,24 @@ async def graph_chat_answer(
         seen.add(node.id)
         seeds.append(node)
 
+    referenced_node_ids = [str(n.id) for n in seeds]
     try:
-        context = await _build_context(
+        ranked = await _build_context(
             session,
             user.id,
             seeds,
+            query_vec=query_vec,
             time_window=time_window,
             time_window_label=time_window_label,
-            has_speaker_match=bool(speaker_matches),
         )
+        context = ranked.text
+        if ranked.node_ids:
+            referenced_node_ids = [str(nid) for nid in ranked.node_ids]
     except Exception as exc:  # noqa: BLE001 — degrade to a memory-less answer, never 500
         logger.warning("graph_chat: context build failed for user %s: %s", user.id, exc)
         await session.rollback()
         context = time_window_label or ""
-        seeds = temporal_seeds
+        referenced_node_ids = [str(n.id) for n in temporal_seeds]
 
     from .tutor import _lang_label
 
@@ -559,5 +388,5 @@ async def graph_chat_answer(
 
     return GraphChatResult(
         answer=answer,
-        referenced_node_ids=[str(n.id) for n in seeds],
+        referenced_node_ids=referenced_node_ids,
     )

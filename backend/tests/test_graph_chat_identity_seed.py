@@ -87,7 +87,7 @@ async def test_retrieve_seeds_includes_identity_head(db_session, iso_user, monke
 
     monkeypatch.setattr(graph_chat, "embed_text", fake_embed)
 
-    seeds = await graph_chat._retrieve_seeds(db_session, iso_user.id, "마야가 누구야?")
+    seeds, _query_vec = await graph_chat._retrieve_seeds(db_session, iso_user.id, "마야가 누구야?")
     assert node.id in {s.id for s in seeds}
 
 
@@ -109,8 +109,9 @@ async def test_build_context_surfaces_identity_and_neighbor_statement(db_session
     )
     await db_session.commit()
 
-    ctx = await graph_chat._build_context(db_session, iso_user.id, [maya])
+    ranked = await graph_chat._build_context(db_session, iso_user.id, [maya])
+    ctx = ranked.text
     assert "내 고양이" in ctx                    # identity description surfaced
     assert "병원에 갔다" in ctx                   # neighbour statement BODY, not just label
-    assert "언급된 대상: 마야" in ctx              # MENTIONS relation rendered as natural language
+    assert "언급된 인물: 마야" in ctx              # MENTIONS relation rendered as natural language
     assert "MENTIONS" not in ctx                 # not left as a raw/ambiguous triple

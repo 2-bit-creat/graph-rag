@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import crud
 from .config import get_settings
-from .graph_chat import _statement_content
+from .graph_retrieval import statement_content as _statement_content
 from .models import ChatSession, User
 from .rag import _get_client, embed_texts
 

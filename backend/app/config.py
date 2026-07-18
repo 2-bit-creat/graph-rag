@@ -104,7 +104,6 @@ class Settings(BaseSettings):
     # sentence embedding below the cutoff even though the speaker is unambiguous
     # from the text alone). 0 disables the feature without touching code.
     graph_chat_speaker_seed_limit: int = 8
-    graph_chat_max_triples: int = 30
     graph_chat_max_completion_tokens: int = 500
     chat_timezone: str = "Asia/Seoul"
     graph_chat_temporal_seed_limit: int = 12
@@ -116,6 +115,23 @@ class Settings(BaseSettings):
     graph_retrieve_seed_limit: int = 5
     graph_retrieve_identity_max_distance: float = 0.5
     graph_retrieve_identity_seed_limit: int = 3
+
+    # graph_retrieval.py: shared Context Package builder + RRF rerank, consumed
+    # by both graph_chat.py (chat) and rag.py (quiz). See docstring there for the
+    # Case A/B/C seed-expansion rules this tunes.
+    graph_case_a_statement_limit: int = 3  # Concept seed -> linked Statements
+    graph_case_b_statement_limit: int = 5  # Identity seed -> that speaker's Statements
+    graph_case_c_concept_limit: int = 5  # Statement seed -> its CONTEXT concepts
+    graph_case_c_mention_limit: int = 5  # Statement seed -> its MENTIONS identities
+    # RRF fusion constant (standard default from the original RRF paper — larger
+    # values flatten the influence of rank differences).
+    graph_rrf_k: int = 60
+    # Multiplier applied to a package's RRF score when it falls outside an
+    # explicit query time window — a soft demotion, never a hard cutoff, so a
+    # vaguely-timed question doesn't lose a genuinely relevant memory outright.
+    graph_time_penalty_factor: float = 0.5
+    # Final cutoff after RRF rerank — how many Context Packages reach the prompt.
+    graph_context_top_k: int = 5
 
     # Chat→journal distillation: a candidate diary sentence within this cosine
     # distance of an existing Statement node is flagged as a duplicate (RAG already

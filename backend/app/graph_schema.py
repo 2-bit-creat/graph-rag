@@ -20,6 +20,7 @@ REL_KEYWORDS = "KEYWORDS"
 # 일기 지식그래프 (정체성-진술-개념) 관계
 REL_SPOKE_OR_PUBLISHED = "SPOKE_OR_PUBLISHED"  # (Person|Source|Identity) -> (Statement)
 REL_MENTIONS = "MENTIONS"  # (Statement) -> (Identity)
+REL_CONTEXT = "CONTEXT"  # (Statement) -> (Concept)
 
 
 def contains_relation(language_code: str) -> str:

@@ -1,4 +1,9 @@
-"""Graph RAG: graph retrieval for journal and quiz context."""
+"""Graph RAG: graph retrieval for journal and quiz context.
+
+Seed discovery (embedding + identity-alias search) lives here; the shared
+:mod:`graph_retrieval` module owns everything downstream of a seed list — 1-hop
+type-aware expansion into Context Packages, RRF rerank, and prompt rendering.
+"""
 
 import uuid
 from dataclasses import dataclass, field
@@ -9,12 +14,9 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import get_settings
-from .crud import (
-    find_identities_by_alias_embedding,
-    find_similar_nodes_with_distance,
-    get_neighborhood,
-)
-from .models import Edge, Node
+from .crud import find_identities_by_alias_embedding, find_similar_nodes_with_distance
+from .graph_retrieval import build_ranked_context
+from .models import Node
 
 
 @lru_cache
@@ -63,26 +65,6 @@ def _node_embed_text(node: Node) -> str:
     return f"{node.name}\n{desc}".strip() if desc else node.name
 
 
-def _node_fact_line(node: Node) -> str:
-    """Human-readable fact for the graph context: a Statement's actual sentence,
-    or an identity/concept's ``name — description``. The triple view only carries
-    node NAMES (short labels), so this is what lets the model answer 'who/what'."""
-    import json as _json
-
-    desc = (node.description or "").strip()
-    if node.type == "Statement":
-        if desc:
-            try:
-                content = (_json.loads(desc).get("content") or "").strip()
-                if content:
-                    return content
-            except (ValueError, AttributeError):
-                parts = desc.split("\n", 1)
-                return (parts[1] if len(parts) > 1 else parts[0]).strip() or node.name
-        return node.name
-    return f"{node.name} — {desc}" if desc else node.name
-
-
 async def ensure_statement_embeddings(
     session: AsyncSession,
     user_id: uuid.UUID,
@@ -125,13 +107,14 @@ async def retrieve_graph_context(
     query_vec: list[float] | None = None,
 ) -> RetrievedContext:
     """Seed from two text-embedding indexes (Statement/Concept name_embedding +
-    identity alias embeddings), expand, and render both the actual sentences and
-    the relationship triples. ``query_vec`` may be passed in to avoid re-embedding
-    the same query."""
+    identity alias embeddings), falling back to a plain name search when neither
+    hits, then hand off to :mod:`graph_retrieval`'s shared Context Package
+    builder + RRF rerank for the 1-hop expansion and final prompt text.
+    ``query_vec`` may be passed in to avoid re-embedding the same query."""
     settings = get_settings()
     tokens = [t for t in query.replace("?", " ").split() if len(t) > 2]
 
-    seed_ids: set[uuid.UUID] = set()
+    seeds_by_id: dict[uuid.UUID, Node] = {}
     best_dist = 1.0  # min cosine distance across seeds → graph relevance score
     if user_id is not None and query.strip():
         try:
@@ -157,90 +140,32 @@ async def retrieve_graph_context(
                 )
             ]
             for node, dist in scored:
-                seed_ids.add(node.id)
+                seeds_by_id[node.id] = node
                 best_dist = min(best_dist, dist)
         except Exception:
             await session.rollback()
 
-    if not seed_ids and tokens:
+    if not seeds_by_id and tokens and user_id is not None:
         filters = [Node.name.ilike(f"%{tok}%") for tok in tokens]
-        q = select(Node).where(or_(*filters))
-        if user_id is not None:
-            q = q.where(Node.user_id == user_id)
-        seeds = await session.execute(q.limit(10))
-        seed_ids = {n.id for n in seeds.scalars().all()}
+        q = select(Node).where(Node.user_id == user_id, or_(*filters)).limit(10)
+        found = await session.execute(q)
+        for node in found.scalars().all():
+            seeds_by_id[node.id] = node
 
-    graph_score = max(0.0, 1.0 - best_dist) if seed_ids else 0.0
+    graph_score = max(0.0, 1.0 - best_dist) if seeds_by_id else 0.0
 
-    edge_query = select(Edge)
-    if user_id is not None:
-        edge_query = edge_query.where(Edge.user_id == user_id)
-    if seed_ids:
-        edge_query = edge_query.where(
-            or_(Edge.source_id.in_(seed_ids), Edge.target_id.in_(seed_ids))
+    if not seeds_by_id or user_id is None:
+        return RetrievedContext(
+            context="", seed_node_ids=list(seeds_by_id), graph_score=graph_score
         )
-    # Strongest (most-reinforced) relations first, so the cap keeps signal not noise.
-    edges = list(
-        (
-            await session.execute(edge_query.order_by(Edge.weight.desc()).limit(50))
-        ).scalars().all()
+
+    ranked = await build_ranked_context(
+        session, user_id, list(seeds_by_id.values()), query_vec=query_vec
     )
-
-    node_ids = {e.source_id for e in edges} | {e.target_id for e in edges} | seed_ids
-
-    if user_id and seed_ids:
-        node_ids |= await get_neighborhood(session, user_id, seed_ids, depth=2)
-
-    if not node_ids:
-        return RetrievedContext(context="", seed_node_ids=list(seed_ids), graph_score=graph_score)
-
-    nodes = (
-        await session.execute(select(Node).where(Node.id.in_(node_ids)))
-    ).scalars().all()
-    name_by_id = {n.id: n.name for n in nodes}
-    node_by_id = {n.id: n for n in nodes}
-
-    if user_id and seed_ids:
-        all_edges = await session.execute(
-            select(Edge).where(
-                Edge.user_id == user_id,
-                or_(Edge.source_id.in_(node_ids), Edge.target_id.in_(node_ids)),
-            ).order_by(Edge.weight.desc()).limit(80)
-        )
-        edges = list(all_edges.scalars().all())
-
-    # Sentences that answer 'who/what/what happened': seed nodes plus the Statement
-    # nodes reachable from them — the triple view alone only exposes short labels.
-    fact_ids: list[uuid.UUID] = [sid for sid in seed_ids if sid in node_by_id]
-    for e in edges:
-        for anchor, other in ((e.source_id, e.target_id), (e.target_id, e.source_id)):
-            if anchor in seed_ids and other in node_by_id:
-                nb = node_by_id[other]
-                if nb.type == "Statement" and other not in fact_ids:
-                    fact_ids.append(other)
-    fact_lines: list[str] = []
-    seen_facts: set[str] = set()
-    for nid in fact_ids[:15]:
-        line = _node_fact_line(node_by_id[nid]).strip()
-        if line and line not in seen_facts:
-            seen_facts.add(line)
-            fact_lines.append(f"- {line}")
-
-    triple_lines = [
-        f"({name_by_id.get(e.source_id, '?')}) -[{e.relation}]-> ({name_by_id.get(e.target_id, '?')})"
-        for e in edges
-        if e.source_id in name_by_id and e.target_id in name_by_id
-    ]
-
-    parts: list[str] = []
-    if fact_lines:
-        parts.append("Relevant statements:\n" + "\n".join(fact_lines))
-    if triple_lines:
-        parts.append("Relationships:\n" + "\n".join(triple_lines))
     return RetrievedContext(
-        context="\n\n".join(parts),
-        seed_node_ids=list(seed_ids),
-        node_ids=list(node_ids),
+        context=ranked.text,
+        seed_node_ids=list(seeds_by_id),
+        node_ids=ranked.node_ids,
         graph_score=graph_score,
     )
 

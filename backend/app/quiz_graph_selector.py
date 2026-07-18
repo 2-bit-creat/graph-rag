@@ -182,23 +182,18 @@ async def _fallback_seed_nodes(
 ) -> list[tuple[Node, datetime | None]]:
     query = translation_en[:200]
     rc = await hybrid_retrieve(session, query, user_id)
-    names: list[str] = []
-    for line in (rc.context or "").splitlines():
-        line = line.strip()
-        if line and line not in names:
-            names.append(line[:80])
-    seeds: list[tuple[Node, datetime | None]] = []
-    for name in names[:5]:
+    if rc.node_ids:
         result = await session.execute(
-            select(Node)
-            .where(Node.user_id == user_id, Node.name.ilike(name[:50]))
-            .limit(1)
+            select(Node).where(Node.id.in_(rc.node_ids[:5]))
         )
-        node = result.scalar_one_or_none()
-        if node is not None:
-            seeds.append((node, node.created_at))
-    if seeds:
-        return seeds
+        nodes = {n.id: n for n in result.scalars().all()}
+        seeds = [
+            (nodes[nid], nodes[nid].created_at)
+            for nid in rc.node_ids[:5]
+            if nid in nodes
+        ]
+        if seeds:
+            return seeds
     result = await session.execute(
         select(Node)
         .where(Node.user_id == user_id)

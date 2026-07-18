@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import select
 
 from app import crud, graph_chat
-from app.models import Edge
 
 
 def _unit_vec(dim: int = 1536, hot: int = 0) -> list[float]:
@@ -75,7 +74,7 @@ async def test_graph_chat_answer_passes_reordered_messages(db_session, iso_user,
     client.chat.completions.create = fake_create
 
     monkeypatch.setattr(graph_chat, "_get_client", lambda: client)
-    monkeypatch.setattr(graph_chat, "_retrieve_seeds", AsyncMock(return_value=[]))
+    monkeypatch.setattr(graph_chat, "_retrieve_seeds", AsyncMock(return_value=([], None)))
 
     await graph_chat.graph_chat_answer(
         db_session,
@@ -108,46 +107,39 @@ async def test_retrieve_seeds_sorted_by_distance(db_session, iso_user, monkeypat
 
     monkeypatch.setattr(graph_chat, "embed_text", fake_embed)
 
-    seeds = await graph_chat._retrieve_seeds(db_session, iso_user.id, "query")
+    seeds, _query_vec = await graph_chat._retrieve_seeds(db_session, iso_user.id, "query")
     assert seeds and seeds[0].id == near.id
 
 
 @pytest.mark.asyncio
-async def test_build_context_triples_weight_order(db_session, iso_user):
-    a = await crud._get_or_create_node(
-        db_session, name="A", type_="Concept", user_id=iso_user.id
+async def test_build_context_concept_seed_surfaces_linked_statement_content(db_session, iso_user):
+    """Case A regression: a Concept seed must pull its linked Statement's actual
+    sentence, not leave it as a short-label triple. This is the exact bug the
+    graph_retrieval.py Context Package refactor fixed — graph_chat used to only
+    do this for Identity seeds, silently dropping Concept-seeded statement bodies."""
+    concept = await crud._get_or_create_node(
+        db_session, name="Basel III", type_="Concept", user_id=iso_user.id
     )
-    b = await crud._get_or_create_node(
-        db_session, name="B", type_="Concept", user_id=iso_user.id
-    )
-    c = await crud._get_or_create_node(
-        db_session, name="C", type_="Concept", user_id=iso_user.id
+    stmt = await crud._get_or_create_node(
+        db_session,
+        name="규제 자본 요건",  # short label — must NOT be all the model sees
+        type_="Statement",
+        description=json.dumps(
+            {"context_type": "업무", "content": "Basel III 규제 자본 요건에 맞춰 수정안을 준비했다."}
+        ),
+        user_id=iso_user.id,
     )
     await crud.create_edge(
-        db_session, source_id=a.id, target_id=b.id, relation="LOW", user_id=iso_user.id
+        db_session, source_id=stmt.id, target_id=concept.id,
+        relation="CONTEXT", user_id=iso_user.id,
     )
-    await crud.create_edge(
-        db_session, source_id=a.id, target_id=c.id, relation="HIGH", user_id=iso_user.id
-    )
-    e_low = (
-        await db_session.execute(
-            select(Edge).where(Edge.source_id == a.id, Edge.relation == "LOW")
-        )
-    ).scalar_one()
-    e_high = (
-        await db_session.execute(
-            select(Edge).where(Edge.source_id == a.id, Edge.relation == "HIGH")
-        )
-    ).scalar_one()
-    e_low.weight = 1
-    e_high.weight = 99
     await db_session.commit()
 
-    ctx = await graph_chat._build_context(db_session, iso_user.id, [a])
-    high_pos = ctx.find("HIGH")
-    low_pos = ctx.find("LOW")
-    assert high_pos != -1 and low_pos != -1
-    assert high_pos < low_pos
+    ranked = await graph_chat._build_context(db_session, iso_user.id, [concept])
+    ctx = ranked.text
+
+    assert "Basel III 규제 자본 요건에 맞춰 수정안을 준비했다." in ctx
+    assert "연관 개념: Basel III" in ctx
 
 
 async def _append_many_pairs(db_session, room, pairs: int) -> None:
