@@ -11,6 +11,7 @@ import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart';
 import '../utils/statement_display.dart';
+import '../widgets/app_theme_toggle_button.dart';
 import '../widgets/chat_journal_compose_bar.dart';
 import '../widgets/graph_chat_panel.dart';
 import '../widgets/graph_inspector_panel.dart';
@@ -25,28 +26,16 @@ class KnowledgeGraphScreen extends StatefulWidget {
   const KnowledgeGraphScreen({
     super.key,
     this.initialNodeId,
-    this.initialChatOpen = true,
   });
 
   /// If set, the graph will auto-select this node on load.
   final String? initialNodeId;
-
-  /// 대화 패널을 처음부터 펼칠지 (기본: 켜짐).
-  final bool initialChatOpen;
 
   @override
   State<KnowledgeGraphScreen> createState() => _KnowledgeGraphScreenState();
 }
 
 class _KnowledgeGraphScreenState extends State<KnowledgeGraphScreen> {
-  late bool _chatOpen;
-
-  @override
-  void initState() {
-    super.initState();
-    _chatOpen = widget.initialChatOpen;
-  }
-
   @override
   Widget build(BuildContext context) {
     final shell = context.shell;
@@ -60,14 +49,6 @@ class _KnowledgeGraphScreenState extends State<KnowledgeGraphScreen> {
         surfaceTintColor: Colors.transparent,
         title: const Text('내 지식 그래프'),
         actions: [
-          IconButton(
-            tooltip: _chatOpen ? '대화창 접기' : '대화창 열기',
-            icon: Icon(
-              _chatOpen ? Icons.forum_rounded : Icons.forum_outlined,
-              color: _chatOpen ? AppColors.hubGraph : null,
-            ),
-            onPressed: () => setState(() => _chatOpen = !_chatOpen),
-          ),
           IconButton(
             tooltip: '저장 위치 안내',
             icon: const Icon(Icons.info_outline),
@@ -94,11 +75,7 @@ class _KnowledgeGraphScreenState extends State<KnowledgeGraphScreen> {
           ),
         ],
       ),
-      body: KnowledgeGraphView(
-        initialNodeId: widget.initialNodeId,
-        chatOpen: _chatOpen,
-        onChatOpenChanged: (open) => setState(() => _chatOpen = open),
-      ),
+      body: KnowledgeGraphView(initialNodeId: widget.initialNodeId),
     );
   }
 }
@@ -108,14 +85,15 @@ class KnowledgeGraphView extends StatefulWidget {
     super.key,
     this.compact = false,
     this.initialNodeId,
-    this.chatOpen = true,
-    this.onChatOpenChanged,
+    this.onOpenMenu,
   });
 
   final bool compact;
   final String? initialNodeId;
-  final bool chatOpen;
-  final ValueChanged<bool>? onChatOpenChanged;
+
+  /// When set, the floating search pill shows a leading hamburger button that
+  /// invokes this (opens the rooms drawer) — the host screen has no AppBar.
+  final VoidCallback? onOpenMenu;
 
   @override
   State<KnowledgeGraphView> createState() => _KnowledgeGraphViewState();
@@ -141,7 +119,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   // ── 그래프 대화 (전역 chatSession 컨트롤러 구독) ─────────────────────────
   final _chatInputController = TextEditingController();
   final _chatInputFocusNode = FocusNode();
-  final _chatScrollController = ScrollController();
   Set<String> _glowIds = const {};
   int _glowSeq = 0;
   int _lastMsgCount = 0;
@@ -154,34 +131,51 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   String? _prevJournalGraphStatus;
   bool _graphReloadScheduled = false;
 
-  /// User-resizable chat panel width (px). Null → default fraction on first layout.
-  double? _chatPanelWidth;
+  // ── 바텀시트 (지도 앱 스타일: 40% 기본 / 90% 포커스 / 최소화-입력줄만) ────
+  final _sheetController = DraggableScrollableController();
+  static const double _sheetDefaultSize = 0.40; // 상태 A
+  static const double _sheetFocusSize = 0.90; // 상태 B
+  bool _chatFocused = false; // 스크림 표시 여부 — 포커스에서만 파생, 수동 드래그와 무관
 
-  static const _chatMinWidth = 280.0;
-  static const _chatMaxWidthFraction = 0.58;
+  /// 시트의 `builder`가 매 build마다 새로 넘겨주는 컨트롤러 — 프로그램적 스크롤은
+  /// 항상 "현재 살아있는" 컨트롤러를 대상으로 해야 한다.
+  ScrollController? _activeChatScrollController;
 
-  double _chatMaxWidth(BuildContext context) =>
-      (MediaQuery.sizeOf(context).width * _chatMaxWidthFraction)
-          .clamp(_chatMinWidth, 720.0);
-
-  double _resolvedChatWidth(BuildContext context) {
-    final maxW = _chatMaxWidth(context);
-    _chatPanelWidth ??=
-        (MediaQuery.sizeOf(context).width.clamp(320.0, 900.0) * 0.34)
-            .clamp(_chatMinWidth, maxW);
-    return _chatPanelWidth!.clamp(_chatMinWidth, maxW);
+  /// 입력바 높이 근사치 기반 최소 시트 크기(상태 C) — 정확한 픽셀 측정 대신
+  /// 넉넉한 상수 사용, snap:true 물리가 오차를 흡수한다.
+  double _sheetMinChildSize(BuildContext context, double graphAreaHeight) {
+    const inputBarApproxHeight = 64.0;
+    final minPx = inputBarApproxHeight + MediaQuery.paddingOf(context).bottom;
+    if (graphAreaHeight <= 0) return 0.08;
+    return (minPx / graphAreaHeight).clamp(0.06, _sheetDefaultSize - 0.02);
   }
 
-  void _resizeChatPanel(double deltaDx) {
-    final maxW = _chatMaxWidth(context);
-    setState(() {
-      // Handle sits on the chat panel's left edge — drag left (−dx) widens chat.
-      _chatPanelWidth =
-          (_resolvedChatWidth(context) - deltaDx).clamp(_chatMinWidth, maxW);
-    });
+  void _onChatFocusChanged() {
+    final focused = _chatInputFocusNode.hasFocus;
+    if (focused == _chatFocused) return;
+    setState(() => _chatFocused = focused);
+    if (!_sheetController.isAttached) return;
+    _sheetController.animateTo(
+      focused ? _sheetFocusSize : _sheetDefaultSize,
+      duration: Duration(milliseconds: focused ? 260 : 220),
+      curve: focused ? Curves.easeOutCubic : Curves.easeIn,
+    );
+  }
+
+  /// 핀 성공 등으로 채팅을 눈에 띄게 해야 할 때 — 이미 40% 이상이면 그대로 둔다.
+  void _ensureChatVisible() {
+    if (!_sheetController.isAttached) return;
+    if (_sheetController.size < _sheetDefaultSize) {
+      _sheetController.animateTo(
+        _sheetDefaultSize,
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOutCubic,
+      );
+    }
   }
 
   Widget _buildGraphChatPanel({
+    required ScrollController scrollController,
     Map<String, Color> typeColors = const {},
     Map<String, Map<String, dynamic>> nodeById = const {},
   }) {
@@ -190,27 +184,112 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
       busy: chatSession.busy,
       typeColors: typeColors,
       nodeById: nodeById,
-      inputController: _chatInputController,
-      scrollController: _chatScrollController,
-      onSend: _sendChat,
+      scrollController: scrollController,
+      title: (chatSession.activeSession?['title'] as String?)?.trim(),
       onNodeHighlight: nodeById.isEmpty ? (_) {} : _highlightNodes,
       onNodeSelect: nodeById.isEmpty
           ? (_) {}
           : (node) => _selectNode(node, showSheet: true),
       onClearHistory: _deleteActiveRoom,
-      onCollapse: _collapseChat,
-      activeCard: _activeModeCard(),
       listFooter: _chatListFooter(),
-      modeLabel: _modeLabel(),
-      onExitMode: chatSession.exitMode,
-      onModeSelected: _onModeSelected,
-      inputEnabled: _inputEnabled,
-      inputHint: _inputHint,
-      inputBarOverride: _journalInputBar(),
       statusPill: journalTask.showsPill
           ? JournalStatusPill(onTap: _onStatusPillTap)
           : null,
-      inputFocusNode: _chatInputFocusNode,
+    );
+  }
+
+  /// 시트 밖, 화면 최하단에 항상 도킹된 입력바 — 시트 익스텐트와 무관하게
+  /// 최소화 상태에서도 계속 탭 가능해야 한다.
+  Widget _buildPersistentInputBar() {
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: ChatInputBar(
+        inputController: _chatInputController,
+        busy: chatSession.busy,
+        onSend: _sendChat,
+        modeLabel: _modeLabel(),
+        onExitMode: chatSession.exitMode,
+        onModeSelected: _onModeSelected,
+        inputEnabled: _inputEnabled,
+        inputHint: _inputHint,
+        inputBarOverride: _journalInputBar(),
+        inputFocusNode: _chatInputFocusNode,
+      ),
+    );
+  }
+
+  Widget _buildChatSheet(
+    double graphAreaHeight, {
+    Map<String, Color> typeColors = const {},
+    Map<String, Map<String, dynamic>> nodeById = const {},
+  }) {
+    return DraggableScrollableSheet(
+      controller: _sheetController,
+      initialChildSize: _sheetDefaultSize,
+      minChildSize: _sheetMinChildSize(context, graphAreaHeight),
+      maxChildSize: _sheetFocusSize,
+      snap: true,
+      snapSizes: const [_sheetDefaultSize],
+      builder: (context, sheetScrollController) {
+        _activeChatScrollController = sheetScrollController;
+        return _buildGraphChatPanel(
+          scrollController: sheetScrollController,
+          typeColors: typeColors,
+          nodeById: nodeById,
+        );
+      },
+    );
+  }
+
+  /// 그래프 캔버스(변경 없음) + 떠 있는 오버레이(검색 필·범례 칩) + 포커스
+  /// 스크림 + 상시 임베드된 채팅 시트 + 시트 밖에 도킹된 입력바. 그래프 영역
+  /// 실제 높이를 LayoutBuilder로 얻어 시트 비율 계산의 기준으로 쓴다.
+  /// [overlays]는 스크림 아래에 깔려 포커스 시 함께 어두워진다.
+  Widget _canvasWithChat({
+    required List<Map<String, dynamic>> nodes,
+    required List<Map<String, dynamic>> edges,
+    required Map<String, Color> typeColors,
+    bool compactMode = false,
+    double overlayTopInset = 8,
+    List<Widget> overlays = const [],
+  }) {
+    final nodeById = buildNodeById(nodes);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final graphAreaHeight = constraints.maxHeight;
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            AnimatedBuilder(
+              animation: _sheetController,
+              builder: (context, _) {
+                final sheetPx = (_sheetController.isAttached
+                        ? _sheetController.size
+                        : _sheetDefaultSize) *
+                    graphAreaHeight;
+                return _canvasWithCard(
+                  nodes: nodes,
+                  edges: edges,
+                  typeColors: typeColors,
+                  compactMode: compactMode,
+                  overlayTopInset: overlayTopInset,
+                  selectionCardBottom: sheetPx + 12,
+                );
+              },
+            ),
+            ...overlays,
+            _ChatFocusScrim(
+              visible: _chatFocused,
+              onTap: _chatInputFocusNode.unfocus,
+            ),
+            _buildChatSheet(graphAreaHeight,
+                typeColors: typeColors, nodeById: nodeById),
+            _buildPersistentInputBar(),
+          ],
+        );
+      },
     );
   }
 
@@ -231,42 +310,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     }
   }
 
-  Widget _layoutGraphWithChat({
-    required Widget graphSide,
-    Map<String, Color> typeColors = const {},
-    Map<String, Map<String, dynamic>> nodeById = const {},
-  }) {
-    final showChat = widget.chatOpen;
-    if (!showChat) {
-      return Stack(
-        fit: StackFit.expand,
-        children: [
-          graphSide,
-          Positioned(
-            right: 0,
-            top: MediaQuery.sizeOf(context).height * 0.38,
-            child: GraphChatCollapsedTab(onExpand: _expandChat),
-          ),
-        ],
-      );
-    }
-
-    final chatW = _resolvedChatWidth(context);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(child: graphSide),
-        _ChatPanelResizeHandle(onDrag: _resizeChatPanel),
-        SizedBox(
-          width: chatW,
-          child: _buildGraphChatPanel(
-            typeColors: typeColors,
-            nodeById: nodeById,
-          ),
-        ),
-      ],
-    );
-  }
 
   @override
   void initState() {
@@ -284,6 +327,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     chatSession.errors.addListener(_onChatError);
     journalTask.addListener(_onJournalTaskChanged);
     _chatInputController.addListener(_onChatInputChanged);
+    _chatInputFocusNode.addListener(_onChatFocusChanged);
     chatSession.init();
   }
 
@@ -297,9 +341,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
       chatSession.onReferencedNodes = null;
     }
     _chatInputController.removeListener(_onChatInputChanged);
+    _chatInputFocusNode.removeListener(_onChatFocusChanged);
     _chatInputController.dispose();
     _chatInputFocusNode.dispose();
-    _chatScrollController.dispose();
+    _sheetController.dispose();
     super.dispose();
   }
 
@@ -339,15 +384,27 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     }
     // Defensive re-focus for word quizzes generally (covers entering the
     // mode and any card change, not just the explicit "다음 문제" tap).
+    // Deferred a frame: requestFocus() here runs synchronously inside
+    // notifyListeners(), i.e. still against the OLD build where the composer
+    // was `enabled: false` (wordQuizSolved was true for the just-finished
+    // question) — EditableText only opens its platform text-input connection
+    // on a focus-state TRANSITION, so focusing before the rebuild that flips
+    // `enabled` to true leaves the field visually focused but not accepting
+    // keystrokes. Requesting it after the next frame targets the rebuilt,
+    // enabled field instead.
     if (mode == ChatMode.quizWord && quizCardChanged) {
-      _chatInputFocusNode.requestFocus();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _chatInputFocusNode.requestFocus();
+      });
     }
     // A reply landing can leave the composer looking enabled but no longer
     // holding real editing focus (the field re-enables after busy, but
     // Flutter doesn't auto-restore focus) — return it to the composer so the
     // next message can be typed immediately, same as the quiz re-focus above.
     if (mode == ChatMode.normal && _lastChatBusy && !chatSession.busy) {
-      _chatInputFocusNode.requestFocus();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _chatInputFocusNode.requestFocus();
+      });
     }
     _lastChatMode = mode;
     _lastChatBusy = chatSession.busy;
@@ -523,13 +580,14 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
 
   void _scrollChatToBottom({bool animated = true}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_chatScrollController.hasClients) return;
-      final max = _chatScrollController.position.maxScrollExtent;
+      final controller = _activeChatScrollController;
+      if (controller == null || !controller.hasClients) return;
+      final max = controller.position.maxScrollExtent;
       if (animated) {
-        _chatScrollController.animateTo(max,
+        controller.animateTo(max,
             duration: const Duration(milliseconds: 280), curve: Curves.easeOut);
       } else {
-        _chatScrollController.jumpTo(max);
+        controller.jumpTo(max);
       }
     });
   }
@@ -682,9 +740,16 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     }
   }
 
+  // Deliberately NOT gated on wordQuizSolved: toggling TextField.enabled
+  // false→true forces Flutter to tear down and reopen the platform text-input
+  // connection, and doing that right as a new question loads is what caused
+  // the composer to go dead ("입력창이 막혔어" — reproduced a few questions
+  // in, not the first). The actual no-typing-once-solved behavior is already
+  // enforced in chat_session_controller.dart (updateClozeDraft/answerWordQuiz
+  // both no-op once wordQuizSolved is true), so gating the widget too was
+  // pure UX polish, not a correctness requirement — not worth the fragility.
   bool get _inputEnabled =>
-      chatSession.mode != ChatMode.quizWord ||
-      (chatSession.wordQuizUsesComposer && !chatSession.wordQuizSolved);
+      chatSession.mode != ChatMode.quizWord || chatSession.wordQuizUsesComposer;
 
   String get _inputHint {
     switch (chatSession.mode) {
@@ -705,11 +770,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
       chatSession.mode == ChatMode.journal && !journalTask.isBusy
           ? const ChatJournalComposeBar()
           : null;
-
-  /// Quiz cards now render inline in the chat scroll (see [_chatListFooter]) so
-  /// they flow with the conversation like every other feature card — nothing is
-  /// pinned above the input anymore.
-  Widget? _activeModeCard() => null;
 
   /// Feature cards that live INSIDE the chat scroll so they grow with content and
   /// scroll up with the conversation — distill draft and the active quiz card.
@@ -747,7 +807,13 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
             chatSession.nextQuiz();
             // "다음 문제" steals focus from the composer — the next blank
             // needs typing to work immediately, not after a manual tap back.
-            _chatInputFocusNode.requestFocus();
+            // Deferred a frame for the same reason as the defensive re-focus
+            // in _onChatChanged: requesting focus before the rebuild that
+            // flips the composer back to `enabled: true` leaves it focused
+            // but not actually accepting keystrokes.
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _chatInputFocusNode.requestFocus();
+            });
           },
           onExit: chatSession.exitMode,
           externalResult: chatSession.quizFeedback,
@@ -810,10 +876,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     });
     _canvasKey.currentState?.focusOnNodes(nodeIds);
   }
-
-  void _collapseChat() => widget.onChatOpenChanged?.call(false);
-
-  void _expandChat() => widget.onChatOpenChanged?.call(true);
 
   void _syncSelection(Map<String, dynamic> graph) {
     if (_selectedNodeId == null) return;
@@ -962,11 +1024,11 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
             .map((e) => e.toString())
             .toList();
         if (clozeIds.isNotEmpty) {
-          _expandChat();
+          _ensureChatVisible();
           await chatSession.startQuiz('cloze',
               language: language, quizIds: clozeIds);
         } else if (compositionIds.isNotEmpty) {
-          _expandChat();
+          _ensureChatVisible();
           await chatSession.startQuiz('composition',
               language: language, quizIds: compositionIds);
         } else {
@@ -1166,17 +1228,51 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   }
 
   Widget _buildEmptyWithChat() {
-    return _layoutGraphWithChat(
-      graphSide: const _EmptyGraphHint(),
+    final safeTop = MediaQuery.paddingOf(context).top;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final graphAreaHeight = constraints.maxHeight;
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            const _EmptyGraphHint(),
+            // 그래프가 비어도 드로어(대화방 목록)와 테마 전환은 접근 가능해야
+            // 한다 — AppBar가 사라졌으므로 이 플로팅 버튼이 유일한 통로.
+            if (widget.onOpenMenu != null)
+              Positioned(
+                top: safeTop + 8,
+                left: 12,
+                child: _FloatingCircleButton(
+                  tooltip: '메뉴',
+                  icon: Icons.menu_rounded,
+                  onTap: widget.onOpenMenu!,
+                ),
+              ),
+            _ChatFocusScrim(
+              visible: _chatFocused,
+              onTap: _chatInputFocusNode.unfocus,
+            ),
+            _buildChatSheet(graphAreaHeight),
+            _buildPersistentInputBar(),
+          ],
+        );
+      },
     );
   }
 
-  /// Canvas + floating selection card.
+  /// Canvas + floating selection card. [selectionCardBottom] lets a caller
+  /// float the card above whatever sits below it (a bottom sheet's live
+  /// extent in the full-graph chat layout; a fixed 12px in compact mode,
+  /// which has no sheet). [overlayTopInset] pushes the mode toggle / speaker
+  /// legend below any floating chrome (search pill + legend chips) the
+  /// full-bleed layout stacks over the canvas.
   Widget _canvasWithCard({
     required List<Map<String, dynamic>> nodes,
     required List<Map<String, dynamic>> edges,
     required Map<String, Color> typeColors,
     bool compactMode = false,
+    double overlayTopInset = 8,
+    double selectionCardBottom = 12,
   }) {
     final nodeById = buildNodeById(nodes);
     final selected = _selectedNode ?? _selectedEdge;
@@ -1202,14 +1298,14 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
         ),
         // 모드 토글 — 기본 ↔ 화자 숨김(색상 인코딩).
         Positioned(
-          top: compactMode ? 26 : 8,
+          top: compactMode ? 26 : overlayTopInset,
           right: 12,
           child: _HideHeadsToggle(active: _hideHeads, onTap: _toggleHideHeads),
         ),
         // 화자 색상 범례: head가 안 보이는 동안 색을 해독할 유일한 단서.
         if (_hideHeads)
           Positioned(
-            top: compactMode ? 26 : 8,
+            top: compactMode ? 26 : overlayTopInset,
             left: 10,
             child: SpeakerColorLegendCard(
               entries: _speakerLegendEntries(nodes, edges),
@@ -1218,7 +1314,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
         Positioned(
           left: 12,
           right: 64, // keep clear of the zoom controls
-          bottom: 12,
+          bottom: selectionCardBottom,
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 180),
             switchInCurve: Curves.easeOutCubic,
@@ -1317,20 +1413,39 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     required List<String> relationTypes,
     required Map<String, Color> typeColors,
   }) {
-    final nodeById = buildNodeById(nodes);
-
-    return _layoutGraphWithChat(
+    // Google-Maps grammar: the graph is a full-bleed background; search and
+    // legend float OVER it as detached surfaces instead of stacked bars that
+    // push the canvas down.
+    final safeTop = MediaQuery.paddingOf(context).top;
+    final pillTop = safeTop + 8;
+    final chipsTop = pillTop + 58;
+    return _canvasWithChat(
+      nodes: nodes,
+      edges: edges,
       typeColors: typeColors,
-      nodeById: nodeById,
-      graphSide: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _GraphToolbar(
-            query: _query,
+      overlayTopInset: chipsTop + 44,
+      overlays: [
+        Positioned(
+          top: chipsTop,
+          left: 0,
+          right: 0,
+          child: OntologyLegendBar(
+            entityTypes: _legendEntityTypes(entityTypes),
+            typeColors: typeColors,
+            selectedType: _typeFilter,
+            onTypeSelected: (t) => setState(() => _typeFilter = t),
+          ),
+        ),
+        Positioned(
+          top: pillTop,
+          left: 12,
+          right: 12,
+          child: _FloatingSearchBar(
+            matchCount: _queryMatchCount(nodes),
             nodeCount: nodes.length,
             edgeCount: edges.length,
-            matchCount: _queryMatchCount(nodes),
             onQueryChanged: (v) => setState(() => _query = v),
+            onOpenMenu: widget.onOpenMenu,
             onRefresh: () {
               _load();
               chatSession.loadSessions();
@@ -1342,80 +1457,37 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
             ),
             onTrash: () => Navigator.push(
               context,
-              MaterialPageRoute<void>(builder: (_) => const GraphTrashScreen()),
+              MaterialPageRoute<void>(
+                  builder: (_) => const GraphTrashScreen()),
             ).then((_) => _load()),
             onClearGraph: _clearGraph,
             onAddNode: _addNode,
           ),
-          Container(
-            padding: const EdgeInsets.only(bottom: 6),
-            decoration: BoxDecoration(
-              color: context.shell.toolbarBackground,
-              border: Border(
-                  bottom: BorderSide(color: context.shell.toolbarBorder)),
-            ),
-            child: OntologyLegendBar(
-              entityTypes: _legendEntityTypes(entityTypes),
-              typeColors: typeColors,
-              selectedType: _typeFilter,
-              onTypeSelected: (t) => setState(() => _typeFilter = t),
-            ),
-          ),
-          Expanded(
-            child: _canvasWithCard(
-              nodes: nodes,
-              edges: edges,
-              typeColors: typeColors,
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
 
-/// Drag handle between graph canvas and chat panel.
-class _ChatPanelResizeHandle extends StatefulWidget {
-  const _ChatPanelResizeHandle({required this.onDrag});
+/// Dark scrim over the graph while the composer is focused (state B) — tap
+/// to unfocus and return to state A. `IgnorePointer` is essential: at
+/// opacity 0 the scrim must not eat pointer events meant for the graph.
+class _ChatFocusScrim extends StatelessWidget {
+  const _ChatFocusScrim({required this.visible, required this.onTap});
 
-  final ValueChanged<double> onDrag;
-
-  @override
-  State<_ChatPanelResizeHandle> createState() => _ChatPanelResizeHandleState();
-}
-
-class _ChatPanelResizeHandleState extends State<_ChatPanelResizeHandle> {
-  bool _hovering = false;
-  bool _dragging = false;
+  final bool visible;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final active = _hovering || _dragging;
-    return MouseRegion(
-      cursor: SystemMouseCursors.resizeColumn,
-      onEnter: (_) => setState(() => _hovering = true),
-      onExit: (_) => setState(() => _hovering = false),
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onHorizontalDragStart: (_) => setState(() => _dragging = true),
-        onHorizontalDragEnd: (_) => setState(() => _dragging = false),
-        onHorizontalDragCancel: () => setState(() => _dragging = false),
-        onHorizontalDragUpdate: (d) => widget.onDrag(d.delta.dx),
-        child: Container(
-          width: 10,
-          color: active
-              ? AppColors.hubGraph.withValues(alpha: 0.12)
-              : Colors.transparent,
-          child: Center(
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
-              width: active ? 3 : 2,
-              height: double.infinity,
-              color: active
-                  ? AppColors.hubGraph.withValues(alpha: 0.65)
-                  : context.shell.panelBorder,
-            ),
-          ),
+    return IgnorePointer(
+      ignoring: !visible,
+      child: AnimatedOpacity(
+        opacity: visible ? 1 : 0,
+        duration: const Duration(milliseconds: 180),
+        child: GestureDetector(
+          onTap: onTap,
+          child: ColoredBox(color: Colors.black.withValues(alpha: 0.45)),
         ),
       ),
     );
@@ -1506,139 +1578,220 @@ class _CompactGraphHeader extends StatelessWidget {
   }
 }
 
-class _GraphToolbar extends StatelessWidget {
-  const _GraphToolbar({
-    required this.query,
+/// Small circular floating action (menu button on the empty-graph state).
+class _FloatingCircleButton extends StatelessWidget {
+  const _FloatingCircleButton({
+    required this.tooltip,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final shell = context.shell;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xF21A1A22) : Colors.white,
+        shape: BoxShape.circle,
+        border: Border.all(color: shell.panelBorder),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.38 : 0.12),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        shape: const CircleBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: IconButton(
+          tooltip: tooltip,
+          onPressed: onTap,
+          icon: Icon(icon, color: shell.primaryText),
+        ),
+      ),
+    );
+  }
+}
+
+/// Google-Maps-style floating search pill: hamburger (rooms drawer) + search
+/// field + theme toggle + overflow menu, one detached rounded surface floating
+/// over the full-bleed graph — replaces the old stacked AppBar+toolbar strips.
+class _FloatingSearchBar extends StatelessWidget {
+  const _FloatingSearchBar({
+    required this.matchCount,
     required this.nodeCount,
     required this.edgeCount,
-    required this.matchCount,
     required this.onQueryChanged,
     required this.onRefresh,
     required this.onOntology,
     required this.onTrash,
     required this.onClearGraph,
     required this.onAddNode,
+    this.onOpenMenu,
   });
 
-  final String query;
+  final int? matchCount;
   final int nodeCount;
   final int edgeCount;
-  final int? matchCount;
   final ValueChanged<String> onQueryChanged;
   final VoidCallback onRefresh;
   final VoidCallback onOntology;
   final VoidCallback onTrash;
   final VoidCallback onClearGraph;
   final VoidCallback onAddNode;
+  final VoidCallback? onOpenMenu;
 
   @override
   Widget build(BuildContext context) {
     final shell = context.shell;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final fieldFill = isDark ? const Color(0xFF1A1A22) : Colors.white;
-    final hintColor = isDark ? const Color(0xFF6B7280) : AppColors.textMuted;
+    final surface = isDark ? const Color(0xF21A1A22) : Colors.white;
+    final hintColor = isDark ? const Color(0xFF7B8494) : AppColors.textMuted;
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 8, 8, 4),
+      height: 52,
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: shell.toolbarBackground,
-        border: Border(bottom: BorderSide(color: shell.toolbarBorder)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              style: TextStyle(color: shell.primaryText),
-              decoration: InputDecoration(
-                hintText: '노드 검색 — 일치하는 노드가 밝게 표시됩니다',
-                hintStyle: TextStyle(color: hintColor, fontSize: 13),
-                prefixIcon: Icon(Icons.search, size: 20, color: hintColor),
-                suffixText: matchCount == null ? null : '$matchCount개 일치',
-                suffixStyle: TextStyle(
-                  fontSize: 11,
-                  color: matchCount == 0
-                      ? const Color(0xFFFF7A7A)
-                      : AppColors.accent,
-                ),
-                filled: true,
-                fillColor: fieldFill,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(color: shell.panelBorder),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(color: shell.panelBorder),
-                ),
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(vertical: 10),
-              ),
-              onChanged: onQueryChanged,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            '$nodeCount · $edgeCount',
-            style: TextStyle(fontSize: 11, color: shell.mutedText),
-          ),
-          const SizedBox(width: 2),
-          IconButton(
-            tooltip: '온톨로지',
-            onPressed: onOntology,
-            icon:
-                const Icon(Icons.category_outlined, color: AppColors.textMuted),
-          ),
-          IconButton(
-            tooltip: '새로고침',
-            onPressed: onRefresh,
-            icon: const Icon(Icons.refresh, color: AppColors.textMuted),
-          ),
-          // Destructive / rarely-used actions live behind the overflow menu
-          // so they can't be fat-fingered while exploring.
-          PopupMenuButton<String>(
-            tooltip: '더보기',
-            icon: const Icon(Icons.more_vert, color: AppColors.textMuted),
-            color: shell.barBackground,
-            onSelected: (v) {
-              if (v == 'addNode') onAddNode();
-              if (v == 'trash') onTrash();
-              if (v == 'clear') onClearGraph();
-            },
-            itemBuilder: (_) => [
-              PopupMenuItem(
-                value: 'addNode',
-                child: ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.add_circle_outline,
-                      color: AppColors.textMuted),
-                  title: Text('노드 추가',
-                      style: TextStyle(color: shell.primaryText, fontSize: 13)),
-                ),
-              ),
-              PopupMenuItem(
-                value: 'trash',
-                child: ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.delete_outline,
-                      color: AppColors.textMuted),
-                  title: Text('휴지통',
-                      style: TextStyle(color: shell.primaryText, fontSize: 13)),
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'clear',
-                child: ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(Icons.delete_sweep, color: Colors.redAccent),
-                  title: Text('그래프 전체 삭제',
-                      style: TextStyle(color: Colors.redAccent, fontSize: 13)),
-                ),
-              ),
-            ],
+        color: surface,
+        borderRadius: BorderRadius.circular(26),
+        border: Border.all(color: shell.panelBorder),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.38 : 0.12),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
           ),
         ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: Row(
+          children: [
+            if (onOpenMenu != null)
+              IconButton(
+                tooltip: '메뉴',
+                onPressed: onOpenMenu,
+                icon: Icon(Icons.menu_rounded, color: shell.primaryText),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.only(left: 14, right: 2),
+                child: Icon(Icons.search, size: 20, color: hintColor),
+              ),
+            Expanded(
+              child: TextField(
+                style: TextStyle(color: shell.primaryText, fontSize: 14.5),
+                decoration: InputDecoration(
+                  hintText: '노드 검색',
+                  hintStyle: TextStyle(color: hintColor, fontSize: 14),
+                  suffixText: matchCount == null ? null : '$matchCount개',
+                  suffixStyle: TextStyle(
+                    fontSize: 11.5,
+                    color: matchCount == 0
+                        ? const Color(0xFFFF7A7A)
+                        : AppColors.accent,
+                  ),
+                  isDense: true,
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 15),
+                ),
+                onChanged: onQueryChanged,
+              ),
+            ),
+            const AppThemeToggleButton(),
+            // Destructive / rarely-used actions live behind the overflow menu
+            // so they can't be fat-fingered while exploring.
+            PopupMenuButton<String>(
+              tooltip: '더보기',
+              icon: Icon(Icons.more_vert, color: shell.primaryText),
+              color: shell.barBackground,
+              onSelected: (v) {
+                if (v == 'ontology') onOntology();
+                if (v == 'refresh') onRefresh();
+                if (v == 'addNode') onAddNode();
+                if (v == 'trash') onTrash();
+                if (v == 'clear') onClearGraph();
+              },
+              itemBuilder: (_) => [
+                PopupMenuItem(
+                  enabled: false,
+                  height: 32,
+                  child: Text('노드 $nodeCount · 관계 $edgeCount',
+                      style:
+                          TextStyle(color: shell.mutedText, fontSize: 12)),
+                ),
+                PopupMenuItem(
+                  value: 'ontology',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.category_outlined,
+                        color: AppColors.textMuted),
+                    title: Text('온톨로지',
+                        style:
+                            TextStyle(color: shell.primaryText, fontSize: 13)),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'refresh',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading:
+                        const Icon(Icons.refresh, color: AppColors.textMuted),
+                    title: Text('새로고침',
+                        style:
+                            TextStyle(color: shell.primaryText, fontSize: 13)),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'addNode',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.add_circle_outline,
+                        color: AppColors.textMuted),
+                    title: Text('노드 추가',
+                        style:
+                            TextStyle(color: shell.primaryText, fontSize: 13)),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'trash',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.delete_outline,
+                        color: AppColors.textMuted),
+                    title: Text('휴지통',
+                        style:
+                            TextStyle(color: shell.primaryText, fontSize: 13)),
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'clear',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.delete_sweep, color: Colors.redAccent),
+                    title: Text('그래프 전체 삭제',
+                        style:
+                            TextStyle(color: Colors.redAccent, fontSize: 13)),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(width: 4),
+          ],
+        ),
       ),
     );
   }

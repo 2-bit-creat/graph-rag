@@ -7,9 +7,11 @@ import '../utils/graph_layout.dart';
 import 'chat_rich_text.dart';
 import 'journal_progress_card.dart';
 
-/// 지식그래프 화면 오른쪽에 붙는 대화 패널.
+/// 지식그래프 화면 위에 떠 있는 바텀시트 형태의 대화 패널 (헤더 + 메시지 피드만).
 ///
-/// 그래프 위에 떠 있는 사이드 패널 형태 — 접으면 그래프만 전체 너비로 보인다.
+/// 입력바는 여기 포함되지 않는다 — [ChatInputBar]로 분리되어 시트 밖에 항상
+/// 도킹된 채 떠 있는다 (최소화 상태에서도 계속 탭 가능해야 하므로). 이 위젯은
+/// `DraggableScrollableSheet.builder`가 넘겨주는 콘텐츠로 직접 임베드된다.
 class GraphChatPanel extends StatelessWidget {
   const GraphChatPanel({
     super.key,
@@ -17,80 +19,63 @@ class GraphChatPanel extends StatelessWidget {
     required this.busy,
     required this.typeColors,
     required this.nodeById,
-    required this.inputController,
     required this.scrollController,
-    required this.onSend,
     required this.onNodeHighlight,
     required this.onNodeSelect,
     required this.onClearHistory,
-    required     this.onCollapse,
-    this.activeCard,
+    this.title,
     this.listFooter,
-    this.modeLabel,
-    this.onExitMode,
-    this.onModeSelected,
-    this.inputEnabled = true,
-    this.inputHint = '아무 얘기나 해보세요…',
-    this.inputBarOverride,
     this.statusPill,
-    this.inputFocusNode,
   });
 
   final List<GraphChatMessage> messages;
   final bool busy;
   final Map<String, Color> typeColors;
   final Map<String, Map<String, dynamic>> nodeById;
-  final TextEditingController inputController;
   final ScrollController scrollController;
-  final ValueChanged<String> onSend;
   final void Function(Set<String> nodeIds) onNodeHighlight;
   final void Function(Map<String, dynamic> node) onNodeSelect;
   final VoidCallback onClearHistory;
-  final VoidCallback onCollapse;
 
-  /// Quiz cards etc. pinned above the input bar.
-  final Widget? activeCard;
+  /// Active chat-room title, shown in the sheet header (falls back to a
+  /// generic label). The screen no longer has an AppBar to display it.
+  final String? title;
 
   /// Optional block appended after messages inside the chat scroll (e.g. distill draft).
   final Widget? listFooter;
-
-  /// When non-null, a mode chip is shown with an X that calls [onExitMode].
-  final String? modeLabel;
-  final VoidCallback? onExitMode;
-
-  /// "+" menu action: 'journal' | 'composition' | 'word' | 'distill'.
-  final ValueChanged<String>? onModeSelected;
-
-  final bool inputEnabled;
-  final String inputHint;
-
-  /// When non-null, replaces the default [_InputBar] (e.g. journal compose).
-  final Widget? inputBarOverride;
 
   /// Floating status pill overlaid at the top of the chat feed while a journal
   /// pipeline runs (Feature C — non-invasive background processing). Chat stays
   /// usable; the pill reports progress and, when tapped, opens review.
   final Widget? statusPill;
 
-  /// Owned by the screen so it can re-request focus after a tap elsewhere
-  /// in the tree (e.g. a quiz card's "다음 문제" button) steals it away.
-  final FocusNode? inputFocusNode;
-
   @override
   Widget build(BuildContext context) {
     final shell = context.shell;
-    return Material(
-      color: shell.panelBackground,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          border: Border(left: BorderSide(color: shell.panelBorder)),
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: shell.panelBackground,
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(AppSpacing.radiusXl),
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.28),
+            blurRadius: 24,
+            offset: const Offset(0, -6),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            const _SheetDragHandle(),
             _PanelHeader(
+              title: title,
               hasMessages: messages.isNotEmpty,
-              onCollapse: onCollapse,
               onClear: onClearHistory,
             ),
             Expanded(
@@ -110,22 +95,6 @@ class GraphChatPanel extends StatelessWidget {
                 ],
               ),
             ),
-            if (activeCard != null) activeCard!,
-            if (modeLabel != null)
-              _ModeChip(
-                label: modeLabel!,
-                onExit: onExitMode,
-              ),
-            inputBarOverride ??
-                _InputBar(
-                  controller: inputController,
-                  busy: busy,
-                  enabled: inputEnabled,
-                  hint: inputHint,
-                  onSend: onSend,
-                  onModeSelected: onModeSelected,
-                  focusNode: inputFocusNode,
-                ),
           ],
         ),
       ),
@@ -164,8 +133,10 @@ class GraphChatPanel extends StatelessWidget {
     final trailing = (busy ? 1 : 0) + (hasFooter ? 1 : 0);
     return ListView.builder(
       controller: scrollController,
+      // Bottom padding clears the floating input pill docked over the sheet —
+      // without it the last message hides behind the composer.
       padding: const EdgeInsets.fromLTRB(
-          AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.md),
+          AppSpacing.md, AppSpacing.sm, AppSpacing.md, 96),
       itemCount: messages.length + trailing,
       itemBuilder: (context, i) {
         if (i >= messages.length) {
@@ -242,32 +213,56 @@ class GraphChatMessage {
       );
 }
 
-// ── Header & collapsed tab ────────────────────────────────────────────────────
+// ── Header & drag handle ───────────────────────────────────────────────────────
+
+/// Visual affordance signaling the sheet is draggable — map-app convention.
+/// Not functionally required for the drag itself (DraggableScrollableSheet
+/// already recognizes a drag gesture anywhere over its content), but without
+/// it there's no visual cue the sheet can be resized.
+class _SheetDragHandle extends StatelessWidget {
+  const _SheetDragHandle();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Center(
+        child: Container(
+          width: 36,
+          height: 4,
+          decoration: BoxDecoration(
+            color: context.shell.panelBorder,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _PanelHeader extends StatelessWidget {
   const _PanelHeader({
+    this.title,
     required this.hasMessages,
-    required this.onCollapse,
     required this.onClear,
   });
 
+  final String? title;
   final bool hasMessages;
-  final VoidCallback onCollapse;
   final VoidCallback onClear;
 
   @override
   Widget build(BuildContext context) {
     final shell = context.shell;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(AppSpacing.md, 8, 4, 8),
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: shell.panelBorder)),
-      ),
+    final resolvedTitle =
+        (title?.trim().isNotEmpty ?? false) ? title!.trim() : '그래프 대화';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.sm, 6),
       child: Row(
         children: [
           Container(
-            width: 24,
-            height: 24,
+            width: 26,
+            height: 26,
             decoration: const BoxDecoration(
               gradient: LinearGradient(
                 colors: [AppColors.hubGraph, AppColors.hubQuiz],
@@ -277,23 +272,18 @@ class _PanelHeader extends StatelessWidget {
               shape: BoxShape.circle,
             ),
             child: const Icon(Icons.auto_awesome_rounded,
-                size: 13, color: Colors.white),
+                size: 14, color: Colors.white),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 10),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('그래프 대화',
-                    style: TextStyle(
-                        color: shell.primaryText,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13.5)),
-                Text('일기 기억 기반',
-                    style: TextStyle(
-                        color: shell.mutedText,
-                        fontSize: 10.5)),
-              ],
+            child: Text(
+              resolvedTitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: shell.primaryText,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15),
             ),
           ),
           IconButton(
@@ -304,62 +294,99 @@ class _PanelHeader extends StatelessWidget {
             onPressed: hasMessages ? onClear : null,
             icon: const Icon(Icons.delete_sweep_outlined),
           ),
-          IconButton(
-            tooltip: '대화 패널 접기',
-            visualDensity: VisualDensity.compact,
-            iconSize: 18,
-            color: shell.primaryText.withValues(alpha: 0.7),
-            onPressed: onCollapse,
-            icon: const Icon(Icons.keyboard_double_arrow_right_rounded),
-          ),
         ],
       ),
     );
   }
 }
 
-/// 패널이 접혔을 때 오른쪽 가장자리에 보이는 탭.
-class GraphChatCollapsedTab extends StatelessWidget {
-  const GraphChatCollapsedTab({super.key, required this.onExpand});
+// ── Persistent input bar (lives OUTSIDE the draggable sheet) ───────────────────
 
-  final VoidCallback onExpand;
+/// Always-docked composer, rendered outside [GraphChatPanel]/the draggable
+/// sheet so it stays visible and tappable at every sheet extent — including
+/// the minimized state, where the sheet's own content is nearly fully hidden.
+class ChatInputBar extends StatelessWidget {
+  const ChatInputBar({
+    super.key,
+    required this.inputController,
+    required this.busy,
+    required this.onSend,
+    this.modeLabel,
+    this.onExitMode,
+    this.onModeSelected,
+    this.inputEnabled = true,
+    this.inputHint = '아무 얘기나 해보세요…',
+    this.inputBarOverride,
+    this.inputFocusNode,
+  });
+
+  final TextEditingController inputController;
+  final bool busy;
+  final ValueChanged<String> onSend;
+
+  /// When non-null, a mode chip is shown with an X that calls [onExitMode].
+  final String? modeLabel;
+  final VoidCallback? onExitMode;
+
+  /// "+" menu action: 'journal' | 'composition' | 'word' | 'distill'.
+  final ValueChanged<String>? onModeSelected;
+
+  final bool inputEnabled;
+  final String inputHint;
+
+  /// When non-null, replaces the default [_InputBar] (e.g. journal compose).
+  final Widget? inputBarOverride;
+
+  /// Owned by the screen so it can re-request focus after a tap elsewhere
+  /// in the tree (e.g. a quiz card's "다음 문제" button) steals it away.
+  final FocusNode? inputFocusNode;
 
   @override
   Widget build(BuildContext context) {
     final shell = context.shell;
-    return Material(
-      color: shell.panelBackground,
-      borderRadius: const BorderRadius.horizontal(left: Radius.circular(14)),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onExpand,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
-          decoration: BoxDecoration(
-            border: Border.all(color: shell.panelBorder),
-            borderRadius:
-                const BorderRadius.horizontal(left: Radius.circular(14)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.forum_rounded,
-                  size: 18, color: AppColors.hubGraph),
-              const SizedBox(height: 6),
-              RotatedBox(
-                quarterTurns: 3,
-                child: Text('대화',
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: shell.primaryText.withValues(alpha: 0.7))),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (modeLabel != null)
+              _ModeChip(label: modeLabel!, onExit: onExitMode),
+            // Gemini-style detached floating pill: opaque, rounded-full, soft
+            // shadow — reads as its own surface instead of a bar glued to the
+            // sheet (whose content used to show through behind it).
+            Container(
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                color: shell.barBackground,
+                borderRadius: BorderRadius.circular(28),
+                border: Border.all(color: shell.panelBorder),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: isDark ? 0.4 : 0.14),
+                    blurRadius: 18,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
               ),
-              const SizedBox(height: 4),
-              Icon(Icons.keyboard_double_arrow_left_rounded,
-                  size: 14,
-                  color: shell.mutedText),
-            ],
-          ),
+              child: Material(
+                color: Colors.transparent,
+                child: inputBarOverride ??
+                    _InputBar(
+                      controller: inputController,
+                      busy: busy,
+                      enabled: inputEnabled,
+                      hint: inputHint,
+                      onSend: onSend,
+                      onModeSelected: onModeSelected,
+                      focusNode: inputFocusNode,
+                    ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -441,102 +468,87 @@ class _InputBarState extends State<_InputBar> {
   Widget build(BuildContext context) {
     final canType = _canType;
     final shell = context.shell;
-    return Container(
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: shell.panelBorder)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(
-              AppSpacing.xs, AppSpacing.sm, AppSpacing.sm, AppSpacing.sm),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              if (widget.onModeSelected != null)
-                PopupMenuButton<String>(
-                  tooltip: '모드',
-                  icon: Icon(Icons.add_circle_outline_rounded,
-                      color: shell.primaryText.withValues(alpha: 0.75)),
-                  color: shell.barBackground,
-                  onSelected: widget.onModeSelected,
-                  itemBuilder: (_) => [
-                    PopupMenuItem(
-                      value: 'journal',
-                      child: _ModeMenuRow(
-                          icon: Icons.auto_stories_rounded,
-                          label: tr('chat.menu.journal')),
-                    ),
-                    PopupMenuItem(
-                      value: 'distill',
-                      child: _ModeMenuRow(
-                          icon: Icons.playlist_add_check_rounded,
-                          label: tr('chat.menu.distill')),
-                    ),
-                    PopupMenuItem(
-                      value: 'composition',
-                      child: _ModeMenuRow(
-                          icon: Icons.edit_note_rounded,
-                          label: tr('chat.menu.composition')),
-                    ),
-                    PopupMenuItem(
-                      value: 'word',
-                      child: _ModeMenuRow(
-                          icon: Icons.style_rounded,
-                          label: tr('chat.menu.word')),
-                    ),
-                  ],
+    // Chrome (pill surface, shadow, SafeArea) is owned by [ChatInputBar] —
+    // this is just the naked row so the pill stays one clean surface.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(6, 6, 8, 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          if (widget.onModeSelected != null)
+            PopupMenuButton<String>(
+              tooltip: '모드',
+              icon: Icon(Icons.add_circle_outline_rounded,
+                  color: shell.primaryText.withValues(alpha: 0.75)),
+              color: shell.barBackground,
+              onSelected: widget.onModeSelected,
+              itemBuilder: (_) => [
+                PopupMenuItem(
+                  value: 'journal',
+                  child: _ModeMenuRow(
+                      icon: Icons.auto_stories_rounded,
+                      label: tr('chat.menu.journal')),
                 ),
-              Expanded(
-                child: Focus(
-                  onKeyEvent: _onKey,
-                  child: TextField(
-                    controller: widget.controller,
-                    focusNode: _focusNode,
-                    enabled: canType,
-                    minLines: 1,
-                    maxLines: 4,
-                    style: TextStyle(
-                        color: shell.primaryText, fontSize: 13.5),
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: canType ? widget.onSend : null,
-                    decoration: InputDecoration(
-                      hintText: widget.hint,
-                      hintStyle: TextStyle(
-                          color: shell.mutedText,
-                          fontSize: 13),
-                      isDense: true,
-                      filled: true,
-                      fillColor: shell.subtleSurface,
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.md, vertical: 9),
-                      border: OutlineInputBorder(
-                        borderRadius:
-                            BorderRadius.circular(AppSpacing.radiusMd),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
-                  ),
+                PopupMenuItem(
+                  value: 'distill',
+                  child: _ModeMenuRow(
+                      icon: Icons.playlist_add_check_rounded,
+                      label: tr('chat.menu.distill')),
+                ),
+                PopupMenuItem(
+                  value: 'composition',
+                  child: _ModeMenuRow(
+                      icon: Icons.edit_note_rounded,
+                      label: tr('chat.menu.composition')),
+                ),
+                PopupMenuItem(
+                  value: 'word',
+                  child: _ModeMenuRow(
+                      icon: Icons.style_rounded,
+                      label: tr('chat.menu.word')),
+                ),
+              ],
+            ),
+          Expanded(
+            child: Focus(
+              onKeyEvent: _onKey,
+              child: TextField(
+                controller: widget.controller,
+                focusNode: _focusNode,
+                enabled: canType,
+                minLines: 1,
+                maxLines: 4,
+                style: TextStyle(color: shell.primaryText, fontSize: 14),
+                textInputAction: TextInputAction.send,
+                onSubmitted: canType ? widget.onSend : null,
+                decoration: InputDecoration(
+                  hintText: widget.hint,
+                  hintStyle: TextStyle(color: shell.mutedText, fontSize: 13.5),
+                  isDense: true,
+                  filled: false,
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.sm, vertical: 11),
                 ),
               ),
-              const SizedBox(width: AppSpacing.xs),
-              Material(
-                color: canType ? AppColors.hubGraph : shell.subtleSurface,
-                shape: const CircleBorder(),
-                clipBehavior: Clip.antiAlias,
-                child: InkWell(
-                  onTap: canType ? () => widget.onSend(widget.controller.text) : null,
-                  child: Padding(
-                    padding: const EdgeInsets.all(10),
-                    child: Icon(Icons.send_rounded,
-                        size: 18,
-                        color: canType ? Colors.white : shell.mutedText),
-                  ),
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
+          const SizedBox(width: AppSpacing.xs),
+          Material(
+            color: canType ? AppColors.hubGraph : shell.subtleSurface,
+            shape: const CircleBorder(),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap:
+                  canType ? () => widget.onSend(widget.controller.text) : null,
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Icon(Icons.send_rounded,
+                    size: 18, color: canType ? Colors.white : shell.mutedText),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

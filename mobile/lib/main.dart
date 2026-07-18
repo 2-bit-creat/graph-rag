@@ -13,7 +13,6 @@ import 'screens/consent_screen.dart';
 import 'screens/knowledge_graph_screen.dart';
 import 'theme/app_theme.dart';
 import 'theme/app_theme_controller.dart';
-import 'widgets/app_theme_toggle_button.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -79,8 +78,10 @@ class _ChatHomeShellState extends State<ChatHomeShell> {
   static const _sidebarExpandedWidth = 260.0;
   static const _sidebarCollapsedWidth = 56.0;
 
-  bool _chatOpen = true;
   bool _sidebarOpen = true;
+  // No AppBar anymore (the graph is full-bleed with a floating search pill),
+  // so the drawer is opened via this key from the pill's hamburger button.
+  final _graphScaffoldKey = GlobalKey<ScaffoldState>();
 
   @override
   void initState() {
@@ -106,46 +107,13 @@ class _ChatHomeShellState extends State<ChatHomeShell> {
     final wide = MediaQuery.sizeOf(context).width >= _wideBreakpoint;
     final shell = context.shell;
 
+    // Google-Maps grammar: no AppBar — the graph fills the screen edge to
+    // edge and the floating search pill (inside KnowledgeGraphView) carries
+    // the hamburger, theme toggle, and overflow actions. The chat-room title
+    // now lives in the bottom sheet's header.
     final graph = Scaffold(
+      key: _graphScaffoldKey,
       backgroundColor: shell.graphBackground,
-      appBar: AppBar(
-        backgroundColor: shell.appBarBackground,
-        foregroundColor: shell.appBarForeground,
-        elevation: 0,
-        scrolledUnderElevation: 0.5,
-        surfaceTintColor: Colors.transparent,
-        automaticallyImplyLeading: !wide,
-        leading: wide
-            ? null
-            : Builder(
-                builder: (ctx) => IconButton(
-                  icon: const Icon(Icons.menu_rounded),
-                  tooltip: tr('shell.roomsMenu'),
-                  onPressed: () => Scaffold.of(ctx).openDrawer(),
-                ),
-              ),
-        title: ListenableBuilder(
-          listenable: chatSession,
-          builder: (context, _) {
-            final title =
-                (chatSession.activeSession?['title'] as String?)?.trim();
-            return Text(title?.isNotEmpty == true ? title! : tr('shell.graphChat'));
-          },
-        ),
-        actions: [
-          const AppThemeToggleButton(),
-          IconButton(
-            tooltip: _chatOpen ? tr('shell.collapseChat') : tr('shell.expandChat'),
-            icon: Icon(
-              _chatOpen
-                  ? Icons.chat_bubble_rounded
-                  : Icons.chat_bubble_outline_rounded,
-              color: _chatOpen ? AppColors.hubGraph : null,
-            ),
-            onPressed: () => setState(() => _chatOpen = !_chatOpen),
-          ),
-        ],
-      ),
       drawer: wide
           ? null
           : Drawer(
@@ -154,8 +122,9 @@ class _ChatHomeShellState extends State<ChatHomeShell> {
               ),
             ),
       body: KnowledgeGraphView(
-        chatOpen: _chatOpen,
-        onChatOpenChanged: (open) => setState(() => _chatOpen = open),
+        onOpenMenu: wide
+            ? null
+            : () => _graphScaffoldKey.currentState?.openDrawer(),
       ),
     );
 
