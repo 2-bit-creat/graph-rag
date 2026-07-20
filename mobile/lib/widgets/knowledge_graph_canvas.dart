@@ -43,6 +43,8 @@ class KnowledgeGraphCanvas extends StatefulWidget {
     this.typeFilter = '전체',
     this.focusMode = true,
     this.compactMode = false,
+    this.showControls = true,
+    this.controlsBottomInset = 0,
     this.hideHeadNodes = false,
     this.glowNodeIds = const {},
     this.glowSeq = 0,
@@ -60,6 +62,8 @@ class KnowledgeGraphCanvas extends StatefulWidget {
   final String typeFilter;
   final bool focusMode;
   final bool compactMode;
+  final bool showControls;
+  final double controlsBottomInset;
 
   /// 화자 숨김(Speaker-to-Color) 모드: head(화자·출처) 노드와 그 귀속 엣지를
   /// 물리 엔진 데이터에서 통째로 제거하고, Statement를 화자색으로 인코딩한다.
@@ -1489,7 +1493,7 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
                 ),
               ),
             ),
-            if (widget.compactMode)
+            if (widget.compactMode && widget.showControls)
               const Positioned(
                 left: 10,
                 top: 8,
@@ -1501,12 +1505,13 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
                   ),
                 ),
               ),
-            Positioned(
-              right: 12,
-              bottom: 12,
-              child: AnimatedBuilder(
-                animation: _transformationController,
-                builder: (context, _) => _ZoomControls(
+            if (widget.showControls)
+              Positioned(
+                right: 12,
+                bottom: 12 + widget.controlsBottomInset,
+                child: AnimatedBuilder(
+                  animation: _transformationController,
+                  builder: (context, _) => _ZoomControls(
                   scalePercent: (_currentScale * 100).round(),
                   showNodeLabels: _showNodeLabels,
                   showEdgeLabels: _showEdgeLabels,
@@ -1531,9 +1536,9 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
                     _showEdgeLabels = !_showEdgeLabels;
                     _frameNotifier.value++;
                   }),
+                  ),
                 ),
               ),
-            ),
           ],
         );
       },

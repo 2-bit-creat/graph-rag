@@ -157,13 +157,17 @@ class _ChatSidebarState extends State<ChatSidebar> {
                     style:
                         TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
               ),
-              if (widget.onCollapse != null)
+              if (widget.onCollapse != null || widget.onNavigate != null)
                 IconButton(
                   tooltip: '사이드바 접기',
                   visualDensity: VisualDensity.compact,
                   iconSize: 20,
-                  onPressed: widget.onCollapse,
-                  icon: const Icon(Icons.keyboard_double_arrow_left_rounded),
+                  onPressed: widget.onCollapse ?? widget.onNavigate,
+                  icon: Icon(
+                    widget.onCollapse != null
+                        ? Icons.keyboard_double_arrow_left_rounded
+                        : Icons.close_rounded,
+                  ),
                 ),
             ],
           ),

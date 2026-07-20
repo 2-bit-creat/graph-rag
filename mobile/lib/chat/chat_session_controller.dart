@@ -705,7 +705,7 @@ class ChatSessionController extends ChangeNotifier {
     // Show it in the live feed immediately — this used to only persist to
     // the backend, so every answer past the first (loaded on the next full
     // history fetch) was invisible until the room was reopened.
-    final content = '📝 퀴즈: $answer';
+    final content = '퀴즈: $answer';
     _messages.add(GraphChatMessage(
       role: 'assistant',
       kind: 'quiz_result',

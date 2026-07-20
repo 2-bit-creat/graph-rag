@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 
 import 'config.dart';
+import 'json_compat.dart';
 
 export 'config.dart' show apiBaseUrl, resolveMediaUrl, resolvedApiBaseUrl;
 
@@ -28,6 +29,13 @@ class ApiClient {
           options.headers['Authorization'] = 'Bearer $token';
         }
         handler.next(options);
+      },
+      onResponse: (response, handler) {
+        // Dio's web adapter can expose JSON objects as LegacyJavaScriptObject.
+        // Normalize them once so the rest of the client can safely use Maps
+        // and Lists on every platform.
+        response.data = jsonValue(response.data);
+        handler.next(response);
       },
     ));
   }
@@ -711,13 +719,13 @@ class ApiClient {
 
   Future<List<dynamic>> graphNodeTypes() async {
     final resp = await _dio.get('/graph/node-types');
-    return resp.data as List<dynamic>;
+    return jsonValue(resp.data) as List<dynamic>;
   }
 
   Future<Map<String, dynamic>> getGraph() async {
     try {
       final resp = await _dio.get('/graph');
-      return resp.data as Map<String, dynamic>;
+      return jsonMap(resp.data);
     } on DioException catch (e) {
       throw _friendlyError(e, '지식 그래프');
     }
@@ -726,7 +734,7 @@ class ApiClient {
   Future<Map<String, dynamic>> getNode(String nodeId) async {
     try {
       final resp = await _dio.get('/graph/nodes/$nodeId');
-      return resp.data as Map<String, dynamic>;
+      return jsonMap(resp.data);
     } on DioException catch (e) {
       throw _friendlyError(e, '노드 상세');
     }

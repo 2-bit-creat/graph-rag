@@ -472,14 +472,29 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
             ],
           ),
           const SizedBox(height: 8),
-          Text(
-            blank,
-            softWrap: true,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: color,
-                  fontWeight: FontWeight.w800,
-                  height: 1.35,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Text(
+                  blank,
+                  softWrap: true,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: color,
+                        fontWeight: FontWeight.w800,
+                        height: 1.35,
+                      ),
                 ),
+              ),
+              if (_showAudio) ...[
+                const SizedBox(width: 8),
+                QuizAudioButton(
+                  key: widget.audioButtonKey,
+                  audioUrl: widget.audioUrl,
+                  iconSize: 18,
+                ),
+              ],
+            ],
           ),
         ],
       ),
@@ -560,16 +575,6 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
                   iconSize: 18,
                 ),
             ],
-          ),
-        ] else if (_showAudio) ...[
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: QuizAudioButton(
-              key: widget.audioButtonKey,
-              audioUrl: widget.audioUrl,
-              iconSize: 18,
-            ),
           ),
         ],
         if (!widget.externalInput && !_solved) ...[

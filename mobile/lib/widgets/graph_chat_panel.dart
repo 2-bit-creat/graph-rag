@@ -26,6 +26,9 @@ class GraphChatPanel extends StatelessWidget {
     this.title,
     this.listFooter,
     this.statusPill,
+    this.onHandleDragUpdate,
+    this.onHandleDragEnd,
+    this.onPanelTap,
   });
 
   final List<GraphChatMessage> messages;
@@ -48,6 +51,9 @@ class GraphChatPanel extends StatelessWidget {
   /// pipeline runs (Feature C — non-invasive background processing). Chat stays
   /// usable; the pill reports progress and, when tapped, opens review.
   final Widget? statusPill;
+  final ValueChanged<double>? onHandleDragUpdate;
+  final VoidCallback? onHandleDragEnd;
+  final VoidCallback? onPanelTap;
 
   @override
   Widget build(BuildContext context) {
@@ -67,16 +73,16 @@ class GraphChatPanel extends StatelessWidget {
           ),
         ],
       ),
-      child: Material(
-        color: Colors.transparent,
-        child: Column(
+      child: Listener(
+        onPointerDown: onPanelTap == null ? null : (_) => onPanelTap!(),
+        child: Material(
+          color: Colors.transparent,
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const _SheetDragHandle(),
-            _PanelHeader(
-              title: title,
-              hasMessages: messages.isNotEmpty,
-              onClear: onClearHistory,
+            _SheetDragHandle(
+              onDragUpdate: onHandleDragUpdate,
+              onDragEnd: onHandleDragEnd,
             ),
             Expanded(
               child: Stack(
@@ -98,6 +104,7 @@ class GraphChatPanel extends StatelessWidget {
           ],
         ),
       ),
+      ),
     );
   }
 
@@ -105,26 +112,35 @@ class GraphChatPanel extends StatelessWidget {
     final shell = context.shell;
     final hasFooter = listFooter != null;
     if (messages.isEmpty && !busy && !hasFooter) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.lg),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.forum_rounded,
-                  size: 32,
-                  color: shell.mutedText.withValues(alpha: 0.6)),
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                tr('chat.emptyTitle'),
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: shell.mutedText,
-                  height: 1.45,
-                  fontSize: 12.5,
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onVerticalDragUpdate: onHandleDragUpdate == null
+            ? null
+            : (details) => onHandleDragUpdate!(details.primaryDelta ?? 0),
+        onVerticalDragEnd: onHandleDragEnd == null
+            ? null
+            : (_) => onHandleDragEnd!(),
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.lg),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.forum_rounded,
+                    size: 32,
+                    color: shell.mutedText.withValues(alpha: 0.6)),
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  tr('chat.emptyTitle'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: shell.mutedText,
+                    height: 1.45,
+                    fontSize: 12.5,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       );
@@ -220,19 +236,32 @@ class GraphChatMessage {
 /// already recognizes a drag gesture anywhere over its content), but without
 /// it there's no visual cue the sheet can be resized.
 class _SheetDragHandle extends StatelessWidget {
-  const _SheetDragHandle();
+  const _SheetDragHandle({this.onDragUpdate, this.onDragEnd});
+
+  final ValueChanged<double>? onDragUpdate;
+  final VoidCallback? onDragEnd;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Center(
-        child: Container(
-          width: 36,
-          height: 4,
-          decoration: BoxDecoration(
-            color: context.shell.panelBorder,
-            borderRadius: BorderRadius.circular(2),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onVerticalDragUpdate: onDragUpdate == null
+          ? null
+          : (details) => onDragUpdate!(details.primaryDelta ?? 0),
+      onVerticalDragEnd: onDragEnd == null ? null : (_) => onDragEnd!(),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: SizedBox(
+          height: 28,
+          child: Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: context.shell.panelBorder,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
           ),
         ),
       ),
@@ -348,7 +377,7 @@ class ChatInputBar extends StatelessWidget {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -362,7 +391,7 @@ class ChatInputBar extends StatelessWidget {
               clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
                 color: shell.barBackground,
-                borderRadius: BorderRadius.circular(28),
+              borderRadius: BorderRadius.circular(24),
                 border: Border.all(color: shell.panelBorder),
                 boxShadow: [
                   BoxShadow(
@@ -471,9 +500,9 @@ class _InputBarState extends State<_InputBar> {
     // Chrome (pill surface, shadow, SafeArea) is owned by [ChatInputBar] —
     // this is just the naked row so the pill stays one clean surface.
     return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 6, 8, 6),
+      padding: const EdgeInsets.fromLTRB(3, 1, 5, 1),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           if (widget.onModeSelected != null)
             PopupMenuButton<String>(
@@ -517,7 +546,7 @@ class _InputBarState extends State<_InputBar> {
                 focusNode: _focusNode,
                 enabled: canType,
                 minLines: 1,
-                maxLines: 4,
+                maxLines: 2,
                 style: TextStyle(color: shell.primaryText, fontSize: 14),
                 textInputAction: TextInputAction.send,
                 onSubmitted: canType ? widget.onSend : null,
@@ -528,7 +557,7 @@ class _InputBarState extends State<_InputBar> {
                   filled: false,
                   border: InputBorder.none,
                   contentPadding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.sm, vertical: 11),
+                      horizontal: AppSpacing.sm, vertical: 2),
                 ),
               ),
             ),
@@ -542,7 +571,7 @@ class _InputBarState extends State<_InputBar> {
               onTap:
                   canType ? () => widget.onSend(widget.controller.text) : null,
               child: Padding(
-                padding: const EdgeInsets.all(10),
+                padding: const EdgeInsets.all(6),
                 child: Icon(Icons.send_rounded,
                     size: 18, color: canType ? Colors.white : shell.mutedText),
               ),
@@ -586,7 +615,9 @@ class _ModeChip extends StatelessWidget {
       child: Align(
         alignment: Alignment.centerLeft,
         child: Material(
-          color: AppColors.hubGraph.withValues(alpha: 0.18),
+          color: context.shell.barBackground,
+          elevation: 3,
+          shadowColor: Colors.black.withValues(alpha: 0.22),
           borderRadius: BorderRadius.circular(20),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(10, 5, 4, 5),

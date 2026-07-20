@@ -132,7 +132,12 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   bool _graphReloadScheduled = false;
 
   // ── 바텀시트 (지도 앱 스타일: 40% 기본 / 90% 포커스 / 최소화-입력줄만) ────
-  final _sheetController = DraggableScrollableController();
+  final _chatScrollController = ScrollController();
+  bool _chatVisible = true;
+  double _chatAreaHeight = 1;
+  double _chatSheetSize = _sheetDefaultSize;
+  double _chatRestoredSize = _sheetDefaultSize;
+  bool _graphToolsVisible = true;
   static const double _sheetDefaultSize = 0.40; // 상태 A
   static const double _sheetFocusSize = 0.90; // 상태 B
   bool _chatFocused = false; // 스크림 표시 여부 — 포커스에서만 파생, 수동 드래그와 무관
@@ -153,29 +158,52 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   void _onChatFocusChanged() {
     final focused = _chatInputFocusNode.hasFocus;
     if (focused == _chatFocused) return;
+    if (focused && !_chatVisible) {
+      setState(() => _chatVisible = true);
+      _animateChatSheet(_chatRestoredSize, remember: false);
+    }
     setState(() => _chatFocused = focused);
-    if (!_sheetController.isAttached) return;
-    _sheetController.animateTo(
-      focused ? _sheetFocusSize : _sheetDefaultSize,
-      duration: Duration(milliseconds: focused ? 260 : 220),
-      curve: focused ? Curves.easeOutCubic : Curves.easeIn,
+    _animateChatSheet(focused ? _sheetFocusSize : _chatRestoredSize);
+  }
+
+  void _animateChatSheet(double target, {bool remember = true}) {
+    final min = _sheetMinChildSize(context, _chatAreaHeight);
+    final next = target.clamp(min, _sheetFocusSize).toDouble();
+    if (remember && _chatVisible && next > min + 0.01) {
+      _chatRestoredSize = next;
+    }
+    setState(() {
+      _chatSheetSize = next;
+    });
+  }
+
+  void _toggleChatVisibility() {
+    final nextVisible = !_chatVisible;
+    _chatInputFocusNode.unfocus();
+    final min = _sheetMinChildSize(context, _chatAreaHeight);
+    if (!nextVisible) {
+      _chatRestoredSize = _chatSheetSize > min + 0.01
+          ? _chatSheetSize
+          : _chatRestoredSize;
+    }
+    setState(() => _chatVisible = nextVisible);
+    _animateChatSheet(
+      nextVisible ? _chatRestoredSize : min,
+      remember: false,
     );
   }
 
   /// 핀 성공 등으로 채팅을 눈에 띄게 해야 할 때 — 이미 40% 이상이면 그대로 둔다.
   void _ensureChatVisible() {
-    if (!_sheetController.isAttached) return;
-    if (_sheetController.size < _sheetDefaultSize) {
-      _sheetController.animateTo(
-        _sheetDefaultSize,
-        duration: const Duration(milliseconds: 240),
-        curve: Curves.easeOutCubic,
-      );
+    if (!_chatVisible) {
+      setState(() => _chatVisible = true);
+      _animateChatSheet(_chatRestoredSize, remember: false);
     }
   }
 
   Widget _buildGraphChatPanel({
     required ScrollController scrollController,
+    required double graphAreaHeight,
     Map<String, Color> typeColors = const {},
     Map<String, Map<String, dynamic>> nodeById = const {},
   }) {
@@ -195,6 +223,21 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
       statusPill: journalTask.showsPill
           ? JournalStatusPill(onTap: _onStatusPillTap)
           : null,
+      onPanelTap: _chatVisible ? null : () {
+        _chatInputFocusNode.unfocus();
+        setState(() => _chatVisible = true);
+        _animateChatSheet(_chatRestoredSize, remember: false);
+      },
+      onHandleDragUpdate: (delta) {
+        if (graphAreaHeight <= 0) return;
+        final next = (_chatSheetSize - delta / graphAreaHeight)
+            .clamp(_sheetMinChildSize(context, graphAreaHeight), _sheetFocusSize)
+            .toDouble();
+        setState(() {
+          _chatSheetSize = next;
+          if (_chatVisible) _chatRestoredSize = next;
+        });
+      },
     );
   }
 
@@ -225,21 +268,18 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     Map<String, Color> typeColors = const {},
     Map<String, Map<String, dynamic>> nodeById = const {},
   }) {
-    return DraggableScrollableSheet(
-      controller: _sheetController,
-      initialChildSize: _sheetDefaultSize,
-      minChildSize: _sheetMinChildSize(context, graphAreaHeight),
-      maxChildSize: _sheetFocusSize,
-      snap: true,
-      snapSizes: const [_sheetDefaultSize],
-      builder: (context, sheetScrollController) {
-        _activeChatScrollController = sheetScrollController;
-        return _buildGraphChatPanel(
-          scrollController: sheetScrollController,
-          typeColors: typeColors,
-          nodeById: nodeById,
-        );
-      },
+    _activeChatScrollController = _chatScrollController;
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      height: _chatSheetSize * graphAreaHeight,
+      child: _buildGraphChatPanel(
+        scrollController: _chatScrollController,
+        graphAreaHeight: graphAreaHeight,
+        typeColors: typeColors,
+        nodeById: nodeById,
+      ),
     );
   }
 
@@ -259,25 +299,19 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final graphAreaHeight = constraints.maxHeight;
+        _chatAreaHeight = graphAreaHeight;
         return Stack(
           fit: StackFit.expand,
           children: [
-            AnimatedBuilder(
-              animation: _sheetController,
-              builder: (context, _) {
-                final sheetPx = (_sheetController.isAttached
-                        ? _sheetController.size
-                        : _sheetDefaultSize) *
-                    graphAreaHeight;
-                return _canvasWithCard(
-                  nodes: nodes,
-                  edges: edges,
-                  typeColors: typeColors,
-                  compactMode: compactMode,
-                  overlayTopInset: overlayTopInset,
-                  selectionCardBottom: sheetPx + 12,
-                );
-              },
+            _canvasWithCard(
+              nodes: nodes,
+              edges: edges,
+              typeColors: typeColors,
+              compactMode: compactMode,
+              overlayTopInset: overlayTopInset,
+              selectionCardBottom: _chatSheetSize * graphAreaHeight + 12,
+              controlsBottomInset: 92,
+              controlsVisible: _graphToolsVisible,
             ),
             ...overlays,
             _ChatFocusScrim(
@@ -344,7 +378,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     _chatInputFocusNode.removeListener(_onChatFocusChanged);
     _chatInputController.dispose();
     _chatInputFocusNode.dispose();
-    _sheetController.dispose();
+    _chatScrollController.dispose();
     super.dispose();
   }
 
@@ -627,6 +661,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   // ── + 버튼 모드 시스템 ───────────────────────────────────────────────────
 
   void _onModeSelected(String action) {
+    // Opening the mode menu must never resize the chat sheet. If the chat was
+    // hidden, restore its previous height before entering a mode.
+    _ensureChatVisible();
     switch (action) {
       case 'journal':
         // One journal at a time: block only a NEW journal while one is busy.
@@ -1273,6 +1310,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     bool compactMode = false,
     double overlayTopInset = 8,
     double selectionCardBottom = 12,
+    double controlsBottomInset = 0,
+    bool controlsVisible = true,
   }) {
     final nodeById = buildNodeById(nodes);
     final selected = _selectedNode ?? _selectedEdge;
@@ -1282,28 +1321,35 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
         KnowledgeGraphCanvas(
           key: _canvasKey,
           compactMode: compactMode,
+          showControls: controlsVisible,
           nodes: nodes,
           edges: edges,
           typeColors: typeColors,
           selectedNodeId: _selectedNodeId,
           selectedEdgeId: _selectedEdgeId,
+          controlsBottomInset: controlsBottomInset,
           highlightQuery: _query,
           typeFilter: _typeFilter,
           hideHeadNodes: _hideHeads,
           glowNodeIds: _glowIds,
           glowSeq: _glowSeq,
-          onNodeTap: _selectNode,
+          onNodeTap: (node) {
+            _selectNode(node);
+          },
           onEdgeTap: _selectEdge,
-          onBackgroundTap: _clearSelection,
+          onBackgroundTap: () {
+            _clearSelection();
+          },
         ),
         // 모드 토글 — 기본 ↔ 화자 숨김(색상 인코딩).
-        Positioned(
-          top: compactMode ? 26 : overlayTopInset,
-          right: 12,
-          child: _HideHeadsToggle(active: _hideHeads, onTap: _toggleHideHeads),
-        ),
+        if (compactMode)
+          Positioned(
+            top: compactMode ? 26 : overlayTopInset,
+            right: 12,
+            child: _HideHeadsToggle(active: _hideHeads, onTap: _toggleHideHeads),
+          ),
         // 화자 색상 범례: head가 안 보이는 동안 색을 해독할 유일한 단서.
-        if (_hideHeads)
+        if (_hideHeads && compactMode)
           Positioned(
             top: compactMode ? 26 : overlayTopInset,
             left: 10,
@@ -1425,45 +1471,51 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
       typeColors: typeColors,
       overlayTopInset: chipsTop + 44,
       overlays: [
-        Positioned(
-          top: chipsTop,
-          left: 0,
-          right: 0,
-          child: OntologyLegendBar(
-            entityTypes: _legendEntityTypes(entityTypes),
-            typeColors: typeColors,
-            selectedType: _typeFilter,
-            onTypeSelected: (t) => setState(() => _typeFilter = t),
-          ),
-        ),
-        Positioned(
-          top: pillTop,
-          left: 12,
-          right: 12,
-          child: _FloatingSearchBar(
-            matchCount: _queryMatchCount(nodes),
-            nodeCount: nodes.length,
-            edgeCount: edges.length,
-            onQueryChanged: (v) => setState(() => _query = v),
-            onOpenMenu: widget.onOpenMenu,
-            onRefresh: () {
-              _load();
-              chatSession.loadSessions();
-            },
-            onOntology: () => OntologySettingsSheet.show(
-              context,
-              onApplied: _load,
-              onFilterByType: (type) => setState(() => _typeFilter = type),
+        if (_graphToolsVisible)
+          Positioned(
+            top: chipsTop,
+            left: 0,
+            right: 0,
+            child: OntologyLegendBar(
+              entityTypes: _legendEntityTypes(entityTypes),
+              typeColors: typeColors,
+              selectedType: _typeFilter,
+              onTypeSelected: (t) => setState(() => _typeFilter = t),
             ),
-            onTrash: () => Navigator.push(
-              context,
-              MaterialPageRoute<void>(
-                  builder: (_) => const GraphTrashScreen()),
-            ).then((_) => _load()),
-            onClearGraph: _clearGraph,
-            onAddNode: _addNode,
           ),
-        ),
+        Positioned(
+            top: pillTop,
+            left: 12,
+            right: 12,
+            child: _FloatingSearchBar(
+              matchCount: _queryMatchCount(nodes),
+              nodeCount: nodes.length,
+              edgeCount: edges.length,
+              onQueryChanged: (v) => setState(() => _query = v),
+              onOpenMenu: widget.onOpenMenu,
+              onRefresh: () {
+                _load();
+                chatSession.loadSessions();
+              },
+              onOntology: () => OntologySettingsSheet.show(
+                context,
+                onApplied: _load,
+                onFilterByType: (type) => setState(() => _typeFilter = type),
+              ),
+              onTrash: () => Navigator.push(
+                context,
+                MaterialPageRoute<void>(
+                    builder: (_) => const GraphTrashScreen()),
+              ).then((_) => _load()),
+              onClearGraph: _clearGraph,
+              onAddNode: _addNode,
+              onToggleChat: _toggleChatVisibility,
+              chatVisible: _chatVisible,
+              onToggleGraphTools: () =>
+                  setState(() => _graphToolsVisible = !_graphToolsVisible),
+              graphToolsVisible: _graphToolsVisible,
+            ),
+          ),
       ],
     );
   }
@@ -1635,6 +1687,10 @@ class _FloatingSearchBar extends StatelessWidget {
     required this.onTrash,
     required this.onClearGraph,
     required this.onAddNode,
+    required this.onToggleChat,
+    required this.chatVisible,
+    required this.onToggleGraphTools,
+    required this.graphToolsVisible,
     this.onOpenMenu,
   });
 
@@ -1647,20 +1703,24 @@ class _FloatingSearchBar extends StatelessWidget {
   final VoidCallback onTrash;
   final VoidCallback onClearGraph;
   final VoidCallback onAddNode;
+  final VoidCallback onToggleChat;
+  final bool chatVisible;
+  final VoidCallback onToggleGraphTools;
+  final bool graphToolsVisible;
   final VoidCallback? onOpenMenu;
 
   @override
   Widget build(BuildContext context) {
     final shell = context.shell;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final surface = isDark ? const Color(0xF21A1A22) : Colors.white;
+    final surface = isDark ? const Color(0xE91A1A22) : const Color(0xF2FFFFFF);
     final hintColor = isDark ? const Color(0xFF7B8494) : AppColors.textMuted;
     return Container(
-      height: 52,
+      height: 48,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: surface,
-        borderRadius: BorderRadius.circular(26),
+        borderRadius: BorderRadius.circular(24),
         border: Border.all(color: shell.panelBorder),
         boxShadow: [
           BoxShadow(
@@ -1699,14 +1759,26 @@ class _FloatingSearchBar extends StatelessWidget {
                         : AppColors.accent,
                   ),
                   isDense: true,
+                  filled: true,
+                  fillColor: Colors.transparent,
                   border: InputBorder.none,
                   contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 6, vertical: 15),
+                      horizontal: 6, vertical: 11),
                 ),
                 onChanged: onQueryChanged,
               ),
             ),
             const AppThemeToggleButton(),
+            IconButton(
+              tooltip: chatVisible ? '梨꾪똿 ?④湲' : '梨꾪똿 ?쒖떆',
+              onPressed: onToggleChat,
+              icon: Icon(
+                chatVisible
+                    ? Icons.keyboard_arrow_down_rounded
+                    : Icons.keyboard_arrow_up_rounded,
+                color: shell.primaryText,
+              ),
+            ),
             // Destructive / rarely-used actions live behind the overflow menu
             // so they can't be fat-fingered while exploring.
             PopupMenuButton<String>(
@@ -1719,8 +1791,26 @@ class _FloatingSearchBar extends StatelessWidget {
                 if (v == 'addNode') onAddNode();
                 if (v == 'trash') onTrash();
                 if (v == 'clear') onClearGraph();
+                if (v == 'toggleGraphTools') onToggleGraphTools();
               },
               itemBuilder: (_) => [
+                PopupMenuItem(
+                  value: 'toggleGraphTools',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      graphToolsVisible
+                          ? Icons.visibility_off_outlined
+                          : Icons.visibility_outlined,
+                      color: AppColors.textMuted,
+                    ),
+                    title: Text(
+                      graphToolsVisible ? '그래프 도구 숨김' : '그래프 도구 표시',
+                      style: TextStyle(color: shell.primaryText, fontSize: 13),
+                    ),
+                  ),
+                ),
                 PopupMenuItem(
                   enabled: false,
                   height: 32,
