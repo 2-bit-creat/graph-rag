@@ -17,9 +17,10 @@ class _CardShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 600;
     return Container(
-      margin: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-      padding: const EdgeInsets.all(14),
+      margin: EdgeInsets.fromLTRB(8, compact ? 2 : 4, 8, 8),
+      padding: EdgeInsets.all(compact ? 10 : 14),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(14),
@@ -48,7 +49,7 @@ class _CardShell extends StatelessWidget {
                   ),
               ],
             ),
-          if (title != null) const SizedBox(height: 10),
+          if (title != null) SizedBox(height: compact ? 6 : 10),
           child,
         ],
       ),

@@ -29,6 +29,7 @@ class GraphChatPanel extends StatelessWidget {
     this.onHandleDragUpdate,
     this.onHandleDragEnd,
     this.onPanelTap,
+    this.quizMode = false,
   });
 
   final List<GraphChatMessage> messages;
@@ -54,10 +55,12 @@ class GraphChatPanel extends StatelessWidget {
   final ValueChanged<double>? onHandleDragUpdate;
   final VoidCallback? onHandleDragEnd;
   final VoidCallback? onPanelTap;
+  final bool quizMode;
 
   @override
   Widget build(BuildContext context) {
     final shell = context.shell;
+    final safeTop = MediaQuery.paddingOf(context).top;
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
@@ -85,21 +88,30 @@ class GraphChatPanel extends StatelessWidget {
               onDragEnd: onHandleDragEnd,
             ),
             Expanded(
-              child: Stack(
-                children: [
-                  Positioned.fill(child: _buildMessageList(context)),
-                  if (statusPill != null)
-                    Positioned(
-                      top: 8,
-                      left: 0,
-                      right: 0,
-                      child: Align(
-                        alignment: Alignment.topCenter,
-                        child: statusPill,
-                      ),
+              child: quizMode && listFooter != null
+                  ? SingleChildScrollView(
+                      padding: EdgeInsets.fromLTRB(
+                          AppSpacing.md,
+                          AppSpacing.sm + safeTop,
+                          AppSpacing.md,
+                          108),
+                      child: listFooter,
+                    )
+                  : Stack(
+                      children: [
+                        Positioned.fill(child: _buildMessageList(context)),
+                        if (statusPill != null)
+                          Positioned(
+                            top: 8,
+                            left: 0,
+                            right: 0,
+                            child: Align(
+                              alignment: Alignment.topCenter,
+                              child: statusPill,
+                            ),
+                          ),
+                      ],
                     ),
-                ],
-              ),
             ),
           ],
         ),
@@ -510,6 +522,12 @@ class _InputBarState extends State<_InputBar> {
               icon: Icon(Icons.add_circle_outline_rounded,
                   color: shell.primaryText.withValues(alpha: 0.75)),
               color: shell.barBackground,
+              elevation: 10,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
+              menuPadding: const EdgeInsets.symmetric(vertical: 6),
+              offset: const Offset(0, -8),
               onSelected: widget.onModeSelected,
               itemBuilder: (_) => [
                 PopupMenuItem(
@@ -657,30 +675,39 @@ class _UserBubble extends StatelessWidget {
     // Keep the subtle translucent bubble in dark mode; go solid indigo in light
     // mode so the white text stays readable over the near-white panel.
     final dark = Theme.of(context).brightness == Brightness.dark;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.sm, left: 24),
-      child: Align(
-        alignment: Alignment.centerRight,
-        child: Container(
-          padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.sm, vertical: 7),
-          decoration: BoxDecoration(
-            color: dark
-                ? AppColors.hubGraph.withValues(alpha: 0.28)
-                : AppColors.hubGraph,
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(AppSpacing.radiusMd),
-              topRight: Radius.circular(AppSpacing.radiusMd),
-              bottomLeft: Radius.circular(AppSpacing.radiusMd),
-              bottomRight: Radius.circular(4),
+    return LayoutBuilder(
+      builder: (context, constraints) => Padding(
+        padding: const EdgeInsets.only(bottom: AppSpacing.sm, left: 24),
+        child: Align(
+          alignment: Alignment.centerRight,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              // Keep long user messages readable on narrow phones instead of
+              // letting the bubble consume the entire chat width.
+              maxWidth: constraints.maxWidth.clamp(240.0, 520.0) * 0.84,
             ),
-          ),
-          child: ChatRichText(
-            text: text,
-            style: const TextStyle(
-              color: AppColors.graphLabelLight,
-              height: 1.4,
-              fontSize: 13,
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.sm, vertical: 7),
+              decoration: BoxDecoration(
+                color: dark
+                    ? AppColors.hubGraph.withValues(alpha: 0.28)
+                    : AppColors.hubGraph,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(AppSpacing.radiusMd),
+                  topRight: Radius.circular(AppSpacing.radiusMd),
+                  bottomLeft: Radius.circular(AppSpacing.radiusMd),
+                  bottomRight: Radius.circular(4),
+                ),
+              ),
+              child: ChatRichText(
+                text: text,
+                style: const TextStyle(
+                  color: AppColors.graphLabelLight,
+                  height: 1.4,
+                  fontSize: 13,
+                ),
+              ),
             ),
           ),
         ),

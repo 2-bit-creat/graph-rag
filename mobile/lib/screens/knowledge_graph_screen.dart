@@ -138,6 +138,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   double _chatSheetSize = _sheetDefaultSize;
   double _chatRestoredSize = _sheetDefaultSize;
   bool _graphToolsVisible = true;
+  bool _chatExpandedForInput = false;
+  bool get _isQuizMode =>
+      chatSession.mode == ChatMode.quizWord ||
+      chatSession.mode == ChatMode.quizComposition;
   static const double _sheetDefaultSize = 0.40; // 상태 A
   static const double _sheetFocusSize = 0.90; // 상태 B
   bool _chatFocused = false; // 스크림 표시 여부 — 포커스에서만 파생, 수동 드래그와 무관
@@ -157,13 +161,19 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
 
   void _onChatFocusChanged() {
     final focused = _chatInputFocusNode.hasFocus;
-    if (focused == _chatFocused) return;
-    if (focused && !_chatVisible) {
-      setState(() => _chatVisible = true);
-      _animateChatSheet(_chatRestoredSize, remember: false);
+    if (focused) {
+      if (!_chatVisible) setState(() => _chatVisible = true);
+      setState(() {
+        _chatFocused = true;
+        _chatExpandedForInput = true;
+      });
+      _animateChatSheet(_sheetFocusSize);
+      return;
     }
-    setState(() => _chatFocused = focused);
-    _animateChatSheet(focused ? _sheetFocusSize : _chatRestoredSize);
+
+    // Losing focus should not collapse the chat. A downward drag is the
+    // explicit user action that restores the normal sheet height.
+    if (_chatFocused) setState(() => _chatFocused = false);
   }
 
   void _animateChatSheet(double target, {bool remember = true}) {
@@ -182,6 +192,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     _chatInputFocusNode.unfocus();
     final min = _sheetMinChildSize(context, _chatAreaHeight);
     if (!nextVisible) {
+      _chatExpandedForInput = false;
       _chatRestoredSize = _chatSheetSize > min + 0.01
           ? _chatSheetSize
           : _chatRestoredSize;
@@ -196,6 +207,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   /// 핀 성공 등으로 채팅을 눈에 띄게 해야 할 때 — 이미 40% 이상이면 그대로 둔다.
   void _ensureChatVisible() {
     if (!_chatVisible) {
+      _chatExpandedForInput = false;
       setState(() => _chatVisible = true);
       _animateChatSheet(_chatRestoredSize, remember: false);
     }
@@ -220,6 +232,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
           : (node) => _selectNode(node, showSheet: true),
       onClearHistory: _deleteActiveRoom,
       listFooter: _chatListFooter(),
+      quizMode: _isQuizMode,
       statusPill: journalTask.showsPill
           ? JournalStatusPill(onTap: _onStatusPillTap)
           : null,
@@ -230,6 +243,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
       },
       onHandleDragUpdate: (delta) {
         if (graphAreaHeight <= 0) return;
+        _chatExpandedForInput = false;
         final next = (_chatSheetSize - delta / graphAreaHeight)
             .clamp(_sheetMinChildSize(context, graphAreaHeight), _sheetFocusSize)
             .toDouble();
@@ -279,7 +293,14 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
       bottom: 0,
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
-      height: _chatVisible ? _chatSheetSize * graphAreaHeight : 0,
+      // While typing, use every pixel above the keyboard. The Scaffold/SafeArea
+      // viewport already excludes the IME, so this keeps the composer and the
+      // latest messages visible on short and tall phones alike.
+      height: !_chatVisible
+          ? 0
+          : (_isQuizMode || _chatExpandedForInput
+              ? graphAreaHeight
+              : _chatSheetSize * graphAreaHeight),
       child: IgnorePointer(
         ignoring: !_chatVisible,
         child: _buildGraphChatPanel(

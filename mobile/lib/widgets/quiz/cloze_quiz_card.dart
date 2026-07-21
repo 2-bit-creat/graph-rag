@@ -174,49 +174,40 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
     );
   }
 
-  Widget _buildClozeSentence(String prompt, String blank) {
+  Widget _buildClozeSentence(String prompt, String blank, {bool compact = false}) {
     final match = RegExp(r'_{3,}').firstMatch(prompt);
     if (match == null) {
       return Text(prompt,
-          style:
-              Theme.of(context).textTheme.titleLarge?.copyWith(height: 1.42));
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              height: compact ? 1.08 : 1.42,
+              fontSize: compact ? 18 : null));
     }
     final scheme = Theme.of(context).colorScheme;
     final visible = _effectiveAnswerRevealed;
     final baseStyle = Theme.of(context).textTheme.titleLarge?.copyWith(
-          height: 1.42,
+          height: compact ? 1.08 : 1.42,
+          fontSize: compact ? 18 : null,
           color: scheme.onSurface,
           fontWeight: FontWeight.w700,
         );
-    final maxBlankWidth =
-        (MediaQuery.sizeOf(context).width * 0.68).clamp(180.0, 340.0);
     final words = blank.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
 
     final List<InlineSpan> blankSpans;
     if (visible) {
       blankSpans = [
-        WidgetSpan(
-          alignment: PlaceholderAlignment.middle,
-          child: Container(
-            constraints: BoxConstraints(
-              minWidth: 132,
-              maxWidth: maxBlankWidth,
-            ),
-            margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-            decoration: BoxDecoration(
-              color: scheme.primary.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: scheme.primary.withValues(alpha: 0.5)),
-            ),
-            child: Text(
-              blank,
-              softWrap: true,
-              textAlign: TextAlign.center,
-              style: baseStyle?.copyWith(color: scheme.primary, height: 1.28),
+        for (var i = 0; i < words.length; i++) ...[
+          if (i > 0) const TextSpan(text: ' '),
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: _wordSlot(
+              display: words[i],
+              targetWord: words[i],
+              completed: true,
+              active: false,
+              scheme: scheme,
             ),
           ),
-        ),
+        ],
       ];
     } else if (widget.externalInput) {
       // Composer keystrokes are matched word-by-word live (see
@@ -509,13 +500,15 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
     final hintKo = widget.quizData['hint_ko']?.toString() ?? '';
     final blank = _blank;
     final wrongFirstTry = _effectiveGrade == false && !_effectiveSolved;
+    final compact = MediaQuery.sizeOf(context).width < 600;
+    final sectionGap = compact ? 8.0 : 14.0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _buildClozeSentence(prompt, blank),
+        _buildClozeSentence(prompt, blank, compact: compact),
         if (contextKo.isNotEmpty && !_isAnswerOnlyContext(contextKo)) ...[
-          const SizedBox(height: 14),
+          SizedBox(height: sectionGap),
           Text(
             '문장 뜻',
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
@@ -527,7 +520,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
           _buildContextKo(contextKo),
         ],
         if (_effectiveAnswerRevealed && blank.isNotEmpty) ...[
-          const SizedBox(height: 14),
+          SizedBox(height: sectionGap),
           _answerPanel(blank: blank, wrongFirstTry: wrongFirstTry),
         ],
         if (wrongFirstTry) ...[
@@ -549,7 +542,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
               style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
         ],
         if (!_effectiveAnswerRevealed) ...[
-          const SizedBox(height: 14),
+          SizedBox(height: sectionGap),
           Wrap(
             spacing: 8,
             runSpacing: 8,
