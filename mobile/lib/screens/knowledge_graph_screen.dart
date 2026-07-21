@@ -269,16 +269,25 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     Map<String, Map<String, dynamic>> nodeById = const {},
   }) {
     _activeChatScrollController = _chatScrollController;
-    return Positioned(
+    // When the chat is collapsed, do not leave the sheet at its minimum
+    // height. That exposed only the rounded top edge and shadow above the
+    // composer. The composer is docked independently, so the chat sheet can
+    // disappear completely while retaining its restored height for reopening.
+    return AnimatedPositioned(
       left: 0,
       right: 0,
       bottom: 0,
-      height: _chatSheetSize * graphAreaHeight,
-      child: _buildGraphChatPanel(
-        scrollController: _chatScrollController,
-        graphAreaHeight: graphAreaHeight,
-        typeColors: typeColors,
-        nodeById: nodeById,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      height: _chatVisible ? _chatSheetSize * graphAreaHeight : 0,
+      child: IgnorePointer(
+        ignoring: !_chatVisible,
+        child: _buildGraphChatPanel(
+          scrollController: _chatScrollController,
+          graphAreaHeight: graphAreaHeight,
+          typeColors: typeColors,
+          nodeById: nodeById,
+        ),
       ),
     );
   }
@@ -2045,7 +2054,10 @@ class _SelectionInfoCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 2),
-                Row(
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 3,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Text(
                       '$type · 연결 $degree개',
@@ -2183,11 +2195,15 @@ class _SelectionInfoCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: shell.panelBorder),
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(child: body),
-            const SizedBox(width: 6),
+            body,
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
             if (n != null && isStatement)
               IconButton(
                 tooltip: n['is_pinned'] == true ? '핀 해제' : '최우선 과제로 핀',
@@ -2226,6 +2242,8 @@ class _SelectionInfoCard extends StatelessWidget {
               visualDensity: VisualDensity.compact,
               onPressed: onClose,
               icon: Icon(Icons.close, size: 18, color: shell.mutedText),
+            ),
+              ],
             ),
           ],
         ),

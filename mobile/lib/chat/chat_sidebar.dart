@@ -26,10 +26,15 @@ class ChatSidebar extends StatefulWidget {
 class _ChatSidebarState extends State<ChatSidebar> {
   // Shared calendar-date notifier for the pushed timeline screen.
   final _sharedDate = ValueNotifier<String?>(null);
+  final _searchController = TextEditingController();
+  final _searchFocusNode = FocusNode();
+  bool _searching = false;
 
   @override
   void dispose() {
     _sharedDate.dispose();
+    _searchController.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
@@ -43,6 +48,16 @@ class _ChatSidebarState extends State<ChatSidebar> {
   void _select(String id) {
     chatSession.selectSession(id);
     _afterTap();
+  }
+
+  void _toggleSearch() {
+    setState(() => _searching = !_searching);
+    if (_searching) {
+      _searchFocusNode.requestFocus();
+    } else {
+      _searchController.clear();
+      _searchFocusNode.unfocus();
+    }
   }
 
   Future<void> _rename(String id, String? current) async {
@@ -129,6 +144,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
 
   @override
   Widget build(BuildContext context) {
+    final shell = context.shell;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -174,24 +190,71 @@ class _ChatSidebarState extends State<ChatSidebar> {
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 10),
-          child: OutlinedButton.icon(
+          child: FilledButton.tonalIcon(
             onPressed: _newChat,
             icon: const Icon(Icons.add_rounded, size: 18),
             label: const Text('새 채팅'),
-            style: OutlinedButton.styleFrom(
+            style: FilledButton.styleFrom(
+              foregroundColor: shell.primaryText,
+              backgroundColor: shell.subtleSurface,
               alignment: Alignment.centerLeft,
+              minimumSize: const Size.fromHeight(44),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(13),
+              ),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             ),
           ),
         ),
         const SizedBox(height: 6),
 
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: _searching
+              ? TextField(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  autofocus: true,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    hintText: '채팅 검색',
+                    prefixIcon: const Icon(Icons.search_rounded, size: 19),
+                    suffixIcon: IconButton(
+                      onPressed: _toggleSearch,
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                    ),
+                    isDense: true,
+                    filled: true,
+                    fillColor: shell.subtleSurface,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(13),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                )
+              : ListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 5),
+                  leading: const Icon(Icons.search_rounded, size: 20),
+                  title: const Text('채팅 검색'),
+                  onTap: _toggleSearch,
+                ),
+        ),
+        const SizedBox(height: 4),
+
         // ── Recent rooms ─────────────────────────────────────────────────
         Expanded(
           child: ListenableBuilder(
             listenable: Listenable.merge([chatSession, journalTask]),
             builder: (context, _) {
-              final sessions = chatSession.sessions;
+              final query = _searchController.text.trim().toLowerCase();
+              final sessions = query.isEmpty
+                  ? chatSession.sessions
+                  : chatSession.sessions.where((s) {
+                      final title = s['title']?.toString().toLowerCase() ?? '';
+                      final preview = s['preview']?.toString().toLowerCase() ?? '';
+                      return title.contains(query) || preview.contains(query);
+                    }).toList();
               if (sessions.isEmpty) {
                 return Center(
                   child: Padding(
@@ -326,16 +389,16 @@ class _RoomTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Material(
-      color: active ? cs.primary.withValues(alpha: 0.12) : Colors.transparent,
-      borderRadius: BorderRadius.circular(8),
+      color: active ? cs.primary.withValues(alpha: 0.16) : Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
           child: Row(
             children: [
-              Icon(Icons.chat_bubble_outline_rounded,
+              Icon(active ? Icons.chat_bubble_rounded : Icons.chat_bubble_outline_rounded,
                   size: 16,
                   color: active ? cs.primary : AppColors.textMuted),
               const SizedBox(width: 8),
