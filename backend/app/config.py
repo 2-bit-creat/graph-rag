@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     # (Neon's -pooler endpoint) own pooling instead — avoids each cold Lambda
     # container holding idle connections against the free-tier connection cap.
     db_lambda_pooling: bool = False
+    # init_db()'s create_all + ~90 idempotent ALTER/CREATE INDEX statements are
+    # cheap against a co-located docker-compose Postgres (default True is fine
+    # for local dev), but against a remote managed DB each statement is a real
+    # network round trip — measured ~90x0.6s = ~60-70s cross-region, which can
+    # eat most/all of a Lambda cold start's timeout budget for no reason once
+    # the schema is already up to date. Run once with this True after a schema
+    # change (or on first deploy), then flip to False for fast cold starts.
+    run_db_migrations: bool = True
     openai_api_key: str = ""
     # Single model for every LLM call — quiz generation, tutor, chat, cleanup.
     # (The old gpt-4o "premium" path was removed for cost; the bundle generator

@@ -46,13 +46,26 @@ Parameters:
     Default: "true"
     AllowedValues: ["true", "false"]
     Description: Skip SQLAlchemy's connection pool in favor of the DB-side pooler — keeps cold Lambda containers from exhausting Neon's free-tier connection cap.
+  RunDbMigrations:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Run init_db()'s ~90 idempotent schema statements at cold start. Each is a real round trip to a remote DB (measured ~60-70s total against Neon) — fine once, but eats most of the cold-start timeout budget on every container otherwise. Set "true" for the first deploy against a fresh DB (or after adding a new migration), then flip back to "false".
 
 Globals:
   Function:
     Timeout: 120
     MemorySize: 1024
-    Architectures: [arm64]
-    ReservedConcurrentExecutions: 5
+    # x86_64, not arm64/Graviton: emulated arm64 builds hit a Docker Desktop
+    # containerd export bug on this machine (see backend/Dockerfile). Costs
+    # ~20% more per ms than Graviton would, but builds reliably.
+    Architectures: [x86_64]
+    # No ReservedConcurrentExecutions: this account's whole-region Lambda
+    # concurrency limit is 10 (AWS's brand-new-account default before a quota
+    # increase), and AWS requires >=10 UNRESERVED remain after any reservation
+    # — so no positive reservation is possible here. The account-wide limit of
+    # 10 already acts as the cost ceiling. Revisit once a quota increase is
+    # requested/granted.
 
 Resources:
   GraphRagFunction:
@@ -63,6 +76,13 @@ Resources:
       DockerTag: latest
     Properties:
       PackageType: Image
+      Policies:
+        # storage.py's boto3 put_object/list_objects_v2/delete_objects calls
+        # (audio uploads, quiz TTS) had no IAM permission at all before this —
+        # the function's role was CloudWatch-Logs-only. Scoped to just the
+        # media bucket, not a blanket S3 policy.
+        - S3CrudPolicy:
+            BucketName: !Ref S3Bucket
       Environment:
         Variables:
           DATABASE_URL: !Ref DatabaseUrl
@@ -75,14 +95,14 @@ Resources:
           DB_REQUIRE_SSL: !Ref DbRequireSsl
           DB_DISABLE_PREPARED_CACHE: !Ref DbDisablePreparedCache
           DB_LAMBDA_POOLING: !Ref DbLambdaPooling
+          RUN_DB_MIGRATIONS: !Ref RunDbMigrations
       FunctionUrlConfig:
         AuthType: NONE
-        Cors:
-          # Narrow to the CloudFront web domain post-deploy — "*" here only to
-          # unblock the first deploy before that domain exists.
-          AllowOrigins: ["*"]
-          AllowMethods: ["*"]
-          AllowHeaders: ["authorization", "content-type"]
+        # No Cors block here — FastAPI's own CORSMiddleware (main.py, driven by
+        # CORS_ORIGINS) is the single source of truth for CORS. Function URL's
+        # native CORS handling would add its own Access-Control-Allow-Origin on
+        # top of the app's, and the browser rejects a response with the same
+        # header appearing twice ("multiple values ... only one is allowed").
 
 Outputs:
   FunctionUrl:

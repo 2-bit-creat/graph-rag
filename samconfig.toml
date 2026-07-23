@@ -2,14 +2,13 @@ version = 0.1
 
 [default.global.parameters]
 stack_name = "graph-rag-backend"
+region = "ap-northeast-2"
 
 [default.build.parameters]
 cached = true
 parallel = true
 
 [default.deploy.parameters]
-stack_name = "graph-rag-backend"
-region = "ap-northeast-2"
 profile = "my-ai-app"
 resolve_s3 = true
 resolve_image_repos = true
@@ -21,3 +20,5 @@ confirm_changeset = true
 #     DatabaseUrl="postgresql+asyncpg://..." \
 #     OpenAiApiKey="sk-..." \
 #     CorsOrigins="https://your-branch.your-app-id.amplifyapp.com"
+s3_prefix = "graph-rag-backend"
+parameter_overrides = "Environment=\"production\" CorsOrigins=\"https://d2pxpnskssh5n0.cloudfront.net\" S3Bucket=\"graphrag-media-prod-jsy97-248719798440-ap-northeast-2-an\" MediaBaseUrl=\"https://d2ocj6tslcohiq.cloudfront.net\" DbRequireSsl=\"true\" DbDisablePreparedCache=\"true\" DbLambdaPooling=\"true\" RunDbMigrations=\"false\""

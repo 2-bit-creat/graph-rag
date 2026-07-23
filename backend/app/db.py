@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 import asyncio
 import logging
+import socket
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
@@ -11,6 +12,22 @@ from .config import get_settings
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+# Managed Postgres hosts (Neon included) often publish both A and AAAA records.
+# A Lambda function outside a VPC has no outbound IPv6 route, so if asyncio/
+# asyncpg picks the AAAA address first the TCP connect just hangs — no error,
+# no fast failure, it silently eats the whole Lambda timeout. Force IPv4-only
+# resolution globally; harmless locally (docker-compose Postgres is IPv4/
+# localhost anyway) and keeps SNI-based routing intact since the hostname
+# itself is untouched — only the DNS answer is filtered.
+_orig_getaddrinfo = socket.getaddrinfo
+
+
+def _ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    return _orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+
+
+socket.getaddrinfo = _ipv4_only_getaddrinfo
 
 # Neon (and similar managed Postgres) connection quirks — all gated behind
 # settings that default False, so the local docker-compose Postgres is
@@ -329,39 +346,50 @@ async def init_db() -> None:
 
     await _wait_for_db()
 
-    async with engine.begin() as conn:
-        try:
-            await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
-        except Exception:
-            pass
-        await conn.run_sync(Base.metadata.create_all)
-
-    for sql in _MIGRATIONS:
-        try:
-            async with engine.begin() as conn:
-                # Avoid hanging forever when pytest/another uvicorn holds a DDL lock.
-                await conn.exec_driver_sql("SET lock_timeout = '10s'")
-                await conn.exec_driver_sql(sql)
-        except Exception as exc:
-            # Vector index builds (ivfflat/hnsw) may fail on empty/small datasets
-            # or if the installed pgvector predates HNSW support — non-fatal.
-            is_vector_index_sql = "USING ivfflat" in sql or "USING hnsw" in sql
-            if not is_vector_index_sql and "lock timeout" not in str(exc).lower():
-                raise
-            logger.warning("Migration skipped (non-fatal): %s", exc)
-
-    try:
+    if settings.run_db_migrations:
+        # One physical connection for the whole DDL sequence below, not one per
+        # statement — with db_lambda_pooling's NullPool (no connection reuse
+        # across requests, only within one), opening a fresh connection per
+        # migration statement meant a full TCP+TLS handshake to Neon for each of
+        # 60+ statements sequentially, easily exceeding the Lambda timeout on cold
+        # start. Per-statement failure isolation is now a SAVEPOINT
+        # (begin_nested) instead of a separate connection+transaction.
+        #
+        # Even so, ~90 statements against a remote cross-region DB is ~60-70s
+        # of pure round-trip time (measured against Neon) — fine once, not on
+        # every cold start. See Settings.run_db_migrations.
         async with engine.begin() as conn:
             await conn.exec_driver_sql("SET lock_timeout = '10s'")
-            await conn.exec_driver_sql(
-                "ALTER TABLE nodes DROP CONSTRAINT IF EXISTS uq_node_name_type"
-            )
-            await conn.exec_driver_sql(
-                "ALTER TABLE nodes ADD CONSTRAINT uq_node_user_name_type "
-                "UNIQUE (user_id, name, type)"
-            )
-    except Exception as exc:
-        logger.warning("Constraint migration skipped (non-fatal): %s", exc)
+            try:
+                async with conn.begin_nested():
+                    await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
+            except Exception:
+                pass
+            await conn.run_sync(Base.metadata.create_all)
+
+            for sql in _MIGRATIONS:
+                try:
+                    async with conn.begin_nested():
+                        await conn.exec_driver_sql(sql)
+                except Exception as exc:
+                    # Vector index builds (ivfflat/hnsw) may fail on empty/small datasets
+                    # or if the installed pgvector predates HNSW support — non-fatal.
+                    is_vector_index_sql = "USING ivfflat" in sql or "USING hnsw" in sql
+                    if not is_vector_index_sql and "lock timeout" not in str(exc).lower():
+                        raise
+                    logger.warning("Migration skipped (non-fatal): %s", exc)
+
+            try:
+                async with conn.begin_nested():
+                    await conn.exec_driver_sql(
+                        "ALTER TABLE nodes DROP CONSTRAINT IF EXISTS uq_node_name_type"
+                    )
+                    await conn.exec_driver_sql(
+                        "ALTER TABLE nodes ADD CONSTRAINT uq_node_user_name_type "
+                        "UNIQUE (user_id, name, type)"
+                    )
+            except Exception as exc:
+                logger.warning("Constraint migration skipped (non-fatal): %s", exc)
 
     async with async_session_factory() as session:
         from . import crud

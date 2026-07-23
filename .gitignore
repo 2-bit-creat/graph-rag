@@ -18,10 +18,17 @@ mobile/.dart_tool/
 mobile/build/
 mobile/.flutter-plugins-dependencies
 
+# SAM build artifacts (local Docker layer cache + packaged template)
+.aws-sam/
+
 # Env files
 .env
 .env.local
 .env*.local
+
+# Backend deploy secrets (real DatabaseUrl/OpenAiApiKey/JwtSecret) — see
+# .deploy-secrets.env.example for the template.
+.deploy-secrets.env
 
 # OS / editor
 .DS_Store

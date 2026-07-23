@@ -36,10 +36,15 @@ async def lifespan(app: FastAPI):
         Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
         _STATIC_DIR.mkdir(parents=True, exist_ok=True)
         (_STATIC_DIR / "audio").mkdir(parents=True, exist_ok=True)
-    Path(settings.debug_runs_dir).mkdir(parents=True, exist_ok=True)
-    from .pipeline_trace import cleanup_old_debug_runs
+    if settings.debug_enabled:
+        # Off by default in production (see Settings.debug_enabled) — and must
+        # stay off on Lambda regardless, since /var/task is read-only and this
+        # writes raw prompts/transcripts/audio that pipeline_trace.py and the
+        # debug router already gate on this same flag before touching disk.
+        Path(settings.debug_runs_dir).mkdir(parents=True, exist_ok=True)
+        from .pipeline_trace import cleanup_old_debug_runs
 
-    cleanup_old_debug_runs(settings.debug_runs_retention_days)
+        cleanup_old_debug_runs(settings.debug_runs_retention_days)
 
     await init_db()
     if settings.expression_extraction_enabled:
