@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import logging
 import re
+import tempfile
 import uuid
 from pathlib import Path
+
+from .config import get_settings
+from .storage import public_media_url, save_media
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +102,8 @@ async def synthesize_quiz_audio(
     *,
     language: str = "english",
 ) -> tuple[str | None, str | None]:
-    """Write MP3 to static/audio.
+    """Synthesize MP3 for a quiz sentence — to S3 (Lambda-safe) when
+    ``S3_BUCKET`` is configured, otherwise to the local static/audio dir.
 
     Returns (audio_url, error_message).
     """
@@ -106,25 +111,37 @@ async def synthesize_quiz_audio(
     if not cleaned:
         return None, "empty sentence_en"
 
-    AUDIO_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = AUDIO_DIR / f"{quiz_id}.mp3"
-    if out_path.exists():
-        out_path.unlink()
-
     voice = voice_for_language(language)
+
+    # edge_tts only writes to a filesystem path, so synthesize into a temp file
+    # either way; the local branch then keeps it, the S3 branch reads it back
+    # as bytes to upload and discards it (Lambda's /tmp doesn't persist anyway).
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
     try:
         import edge_tts
 
         communicate = edge_tts.Communicate(cleaned, voice)
-        await communicate.save(str(out_path))
+        await communicate.save(str(tmp_path))
     except Exception as exc:
         logger.exception("Edge-TTS failed for quiz %s", quiz_id)
-        if out_path.exists():
-            out_path.unlink(missing_ok=True)
+        tmp_path.unlink(missing_ok=True)
         return None, str(exc)
 
-    if not out_path.exists() or out_path.stat().st_size < MIN_AUDIO_BYTES:
-        out_path.unlink(missing_ok=True)
+    if not tmp_path.exists() or tmp_path.stat().st_size < MIN_AUDIO_BYTES:
+        tmp_path.unlink(missing_ok=True)
         return None, "TTS produced empty audio file"
 
+    settings = get_settings()
+    if settings.s3_bucket:
+        data = tmp_path.read_bytes()
+        tmp_path.unlink(missing_ok=True)
+        key = f"quiz-audio/{quiz_id}.mp3"
+        await save_media(data, key)
+        return public_media_url(key), None
+
+    AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = AUDIO_DIR / f"{quiz_id}.mp3"
+    out_path.unlink(missing_ok=True)
+    tmp_path.replace(out_path)
     return quiz_audio_relative_path(quiz_id), None

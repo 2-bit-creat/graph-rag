@@ -285,6 +285,11 @@ class Edge(Base):
     __tablename__ = "edges"
     __table_args__ = (
         UniqueConstraint("source_id", "target_id", "relation", name="uq_edge_triple"),
+        # uq_edge_triple's leftmost column covers source_id lookups, but reverse
+        # traversal (find everything pointing AT a target with a given relation —
+        # e.g. find_statements_by_speaker/find_statements_by_concept in crud.py)
+        # filters on target_id first and has no matching prefix in that index.
+        Index("idx_edges_target_relation", "target_id", "relation"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

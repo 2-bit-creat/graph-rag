@@ -4,6 +4,7 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
 from .config import get_settings
 
@@ -11,7 +12,25 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
-engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=True)
+# Neon (and similar managed Postgres) connection quirks — all gated behind
+# settings that default False, so the local docker-compose Postgres is
+# unaffected. See Settings.db_require_ssl / db_disable_prepared_cache /
+# db_lambda_pooling in config.py for what each one is working around.
+_connect_args: dict = {}
+if settings.db_require_ssl:
+    _connect_args["ssl"] = True
+if settings.db_disable_prepared_cache:
+    _connect_args["statement_cache_size"] = 0
+    _connect_args["prepared_statement_cache_size"] = 0
+
+_engine_kwargs: dict = {"echo": False, "pool_pre_ping": True, "connect_args": _connect_args}
+if settings.db_lambda_pooling:
+    # Let the DB-side pooler (Neon's -pooler endpoint) own pooling instead of
+    # SQLAlchemy's — otherwise every cold Lambda container adds its own idle
+    # connection pool on top, quickly exhausting the free-tier connection cap.
+    _engine_kwargs["poolclass"] = NullPool
+
+engine = create_async_engine(settings.database_url, **_engine_kwargs)
 
 async_session_factory = async_sessionmaker(
     bind=engine,
@@ -266,6 +285,20 @@ _MIGRATIONS = [
     # uq_node_user_name_type (user_id, name, type) means this only fires where no
     # same-named Person row already exists for that user.
     "UPDATE nodes SET type = 'Person' WHERE type = 'Speaker'",
+    # Reverse-edge traversal (target_id + relation) had no matching index —
+    # only the (source_id, target_id, relation) uniqueness index existed, whose
+    # leftmost column doesn't help a target_id-first lookup. This is the exact
+    # access pattern of find_statements_by_speaker/find_statements_by_concept,
+    # the hot path for every chat/quiz retrieval.
+    "CREATE INDEX IF NOT EXISTS idx_edges_target_relation ON edges (target_id, relation)",
+    # ivfflat's "lists" parameter is a fixed guess that stops matching recall
+    # expectations as row count grows past what it was tuned for; HNSW has no
+    # such parameter to retune and gives better recall/speed at scale. Drop the
+    # old indexes and rebuild as HNSW (same names — nothing else references them).
+    "DROP INDEX IF EXISTS idx_nodes_name_embedding",
+    "CREATE INDEX IF NOT EXISTS idx_nodes_name_embedding ON nodes USING hnsw (name_embedding vector_cosine_ops)",
+    "DROP INDEX IF EXISTS idx_alias_embeddings_embedding",
+    "CREATE INDEX IF NOT EXISTS idx_alias_embeddings_embedding ON node_alias_embeddings USING hnsw (embedding vector_cosine_ops)",
 ]
 
 
@@ -310,8 +343,10 @@ async def init_db() -> None:
                 await conn.exec_driver_sql("SET lock_timeout = '10s'")
                 await conn.exec_driver_sql(sql)
         except Exception as exc:
-            # ivfflat index etc. may fail on empty/small datasets — non-fatal
-            if "USING ivfflat" not in sql and "lock timeout" not in str(exc).lower():
+            # Vector index builds (ivfflat/hnsw) may fail on empty/small datasets
+            # or if the installed pgvector predates HNSW support — non-fatal.
+            is_vector_index_sql = "USING ivfflat" in sql or "USING hnsw" in sql
+            if not is_vector_index_sql and "lock timeout" not in str(exc).lower():
                 raise
             logger.warning("Migration skipped (non-fatal): %s", exc)
 

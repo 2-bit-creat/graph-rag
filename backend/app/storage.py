@@ -17,10 +17,19 @@ def _local_root() -> Path:
 
 
 async def save_audio(data: bytes, filename: str, user_id: uuid.UUID) -> str:
-    settings = get_settings()
     ext = Path(filename).suffix or ".m4a"
     key = f"{user_id}/{uuid.uuid4()}{ext}"
+    return await save_media(data, key)
 
+
+async def save_media(data: bytes, key: str) -> str:
+    """Write bytes under an explicit key — local file (dev) or S3 (prod).
+
+    Unlike ``save_audio``, the caller picks the key (e.g. a deterministic
+    ``quiz-audio/{quiz_id}.mp3`` so regenerating a quiz's TTS overwrites
+    rather than accumulates objects). Returns the key, same as ``save_audio``.
+    """
+    settings = get_settings()
     if settings.s3_bucket:
         return await _save_s3(data, key)
 
@@ -40,6 +49,21 @@ async def _save_s3(data: bytes, key: str) -> str:
     client = boto3.client("s3", **client_kwargs)
     client.put_object(Bucket=settings.s3_bucket, Key=key, Body=data)
     return key
+
+
+def public_media_url(key: str) -> str | None:
+    """Absolute URL for a key written via ``save_media``/``save_audio`` — the
+    CloudFront domain fronting the media bucket, or None when storage is local
+    (callers should fall back to a backend-relative path in that case)."""
+    settings = get_settings()
+    if not settings.s3_bucket:
+        return None
+    if settings.media_base_url:
+        return f"{settings.media_base_url.rstrip('/')}/{key}"
+    # No CDN configured — fall back to the direct virtual-hosted S3 URL. Only
+    # reachable if the bucket/object is public; fine for dev, not for a
+    # CloudFront-OAC-fronted private bucket in production.
+    return f"https://{settings.s3_bucket}.s3.{settings.s3_region}.amazonaws.com/{key}"
 
 
 def local_path(key: str) -> Path:

@@ -1,12 +1,12 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: Graph RAG FastAPI backend on AWS Lambda (container image) + API Gateway HTTP API
+Description: Graph RAG FastAPI backend on AWS Lambda (container image) via a Function URL
 
 Parameters:
   DatabaseUrl:
     Type: String
     NoEcho: true
-    Description: Async Postgres URL, e.g. postgresql+asyncpg://... (use a managed DB like Supabase/RDS)
+    Description: Async Postgres URL, e.g. postgresql+asyncpg://... (Neon pooled endpoint recommended)
   OpenAiApiKey:
     Type: String
     NoEcho: true
@@ -22,17 +22,39 @@ Parameters:
   CorsOrigins:
     Type: String
     Default: ""
-    Description: Comma-separated allowed web origins (e.g. https://app.example.com). Leave empty for a native-only mobile client. Do NOT use "*" — credentials are enabled.
+    Description: Comma-separated allowed web origins (e.g. the CloudFront domain serving the Flutter web build). Leave empty for a native-only mobile client. Do NOT use "*" — the app also allows credentials in dev.
+  S3Bucket:
+    Type: String
+    Default: ""
+    Description: Media bucket for audio uploads + quiz TTS. Leave empty only for a short-lived smoke test — Lambda's filesystem does not persist, so any real deployment must set this.
+  MediaBaseUrl:
+    Type: String
+    Default: ""
+    Description: Public base URL (typically a CloudFront domain) fronting S3Bucket, used to build playable media URLs.
+  DbRequireSsl:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Neon (and most managed Postgres) require TLS.
+  DbDisablePreparedCache:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Required when DatabaseUrl points at Neon's pooled (-pooler) endpoint (PgBouncer transaction mode).
+  DbLambdaPooling:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Skip SQLAlchemy's connection pool in favor of the DB-side pooler — keeps cold Lambda containers from exhausting Neon's free-tier connection cap.
 
 Globals:
   Function:
-    Timeout: 60
+    Timeout: 120
     MemorySize: 1024
+    Architectures: [arm64]
+    ReservedConcurrentExecutions: 5
 
 Resources:
-  GraphRagApi:
-    Type: AWS::Serverless::HttpApi
-
   GraphRagFunction:
     Type: AWS::Serverless::Function
     Metadata:
@@ -48,21 +70,21 @@ Resources:
           CORS_ORIGINS: !Ref CorsOrigins
           ENVIRONMENT: !Ref Environment
           JWT_SECRET: !Ref JwtSecret
-      Events:
-        Root:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref GraphRagApi
-            Path: /
-            Method: ANY
-        Proxy:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref GraphRagApi
-            Path: /{proxy+}
-            Method: ANY
+          S3_BUCKET: !Ref S3Bucket
+          MEDIA_BASE_URL: !Ref MediaBaseUrl
+          DB_REQUIRE_SSL: !Ref DbRequireSsl
+          DB_DISABLE_PREPARED_CACHE: !Ref DbDisablePreparedCache
+          DB_LAMBDA_POOLING: !Ref DbLambdaPooling
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          # Narrow to the CloudFront web domain post-deploy — "*" here only to
+          # unblock the first deploy before that domain exists.
+          AllowOrigins: ["*"]
+          AllowMethods: ["*"]
+          AllowHeaders: ["authorization", "content-type"]
 
 Outputs:
-  ApiUrl:
-    Description: Base URL for the deployed API (set as NEXT_PUBLIC_API_BASE_URL in Amplify)
-    Value: !Sub "https://${GraphRagApi}.execute-api.${AWS::Region}.amazonaws.com"
+  FunctionUrl:
+    Description: Lambda Function URL — set as API_BASE_URL for the Flutter build (no trailing slash)
+    Value: !GetAtt GraphRagFunctionUrl.FunctionUrl

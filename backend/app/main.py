@@ -29,10 +29,14 @@ async def lifespan(app: FastAPI):
             "credentials. Set DATABASE_URL to a managed database with unique "
             "credentials."
         )
-    Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
+    if not settings.s3_bucket:
+        # Local/dev only — on Lambda this directory doesn't persist across
+        # invocations, so S3_BUCKET must be set in any deployed environment
+        # (quiz TTS and audio uploads both switch to S3 when it is).
+        Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
+        _STATIC_DIR.mkdir(parents=True, exist_ok=True)
+        (_STATIC_DIR / "audio").mkdir(parents=True, exist_ok=True)
     Path(settings.debug_runs_dir).mkdir(parents=True, exist_ok=True)
-    _STATIC_DIR.mkdir(parents=True, exist_ok=True)
-    (_STATIC_DIR / "audio").mkdir(parents=True, exist_ok=True)
     from .pipeline_trace import cleanup_old_debug_runs
 
     cleanup_old_debug_runs(settings.debug_runs_retention_days)
@@ -46,7 +50,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Graph RAG Language Platform API", version="0.2.0", lifespan=lifespan)
 
-app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+if not settings.s3_bucket:
+    # Local/dev static serving only — Lambda's filesystem doesn't persist
+    # writes, so deployed environments must set S3_BUCKET (+ MEDIA_BASE_URL)
+    # and serve quiz audio / uploads from S3/CloudFront instead.
+    _STATIC_DIR.mkdir(parents=True, exist_ok=True)
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 _cors_kwargs: dict = {
     "allow_origins": settings.cors_origin_list,

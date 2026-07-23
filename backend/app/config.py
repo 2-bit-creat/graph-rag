@@ -7,6 +7,17 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+asyncpg://graphrag:graphrag@localhost:6432/graphrag"
+    # Neon (and similar managed Postgres) specifics — all default False/off so
+    # local docker-compose Postgres is unaffected. Turn on for a Neon DATABASE_URL.
+    db_require_ssl: bool = False
+    # Neon's pooled (-pooler) endpoint runs PgBouncer in transaction mode, which
+    # is incompatible with asyncpg's server-side prepared statements — disable
+    # the statement cache when pointed at a pooled connection string.
+    db_disable_prepared_cache: bool = False
+    # Lambda: skip SQLAlchemy's own connection pool and let the DB-side pooler
+    # (Neon's -pooler endpoint) own pooling instead — avoids each cold Lambda
+    # container holding idle connections against the free-tier connection cap.
+    db_lambda_pooling: bool = False
     openai_api_key: str = ""
     # Single model for every LLM call — quiz generation, tutor, chat, cleanup.
     # (The old gpt-4o "premium" path was removed for cost; the bundle generator
@@ -39,6 +50,10 @@ class Settings(BaseSettings):
     s3_bucket: str = ""
     s3_endpoint: str = ""
     s3_region: str = "ap-northeast-2"
+    # Public base URL (typically a CloudFront domain fronting the media bucket)
+    # used to build playable/downloadable URLs for objects written to S3 — e.g.
+    # "https://media.example.com". Empty means local-filesystem serving only.
+    media_base_url: str = ""
 
     redis_url: str = "redis://localhost:6379/0"
     graph_processing_async: bool = False
