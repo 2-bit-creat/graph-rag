@@ -4,17 +4,18 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import crud
 from ..auth_utils import create_access_token, hash_password, verify_password
 from ..db import get_session
 from ..deps import get_current_user, request_user_dep
-from ..dev_user import DEV_USER_ID, get_dev_user
-from ..models import JournalEntry, User
+from ..dev_user import DEV_EMAIL, DEV_USER_ID, get_dev_user
+from ..models import ChatSession, JournalEntry, Node, User
 from ..storage import purge_user_storage
 from ..schemas import (
+    AccountSummaryOut,
     ConsentRequest,
     LoginRequest,
     RegisterRequest,
@@ -80,6 +81,58 @@ async def delete_me(
 
     await asyncio.to_thread(purge_user_storage, user_id, entry_ids)
     return {"status": "deleted"}
+
+
+def _handle_from_email(email: str) -> str:
+    """Reverse the /auth/simple email encoding back to the handle the user
+    actually typed. `dev@local` is the reserved "main" space."""
+    if email == DEV_EMAIL:
+        return _RESERVED_MAIN
+    if email.startswith("simple:") and email.endswith("@local"):
+        return email[len("simple:") : -len("@local")]
+    return email
+
+
+@router.get("/admin/accounts", response_model=list[AccountSummaryOut])
+async def list_accounts(
+    _user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> list[AccountSummaryOut]:
+    """Dev-tools-only overview of every account and a rough DB-usage proxy
+    (row counts, not disk bytes). Gated by being logged in already — same
+    "no extra lock, just tucked away" posture as the rest of dev tools — but
+    NEVER call this from an unauthenticated surface (e.g. the account entry
+    screen): it enumerates every handle on the server, which is exactly the
+    kind of cross-user exposure this app's privacy work has been avoiding.
+    """
+    users = (await session.execute(select(User).order_by(User.created_at))).scalars().all()
+
+    journal_counts = dict(
+        (await session.execute(
+            select(JournalEntry.user_id, func.count()).group_by(JournalEntry.user_id)
+        )).all()
+    )
+    node_counts = dict(
+        (await session.execute(
+            select(Node.user_id, func.count()).group_by(Node.user_id)
+        )).all()
+    )
+    chat_counts = dict(
+        (await session.execute(
+            select(ChatSession.user_id, func.count()).group_by(ChatSession.user_id)
+        )).all()
+    )
+
+    return [
+        AccountSummaryOut(
+            handle=_handle_from_email(u.email),
+            created_at=u.created_at,
+            journal_count=journal_counts.get(u.id, 0),
+            node_count=node_counts.get(u.id, 0),
+            chat_session_count=chat_counts.get(u.id, 0),
+        )
+        for u in users
+    ]
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)

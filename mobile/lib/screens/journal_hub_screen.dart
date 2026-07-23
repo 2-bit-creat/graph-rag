@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/client.dart';
 import '../app_route_observer.dart';
-import '../compose/compose_session_controller.dart';
+import '../chat/chat_session_controller.dart' show openChatJournalCompose;
 import '../widgets/app_ui.dart';
 import '../widgets/entry_hub_layout.dart';
 import '../widgets/journal_user_detail_panel.dart';
@@ -13,9 +13,9 @@ class JournalHubScreen extends StatelessWidget {
 
   final String? initialEntryId;
 
-  /// 작성 창 오버레이 열기 — 페이지 이동 없이 현재 화면 위에 창이 뜬다.
+  /// 새 일기 쓰기 — 팝업 작성 창 대신 홈(대화)의 채팅 일기 쓰기 모드로 이동.
   static Future<void> openCompose(BuildContext context) {
-    composeSession.open(startNew: true);
+    openChatJournalCompose();
     return Future.value();
   }
 

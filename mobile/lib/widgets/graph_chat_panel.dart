@@ -6,6 +6,7 @@ import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart';
 import 'chat_rich_text.dart';
 import 'journal_progress_card.dart';
+import 'thinking_orbs.dart';
 
 /// 지식그래프 화면 위에 떠 있는 바텀시트 형태의 대화 패널 (헤더 + 메시지 피드만).
 ///
@@ -110,6 +111,13 @@ class GraphChatPanel extends StatelessWidget {
                               child: statusPill,
                             ),
                           ),
+                        Positioned(
+                          right: 14,
+                          bottom: 100,
+                          child: _ScrollToBottomButton(
+                            controller: scrollController,
+                          ),
+                        ),
                       ],
                     ),
             ),
@@ -134,20 +142,32 @@ class GraphChatPanel extends StatelessWidget {
             : (_) => onHandleDragEnd!(),
         child: Center(
           child: Padding(
-            padding: const EdgeInsets.all(AppSpacing.lg),
+            padding: const EdgeInsets.all(AppSpacing.xl),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.forum_rounded,
-                    size: 32,
-                    color: shell.mutedText.withValues(alpha: 0.6)),
-                const SizedBox(height: AppSpacing.sm),
+                // Brand orbs, gently breathing — the same "voice" as the
+                // assistant avatar and thinking indicator.
+                const ThinkingOrbs(size: 56, period: Duration(seconds: 5)),
+                const SizedBox(height: AppSpacing.lg),
                 Text(
                   tr('chat.emptyTitle'),
                   textAlign: TextAlign.center,
                   style: TextStyle(
+                    color: shell.primaryText.withValues(alpha: 0.9),
+                    height: 1.4,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '떠오르는 생각, 오늘 있었던 일, 궁금한 것 —\n무엇이든 편하게 적어보세요.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
                     color: shell.mutedText,
-                    height: 1.45,
+                    height: 1.5,
                     fontSize: 12.5,
                   ),
                 ),
@@ -172,35 +192,43 @@ class GraphChatPanel extends StatelessWidget {
           return listFooter!;
         }
         final m = messages[i];
+        // Stable per-message key so the entrance animation fires once and never
+        // re-triggers as the ListView recycles rows during scroll.
+        final entranceKey = m.id ?? '${i}_${m.role}_${m.content.hashCode}';
+        Widget child;
         if (m.kind == 'journal_progress') {
           final entryId = m.meta?['entry_id']?.toString();
           if (entryId != null && entryId.isNotEmpty) {
             return JournalProgressCard(entryId: entryId);
           }
+          child = const SizedBox.shrink();
+        } else if (m.kind == 'journal_mode') {
+          child = _JournalModeBanner(text: m.content);
+        } else if (m.kind == 'journal_submit' && m.role == 'user') {
+          child = _JournalSubmitBubble(text: m.content);
+        } else if (m.role == 'user') {
+          child = _UserBubble(text: m.content);
+        } else {
+          child = _AssistantBubble(
+            text: m.content,
+            referencedNodes: [
+              for (final id in m.referencedNodeIds)
+                if (nodeById[id] != null) nodeById[id]!,
+            ],
+            typeColors: typeColors,
+            onNodeTap: (node) {
+              final ids =
+                  m.referencedNodeIds.where(nodeById.containsKey).toSet();
+              if (ids.isNotEmpty) onNodeHighlight(ids);
+            },
+            onNodeOpen: onNodeSelect,
+          );
         }
-        if (m.kind == 'journal_mode') {
-          return _JournalModeBanner(text: m.content);
-        }
-        if (m.kind == 'journal_submit' && m.role == 'user') {
-          return _JournalSubmitBubble(text: m.content);
-        }
-        return m.role == 'user'
-            ? _UserBubble(text: m.content)
-            : _AssistantBubble(
-                text: m.content,
-                referencedNodes: [
-                  for (final id in m.referencedNodeIds)
-                    if (nodeById[id] != null) nodeById[id]!,
-                ],
-                typeColors: typeColors,
-                onNodeTap: (node) {
-                  final ids = m.referencedNodeIds
-                      .where(nodeById.containsKey)
-                      .toSet();
-                  if (ids.isNotEmpty) onNodeHighlight(ids);
-                },
-                onNodeOpen: onNodeSelect,
-              );
+        return _MessageEntrance(
+          key: ValueKey(entranceKey),
+          entranceKey: entranceKey,
+          child: child,
+        );
       },
     );
   }
@@ -276,66 +304,6 @@ class _SheetDragHandle extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _PanelHeader extends StatelessWidget {
-  const _PanelHeader({
-    this.title,
-    required this.hasMessages,
-    required this.onClear,
-  });
-
-  final String? title;
-  final bool hasMessages;
-  final VoidCallback onClear;
-
-  @override
-  Widget build(BuildContext context) {
-    final shell = context.shell;
-    final resolvedTitle =
-        (title?.trim().isNotEmpty ?? false) ? title!.trim() : '그래프 대화';
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.sm, 6),
-      child: Row(
-        children: [
-          Container(
-            width: 26,
-            height: 26,
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [AppColors.hubGraph, AppColors.hubQuiz],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.auto_awesome_rounded,
-                size: 14, color: Colors.white),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              resolvedTitle,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  color: shell.primaryText,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 15),
-            ),
-          ),
-          IconButton(
-            tooltip: '대화 기록 삭제',
-            visualDensity: VisualDensity.compact,
-            iconSize: 18,
-            color: shell.primaryText.withValues(alpha: 0.55),
-            onPressed: hasMessages ? onClear : null,
-            icon: const Icon(Icons.delete_sweep_outlined),
-          ),
-        ],
       ),
     );
   }
@@ -564,7 +532,10 @@ class _InputBarState extends State<_InputBar> {
                 focusNode: _focusNode,
                 enabled: canType,
                 minLines: 1,
-                maxLines: 2,
+                // Auto-grows with content up to ~6 lines, then scrolls — the
+                // standard composer behavior; capped so it never eats the feed.
+                maxLines: 6,
+                keyboardType: TextInputType.multiline,
                 style: TextStyle(color: shell.primaryText, fontSize: 14),
                 textInputAction: TextInputAction.send,
                 onSubmitted: canType ? widget.onSend : null,
@@ -581,21 +552,69 @@ class _InputBarState extends State<_InputBar> {
             ),
           ),
           const SizedBox(width: AppSpacing.xs),
-          Material(
-            color: canType ? AppColors.hubGraph : shell.subtleSurface,
-            shape: const CircleBorder(),
-            clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              onTap:
-                  canType ? () => widget.onSend(widget.controller.text) : null,
-              child: Padding(
-                padding: const EdgeInsets.all(6),
-                child: Icon(Icons.send_rounded,
-                    size: 18, color: canType ? Colors.white : shell.mutedText),
-              ),
-            ),
+          _SendButton(
+            enabled: canType,
+            onSend: () {
+              HapticFeedback.lightImpact();
+              widget.onSend(widget.controller.text);
+            },
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Circular send button with a subtle press-scale + a color/fill transition
+/// between its disabled and active states.
+class _SendButton extends StatefulWidget {
+  const _SendButton({required this.enabled, required this.onSend});
+
+  final bool enabled;
+  final VoidCallback onSend;
+
+  @override
+  State<_SendButton> createState() => _SendButtonState();
+}
+
+class _SendButtonState extends State<_SendButton> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final shell = context.shell;
+    final enabled = widget.enabled;
+    return GestureDetector(
+      onTapDown: enabled ? (_) => setState(() => _pressed = true) : null,
+      onTapCancel: enabled ? () => setState(() => _pressed = false) : null,
+      onTapUp: enabled ? (_) => setState(() => _pressed = false) : null,
+      onTap: enabled ? widget.onSend : null,
+      child: AnimatedScale(
+        scale: _pressed ? 0.86 : 1,
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOut,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: enabled ? AppColors.hubGraph : shell.subtleSurface,
+            shape: BoxShape.circle,
+            boxShadow: enabled
+                ? [
+                    BoxShadow(
+                      color: AppColors.hubGraph.withValues(alpha: 0.35),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Icon(
+            Icons.send_rounded,
+            size: 18,
+            color: enabled ? Colors.white : shell.mutedText,
+          ),
+        ),
       ),
     );
   }
@@ -758,19 +777,25 @@ class _AssistantBubble extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 ChatRichText(text: text),
-                const SizedBox(height: 2),
-                // AI Basic Act (2026) generated-content marking.
-                Text(
-                  'AI 생성',
-                  style: TextStyle(
-                    fontSize: 10,
-                    height: 1.2,
-                    letterSpacing: 0.3,
-                    color: Theme.of(context)
-                        .colorScheme
-                        .onSurfaceVariant
-                        .withValues(alpha: 0.7),
-                  ),
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    // AI Basic Act (2026) generated-content marking.
+                    Text(
+                      'AI 생성',
+                      style: TextStyle(
+                        fontSize: 10,
+                        height: 1.2,
+                        letterSpacing: 0.3,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurfaceVariant
+                            .withValues(alpha: 0.7),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    _CopyMessageButton(text: text),
+                  ],
                 ),
                 if (referencedNodes.isNotEmpty) ...[
                   const SizedBox(height: 5),
@@ -793,6 +818,61 @@ class _AssistantBubble extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Subtle "copy" affordance under an assistant message. Flips to a check for a
+/// moment on tap — the standard commercial-chat confirmation.
+class _CopyMessageButton extends StatefulWidget {
+  const _CopyMessageButton({required this.text});
+  final String text;
+
+  @override
+  State<_CopyMessageButton> createState() => _CopyMessageButtonState();
+}
+
+class _CopyMessageButtonState extends State<_CopyMessageButton> {
+  bool _copied = false;
+
+  Future<void> _copy() async {
+    HapticFeedback.selectionClick();
+    await Clipboard.setData(ClipboardData(text: widget.text));
+    if (!mounted) return;
+    setState(() => _copied = true);
+    Future.delayed(const Duration(milliseconds: 1600), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = context.shell.mutedText;
+    return InkWell(
+      onTap: _copy,
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              _copied ? Icons.check_rounded : Icons.copy_rounded,
+              size: 12,
+              color: _copied ? AppColors.accent : muted.withValues(alpha: 0.8),
+            ),
+            const SizedBox(width: 3),
+            Text(
+              _copied ? '복사됨' : '복사',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: _copied ? AppColors.accent : muted.withValues(alpha: 0.8),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -855,21 +935,160 @@ class _ThinkingRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-      child: Row(
-        children: [
-          const SizedBox(
-            width: 12,
-            height: 12,
-            child: CircularProgressIndicator(strokeWidth: 2),
+    return const ThinkingIndicator();
+  }
+}
+
+/// One-shot fade + rise for a freshly appended message. Keyed by a stable
+/// message id and gated by [_seen] so scrolling never replays the animation on
+/// recycled rows — only genuinely new messages animate in.
+class _MessageEntrance extends StatefulWidget {
+  const _MessageEntrance({
+    super.key,
+    required this.entranceKey,
+    required this.child,
+  });
+
+  final String entranceKey;
+  final Widget child;
+
+  static final Set<String> _seen = <String>{};
+
+  @override
+  State<_MessageEntrance> createState() => _MessageEntranceState();
+}
+
+class _MessageEntranceState extends State<_MessageEntrance>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+  late final bool _animate;
+
+  @override
+  void initState() {
+    super.initState();
+    _animate = !_MessageEntrance._seen.contains(widget.entranceKey);
+    _MessageEntrance._seen.add(widget.entranceKey);
+    _c = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 320),
+      value: _animate ? 0 : 1,
+    );
+    if (_animate) _c.forward();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_animate) return widget.child;
+    final curve = CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
+    return FadeTransition(
+      opacity: curve,
+      child: AnimatedBuilder(
+        animation: curve,
+        builder: (context, child) => Transform.translate(
+          offset: Offset(0, (1 - curve.value) * 8),
+          child: child,
+        ),
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+/// Floating "jump to latest" pill — appears only when the feed is scrolled up
+/// away from the bottom, fades/scales in, and animates back down on tap.
+class _ScrollToBottomButton extends StatefulWidget {
+  const _ScrollToBottomButton({required this.controller});
+
+  final ScrollController controller;
+
+  @override
+  State<_ScrollToBottomButton> createState() => _ScrollToBottomButtonState();
+}
+
+class _ScrollToBottomButtonState extends State<_ScrollToBottomButton> {
+  static const _threshold = 260.0;
+  bool _visible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onScroll);
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (!widget.controller.hasClients) return;
+    final pos = widget.controller.position;
+    // Normal (non-reversed) list: bottom == maxScrollExtent.
+    final show = pos.maxScrollExtent - pos.pixels > _threshold;
+    if (show != _visible) setState(() => _visible = show);
+  }
+
+  void _jump() {
+    if (!widget.controller.hasClients) return;
+    HapticFeedback.selectionClick();
+    widget.controller.animateTo(
+      widget.controller.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final shell = context.shell;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return IgnorePointer(
+      ignoring: !_visible,
+      child: AnimatedScale(
+        scale: _visible ? 1 : 0.6,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutBack,
+        child: AnimatedOpacity(
+          opacity: _visible ? 1 : 0,
+          duration: const Duration(milliseconds: 160),
+          child: Container(
+            decoration: BoxDecoration(
+              color: shell.barBackground,
+              shape: BoxShape.circle,
+              border: Border.all(color: shell.panelBorder),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: isDark ? 0.4 : 0.14),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Material(
+              color: Colors.transparent,
+              shape: const CircleBorder(),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: _jump,
+                child: Padding(
+                  padding: const EdgeInsets.all(9),
+                  child: Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    size: 22,
+                    color: shell.primaryText.withValues(alpha: 0.85),
+                  ),
+                ),
+              ),
+            ),
           ),
-          const SizedBox(width: AppSpacing.sm),
-          Text('기억을 뒤적이는 중…',
-              style: TextStyle(
-                  color: context.shell.mutedText,
-                  fontSize: 11.5)),
-        ],
+        ),
       ),
     );
   }

@@ -13,6 +13,7 @@ import '../utils/audio_mime.dart';
 import '../utils/wav_builder.dart';
 import 'audio_drop_zone.dart';
 import 'audio_record_core.dart';
+import 'audio_waveform.dart';
 
 export 'audio_record_core.dart' show kMaxRecordingSeconds;
 
@@ -449,11 +450,11 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
                   fontWeight: FontWeight.bold,
                 ),
           ),
-          if (kIsWeb && _recorder.pcmBytes > 0)
-            Text(
-              '${(_recorder.pcmBytes / 32000).toStringAsFixed(1)}s captured',
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-            ),
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: AudioWaveform(levels: _recorder.levels),
+          ),
         ],
         Text(
           _recording

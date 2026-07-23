@@ -1,13 +1,20 @@
 import 'package:flutter/material.dart';
 
+import '../auth/account_controller.dart';
 import '../compose/compose_session_controller.dart';
+import '../screens/kg_insight_screen.dart';
 import '../screens/kg_timeline_screen.dart';
 import '../screens/menu_screen.dart';
+import '../screens/quiz_queue_screen.dart';
+import '../screens/vocabulary_hub_screen.dart';
 import '../theme/app_theme.dart';
 import 'chat_session_controller.dart';
 import 'journal_task_controller.dart';
 
-/// Claude-style left rail: new chat, recent rooms, and shortcuts to 기록/메뉴.
+/// Gemini-style left rail: new chat, a fixed block of compact nav shortcuts
+/// (기록·내 일기·돌아보기·단어장·퀴즈 큐 — each opens its destination directly,
+/// no intermediate "메뉴" hub page), a 45%-height scrollable recent-rooms
+/// list, and a profile/account row pinned to the very bottom.
 ///
 /// Used both as a fixed rail (wide) and inside a Drawer (narrow). [onNavigate]
 /// closes the drawer after a tap on narrow; it's null when docked as a rail.
@@ -24,15 +31,12 @@ class ChatSidebar extends StatefulWidget {
 }
 
 class _ChatSidebarState extends State<ChatSidebar> {
-  // Shared calendar-date notifier for the pushed timeline screen.
-  final _sharedDate = ValueNotifier<String?>(null);
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
   bool _searching = false;
 
   @override
   void dispose() {
-    _sharedDate.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
@@ -108,21 +112,37 @@ class _ChatSidebarState extends State<ChatSidebar> {
     Navigator.push(
       context,
       MaterialPageRoute(
+        // sharedDate omitted — the timeline owns its own notifier now. A
+        // notifier owned by this State would be disposed the moment the drawer
+        // closes, crashing the still-live pushed screen.
         builder: (_) => KgTimelineScreen(
-          sharedDate: _sharedDate,
           refreshSignal: composeSession.entriesChanged,
         ),
       ),
     );
   }
 
-  void _pushMenu() {
+  void _push(Widget screen) {
     _afterTap();
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const MenuScreen()),
-    );
+    Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
   }
+
+  void _pushInsight() => _push(
+        Scaffold(
+          appBar: AppBar(title: const Text('돌아보기')),
+          body: const KgInsightScreen(),
+        ),
+      );
+
+  void _pushVocab() => _push(const VocabularyHubScreen());
+
+  void _pushQuizQueue() => _push(const QuizQueueScreen());
+
+  /// Single destination for the bottom profile row — a "계정 · 설정" hub
+  /// (theme, account switch/delete, dev tools) with the profile/level editor
+  /// one tap further in via its own header. One tap target, not two, mirrors
+  /// how Gemini's bottom account row opens a single settings surface.
+  void _pushAccountMenu() => _push(const MenuScreen());
 
   String? _resolvedPreview(String? preview, {required bool active}) {
     final p = preview?.trim();
@@ -145,6 +165,14 @@ class _ChatSidebarState extends State<ChatSidebar> {
   @override
   Widget build(BuildContext context) {
     final shell = context.shell;
+    // Gemini-style: a fixed-height nav block on top, then whatever height
+    // remains splits 45/55 between the scrollable history and blank space —
+    // via nested Expanded/flex rather than a raw `totalHeight * 0.45`
+    // SizedBox. The earlier percent-of-*total*-height version didn't account
+    // for the fixed top+bottom chrome's own height, so on a typical drawer
+    // it silently overflowed off the bottom of the screen (hiding the
+    // profile row entirely instead of just looking a bit cramped). Flex only
+    // ever claims space actually left over, so it can't overflow.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -206,7 +234,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
             ),
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 2),
 
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -232,17 +260,49 @@ class _ChatSidebarState extends State<ChatSidebar> {
                     ),
                   ),
                 )
-              : ListTile(
-                  dense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 5),
-                  leading: const Icon(Icons.search_rounded, size: 20),
-                  title: const Text('채팅 검색'),
+              : _CompactNavTile(
+                  icon: Icons.search_rounded,
+                  label: '채팅 검색',
                   onTap: _toggleSearch,
                 ),
         ),
-        const SizedBox(height: 4),
 
-        // ── Recent rooms ─────────────────────────────────────────────────
+        // ── Gemini-style compact nav block (fixed, small) ────────────────
+        // Each item opens its destination directly — no intermediate "메뉴"
+        // hub page to pass through first. ("내 일기" = the timeline/기록 view;
+        // the old separate JournalHub "내 일기" was near-duplicate and removed.)
+        _CompactNavTile(
+            icon: Icons.auto_stories_outlined,
+            label: '내 일기',
+            onTap: _pushTimeline),
+        _CompactNavTile(
+            icon: Icons.bar_chart_rounded, label: '돌아보기', onTap: _pushInsight),
+        _CompactNavTile(
+            icon: Icons.menu_book_rounded,
+            label: '단어장 · 표현 은행',
+            onTap: _pushVocab),
+        _CompactNavTile(
+            icon: Icons.playlist_add_check_rounded,
+            label: '퀴즈 큐',
+            onTap: _pushQuizQueue),
+        const SizedBox(height: 4),
+        Divider(height: 1, color: shell.panelBorder),
+
+        // ── Recent rooms — fills ALL remaining space and scrolls internally
+        // (Gemini pattern). Earlier this was capped at 45% with 55% left
+        // blank, which on web/tall windows made the list look truncated even
+        // with plenty of room. Expanded claims exactly what's left, so the
+        // profile row stays pinned and the list never overflows. ───────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
+          child: Text('최근 대화',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.3,
+                color: shell.mutedText,
+              )),
+        ),
         Expanded(
           child: ListenableBuilder(
             listenable: Listenable.merge([chatSession, journalTask]),
@@ -252,7 +312,8 @@ class _ChatSidebarState extends State<ChatSidebar> {
                   ? chatSession.sessions
                   : chatSession.sessions.where((s) {
                       final title = s['title']?.toString().toLowerCase() ?? '';
-                      final preview = s['preview']?.toString().toLowerCase() ?? '';
+                      final preview =
+                          s['preview']?.toString().toLowerCase() ?? '';
                       return title.contains(query) || preview.contains(query);
                     }).toList();
               if (sessions.isEmpty) {
@@ -262,13 +323,12 @@ class _ChatSidebarState extends State<ChatSidebar> {
                     child: Text('아직 채팅방이 없어요.\n"새 채팅"으로 시작하세요.',
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                            fontSize: 12.5,
-                            color: context.shell.mutedText)),
+                            fontSize: 12.5, color: context.shell.mutedText)),
                   ),
                 );
               }
               return ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
                 itemCount: sessions.length,
                 itemBuilder: (context, i) {
                   final s = sessions[i];
@@ -293,10 +353,8 @@ class _ChatSidebarState extends State<ChatSidebar> {
           ),
         ),
 
-        const Divider(height: 1),
-        _NavTile(icon: Icons.history_rounded, label: '기록', onTap: _pushTimeline),
-        _NavTile(icon: Icons.grid_view_rounded, label: '메뉴', onTap: _pushMenu),
-        const SizedBox(height: 8),
+        Divider(height: 1, color: shell.panelBorder),
+        _ProfileFooterRow(onTap: _pushAccountMenu),
       ],
     );
   }
@@ -313,14 +371,6 @@ class ChatSidebarRail extends StatefulWidget {
 }
 
 class _ChatSidebarRailState extends State<ChatSidebarRail> {
-  final _sharedDate = ValueNotifier<String?>(null);
-
-  @override
-  void dispose() {
-    _sharedDate.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -338,19 +388,18 @@ class _ChatSidebarRailState extends State<ChatSidebarRail> {
         ),
         const Spacer(),
         IconButton(
-          tooltip: '기록',
+          tooltip: '내 일기',
           onPressed: () {
             Navigator.push(
               context,
               MaterialPageRoute(
                 builder: (_) => KgTimelineScreen(
-                  sharedDate: _sharedDate,
                   refreshSignal: composeSession.entriesChanged,
                 ),
               ),
             );
           },
-          icon: const Icon(Icons.history_rounded),
+          icon: const Icon(Icons.auto_stories_outlined),
         ),
         IconButton(
           tooltip: '메뉴',
@@ -444,8 +493,12 @@ class _RoomTile extends StatelessWidget {
   }
 }
 
-class _NavTile extends StatelessWidget {
-  const _NavTile(
+/// Gemini-style compact nav row — single line, small icon, no subtitle.
+/// Deliberately smaller than [_RoomTile]/`AppHubTile` since this block is
+/// meant to sit as fixed chrome above the scrollable history, not compete
+/// with it for visual weight.
+class _CompactNavTile extends StatelessWidget {
+  const _CompactNavTile(
       {required this.icon, required this.label, required this.onTap});
 
   final IconData icon;
@@ -454,11 +507,90 @@ class _NavTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      dense: true,
-      leading: Icon(icon, size: 20),
-      title: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
-      onTap: onTap,
+    final shell = context.shell;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(9),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            children: [
+              Icon(icon, size: 18, color: shell.primaryText.withValues(alpha: 0.8)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: shell.primaryText,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Bottom-pinned account row (Gemini's account switcher analog). Tapping the
+/// row opens profile settings; the trailing icon opens the small secondary
+/// page for rarely-used account actions (계정 전환 · 데이터 삭제 · 개발자 도구).
+class _ProfileFooterRow extends StatelessWidget {
+  const _ProfileFooterRow({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final shell = context.shell;
+    final cs = Theme.of(context).colorScheme;
+    final current = accountController.current;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 16,
+                backgroundColor: cs.primary,
+                child: Icon(Icons.person_rounded, size: 18, color: cs.onPrimary),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('내 프로필',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: shell.primaryText,
+                        )),
+                    if (current != null && current.isNotEmpty)
+                      Text(current,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 11, color: shell.mutedText)),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded,
+                  size: 19, color: shell.mutedText),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

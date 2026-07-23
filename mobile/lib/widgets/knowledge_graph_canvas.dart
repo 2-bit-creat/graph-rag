@@ -1351,12 +1351,11 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
   Widget build(BuildContext context) {
     _darkCanvas = Theme.of(context).brightness == Brightness.dark;
     if (widget.nodes.isEmpty || _layout == null) {
-      return ColoredBox(
-        color: _canvasBackground,
-        child: const Center(
-          child: Text('노드 없음', style: TextStyle(color: AppColors.textMuted)),
-        ),
-      );
+      // Just the canvas background — the empty-graph onboarding message is a
+      // single overlay owned by the screen (_EmptyGraphHint). Rendering our
+      // own "노드 없음" here on top of that produced the doubled/overlapping
+      // text. Stay silent and let the one overlay speak.
+      return ColoredBox(color: _canvasBackground);
     }
 
     _visibleNodes = _effectiveNodes.where(_nodeMatchesFilter).toList();

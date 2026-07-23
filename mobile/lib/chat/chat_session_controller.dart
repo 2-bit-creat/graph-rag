@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../api/client.dart';
+import '../app_navigator.dart';
 import '../compose/journal_phase.dart';
 import '../l10n/app_strings.dart';
 import '../widgets/graph_chat_panel.dart' show GraphChatMessage;
@@ -839,3 +840,12 @@ class ChatSessionController extends ChangeNotifier {
 
 /// App-wide singleton — imported directly, like [composeSession].
 final chatSession = ChatSessionController();
+
+/// Single entry point for "새 일기 쓰기" from anywhere outside the home shell
+/// (timeline FAB, journal hub, quiz gen). Returns to the home shell and enters
+/// the in-chat journal compose mode — replacing the old popup compose window,
+/// so journal writing always happens inline in the conversation.
+void openChatJournalCompose() {
+  appNavigatorKey.currentState?.popUntil((route) => route.isFirst);
+  chatSession.enterJournalMode();
+}

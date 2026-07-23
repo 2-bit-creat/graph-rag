@@ -3,20 +3,21 @@ import 'package:flutter/material.dart';
 import '../auth/account_controller.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
+import '../theme/app_theme_controller.dart';
 import '../widgets/app_ui.dart';
-import 'journal_hub_screen.dart';
-import 'kg_debug_screen.dart';
-import 'kg_insight_screen.dart';
+import 'accounts_overview_screen.dart';
 import 'pipeline_debug_hub_screen.dart';
 import 'quiz_generation_screen.dart';
 import 'quiz_pipeline_hub_screen.dart';
-import 'quiz_queue_screen.dart';
+import 'kg_debug_screen.dart';
 import 'settings_screen.dart';
-import 'vocabulary_hub_screen.dart';
 
-/// Consolidated "더보기" menu. Everything the app can do that isn't the chat home
-/// lives here in one place: user tools grouped by purpose, plus a collapsed
-/// developer section (문제 생성·파이프라인 디버그) that isn't locked — just tucked away.
+/// 계정 · 설정. 내 일기/돌아보기/단어장/퀴즈 큐 같은 자주 쓰는 목적지는 이제
+/// [ChatSidebar]의 컴팩트 nav 블록에서 바로 열린다 — 여긴 자주 안 쓰는 항목
+/// (테마·계정 전환·데이터 삭제)과 잠금 없는 개발자 도구, 그리고 상단 프로필
+/// 헤더를 통한 레벨/언어 편집 진입점만 남는다. 사이드바 하단 프로필 행을
+/// 탭하면 곧장 이 화면으로 들어온다 (탭 하나 = 목적지 하나, Gemini의 계정
+/// 행과 동일한 패턴).
 class MenuScreen extends StatefulWidget {
   const MenuScreen({super.key});
 
@@ -66,7 +67,7 @@ class _MenuScreenState extends State<MenuScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('메뉴')),
+      appBar: AppBar(title: const Text('계정 · 설정')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(
           AppSpacing.pageH, AppSpacing.pageV, AppSpacing.pageH, AppSpacing.xxl,
@@ -75,51 +76,8 @@ class _MenuScreenState extends State<MenuScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _ProfileHeader(onTap: () => _open(const SettingsScreen())),
-            const SizedBox(height: AppSpacing.xl),
-
-            // ── 내 기록 ────────────────────────────────────────────────────
-            const AppSectionHeader(title: '내 기록', subtitle: '일기 · 통계'),
             const SizedBox(height: AppSpacing.md),
-            AppHubTile(
-              icon: Icons.auto_stories_outlined,
-              title: '내 일기',
-              subtitle: '번역 · 화자 확인 · 지식그래프 이동',
-              color: AppColors.accent,
-              onTap: () => _open(const JournalHubScreen()),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            AppHubTile(
-              icon: Icons.bar_chart_rounded,
-              title: '돌아보기',
-              subtitle: '성장 통계 & 활동 현황',
-              color: AppColors.hubVoice,
-              onTap: () => _open(
-                Scaffold(
-                  appBar: AppBar(title: const Text('돌아보기')),
-                  body: const KgInsightScreen(),
-                ),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.xl),
-
-            // ── 학습 ──────────────────────────────────────────────────────
-            const AppSectionHeader(title: '학습', subtitle: '표현 · 단어장 · 복습 큐'),
-            const SizedBox(height: AppSpacing.md),
-            AppHubTile(
-              icon: Icons.menu_book_rounded,
-              title: '단어장 · 표현 은행',
-              subtitle: '내 단어장 · 그래프에서 추출된 표현',
-              color: AppColors.accent,
-              onTap: () => _open(const VocabularyHubScreen()),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            AppHubTile(
-              icon: Icons.playlist_add_check_rounded,
-              title: '퀴즈 큐',
-              subtitle: '대기 · 복습 예정 문제 관리',
-              color: AppColors.hubQuiz,
-              onTap: () => _open(const QuizQueueScreen()),
-            ),
+            const _ThemeModeTile(),
             const SizedBox(height: AppSpacing.xl),
 
             AppSectionHeader(title: tr('account.switch'), subtitle: accountController.current ?? ''),
@@ -212,10 +170,100 @@ class _MenuScreenState extends State<MenuScreen> {
                   ),
                 ),
               ),
+              const SizedBox(height: AppSpacing.sm),
+              AppHubTile(
+                icon: Icons.groups_outlined,
+                title: '계정 개요',
+                subtitle: '서버의 전체 계정 · 대략적인 DB 사용량',
+                color: AppColors.hubGraph,
+                onTap: () => _open(const AccountsOverviewScreen()),
+              ),
             ],
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 일반/야간 모드 전환 — 그래프 화면 상단을 비우기 위해 메뉴로 이전.
+/// [AppHubTile]과 같은 표면·라운딩을 쓰되, 탐색이 아닌 즉시 토글이라
+/// 트레일링 [Switch]로 상태를 바로 보여준다.
+class _ThemeModeTile extends StatelessWidget {
+  const _ThemeModeTile();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ListenableBuilder(
+      listenable: appThemeController,
+      builder: (context, _) {
+        final dark = appThemeController.isDark;
+        return Material(
+          color: scheme.surfaceContainerLow.withValues(alpha: 0.7),
+          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: appThemeController.toggle,
+            child: Padding(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              child: Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          AppColors.hubGraph.withValues(alpha: 0.18),
+                          AppColors.hubGraph.withValues(alpha: 0.08),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+                    ),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 180),
+                      child: Icon(
+                        dark
+                            ? Icons.dark_mode_rounded
+                            : Icons.light_mode_rounded,
+                        key: ValueKey(dark),
+                        color: AppColors.hubGraph,
+                        size: 24,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('화면 모드',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 2),
+                        Text(dark ? '야간 모드' : '일반 모드',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: AppColors.textMuted)),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    value: dark,
+                    onChanged: (_) => appThemeController.toggle(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

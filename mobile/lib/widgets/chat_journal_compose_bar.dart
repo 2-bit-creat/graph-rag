@@ -232,131 +232,204 @@ class _ChatJournalComposeBarState extends State<ChatJournalComposeBar> {
 
   @override
   Widget build(BuildContext context) {
-    final maxLines = _expanded ? 22 : 10;
+    final maxLines = _expanded ? 20 : 7;
     final recording = _recorder.recording;
     final shell = context.shell;
+    final scheme = Theme.of(context).colorScheme;
+    // An inline card that lives IN the chat feed (not a docked bar) — rounded
+    // surface, subtle border, no full-width top divider.
     return Container(
+      margin: const EdgeInsets.only(top: 4, bottom: 6),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
       decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: shell.panelBorder)),
+        color: scheme.surfaceContainerLow.withValues(alpha: 0.75),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: shell.panelBorder),
       ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Header: brand badge + title + counter + expand + close.
+          Row(
             children: [
-              Row(
-                children: [
-                  IconButton(
-                    tooltip: '취소',
-                    onPressed: _saving ? null : _confirmExit,
-                    icon: Icon(Icons.close_rounded,
-                        color: shell.primaryText, size: 20),
+              Container(
+                width: 22,
+                height: 22,
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [AppColors.hubVoice, AppColors.accent],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
-                  Expanded(
-                    child: Text(
-                      '일기 쓰기',
-                      style: TextStyle(
-                        color: shell.primaryText,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                  Text(
-                    '$_charCount / $kMaxJournalTextChars',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: shell.mutedText,
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: _expanded ? '축소' : '확장',
-                    onPressed: () => setState(() => _expanded = !_expanded),
-                    icon: Icon(
-                      _expanded
-                          ? Icons.unfold_less_rounded
-                          : Icons.unfold_more_rounded,
-                      color: shell.primaryText.withValues(alpha: 0.75),
-                      size: 20,
-                    ),
-                  ),
-                ],
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.auto_stories_rounded,
+                    size: 13, color: Colors.white),
               ),
-              MentionAutocompleteField(
-                key: _fieldKey,
-                minLines: 3,
-                maxLines: maxLines,
-                showCounter: false,
-                // Docked at the bottom of the screen — open the @-mention popup
-                // upward so it isn't clipped below the viewport.
-                openUpward: true,
-                enabled: !_saving && !recording,
-                onChanged: (t) => setState(() => _charCount = t.length),
-                decoration: InputDecoration(
-                  hintText: '그냥 쓰면 나의 일기 · @로 화자 지정\n예: @엄마 10시까지 오라고 했어',
-                  hintStyle: TextStyle(
-                    color: shell.mutedText,
-                    fontSize: 13,
-                  ),
-                  filled: true,
-                  fillColor: shell.subtleSurface,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              const SizedBox(width: 8),
+              Text(
+                '일기 쓰기',
+                style: TextStyle(
+                  color: shell.primaryText,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13.5,
                 ),
               ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  IconButton(
-                    tooltip: recording ? '녹음 중지·저장' : '음성 녹음',
-                    onPressed: _saving ? null : _toggleMic,
-                    icon: Icon(
-                      recording ? Icons.stop_circle_rounded : Icons.mic_rounded,
-                      color: recording ? Colors.redAccent : AppColors.hubVoice,
-                    ),
-                  ),
-                  if (recording)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: Text(
-                        formatDuration(_recorder.elapsedSec),
-                        style: const TextStyle(
-                          color: Colors.redAccent,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                  IconButton(
-                    tooltip: '음성 파일',
-                    onPressed: _saving || recording ? null : _pickFile,
-                    icon: Icon(
-                      Icons.attach_file_rounded,
-                      color: shell.primaryText.withValues(alpha: 0.75),
-                    ),
-                  ),
-                  const Spacer(),
-                  FilledButton.icon(
-                    onPressed: _saving || recording ? null : _saveText,
-                    icon: _saving
-                        ? SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Theme.of(context).colorScheme.onPrimary),
-                          )
-                        : const Icon(Icons.save_alt_outlined, size: 18),
-                    label: Text(_saving ? '저장 중…' : '저장'),
-                  ),
-                ],
+              const Spacer(),
+              Text(
+                '$_charCount / $kMaxJournalTextChars',
+                style: TextStyle(fontSize: 11, color: shell.mutedText),
               ),
+              const SizedBox(width: 2),
+              _HeaderIcon(
+                tooltip: _expanded ? '축소' : '확장',
+                icon: _expanded
+                    ? Icons.unfold_less_rounded
+                    : Icons.unfold_more_rounded,
+                onTap: () => setState(() => _expanded = !_expanded),
+              ),
+              _HeaderIcon(
+                tooltip: '닫기',
+                icon: Icons.close_rounded,
+                onTap: _saving ? null : _confirmExit,
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          MentionAutocompleteField(
+            key: _fieldKey,
+            minLines: 3,
+            maxLines: maxLines,
+            showCounter: false,
+            // The card sits near the bottom of the feed, so open the @-mention
+            // popup upward to avoid clipping below the viewport.
+            openUpward: true,
+            enabled: !_saving && !recording,
+            onChanged: (t) => setState(() => _charCount = t.length),
+            decoration: InputDecoration(
+              hintText: '그냥 쓰면 나의 일기 · @로 화자 지정\n예: @엄마 10시까지 오라고 했어',
+              hintStyle: TextStyle(color: shell.mutedText, fontSize: 13),
+              filled: true,
+              fillColor: shell.subtleSurface,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              // Mic — pill that turns into a recording indicator.
+              _ActionButton(
+                onTap: _saving ? null : _toggleMic,
+                active: recording,
+                activeColor: Colors.redAccent,
+                idleColor: AppColors.hubVoice,
+                icon: recording
+                    ? Icons.stop_rounded
+                    : Icons.mic_none_rounded,
+                label: recording ? formatDuration(_recorder.elapsedSec) : null,
+              ),
+              const SizedBox(width: 6),
+              _ActionButton(
+                onTap: _saving || recording ? null : _pickFile,
+                idleColor: shell.primaryText.withValues(alpha: 0.7),
+                icon: Icons.attach_file_rounded,
+              ),
+              const Spacer(),
+              FilledButton.icon(
+                onPressed: _saving || recording ? null : _saveText,
+                style: FilledButton.styleFrom(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+                ),
+                icon: _saving
+                    ? SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: scheme.onPrimary),
+                      )
+                    : const Icon(Icons.arrow_upward_rounded, size: 18),
+                label: Text(_saving ? '저장 중…' : '저장'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Small square header affordance (expand / close) for the compose card.
+class _HeaderIcon extends StatelessWidget {
+  const _HeaderIcon(
+      {required this.tooltip, required this.icon, required this.onTap});
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onTap,
+      visualDensity: VisualDensity.compact,
+      iconSize: 19,
+      color: context.shell.primaryText.withValues(alpha: 0.7),
+      icon: Icon(icon),
+    );
+  }
+}
+
+/// Rounded icon (optionally with a label) for the mic / file actions.
+class _ActionButton extends StatelessWidget {
+  const _ActionButton({
+    required this.onTap,
+    required this.icon,
+    required this.idleColor,
+    this.active = false,
+    this.activeColor,
+    this.label,
+  });
+
+  final VoidCallback? onTap;
+  final IconData icon;
+  final Color idleColor;
+  final bool active;
+  final Color? activeColor;
+  final String? label;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = active ? (activeColor ?? idleColor) : idleColor;
+    return Material(
+      color: active
+          ? color.withValues(alpha: 0.12)
+          : context.shell.subtleSurface,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+              horizontal: label != null ? 12 : 10, vertical: 9),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 20, color: color),
+              if (label != null) ...[
+                const SizedBox(width: 6),
+                Text(
+                  label!,
+                  style: TextStyle(
+                      color: color, fontWeight: FontWeight.w700, fontSize: 13),
+                ),
+              ],
             ],
           ),
         ),

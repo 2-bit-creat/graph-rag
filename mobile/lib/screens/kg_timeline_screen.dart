@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/client.dart';
 import '../app_route_observer.dart';
-import '../compose/compose_session_controller.dart';
+import '../chat/chat_session_controller.dart' show openChatJournalCompose;
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import 'journal_hub_screen.dart';
@@ -28,14 +28,18 @@ Color _colorFor(String type) => _kTypeColors[type] ?? const Color(0xFF94A3B8);
 class KgTimelineScreen extends StatefulWidget {
   const KgTimelineScreen({
     super.key,
-    required this.sharedDate,
+    this.sharedDate,
     this.onOpenBuild,
     this.refreshSignal,
   });
 
   /// Cross-tab shared date. When Insight heatmap taps a date, this updates
-  /// and the calendar sub-view scrolls to the correct month.
-  final ValueNotifier<String?> sharedDate;
+  /// and the calendar sub-view scrolls to the correct month. Optional — when
+  /// null the screen owns its own notifier. It MUST be owned by something that
+  /// outlives this route: previously a throwaway notifier created in the
+  /// sidebar's State was passed here, and closing the drawer disposed it while
+  /// this pushed screen was still listening → "used after being disposed".
+  final ValueNotifier<String?>? sharedDate;
 
   /// Called when FAB is tapped — parent can push KgBuildScreen.
   final VoidCallback? onOpenBuild;
@@ -49,6 +53,11 @@ class KgTimelineScreen extends StatefulWidget {
 
 class _KgTimelineScreenState extends State<KgTimelineScreen> with RouteAware {
   int _subView = 0; // 0=타임라인, 1=캘린더
+
+  // Owned internally when the caller didn't pass one — see [sharedDate] doc.
+  late final ValueNotifier<String?> _sharedDate =
+      widget.sharedDate ?? ValueNotifier<String?>(null);
+  bool get _ownsSharedDate => widget.sharedDate == null;
 
   // Raw data — entry-centric (one card per journal entry). The graph is a live
   // derived layer: a card always reflects its entry's CURRENT Statement nodes,
@@ -66,7 +75,7 @@ class _KgTimelineScreenState extends State<KgTimelineScreen> with RouteAware {
   void initState() {
     super.initState();
     _load();
-    widget.sharedDate.addListener(_onSharedDateChanged);
+    _sharedDate.addListener(_onSharedDateChanged);
     widget.refreshSignal?.addListener(_load);
   }
 
@@ -80,7 +89,8 @@ class _KgTimelineScreenState extends State<KgTimelineScreen> with RouteAware {
   @override
   void dispose() {
     appRouteObserver.unsubscribe(this);
-    widget.sharedDate.removeListener(_onSharedDateChanged);
+    _sharedDate.removeListener(_onSharedDateChanged);
+    if (_ownsSharedDate) _sharedDate.dispose();
     widget.refreshSignal?.removeListener(_load);
     super.dispose();
   }
@@ -92,7 +102,7 @@ class _KgTimelineScreenState extends State<KgTimelineScreen> with RouteAware {
   void didPopNext() => _load(silent: true);
 
   void _onSharedDateChanged() {
-    if (widget.sharedDate.value != null) {
+    if (_sharedDate.value != null) {
       setState(() => _subView = 1);
     }
   }
@@ -155,62 +165,42 @@ class _KgTimelineScreenState extends State<KgTimelineScreen> with RouteAware {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('홈'),
+        title: const Text('내 일기'),
         centerTitle: false,
+        titleTextStyle: theme.textTheme.titleLarge?.copyWith(
+          fontWeight: FontWeight.w700,
+          letterSpacing: -0.3,
+        ),
+        scrolledUnderElevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh_rounded, size: 22),
             onPressed: _load,
+            tooltip: '새로고침',
           ),
+          const SizedBox(width: 4),
         ],
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(88),
+          preferredSize: Size.fromHeight(_allCategories.isNotEmpty ? 92 : 52),
           child: Column(
             children: [
-              // Segment control
+              // Minimal underline-style view toggle — flat text tabs with a
+              // single accent underline, no filled segmented button chrome.
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    // Split the available width into two equal halves so each
-                    // segment is wide enough for its label (no vertical wrap).
-                    final segWidth = (constraints.maxWidth - 6) / 2;
-                    return SegmentedButton<int>(
-                      showSelectedIcon: false,
-                      style: SegmentedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                      ),
-                      segments: [
-                        ButtonSegment(
-                          value: 0,
-                          label: SizedBox(
-                            width: segWidth,
-                            child: const Text(
-                              '타임라인',
-                              textAlign: TextAlign.center,
-                              softWrap: false,
-                              overflow: TextOverflow.fade,
-                            ),
-                          ),
-                        ),
-                        ButtonSegment(
-                          value: 1,
-                          label: SizedBox(
-                            width: segWidth,
-                            child: const Text(
-                              '캘린더',
-                              textAlign: TextAlign.center,
-                              softWrap: false,
-                              overflow: TextOverflow.fade,
-                            ),
-                          ),
-                        ),
-                      ],
-                      selected: {_subView},
-                      onSelectionChanged: (s) =>
-                          setState(() => _subView = s.first),
-                    );
-                  },
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+                child: Row(
+                  children: [
+                    _ViewTab(
+                      label: '타임라인',
+                      selected: _subView == 0,
+                      onTap: () => setState(() => _subView = 0),
+                    ),
+                    _ViewTab(
+                      label: '캘린더',
+                      selected: _subView == 1,
+                      onTap: () => setState(() => _subView = 1),
+                    ),
+                  ],
                 ),
               ),
               // Category filter chips
@@ -255,25 +245,69 @@ class _KgTimelineScreenState extends State<KgTimelineScreen> with RouteAware {
                     ),
                     _CalendarSubView(
                       cards: _cards,
-                      sharedDate: widget.sharedDate,
+                      sharedDate: _sharedDate,
                       catFilter: _catFilter,
                       onEntryTap: _onEntryTap,
-                      onAddEntry: () => composeSession.open(startNew: true),
+                      onAddEntry: openChatJournalCompose,
                     ),
                   ],
                 ),
-      // 작성 창 오버레이 — 일기 생성/상태 변경 시 composeSession.entriesChanged를
-      // 통해 타임라인이 갱신되므로 여기서 별도 reload는 필요 없다. 세션이 살아
-      // 있는 동안은 우하단 미니 창이 FAB 자리를 대신하므로 FAB를 숨긴다.
-      floatingActionButton: ListenableBuilder(
-        listenable: composeSession,
-        builder: (context, _) => composeSession.isActive
-            ? const SizedBox.shrink()
-            : FloatingActionButton(
-                onPressed: () => composeSession.open(startNew: true),
-                tooltip: '새 기록 추가',
-                child: const Icon(Icons.add),
+      // "+" 는 이제 팝업 작성 창을 열지 않고, 홈(대화)으로 돌아가 채팅 안
+      // 일기 쓰기 모드를 연다 — 일기 작성 경로를 채팅 하나로 통일.
+      floatingActionButton: FloatingActionButton(
+        onPressed: openChatJournalCompose,
+        tooltip: '새 일기 쓰기',
+        child: const Icon(Icons.add),
+      ),
+    );
+  }
+}
+
+// ─── Minimal underline view tab ─────────────────────────────────────────────
+
+class _ViewTab extends StatelessWidget {
+  const _ViewTab(
+      {required this.label, required this.selected, required this.onTap});
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = selected
+        ? theme.colorScheme.primary
+        : theme.colorScheme.onSurfaceVariant;
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Column(
+            children: [
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  color: color,
+                ),
               ),
+              const SizedBox(height: 7),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                height: 2,
+                width: selected ? 26 : 0,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -350,8 +384,10 @@ class _TimelineSubView extends StatelessWidget {
     }
     final sortedDates = groups.keys.toList()..sort((a, b) => b.compareTo(a));
 
+    // Flat, rail-free list: a quiet date header, then its cards. No timeline
+    // spine / dots — the minimal grouping alone carries the chronology.
     return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 100),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
       itemCount: sortedDates.length,
       itemBuilder: (_, gi) {
         final date = sortedDates[gi];
@@ -360,33 +396,9 @@ class _TimelineSubView extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _DateHeader(date: date),
-            IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Column(
-                    children: [
-                      Container(
-                        width: 2,
-                        color: AppColors.primary.withOpacity(0.15),
-                        margin: const EdgeInsets.only(left: 7),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      children: [
-                        for (final c in items)
-                          _EntryCard(card: c, onTap: () => onEntryTap(c)),
-                        const SizedBox(height: 4),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 4),
+            for (final c in items)
+              _EntryCard(card: c, onTap: () => onEntryTap(c)),
+            const SizedBox(height: 8),
           ],
         );
       },
@@ -481,180 +493,159 @@ class _EntryCard extends StatelessWidget {
       }
     }
 
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: color.withOpacity(0.18), width: 1),
-          boxShadow: [
-            BoxShadow(
-                color: color.withOpacity(0.06),
-                blurRadius: 8,
-                offset: const Offset(0, 2)),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header: type chip + time
-            Container(
-              padding: const EdgeInsets.fromLTRB(12, 9, 12, 7),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.07),
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(14)),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: color.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(6),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: theme.colorScheme.surfaceContainerLow.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(14),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 13),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Meta row: a small color dot + category, then time — no
+                // heavy filled header bar.
+                Row(
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration:
+                          BoxDecoration(color: color, shape: BoxShape.circle),
                     ),
-                    child: Text(
+                    const SizedBox(width: 7),
+                    Text(
                       label,
                       style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: color),
-                    ),
-                  ),
-                  if (statements.length > 1) ...[
-                    const SizedBox(width: 6),
-                    Text('진술 ${statements.length}',
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: theme.colorScheme.onSurfaceVariant)),
-                  ],
-                  const Spacer(),
-                  if (timeStr.isNotEmpty)
-                    Text(timeStr,
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: theme.colorScheme.onSurfaceVariant)),
-                ],
-              ),
-            ),
-            // Body
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (!hasGraph) ...[
-                    if (preview.isNotEmpty)
-                      Text(
-                        preview,
-                        style: TextStyle(
-                          fontSize: 14,
-                          height: 1.35,
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.onSurfaceVariant,
                       ),
-                    // 다음 행동 힌트 — 카드가 막다른 길이 되지 않게.
-                    ...() {
-                      final hint = _nextStepHint(context);
-                      if (hint == null) return const <Widget>[];
-                      final (label, icon, hintColor, spinning) = hint;
-                      return <Widget>[
-                        if (preview.isNotEmpty) const SizedBox(height: 8),
+                    ),
+                    if (statements.length > 1) ...[
+                      const SizedBox(width: 8),
+                      Text('· 진술 ${statements.length}',
+                          style: TextStyle(
+                              fontSize: 11.5,
+                              color: theme.colorScheme.onSurfaceVariant
+                                  .withValues(alpha: 0.7))),
+                    ],
+                    const Spacer(),
+                    if (timeStr.isNotEmpty)
+                      Text(timeStr,
+                          style: TextStyle(
+                              fontSize: 11.5,
+                              color: theme.colorScheme.onSurfaceVariant
+                                  .withValues(alpha: 0.7))),
+                  ],
+                ),
+                const SizedBox(height: 9),
+                if (!hasGraph) ...[
+                  if (preview.isNotEmpty)
+                    Text(
+                      preview,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 14.5,
+                        height: 1.4,
+                        color: theme.colorScheme.onSurface
+                            .withValues(alpha: 0.85),
+                      ),
+                    ),
+                  ...() {
+                    final hint = _nextStepHint(context);
+                    if (hint == null) return const <Widget>[];
+                    final (label, icon, hintColor, spinning) = hint;
+                    return <Widget>[
+                      if (preview.isNotEmpty) const SizedBox(height: 10),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (spinning)
+                            SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 1.6,
+                                color: hintColor,
+                              ),
+                            )
+                          else
+                            Icon(icon, size: 14, color: hintColor),
+                          const SizedBox(width: 5),
+                          Text(
+                            label,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: hintColor,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ];
+                  }(),
+                ] else
+                  for (final s in statements)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 7),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6, right: 9),
+                            child: Container(
+                              width: 4,
+                              height: 4,
+                              decoration: BoxDecoration(
+                                  color: color.withValues(alpha: 0.7),
+                                  shape: BoxShape.circle),
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              s['content']?.toString().trim().isNotEmpty == true
+                                  ? s['content'].toString()
+                                  : (s['title']?.toString() ?? ''),
+                              style: const TextStyle(fontSize: 14, height: 1.4),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                if (speakers.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: [
+                      for (final sp in speakers)
                         Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            if (spinning)
-                              SizedBox(
-                                width: 12,
-                                height: 12,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 1.6,
-                                  color: hintColor,
-                                ),
-                              )
-                            else
-                              Icon(icon, size: 14, color: hintColor),
-                            const SizedBox(width: 5),
-                            Text(
-                              label,
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: hintColor,
-                              ),
-                            ),
+                            Icon(Icons.person_outline_rounded,
+                                size: 12,
+                                color: theme.colorScheme.onSurfaceVariant
+                                    .withValues(alpha: 0.6)),
+                            const SizedBox(width: 3),
+                            Text(sp,
+                                style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: theme.colorScheme.onSurfaceVariant
+                                        .withValues(alpha: 0.8))),
+                            const SizedBox(width: 8),
                           ],
                         ),
-                      ];
-                    }(),
-                  ] else
-                    for (final s in statements)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 6),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.only(top: 6, right: 8),
-                              child: Container(
-                                width: 5,
-                                height: 5,
-                                decoration: BoxDecoration(
-                                    color: color, shape: BoxShape.circle),
-                              ),
-                            ),
-                            Expanded(
-                              child: Text(
-                                s['content']?.toString().trim().isNotEmpty ==
-                                        true
-                                    ? s['content'].toString()
-                                    : (s['title']?.toString() ?? ''),
-                                style:
-                                    const TextStyle(fontSize: 14, height: 1.35),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                  if (speakers.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      children: [
-                        for (final sp in speakers)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: theme.colorScheme.surfaceContainerHighest,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.person,
-                                    size: 11,
-                                    color: theme.colorScheme.onSurfaceVariant),
-                                const SizedBox(width: 3),
-                                Text(sp,
-                                    style: TextStyle(
-                                        fontSize: 11,
-                                        color: theme
-                                            .colorScheme.onSurfaceVariant)),
-                              ],
-                            ),
-                          ),
-                      ],
-                    ),
-                  ],
+                    ],
+                  ),
                 ],
-              ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -685,41 +676,17 @@ class _DateHeader extends StatelessWidget {
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(0, 20, 0, 10),
-      child: Row(
-        children: [
-          // Timeline dot
-          Container(
-            width: 16,
-            height: 16,
-            decoration: BoxDecoration(
-              color: isToday
-                  ? AppColors.primary
-                  : theme.colorScheme.surfaceContainerHighest,
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: isToday
-                    ? AppColors.primary
-                    : theme.colorScheme.outline.withOpacity(0.4),
-                width: isToday ? 0 : 1.5,
-              ),
-            ),
-            child: isToday
-                ? const Icon(Icons.circle, size: 8, color: Colors.white)
-                : null,
-          ),
-          const SizedBox(width: 10),
-          Text(
-            label,
-            style: theme.textTheme.labelMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-              color: isToday
-                  ? AppColors.primary
-                  : theme.colorScheme.onSurface.withOpacity(0.7),
-              letterSpacing: 0.2,
-            ),
-          ),
-        ],
+      padding: const EdgeInsets.fromLTRB(2, 18, 0, 8),
+      child: Text(
+        label,
+        style: theme.textTheme.labelMedium?.copyWith(
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          color: isToday
+              ? AppColors.primary
+              : theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.75),
+          letterSpacing: 0.2,
+        ),
       ),
     );
   }

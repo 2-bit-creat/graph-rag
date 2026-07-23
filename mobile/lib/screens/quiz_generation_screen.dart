@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
-import '../compose/compose_session_controller.dart';
+import '../chat/chat_session_controller.dart' show openChatJournalCompose;
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import '../utils/tutor_lang_label.dart';
@@ -132,7 +132,7 @@ class _QuizGenerationScreenState extends State<QuizGenerationScreen> {
           FilledButton.icon(
             onPressed: () {
               Navigator.pop(ctx);
-              composeSession.open(startNew: true);
+              openChatJournalCompose();
             },
             icon: const Icon(Icons.edit_rounded, size: 18),
             label: const Text('일기 쓰기'),

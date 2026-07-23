@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -35,7 +36,23 @@ class AudioRecordController extends ChangeNotifier {
   Stopwatch? _stopwatch;
   StreamSubscription<Uint8List>? _pcmSub;
   StreamSubscription<RecordState>? _stateSub;
+  StreamSubscription<Amplitude>? _ampSub;
   final BytesBuilder _pcmBuilder = BytesBuilder(copy: false);
+
+  /// Rolling buffer of normalized mic levels (0..1), newest last — drives the
+  /// live recording waveform. Native uses `onAmplitudeChanged`; web derives RMS
+  /// from the PCM stream (amplitude events aren't reliable in-browser).
+  static const _waveformWindow = 48;
+  final List<double> _levels = <double>[];
+  List<double> get levels => List.unmodifiable(_levels);
+
+  void _pushLevel(double v) {
+    _levels.add(v.clamp(0.0, 1.0));
+    if (_levels.length > _waveformWindow) {
+      _levels.removeRange(0, _levels.length - _waveformWindow);
+    }
+    notifyListeners();
+  }
 
   String? _filePath;
   VoidCallback? onMaxDurationReached;
@@ -81,7 +98,7 @@ class AudioRecordController extends ChangeNotifier {
       (chunk) {
         _pcmBuilder.add(chunk);
         _pcmBytes += chunk.length;
-        notifyListeners();
+        _pushLevel(_rmsLevelFromPcm16(chunk));
       },
       onError: (Object e) {
         // Surface via caller snackbars if needed — keep recording state honest.
@@ -104,6 +121,22 @@ class AudioRecordController extends ChangeNotifier {
     );
   }
 
+  /// Normalized 0..1 loudness of a PCM16 chunk (RMS, lightly gained).
+  /// Reads via [ByteData] so it's safe for chunks at any byte offset.
+  double _rmsLevelFromPcm16(Uint8List chunk) {
+    final count = chunk.length ~/ 2;
+    if (count == 0) return 0;
+    final data = ByteData.sublistView(chunk);
+    var sum = 0.0;
+    for (var i = 0; i < count; i++) {
+      final v = data.getInt16(i * 2, Endian.little) / 32768.0;
+      sum += v * v;
+    }
+    final rms = math.sqrt(sum / count);
+    // Gain up quiet speech; RMS of normal speech sits well under 0.3.
+    return (rms * 3.2).clamp(0.0, 1.0);
+  }
+
   void _syncElapsedFromStopwatch() {
     final sw = _stopwatch;
     if (sw == null || !sw.isRunning) return;
@@ -121,6 +154,7 @@ class AudioRecordController extends ChangeNotifier {
     final permitted = await _recorder.hasPermission();
     if (!permitted) return false;
 
+    _levels.clear();
     if (kIsWeb) {
       await _startWebStreamRecording();
     } else {
@@ -128,6 +162,12 @@ class AudioRecordController extends ChangeNotifier {
       _filePath =
           '${dir.path}/recording_${DateTime.now().millisecondsSinceEpoch}.m4a';
       await _recorder.start(_nativeRecordConfig, path: _filePath!);
+      _ampSub = _recorder
+          .onAmplitudeChanged(const Duration(milliseconds: 90))
+          .listen((amp) {
+        // `current` is dBFS (<= 0); map a ~50 dB window onto 0..1.
+        _pushLevel(((amp.current + 50) / 50).clamp(0.0, 1.0));
+      });
     }
 
     _stopwatch = Stopwatch()..start();
@@ -157,6 +197,8 @@ class AudioRecordController extends ChangeNotifier {
     _timer?.cancel();
     _timer = null;
     _stopwatch?.stop();
+    await _ampSub?.cancel();
+    _ampSub = null;
 
     Uint8List? bytes;
     String? path = _filePath;
@@ -200,6 +242,7 @@ class AudioRecordController extends ChangeNotifier {
     _timer?.cancel();
     _pcmSub?.cancel();
     _stateSub?.cancel();
+    _ampSub?.cancel();
     _recorder.dispose();
     super.dispose();
   }

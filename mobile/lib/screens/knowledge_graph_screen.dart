@@ -11,7 +11,6 @@ import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart';
 import '../utils/statement_display.dart';
-import '../widgets/app_theme_toggle_button.dart';
 import '../widgets/chat_journal_compose_bar.dart';
 import '../widgets/graph_chat_panel.dart';
 import '../widgets/graph_inspector_panel.dart';
@@ -19,6 +18,7 @@ import '../widgets/journal_progress_card.dart';
 import '../widgets/journal_status_pill.dart';
 import '../widgets/knowledge_graph_canvas.dart';
 import '../widgets/ontology_settings_sheet.dart';
+import '../widgets/thinking_orbs.dart';
 import 'graph_trash_screen.dart';
 
 /// Full-screen interactive knowledge graph with integrated chat panel.
@@ -142,6 +142,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   bool get _isQuizMode =>
       chatSession.mode == ChatMode.quizWord ||
       chatSession.mode == ChatMode.quizComposition;
+  bool get _isJournalMode => chatSession.mode == ChatMode.journal;
   static const double _sheetDefaultSize = 0.40; // 상태 A
   static const double _sheetFocusSize = 0.90; // 상태 B
   bool _chatFocused = false; // 스크림 표시 여부 — 포커스에서만 파생, 수동 드래그와 무관
@@ -152,9 +153,18 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
 
   /// 입력바 높이 근사치 기반 최소 시트 크기(상태 C) — 정확한 픽셀 측정 대신
   /// 넉넉한 상수 사용, snap:true 물리가 오차를 흡수한다.
+  ///
+  /// [handleClearance]만큼 여유를 더 얹는다 — 이게 없으면 시트를 끝까지
+  /// 내렸을 때 드래그 핸들(회색 바)이 시트 밖에 독립적으로 도킹된 입력바
+  /// 뒤로 완전히 가려져 "최소화해도 잡을 손잡이가 안 보이는" 상태가 된다.
+  /// 최소 높이를 입력바 높이보다 더 크게 잡아, 핸들이 항상 입력바 위로
+  /// 분명한 간격을 두고 보이도록 한다.
   double _sheetMinChildSize(BuildContext context, double graphAreaHeight) {
     const inputBarApproxHeight = 64.0;
-    final minPx = inputBarApproxHeight + MediaQuery.paddingOf(context).bottom;
+    const handleClearance = 32.0;
+    final minPx = inputBarApproxHeight +
+        handleClearance +
+        MediaQuery.paddingOf(context).bottom;
     if (graphAreaHeight <= 0) return 0.08;
     return (minPx / graphAreaHeight).clamp(0.06, _sheetDefaultSize - 0.02);
   }
@@ -258,6 +268,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   /// 시트 밖, 화면 최하단에 항상 도킹된 입력바 — 시트 익스텐트와 무관하게
   /// 최소화 상태에서도 계속 탭 가능해야 한다.
   Widget _buildPersistentInputBar() {
+    // In journal mode the composer is an inline card in the feed footer
+    // (_chatListFooter → ChatJournalComposeBar), so the docked bar is hidden —
+    // there's never a second input surface competing with it.
+    if (_isJournalMode) return const SizedBox.shrink();
     return Positioned(
       left: 0,
       right: 0,
@@ -271,7 +285,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
         onModeSelected: _onModeSelected,
         inputEnabled: _inputEnabled,
         inputHint: _inputHint,
-        inputBarOverride: _journalInputBar(),
         inputFocusNode: _chatInputFocusNode,
       ),
     );
@@ -298,7 +311,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
       // latest messages visible on short and tall phones alike.
       height: !_chatVisible
           ? 0
-          : (_isQuizMode || _chatExpandedForInput
+          : (_isQuizMode || _isJournalMode || _chatExpandedForInput
               ? graphAreaHeight
               : _chatSheetSize * graphAreaHeight),
       child: IgnorePointer(
@@ -428,14 +441,21 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
       _scrollChatToBottom();
     }
     final mode = chatSession.mode;
-    // Quiz/distill cards render as the chat list's footer item (see
+    // Entering journal mode (incl. from the timeline "+", which returns home
+    // and flips the mode) — make sure the chat is showing and scroll to the
+    // inline compose card so it's immediately in view.
+    if (mode == ChatMode.journal && _lastChatMode != ChatMode.journal) {
+      _ensureChatVisible();
+    }
+    // Quiz/distill/journal cards render as the chat list's footer item (see
     // _chatListFooter), not a fixed bar above the input — so switching into
     // one of these modes, or loading a new card into an already-active mode,
     // must scroll the list just like a new message would.
     final enteredFooterMode = mode != _lastChatMode &&
         (mode == ChatMode.distill ||
             mode == ChatMode.quizComposition ||
-            mode == ChatMode.quizWord);
+            mode == ChatMode.quizWord ||
+            mode == ChatMode.journal);
     final distillReady = mode == ChatMode.distill &&
         _lastDistillLoading &&
         !chatSession.distillLoading;
@@ -833,11 +853,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     }
   }
 
-  Widget? _journalInputBar() =>
-      chatSession.mode == ChatMode.journal && !journalTask.isBusy
-          ? const ChatJournalComposeBar()
-          : null;
-
   /// Feature cards that live INSIDE the chat scroll so they grow with content and
   /// scroll up with the conversation — distill draft and the active quiz card.
   Widget? _chatListFooter() {
@@ -895,8 +910,13 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
             _chatInputFocusNode.requestFocus();
           },
         );
-      case ChatMode.normal:
       case ChatMode.journal:
+        // Journal compose now renders INLINE as a card in the message feed
+        // (item 7) — scrolls with the conversation instead of popping up as a
+        // docked bar / modal. Hidden while the pipeline is busy; the floating
+        // status pill carries progress during processing.
+        return journalTask.isBusy ? null : const ChatJournalComposeBar();
+      case ChatMode.normal:
         return null;
     }
   }
@@ -1269,11 +1289,11 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
         .map((e) => e.toString())
         .toList();
 
-    if (nodes.isEmpty) {
-      if (widget.compact) {
-        return _EmptyGraphHint(compact: true);
-      }
-      return _buildEmptyWithChat();
+    // 그래프가 비어 있어도 검색·줌·재배열·도구 숨김 버튼 등 툴바 전체는 그대로
+    // 보여준다 — 도구 접근성이 노드 존재 여부에 좌우되지 않게 한다. compact
+    // 모드만 툴바가 애초에 없는 더 단순한 레이아웃이라 힌트만 보여준다.
+    if (nodes.isEmpty && widget.compact) {
+      return _EmptyGraphHint(compact: true);
     }
 
     return SizedBox.expand(
@@ -1291,39 +1311,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
               relationTypes: relationTypes,
               typeColors: typeColors,
             ),
-    );
-  }
-
-  Widget _buildEmptyWithChat() {
-    final safeTop = MediaQuery.paddingOf(context).top;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final graphAreaHeight = constraints.maxHeight;
-        return Stack(
-          fit: StackFit.expand,
-          children: [
-            const _EmptyGraphHint(),
-            // 그래프가 비어도 드로어(대화방 목록)와 테마 전환은 접근 가능해야
-            // 한다 — AppBar가 사라졌으므로 이 플로팅 버튼이 유일한 통로.
-            if (widget.onOpenMenu != null)
-              Positioned(
-                top: safeTop + 8,
-                left: 12,
-                child: _FloatingCircleButton(
-                  tooltip: '메뉴',
-                  icon: Icons.menu_rounded,
-                  onTap: widget.onOpenMenu!,
-                ),
-              ),
-            _ChatFocusScrim(
-              visible: _chatFocused,
-              onTap: _chatInputFocusNode.unfocus,
-            ),
-            _buildChatSheet(graphAreaHeight),
-            _buildPersistentInputBar(),
-          ],
-        );
-      },
     );
   }
 
@@ -1501,6 +1488,15 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
       typeColors: typeColors,
       overlayTopInset: chipsTop + 44,
       overlays: [
+        // 캔버스 바로 위, 검색바/범례보다 아래 레이어 — 노드가 없을 때만
+        // 온보딩 힌트를 보여주되 툴바 조작은 그대로 통과시킨다. 채팅 시트가
+        // 화면을 덮고 있는 기본 상태에서는 시트 자체의 빈 상태가 온보딩
+        // 메시지 역할을 이미 하므로, 반투명 패널 뒤로 비쳐 겹쳐 보이지
+        // 않도록 채팅을 숨겼을 때만 노출한다 (이중 빈 상태 방지).
+        if (nodes.isEmpty && !_chatVisible)
+          const Positioned.fill(
+            child: IgnorePointer(child: _EmptyGraphHint()),
+          ),
         if (_graphToolsVisible)
           Positioned(
             top: chipsTop,
@@ -1660,49 +1656,6 @@ class _CompactGraphHeader extends StatelessWidget {
   }
 }
 
-/// Small circular floating action (menu button on the empty-graph state).
-class _FloatingCircleButton extends StatelessWidget {
-  const _FloatingCircleButton({
-    required this.tooltip,
-    required this.icon,
-    required this.onTap,
-  });
-
-  final String tooltip;
-  final IconData icon;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final shell = context.shell;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xF21A1A22) : Colors.white,
-        shape: BoxShape.circle,
-        border: Border.all(color: shell.panelBorder),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.38 : 0.12),
-            blurRadius: 14,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        shape: const CircleBorder(),
-        clipBehavior: Clip.antiAlias,
-        child: IconButton(
-          tooltip: tooltip,
-          onPressed: onTap,
-          icon: Icon(icon, color: shell.primaryText),
-        ),
-      ),
-    );
-  }
-}
-
 /// Google-Maps-style floating search pill: hamburger (rooms drawer) + search
 /// field + theme toggle + overflow menu, one detached rounded surface floating
 /// over the full-bleed graph — replaces the old stacked AppBar+toolbar strips.
@@ -1798,7 +1751,6 @@ class _FloatingSearchBar extends StatelessWidget {
                 onChanged: onQueryChanged,
               ),
             ),
-            const AppThemeToggleButton(),
             IconButton(
               tooltip: chatVisible ? '梨꾪똿 ?④湲' : '梨꾪똿 ?쒖떆',
               onPressed: onToggleChat,
@@ -2280,23 +2232,44 @@ class _EmptyGraphHint extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final shell = context.shell;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.hub_outlined, size: 56, color: context.shell.mutedText),
-            const SizedBox(height: 16),
-            Text(tr('graph.emptyTitle'),
-                style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            Text(
-              tr('graph.emptyBody'),
-              textAlign: TextAlign.center,
-              style: TextStyle(color: context.shell.mutedText),
-            ),
-          ],
+        // Bounded width so the title never wraps mid-word into an awkward,
+        // overlap-looking two lines.
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 280),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Brand orbs — same "voice" as the assistant avatar / thinking
+              // indicator, replacing the dated hub outline glyph.
+              ThinkingOrbs(size: compact ? 44 : 58, period: const Duration(seconds: 5)),
+              const SizedBox(height: 20),
+              Text(
+                tr('graph.emptyTitle'),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: shell.primaryText,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.2,
+                  height: 1.35,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                tr('graph.emptyBody'),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: shell.mutedText,
+                  fontSize: 13,
+                  height: 1.5,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

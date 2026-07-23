@@ -318,6 +318,17 @@ class UserOut(BaseModel):
     speaker_id_consent_at: datetime | None = None
 
 
+class AccountSummaryOut(BaseModel):
+    """One row of the dev-tools account overview — handle + a rough DB-usage
+    proxy (row counts, not actual disk bytes)."""
+
+    handle: str
+    created_at: datetime
+    journal_count: int
+    node_count: int
+    chat_session_count: int
+
+
 class ConsentRequest(BaseModel):
     # Version string of the privacy policy / terms the user is accepting.
     consent_version: str

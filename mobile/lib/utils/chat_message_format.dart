@@ -1,19 +1,28 @@
 /// Parses assistant chat text with LaTeX + lightweight markdown.
 library;
 
-enum ChatMessagePartKind { text, displayMath }
+enum ChatMessagePartKind { text, displayMath, code }
 
 class ChatMessagePart {
-  const ChatMessagePart.text(this.content) : kind = ChatMessagePartKind.text;
+  const ChatMessagePart.text(this.content)
+      : kind = ChatMessagePartKind.text,
+        language = null;
 
   const ChatMessagePart.displayMath(this.content)
-      : kind = ChatMessagePartKind.displayMath;
+      : kind = ChatMessagePartKind.displayMath,
+        language = null;
+
+  const ChatMessagePart.code(this.content, {this.language})
+      : kind = ChatMessagePartKind.code;
 
   final ChatMessagePartKind kind;
   final String content;
+
+  /// Fenced code-block language tag (e.g. `dart`, `python`), when present.
+  final String? language;
 }
 
-enum ChatInlinePartKind { text, bold, inlineMath }
+enum ChatInlinePartKind { text, bold, inlineMath, inlineCode }
 
 class ChatInlinePart {
   const ChatInlinePart(this.kind, this.content);
@@ -22,22 +31,34 @@ class ChatInlinePart {
   final String content;
 }
 
-final _displayMathPattern =
-    RegExp(r'\\\[([\s\S]*?)\\\]|\$\$([\s\S]*?)\$\$');
+// Block-level scanner: fenced code fences take precedence over display math so
+// math-like text inside a code block is never re-interpreted. Groups:
+//   1 = code language, 2 = code body, 3/4 = display-math body.
+final _blockPattern = RegExp(
+  r'```[ \t]*([\w+#.-]*)[ \t]*\r?\n([\s\S]*?)```'
+  r'|\\\[([\s\S]*?)\\\]'
+  r'|\$\$([\s\S]*?)\$\$',
+);
 
-/// Split block-level display math from surrounding prose.
+/// Split block-level code fences and display math from surrounding prose.
 List<ChatMessagePart> splitChatMessageParts(String input) {
   if (input.isEmpty) return const [ChatMessagePart.text('')];
 
   final parts = <ChatMessagePart>[];
   var cursor = 0;
-  for (final match in _displayMathPattern.allMatches(input)) {
+  for (final match in _blockPattern.allMatches(input)) {
     if (match.start > cursor) {
       parts.add(ChatMessagePart.text(input.substring(cursor, match.start)));
     }
-    final latex = (match.group(1) ?? match.group(2) ?? '').trim();
-    if (latex.isNotEmpty) {
-      parts.add(ChatMessagePart.displayMath(latex));
+    if (match.group(2) != null) {
+      final lang = (match.group(1) ?? '').trim();
+      final code = match.group(2)!.replaceAll(RegExp(r'\n$'), '');
+      parts.add(ChatMessagePart.code(code, language: lang.isEmpty ? null : lang));
+    } else {
+      final latex = (match.group(3) ?? match.group(4) ?? '').trim();
+      if (latex.isNotEmpty) {
+        parts.add(ChatMessagePart.displayMath(latex));
+      }
     }
     cursor = match.end;
   }
@@ -47,11 +68,35 @@ List<ChatMessagePart> splitChatMessageParts(String input) {
   return parts.isEmpty ? [ChatMessagePart.text(input)] : parts;
 }
 
+final _inlineCodePattern = RegExp(r'`([^`\n]+?)`');
 final _inlineMathPattern = RegExp(r'\\\((.+?)\\\)|\$([^\$\n]+?)\$');
 final _boldPattern = RegExp(r'\*\*(.+?)\*\*');
 
-/// Inline bold + inline math within a prose block.
+/// Inline code + bold + inline math within a prose block. Inline code binds
+/// tightest — its contents are shown verbatim, never re-parsed for math/bold.
 List<ChatInlinePart> parseChatInlineParts(String input) {
+  if (input.isEmpty) return const [];
+
+  final parts = <ChatInlinePart>[];
+  var cursor = 0;
+  for (final match in _inlineCodePattern.allMatches(input)) {
+    if (match.start > cursor) {
+      parts.addAll(_parseMathAndBold(input.substring(cursor, match.start)));
+    }
+    final code = match.group(1) ?? '';
+    if (code.isNotEmpty) {
+      parts.add(ChatInlinePart(ChatInlinePartKind.inlineCode, code));
+    }
+    cursor = match.end;
+  }
+  if (cursor < input.length) {
+    parts.addAll(_parseMathAndBold(input.substring(cursor)));
+  }
+  return parts;
+}
+
+/// Inline math + bold within a code-free chunk.
+List<ChatInlinePart> _parseMathAndBold(String input) {
   if (input.isEmpty) return const [];
 
   final parts = <ChatInlinePart>[];

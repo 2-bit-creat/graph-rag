@@ -67,6 +67,14 @@ class ApiClient {
     return resp.data as Map<String, dynamic>;
   }
 
+  /// Dev-tools-only: every account + a rough DB-usage proxy (row counts).
+  /// Requires auth — never call this from an unauthenticated screen, it
+  /// enumerates every handle on the server.
+  Future<List<Map<String, dynamic>>> getAccountsOverview() async {
+    final resp = await _dio.get('/auth/admin/accounts');
+    return (resp.data as List).cast<Map<String, dynamic>>();
+  }
+
   /// Record privacy-policy acceptance + the separate voice speaker-id opt-in.
   Future<Map<String, dynamic>> recordConsent({
     required String version,

@@ -26,4 +26,31 @@ void main() {
     expect(parts[0].content, '1. WACC');
     expect(parts[2].content, 'g');
   });
+
+  test('splits fenced code blocks with language and strips trailing newline', () {
+    const input = 'before\n```dart\nvoid main() {}\n```\nafter';
+    final parts = splitChatMessageParts(input);
+    final code = parts.firstWhere((p) => p.kind == ChatMessagePartKind.code);
+    expect(code.language, 'dart');
+    expect(code.content, 'void main() {}');
+  });
+
+  test('does not re-parse math inside a code block', () {
+    const input = r'```' '\n' r'x = \(y\) and $z$' '\n' r'```';
+    final parts = splitChatMessageParts(input);
+    expect(parts.length, 1);
+    expect(parts.single.kind, ChatMessagePartKind.code);
+    expect(parts.single.language, isNull);
+    expect(parts.single.content, contains(r'\(y\)'));
+  });
+
+  test('parses inline code verbatim, before bold', () {
+    const input = r'run `flutter **build**` now';
+    final parts = parseChatInlineParts(input);
+    final code =
+        parts.firstWhere((p) => p.kind == ChatInlinePartKind.inlineCode);
+    expect(code.content, 'flutter **build**');
+    // The bold markers inside inline code are NOT interpreted.
+    expect(parts.any((p) => p.kind == ChatInlinePartKind.bold), isFalse);
+  });
 }
