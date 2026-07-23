@@ -49,6 +49,7 @@ async def iso_user(db_session: AsyncSession):
     )
     db_session.add(user)
     await db_session.commit()
+    user_id = user.id
     try:
         yield user
     finally:
@@ -59,8 +60,14 @@ async def iso_user(db_session: AsyncSession):
         # can't roll back until this generator finishes: a guaranteed deadlock.
         # Rolling back db_session first releases those locks before we touch
         # the same rows from a fresh session.
+        #
+        # Session.rollback() expires every ORM object attached to db_session
+        # regardless of expire_on_commit, so `user` is expired the instant
+        # this call returns — accessing user.id afterward would trigger an
+        # async lazy-load outside of SQLAlchemy's greenlet context and raise
+        # MissingGreenlet. user_id was captured above, before the expiry.
         await db_session.rollback()
         # Clean up in a FRESH session — the yielded one is mid-teardown.
         async with async_session_factory() as cleanup:
-            await cleanup.execute(sa_delete(User).where(User.id == user.id))
+            await cleanup.execute(sa_delete(User).where(User.id == user_id))
             await cleanup.commit()

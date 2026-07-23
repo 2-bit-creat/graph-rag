@@ -54,7 +54,7 @@ async def test_edit_node_allowed_after_commit_keeps_provenance(db_session, iso_u
 @pytest.mark.asyncio
 async def test_edit_edge_allowed_after_commit(db_session, iso_user):
     _, _, _, edge = await _committed_graph(db_session, iso_user.id)
-    out = await edit_edge(edge.id, EdgeUpdate(relation="RENAMED"), db_session)
+    out = await edit_edge(edge.id, EdgeUpdate(relation="RENAMED"), iso_user, db_session)
     assert out.relation == "RENAMED"
 
 
@@ -63,6 +63,7 @@ async def test_add_edge_allowed_between_committed_nodes(db_session, iso_user):
     _, speaker, concept, _ = await _committed_graph(db_session, iso_user.id)
     out = await add_edge(
         EdgeCreate(source_id=concept.id, target_id=speaker.id, relation="REL"),
+        iso_user,
         db_session,
     )
     assert out.relation == "REL"
