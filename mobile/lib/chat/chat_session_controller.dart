@@ -295,10 +295,12 @@ class ChatSessionController extends ChangeNotifier {
   }
 
   void _appendJournalModeMarker() {
-    // The marker is a boundary ("you're writing a diary now"), not content, so
-    // one is enough. Leaving and re-entering the mode without saying anything
-    // in between used to stack an identical card each time.
-    if (_messages.isNotEmpty && _messages.last.kind == 'journal_mode') return;
+    // The marker is a one-time "here's how journal mode works" explainer, not
+    // content — once the room has seen it, re-entering the mode later (even
+    // after other messages in between) shouldn't repeat it. Used to only check
+    // the immediately preceding message, which still stacked a duplicate any
+    // time something else happened between two visits to journal mode.
+    if (_messages.any((m) => m.kind == 'journal_mode')) return;
     final msg = GraphChatMessage(
       role: 'assistant',
       kind: 'journal_mode',
