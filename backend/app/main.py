@@ -76,7 +76,11 @@ if not settings.is_production:
     _cors_kwargs["allow_origin_regex"] = (
         r"http://(localhost|127\.0\.0\.1)(:\d+)?|"
         r"http://192\.168\.\d{1,3}\.\d{1,3}(:\d+)?|"
-        r"http://10\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?"
+        r"http://10\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?|"
+        # Full RFC1918 172.16.0.0/12 range, not just 192.168/10 — a phone's
+        # Personal Hotspot (iOS) commonly hands out 172.20.10.x to the host
+        # laptop, which the previous two patterns didn't cover.
+        r"http://172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}(:\d+)?"
     )
 app.add_middleware(CORSMiddleware, **_cors_kwargs)
 
