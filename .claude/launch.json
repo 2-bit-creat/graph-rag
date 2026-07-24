@@ -6,6 +6,12 @@
       "runtimeExecutable": "cmd",
       "runtimeArgs": ["/c", "cd mobile && flutter run -d web-server --web-port 8123"],
       "port": 8123
+    },
+    {
+      "name": "web-build-preview",
+      "runtimeExecutable": "py",
+      "runtimeArgs": ["-3.12", "-m", "http.server", "5436", "--directory", "mobile/build/web"],
+      "port": 5436
     }
   ]
 }

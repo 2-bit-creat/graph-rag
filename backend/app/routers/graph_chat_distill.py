@@ -1,8 +1,8 @@
-"""Chat ? journal distillation endpoints (mounted under /graph/chat).
+"""Chat → journal distillation endpoints (mounted under /graph/chat).
 
-  POST  /graph/chat/sessions/{id}/distill/draft   ? extract a diary draft
-  POST  /graph/chat/sessions/{id}/distill/refine  ? rewrite it conversationally
-  PATCH /graph/chat/sessions/{id}/distill         ? persist include-toggles only
+  POST  /graph/chat/sessions/{id}/distill/draft   → extract a diary draft
+  POST  /graph/chat/sessions/{id}/distill/refine  → rewrite it conversationally
+  PATCH /graph/chat/sessions/{id}/distill         → persist include-toggles only
 
 The final hand-off (committing the draft) reuses the existing journal pipeline:
 the client posts the included sentences to POST /journal/entries. No new commit
@@ -36,7 +36,7 @@ async def _require_session(
 ) -> ChatSession:
     row = await crud.get_chat_session(session, user.id, session_id)
     if row is None:
-        raise HTTPException(status_code=404, detail="???? ?? ? ???.")
+        raise HTTPException(status_code=404, detail="대화방을 찾을 수 없어요.")
     return row
 
 
@@ -52,9 +52,11 @@ def _summary(draft: dict) -> str:
     total = len(draft.get("sentences", []))
     dups = sum(1 for s in draft["sentences"] if s.get("duplicate"))
     if total == 0:
-        return "???? ?? ??? ??? ?? ????."
-    base = f"???? {total}?? ?? ??? ?????."
-    return base + (f" ?? {dups}?? ?? ???? ?? ?? ?????." if dups else "")
+        return "대화에서 새로 정리할 내용을 찾지 못했어요."
+    base = f"대화에서 {total}개의 일기 문장을 정리했어요."
+    return base + (
+        f" 그중 {dups}개는 이미 기록한 내용과 겹쳐 보여 표시해 뒀어요." if dups else ""
+    )
 
 
 async def _append_draft_message(
@@ -86,7 +88,7 @@ async def distill_draft(
         draft = await build_distill_draft(session, user, row)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
-            status_code=502, detail="?? ??? ?????. ?? ? ?? ??? ???."
+            status_code=502, detail="초안 생성에 실패했어요. 잠시 후 다시 시도해 주세요."
         ) from exc
     message_id = await _append_draft_message(session, row, draft)
     await session.commit()
@@ -102,7 +104,7 @@ async def distill_refine(
 ) -> DistillDraftOut:
     row = await _require_session(session, user, session_id)
     if not row.distill_state:
-        raise HTTPException(status_code=409, detail="?? ??? ??? ???.")
+        raise HTTPException(status_code=409, detail="수정할 초안이 아직 없어요.")
     await crud.append_chat_messages(
         session, row, [{"role": "user", "content": payload.instruction.strip()}]
     )
@@ -110,7 +112,7 @@ async def distill_refine(
         draft = await refine_distill_draft(session, user, row, payload.instruction.strip())
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
-            status_code=502, detail="?? ??? ?????. ?? ? ?? ??? ???."
+            status_code=502, detail="초안 수정에 실패했어요. 잠시 후 다시 시도해 주세요."
         ) from exc
     message_id = await _append_draft_message(session, row, draft)
     await session.commit()
@@ -128,7 +130,7 @@ async def update_distill_state(
     row = await _require_session(session, user, session_id)
     state = row.distill_state
     if not state:
-        raise HTTPException(status_code=409, detail="??? ???.")
+        raise HTTPException(status_code=409, detail="저장할 초안이 없어요.")
     sentences = state.get("sentences", [])
     for i, included in enumerate(payload.included):
         if i < len(sentences):

@@ -15,7 +15,7 @@ class AccountController extends ChangeNotifier {
   final Map<String, String> _tokens = {}; // handle -> bearer token
   String? _current;
 
-  static const FlutterSecureStorage _secure = FlutterSecureStorage();
+  static const _TokenStore _secure = _TokenStore();
 
   // Consent state for the current account, fetched from /auth/me. `_consentKnown`
   // gates the app until we know whether the onboarding consent is needed.
@@ -169,6 +169,46 @@ class AccountController extends ChangeNotifier {
     } else {
       await prefs.remove(_currentKey);
     }
+  }
+}
+
+/// Secure storage with a web fallback.
+///
+/// `flutter_secure_storage`'s web backend only works in a secure context
+/// (https, or localhost). Serving the dev build over plain http to a phone on
+/// the hotspot LAN (e.g. http://172.20.10.6:5435) is *not* a secure context, so
+/// every read/write throws and the entry screen can never save a token. There
+/// we fall back to `shared_preferences` (localStorage) using the same key, so
+/// the value round-trips and the later migration path is a no-op.
+///
+/// Native platforms always get the real Keychain/Keystore.
+class _TokenStore {
+  const _TokenStore();
+
+  static bool get _fallback => kIsWeb && !_isSecureContext;
+
+  static bool get _isSecureContext {
+    final u = Uri.base;
+    return u.scheme == 'https' || u.host == 'localhost' || u.host == '127.0.0.1';
+  }
+
+  static const FlutterSecureStorage _secure = FlutterSecureStorage();
+
+  Future<String?> read({required String key}) async {
+    if (_fallback) {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(key);
+    }
+    return _secure.read(key: key);
+  }
+
+  Future<void> write({required String key, required String value}) async {
+    if (_fallback) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(key, value);
+      return;
+    }
+    await _secure.write(key: key, value: value);
   }
 }
 

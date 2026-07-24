@@ -43,6 +43,36 @@
 
   <title>graphrag_mobile</title>
   <link rel="manifest" href="manifest.json">
+
+  <!--
+    Pin the document to the layout viewport. Otherwise, when the on-screen
+    keyboard opens, iOS Safari scrolls the *document* up to reveal the focused
+    field (visualViewport.offsetTop > 0) — the app's top edge slides off screen
+    while the bottom is still under the keyboard, and any inset we measure is
+    computed against a viewport that has silently moved.
+  -->
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+      overflow: hidden;
+      overscroll-behavior: none;
+    }
+    body { position: fixed; top: 0; left: 0; right: 0; bottom: 0; }
+  </style>
+  <script>
+    // Belt to the CSS brace: if Safari scrolls the layout viewport anyway, put
+    // it straight back. Cheap, and only fires while the keyboard animates.
+    if (window.visualViewport) {
+      var pinScroll = function () {
+        if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
+      };
+      window.visualViewport.addEventListener('scroll', pinScroll);
+      window.visualViewport.addEventListener('resize', pinScroll);
+    }
+  </script>
 </head>
 <body>
   <!--

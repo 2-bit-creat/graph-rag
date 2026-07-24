@@ -295,6 +295,10 @@ class ChatSessionController extends ChangeNotifier {
   }
 
   void _appendJournalModeMarker() {
+    // The marker is a boundary ("you're writing a diary now"), not content, so
+    // one is enough. Leaving and re-entering the mode without saying anything
+    // in between used to stack an identical card each time.
+    if (_messages.isNotEmpty && _messages.last.kind == 'journal_mode') return;
     final msg = GraphChatMessage(
       role: 'assistant',
       kind: 'journal_mode',

@@ -30,6 +30,7 @@ class GraphChatPanel extends StatelessWidget {
     this.onHandleDragEnd,
     this.onPanelTap,
     this.quizMode = false,
+    this.listBottomInset = 96,
   });
 
   final List<GraphChatMessage> messages;
@@ -52,6 +53,12 @@ class GraphChatPanel extends StatelessWidget {
   final VoidCallback? onHandleDragEnd;
   final VoidCallback? onPanelTap;
   final bool quizMode;
+
+  /// Height of the composer docked over this sheet, measured by the screen.
+  /// The feed pads its tail by this much so the last message clears it — a
+  /// constant used to under-shoot whenever the composer grew (mode chip, a
+  /// wrapped input line, the home-indicator inset).
+  final double listBottomInset;
 
   @override
   Widget build(BuildContext context) {
@@ -90,7 +97,7 @@ class GraphChatPanel extends StatelessWidget {
                           AppSpacing.md,
                           AppSpacing.sm + safeTop,
                           AppSpacing.md,
-                          108),
+                          listBottomInset + 12),
                       child: listFooter,
                     )
                   : Stack(
@@ -168,8 +175,8 @@ class GraphChatPanel extends StatelessWidget {
       controller: scrollController,
       // Bottom padding clears the floating input pill docked over the sheet —
       // without it the last message hides behind the composer.
-      padding: const EdgeInsets.fromLTRB(
-          AppSpacing.md, AppSpacing.sm, AppSpacing.md, 96),
+      padding: EdgeInsets.fromLTRB(
+          AppSpacing.md, AppSpacing.sm, AppSpacing.md, listBottomInset + 12),
       itemCount: messages.length + trailing,
       itemBuilder: (context, i) {
         if (i >= messages.length) {

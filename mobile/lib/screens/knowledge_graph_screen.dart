@@ -15,6 +15,7 @@ import '../widgets/chat_journal_compose_bar.dart';
 import '../widgets/graph_chat_panel.dart';
 import '../widgets/graph_inspector_panel.dart';
 import '../widgets/knowledge_graph_canvas.dart';
+import '../widgets/measure_size.dart';
 import '../widgets/ontology_settings_sheet.dart';
 import '../widgets/thinking_orbs.dart';
 import 'graph_trash_screen.dart';
@@ -97,7 +98,8 @@ class KnowledgeGraphView extends StatefulWidget {
   State<KnowledgeGraphView> createState() => _KnowledgeGraphViewState();
 }
 
-class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
+class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
+    with WidgetsBindingObserver {
   Map<String, dynamic>? _graph;
   Map<String, dynamic>? _ontology;
   bool _loading = true;
@@ -117,6 +119,13 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   // ── 그래프 대화 (전역 chatSession 컨트롤러 구독) ─────────────────────────
   final _chatInputController = TextEditingController();
   final _chatInputFocusNode = FocusNode();
+
+  /// Measured height of the docked composer, so the feed can pad its tail by
+  /// exactly that much. 0 in journal mode, where the composer moves inline.
+  double _inputBarHeight = 96;
+
+  /// Runs while [_pinChatToBottom] keeps the feed glued to its tail.
+  Timer? _bottomPinTimer;
   Set<String> _glowIds = const {};
   int _glowSeq = 0;
   int _lastMsgCount = 0;
@@ -167,6 +176,44 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     return (minPx / graphAreaHeight).clamp(0.06, _sheetDefaultSize - 0.02);
   }
 
+  /// The keyboard opening shrinks the feed by its full height. Without pulling
+  /// the scroll offset along, everything the user was looking at — including the
+  /// newest message — stays where it was and ends up behind the composer.
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    if (_chatInputFocusNode.hasFocus) _pinChatToBottom();
+  }
+
+  /// Hold the feed at its bottom for a short window instead of scrolling once.
+  ///
+  /// A single scroll can't land this: focusing the composer starts a 220ms
+  /// sheet resize *and* the keyboard inset arrives a frame or more later, so
+  /// `maxScrollExtent` keeps moving after any one-shot `animateTo` finishes —
+  /// which is exactly why the newest message stayed parked under the keyboard
+  /// and had to be dragged up by hand.
+  void _pinChatToBottom(
+      {Duration window = const Duration(milliseconds: 700)}) {
+    void stick() {
+      final c = _activeChatScrollController;
+      if (c == null || !c.hasClients) return;
+      final max = c.position.maxScrollExtent;
+      if ((c.position.pixels - max).abs() > 0.5) c.jumpTo(max);
+    }
+
+    _bottomPinTimer?.cancel();
+    WidgetsBinding.instance.addPostFrameCallback((_) => stick());
+    final deadline = DateTime.now().add(window);
+    _bottomPinTimer = Timer.periodic(const Duration(milliseconds: 16), (t) {
+      if (!mounted || DateTime.now().isAfter(deadline)) {
+        t.cancel();
+        _bottomPinTimer = null;
+        return;
+      }
+      stick();
+    });
+  }
+
   void _onChatFocusChanged() {
     final focused = _chatInputFocusNode.hasFocus;
     if (focused) {
@@ -176,6 +223,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
         _chatExpandedForInput = true;
       });
       _animateChatSheet(_sheetFocusSize);
+      _pinChatToBottom();
       return;
     }
 
@@ -241,6 +289,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
       onClearHistory: _deleteActiveRoom,
       listFooter: _chatListFooter(),
       quizMode: _isQuizMode,
+      listBottomInset: _inputBarHeight,
       onPanelTap: _chatVisible ? null : () {
         _chatInputFocusNode.unfocus();
         setState(() => _chatVisible = true);
@@ -266,21 +315,34 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
     // In journal mode the composer is an inline card in the feed footer
     // (_chatListFooter → ChatJournalComposeBar), so the docked bar is hidden —
     // there's never a second input surface competing with it.
-    if (_isJournalMode) return const SizedBox.shrink();
+    if (_isJournalMode) {
+      if (_inputBarHeight != 0) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _inputBarHeight = 0);
+        });
+      }
+      return const SizedBox.shrink();
+    }
     return Positioned(
       left: 0,
       right: 0,
       bottom: 0,
-      child: ChatInputBar(
-        inputController: _chatInputController,
-        busy: chatSession.busy,
-        onSend: _sendChat,
-        modeLabel: _modeLabel(),
-        onExitMode: chatSession.exitMode,
-        onModeSelected: _onModeSelected,
-        inputEnabled: _inputEnabled,
-        inputHint: _inputHint,
-        inputFocusNode: _chatInputFocusNode,
+      child: MeasureSize(
+        onChange: (size) {
+          if (!mounted || size.height == _inputBarHeight) return;
+          setState(() => _inputBarHeight = size.height);
+        },
+        child: ChatInputBar(
+          inputController: _chatInputController,
+          busy: chatSession.busy,
+          onSend: _sendChat,
+          modeLabel: _modeLabel(),
+          onExitMode: chatSession.exitMode,
+          onModeSelected: _onModeSelected,
+          inputEnabled: _inputEnabled,
+          inputHint: _inputHint,
+          inputFocusNode: _chatInputFocusNode,
+        ),
       ),
     );
   }
@@ -371,6 +433,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (widget.initialNodeId != null) {
       _selectedNodeId = widget.initialNodeId;
     }
@@ -390,6 +453,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
 
   @override
   void dispose() {
+    _bottomPinTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     chatSession.removeListener(_onChatChanged);
     chatSession.errors.removeListener(_onChatError);
     journalTask.removeListener(_onJournalTaskChanged);

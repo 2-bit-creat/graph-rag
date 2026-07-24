@@ -102,11 +102,11 @@ class _SpeakerMergeSheetState extends State<_SpeakerMergeSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('?ě ?Šěšę¸?/ ëśëŚŹ', style: theme.textTheme.titleMedium),
+          Text('화자 합치기 / 분리', style: theme.textTheme.titleMedium),
           const SizedBox(height: 4),
           Text(
-            'ę°ě? ?Źë?´ëŠ´ ěš´ëëĽ?ę¸¸ę˛ ?ëŹ ?¤ëĽ¸ ?ě ?ëĄ ?ě´???Šěš?¸ě. '
-            '?ëŞť ?Šěł¤?źëŠ´ ëśëŚŹ ?ě´ě˝ěźëĄ??¤ě ?ë ???ě´??',
+            '같은 사람이면 카드를 길게 눌러 다른 화자 위로 끌어다 합치세요. '
+            '잘못 합쳤으면 분리 아이콘으로 다시 나눌 수 있어요.',
             style: TextStyle(fontSize: 12, color: Colors.grey[600]),
           ),
           const SizedBox(height: 14),
@@ -125,7 +125,7 @@ class _SpeakerMergeSheetState extends State<_SpeakerMergeSheet> {
               Expanded(
                 child: OutlinedButton(
                   onPressed: _submitting ? null : () => Navigator.of(context).pop(false),
-                  child: const Text('ěˇ¨ě'),
+                  child: const Text('취소'),
                 ),
               ),
               const SizedBox(width: 10),
@@ -134,7 +134,7 @@ class _SpeakerMergeSheetState extends State<_SpeakerMergeSheet> {
                   onPressed: _submitting ? null : _apply,
                   child: _submitting
                       ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Text('?ěŠ'),
+                      : const Text('적용'),
                 ),
               ),
             ],
@@ -183,7 +183,7 @@ class _SpeakerMergeSheetState extends State<_SpeakerMergeSheet> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    members.map((m) => _sample[m] ?? '').where((t) => t.isNotEmpty).join(' Âˇ '),
+                    members.map((m) => _sample[m] ?? '').where((t) => t.isNotEmpty).join(' · '),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
@@ -193,7 +193,7 @@ class _SpeakerMergeSheetState extends State<_SpeakerMergeSheet> {
             ),
             if (merged)
               IconButton(
-                tooltip: 'ëśëŚŹ',
+                tooltip: '분리',
                 icon: const Icon(Icons.call_split_rounded, size: 18),
                 onPressed: _submitting ? null : () => _splitGroup(idx),
               ),

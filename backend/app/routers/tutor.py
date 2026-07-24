@@ -89,7 +89,7 @@ async def save_vocab_batch(
     payload: TutorVocabBatchRequest,
     user: User = Depends(request_user_dep),
 ) -> dict:
-    """Save several expressions at once (e.g. '?´ë²ˆ ?¼ìš´???µì§¸ë¡??´ê¸°')."""
+    """Save several expressions at once (e.g. '이번 라운드 통째로 담기')."""
     saved = 0
     for item in payload.items:
         if not item.expression.strip():
