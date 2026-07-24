@@ -161,14 +161,29 @@ async def pick_quizzes_by_ids(
     return picked
 
 
+def _normalize_answer(text: str, language: str) -> str:
+    """Grading-time normalization for a learner's typed answer.
+
+    Latin-script targets (English/German) fold to lowercase, trimmed. Korean
+    tolerates whitespace variants a learner naturally introduces around
+    particles/spacing rules that don't change the answer's identity (e.g.
+    "그 사람" vs "그사람") by also stripping internal whitespace.
+    """
+    normalized = (text or "").strip().lower()
+    if (language or "").lower() == "korean":
+        normalized = "".join(normalized.split())
+    return normalized
+
+
 def grade_answer(quiz: Quiz, payload: dict) -> tuple[bool, int]:
     """Return (correct, quality 0-5)."""
     quiz_type = quiz.quiz_type
     data = quiz.quiz_data or {}
+    language = quiz.language or data.get("language") or "english"
 
     if quiz_type == "cloze":
-        answer = (payload.get("answer") or "").strip().lower()
-        accepted = [a.strip().lower() for a in (data.get("accepted_answers") or [])]
+        answer = _normalize_answer(payload.get("answer") or "", language)
+        accepted = [_normalize_answer(a, language) for a in (data.get("accepted_answers") or [])]
         correct = answer in accepted
     elif quiz_type == "scramble":
         order = payload.get("order") or payload.get("correct_order") or []

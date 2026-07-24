@@ -34,6 +34,11 @@ async def run_journal_fast_pipeline(
     source_type: str | None = None,
 ) -> tuple[object, dict]:
     """Audio → STT → translate. Returns quickly with status=ready."""
+    from .models import User
+
+    user = await session.get(User, user_id)
+    native_language = getattr(user, "native_language", None) or "korean"
+
     entry = await crud.create_journal_entry(session, user_id, audio_url=None)
     if source_type:
         # Dedicated column — the tracer overwrites pipeline_trace later.
@@ -167,7 +172,7 @@ async def run_journal_fast_pipeline(
     refine_meta: dict = {}
     diarize_provider: str = "disabled"
     try:
-        segments, provider, refine_meta = await diarize_audio(stt_path)
+        segments, provider, refine_meta = await diarize_audio(stt_path, native_language)
         diarize_provider = provider
         if segments:
             diarized_text = segments_to_labeled_transcript(segments)
@@ -253,7 +258,7 @@ async def run_journal_fast_pipeline(
             input_data={
                 "audio_path": str(stt_path.resolve()),
                 "original_path": str(path.resolve()),
-                "language": "ko",
+                "language": native_language,
                 "trim_applied": stt_path != path,
                 "fallback_reason": (
                     "deepgram_empty_transcript"
@@ -265,7 +270,7 @@ async def run_journal_fast_pipeline(
             },
         )
         try:
-            transcript_ko = await transcribe_audio(stt_path)
+            transcript_ko = await transcribe_audio(stt_path, native_language)
             llm_transcript_ko = transcript_ko
             tracer.finish_step(
                 step,
@@ -317,7 +322,7 @@ async def run_journal_fast_pipeline(
             session,
             entry,
             status="failed",
-            transcript_ko=transcript_ko,
+            transcript_native=transcript_ko,
             pipeline_trace=trace,
             debug_run_dir=tracer.debug_dir_relative,
         )
@@ -362,8 +367,8 @@ async def run_journal_fast_pipeline(
     entry = await crud.update_journal_entry(
         session,
         entry,
-        transcript_ko=transcript_ko,
-        transcript_clean_ko=cleaned["transcript_clean_ko"],
+        transcript_native=transcript_ko,
+        transcript_clean_native=cleaned["transcript_clean_ko"],
         translation_en=cleaned["translation_en"],
         translation_de=cleaned.get("translation_de", ""),
         translations=cleaned.get("translations") or {},
@@ -702,7 +707,7 @@ async def run_journal_text_pipeline(
         await crud.update_journal_entry(
             session,
             entry,
-            transcript_ko=labeled,
+            transcript_native=labeled,
             transcript_segments=segments,
             status="failed",
             pipeline_trace={**trace, "entry_source": "precision_text"},
@@ -751,8 +756,8 @@ async def run_journal_text_pipeline(
     await crud.update_journal_entry(
         session,
         entry,
-        transcript_ko=labeled,
-        transcript_clean_ko=cleaned.get("transcript_clean_ko") or labeled,
+        transcript_native=labeled,
+        transcript_clean_native=cleaned.get("transcript_clean_ko") or labeled,
         translation_en=cleaned.get("translation_en") or "",
         translation_de=cleaned.get("translation_de") or "",
         translations=cleaned.get("translations") or {},

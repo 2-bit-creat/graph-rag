@@ -96,7 +96,7 @@ async def _staged_source_entry(
         source_type="책",
         attribution_kind="source",
         attribution_name=attribution_name,
-        transcript_clean_ko="메자닌 투자의 풋옵션 미이행 가능성 점검 지표.",
+        transcript_clean_native="메자닌 투자의 풋옵션 미이행 가능성 점검 지표.",
         translation_en="Checklist for put-option default risk in mezzanine deals.",
         graph_staging={
             "claims": claims,

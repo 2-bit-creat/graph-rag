@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import '../widgets/quiz/cloze_quiz_card.dart';
@@ -42,12 +43,12 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
 
   final _audioKey = GlobalKey<QuizAudioButtonState>();
 
-  static const _typeLabels = {
-    'cloze': '단어 완성',
-    'composition': '작문',
-    'scramble': '문장 배열',
-    'mcq_nuance': '뉘앙스 선택',
-  };
+  static Map<String, String> get _typeLabels => {
+        'cloze': tr('quizSession.typeCloze'),
+        'composition': tr('quizSession.typeComposition'),
+        'scramble': tr('quizSession.typeScramble'),
+        'mcq_nuance': tr('quizSession.typeMcqNuance'),
+      };
 
   @override
   void initState() {
@@ -76,7 +77,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
       if (mounted) {
         setState(() => _loading = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('세션 로드 실패: $e')),
+          SnackBar(content: Text(tr('quizSession.sessionLoadFailed', {'error': e}))),
         );
       }
     }
@@ -191,17 +192,17 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
     final label = _typeLabels[widget.quizType] ?? widget.quizType;
     if (_loading) {
       return Scaffold(
-        appBar: AppHubAppBar(title: '$label 퀴즈'),
-        body: const AppLoadingScreen(message: '문제 불러오는 중…'),
+        appBar: AppHubAppBar(title: tr('quizSession.quizTitle', {'label': label})),
+        body: AppLoadingScreen(message: tr('quizSession.loadingQuestions')),
       );
     }
     if (_items.isEmpty) {
       return Scaffold(
-        appBar: AppHubAppBar(title: '$label 퀴즈'),
+        appBar: AppHubAppBar(title: tr('quizSession.quizTitle', {'label': label})),
         body: AppEmptyState(
           icon: Icons.inbox_outlined,
-          title: '큐에 문제가 없습니다',
-          subtitle: '개발자 도구 → 문제 생성에서 새 문제를 만든 뒤 다시 시도하세요.',
+          title: tr('quizSession.emptyQueueTitle'),
+          subtitle: tr('quizSession.emptyQueueSubtitle'),
         ),
       );
     }
@@ -223,11 +224,16 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
     final audioUrl = item['audio_url']?.toString() ??
         quizData['audio_url']?.toString();
     final level = item['difficulty_level'];
-    final questionKo = item['question_ko']?.toString() ?? '';
+    final questionKo =
+        (item['question_native'] ?? item['question_ko'])?.toString() ?? '';
 
     return Scaffold(
       appBar: AppHubAppBar(
-        title: '$label ${_index + 1}/${_items.length}',
+        title: tr('quizSession.progressTitle', {
+          'label': label,
+          'current': _index + 1,
+          'total': _items.length,
+        }),
         actions: [
           if (level != null)
             Padding(
@@ -275,7 +281,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: Text(
-                        '이 문제에는 음성이 없습니다. 새로 생성한 문제만 재생됩니다.',
+                        tr('quizSession.noAudioNote'),
                         style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                       ),
                     ),
@@ -304,8 +310,10 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
                                 children: [
                                   Text(
                                     widget.quizType == 'composition' && _lastQuality != null
-                                        ? '작문 점수 $_lastQuality/5'
-                                        : (_lastCorrect! ? '정답!' : '오답'),
+                                        ? tr('quizSession.compositionScore', {'score': _lastQuality})
+                                        : (_lastCorrect!
+                                            ? tr('quizSession.correctBang')
+                                            : tr('quizSession.incorrect')),
                                     style: TextStyle(
                                       fontWeight: FontWeight.bold,
                                       color: _lastCorrect!
@@ -317,7 +325,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
                                     Padding(
                                       padding: const EdgeInsets.only(top: 6),
                                       child: Text(
-                                        '정답: $_revealedAnswer',
+                                        tr('quizSession.answerLabel', {'answer': _revealedAnswer}),
                                         style: TextStyle(
                                           fontSize: 14,
                                           fontWeight: FontWeight.w600,
@@ -375,12 +383,12 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
                                             Icons.volume_up_outlined,
                                             size: 18,
                                           ),
-                                          label: const Text('다시 듣기'),
+                                          label: Text(tr('quizSession.listenAgain')),
                                         ),
                                       if (_lastCorrect == true || _clozeSolved || widget.quizType == 'composition')
                                         FilledButton.tonal(
                                           onPressed: _goNext,
-                                          child: const Text('다음 문제'),
+                                          child: Text(tr('chat.nextQuestion')),
                                         ),
                                     ],
                                   ),

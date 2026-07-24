@@ -5,13 +5,13 @@ import 'package:flutter/material.dart';
 import '../api/client.dart';
 import '../chat/chat_mode_cards.dart';
 import '../chat/chat_session_controller.dart';
+import '../chat/chat_suggestions.dart';
 import '../chat/journal_task_controller.dart';
 import '../compose/compose_session_controller.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart';
 import '../utils/statement_display.dart';
-import '../widgets/chat_journal_compose_bar.dart';
 import '../widgets/graph_chat_panel.dart';
 import '../widgets/graph_inspector_panel.dart';
 import '../widgets/knowledge_graph_canvas.dart';
@@ -46,28 +46,20 @@ class _KnowledgeGraphScreenState extends State<KnowledgeGraphScreen> {
         elevation: 0,
         scrolledUnderElevation: 0.5,
         surfaceTintColor: Colors.transparent,
-        title: const Text('내 지식 그래프'),
+        title: Text(tr('kg.title')),
         actions: [
           IconButton(
-            tooltip: '저장 위치 안내',
+            tooltip: tr('kg.storageInfoTooltip'),
             icon: const Icon(Icons.info_outline),
             onPressed: () => showDialog(
               context: context,
               builder: (ctx) => AlertDialog(
-                title: const Text('지식 그래프 저장 위치'),
-                content: const Text(
-                  'PostgreSQL 데이터베이스\n\n'
-                  '• nodes — 개념·인물·장소 등 노드\n'
-                  '• edges — 노드 간 관계 (relation)\n'
-                  '• ontology — 엔티티/관계 타입 정의\n\n'
-                  'GraphRAG 수동 배치(Slow Path) 실행 시\n'
-                  'LightRAG 점진적 병합으로 트리플이 upsert 됩니다.\n'
-                  'API: GET /graph',
-                ),
+                title: Text(tr('kg.storageDialogTitle')),
+                content: Text(tr('kg.storageDialogBody')),
                 actions: [
                   TextButton(
                       onPressed: () => Navigator.pop(ctx),
-                      child: const Text('닫기')),
+                      child: Text(tr('common.close'))),
                 ],
               ),
             ),
@@ -312,17 +304,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   /// 시트 밖, 화면 최하단에 항상 도킹된 입력바 — 시트 익스텐트와 무관하게
   /// 최소화 상태에서도 계속 탭 가능해야 한다.
   Widget _buildPersistentInputBar() {
-    // In journal mode the composer is an inline card in the feed footer
-    // (_chatListFooter → ChatJournalComposeBar), so the docked bar is hidden —
-    // there's never a second input surface competing with it.
-    if (_isJournalMode) {
-      if (_inputBarHeight != 0) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) setState(() => _inputBarHeight = 0);
-        });
-      }
-      return const SizedBox.shrink();
-    }
+    // Journal mode now reuses this same docked pill (mention field + mic/
+    // attach) instead of a separate composer card, so it's never hidden here.
     return Positioned(
       left: 0,
       right: 0,
@@ -330,7 +313,19 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       child: MeasureSize(
         onChange: (size) {
           if (!mounted || size.height == _inputBarHeight) return;
+          final grew = size.height > _inputBarHeight;
+          // Sampled before the rebuild: the feed's tail padding is derived
+          // from this height, so a bar that grows (the suggestion rail
+          // appearing, the input wrapping to a second line) pushes the tail
+          // down *under* the bar unless the scroll offset follows it.
+          final c = _activeChatScrollController;
+          final wasAtBottom = c != null &&
+              c.hasClients &&
+              c.position.maxScrollExtent - c.position.pixels < 24;
           setState(() => _inputBarHeight = size.height);
+          if (grew && wasAtBottom) {
+            _pinChatToBottom(window: const Duration(milliseconds: 260));
+          }
         },
         child: ChatInputBar(
           inputController: _chatInputController,
@@ -341,7 +336,15 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           onModeSelected: _onModeSelected,
           inputEnabled: _inputEnabled,
           inputHint: _inputHint,
+          journalMode: _isJournalMode,
           inputFocusNode: _chatInputFocusNode,
+          suggestions: chatSuggestionsFor(
+            mode: chatSession.mode,
+            messages: chatSession.messages,
+            busy: chatSession.busy,
+            journalBusy: journalTask.isBusy,
+          ),
+          onSuggestionPrompt: _sendSuggestion,
         ),
       ),
     );
@@ -606,33 +609,35 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDlgState) => AlertDialog(
-          title: const Text('노드 추가'),
+          title: Text(tr('kg.addNodeTitle')),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: nameCtrl,
                 autofocus: true,
-                decoration: const InputDecoration(
-                    labelText: '이름',
+                decoration: InputDecoration(
+                    labelText: tr('kg.addNodeNameLabel'),
                     isDense: true,
-                    border: OutlineInputBorder()),
+                    border: const OutlineInputBorder()),
                 onSubmitted: (_) => Navigator.pop(ctx, true),
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 initialValue: type,
-                decoration: const InputDecoration(
-                    labelText: '타입',
+                decoration: InputDecoration(
+                    labelText: tr('kg.addNodeTypeLabel'),
                     isDense: true,
-                    border: OutlineInputBorder()),
-                items: const [
+                    border: const OutlineInputBorder()),
+                items: [
                   DropdownMenuItem(
-                      value: 'Concept', child: Text('개념 (Concept)')),
+                      value: 'Concept', child: Text(tr('kg.typeConcept'))),
                   DropdownMenuItem(
-                      value: 'Identity', child: Text('정체성 (Identity)')),
-                  DropdownMenuItem(value: 'Person', child: Text('사람 (Person)')),
-                  DropdownMenuItem(value: 'Source', child: Text('출처 (Source)')),
+                      value: 'Identity', child: Text(tr('kg.typeIdentity'))),
+                  DropdownMenuItem(
+                      value: 'Person', child: Text(tr('kg.typePerson'))),
+                  DropdownMenuItem(
+                      value: 'Source', child: Text(tr('kg.typeSource'))),
                 ],
                 onChanged: (v) => setDlgState(() => type = v ?? 'Concept'),
               ),
@@ -641,10 +646,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('취소')),
+                child: Text(tr('common.cancel'))),
             FilledButton(
                 onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('추가')),
+                child: Text(tr('common.add'))),
           ],
         ),
       ),
@@ -656,7 +661,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       await apiClient.createNode(name: name, type: type);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("'$name' 노드가 추가되었습니다.")),
+          SnackBar(content: Text(tr('kg.nodeAdded', {'name': name}))),
         );
       }
       await _load();
@@ -729,6 +734,14 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     chatSession.submitInput(raw);
   }
 
+  /// A tapped suggestion chip. Same path as typing it, but the chat is
+  /// surfaced first — chips are reachable while the sheet is minimized, and a
+  /// reply arriving into a hidden feed would look like nothing happened.
+  void _sendSuggestion(String text) {
+    _ensureChatVisible();
+    _sendChat(text);
+  }
+
   /// The panel's clear button now deletes the active room (multi-room world).
   Future<void> _deleteActiveRoom() async {
     final id = chatSession.activeId;
@@ -736,15 +749,15 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('채팅방 삭제'),
-        content: const Text('이 채팅방의 대화를 모두 지울까요?\n지식그래프는 그대로 유지돼요.'),
+        title: Text(tr('kg.deleteRoomTitle')),
+        content: Text(tr('kg.deleteRoomBody')),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('취소')),
+              child: Text(tr('common.cancel'))),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('삭제')),
+              child: Text(tr('common.delete'))),
         ],
       ),
     );
@@ -765,8 +778,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         // Quiz/distill modes stay reachable during background processing.
         if (journalTask.isBusy) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('일기 처리가 진행 중이에요 — 완료 후 새 일기를 저장할 수 있어요.'),
+            SnackBar(
+              content: Text(tr('kg.journalBusySnackbar')),
             ),
           );
           return;
@@ -787,11 +800,11 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
 
   // Learnable target languages — kept in sync with settings_screen.dart's
   // _kLanguages (the quiz engine is only tuned for these three).
-  static const _quizLanguages = [
-    (key: 'english', label: '영어', flag: '🇺🇸'),
-    (key: 'german', label: '독일어', flag: '🇩🇪'),
-    (key: 'korean', label: '한국어', flag: '🇰🇷'),
-  ];
+  static List<({String key, String label, String flag})> get _quizLanguages => [
+        (key: 'english', label: tr('kg.langEnglish'), flag: '🇺🇸'),
+        (key: 'german', label: tr('kg.langGerman'), flag: '🇩🇪'),
+        (key: 'korean', label: tr('kg.langKorean'), flag: '🇰🇷'),
+      ];
 
   /// When the learner has more than one target language configured in their
   /// profile, ask which one this quiz session should draw from before
@@ -823,13 +836,13 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 16, 20, 4),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Text('어떤 언어로 퀴즈를 풀까요?',
-                    style:
-                        TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                child: Text(tr('kg.quizLanguagePrompt'),
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w700, fontSize: 15)),
               ),
             ),
             for (final code in langs)
@@ -956,11 +969,11 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           },
         );
       case ChatMode.journal:
-        // Journal compose now renders INLINE as a card in the message feed
-        // (item 7) — scrolls with the conversation instead of popping up as a
-        // docked bar / modal. Hidden while the pipeline is busy; the floating
-        // status pill carries progress during processing.
-        return journalTask.isBusy ? null : const ChatJournalComposeBar();
+        // Composing now happens directly in the docked input pill (see
+        // ChatInputBar's journalMode) — the feed only needs the "you're
+        // writing a diary" banner (already appended as a journal_mode
+        // message) plus, while the pipeline runs, the progress card.
+        return null;
       case ChatMode.normal:
         return null;
     }
@@ -1246,19 +1259,16 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('지식 그래프 전체 삭제'),
-        content: const Text(
-          '모든 노드·엣지·임베딩 청크가 삭제됩니다.\n'
-          '일기 번역본은 유지됩니다. GraphRAG를 다시 실행하면 새 그래프가 만들어집니다.',
-        ),
+        title: Text(tr('kg.clearGraphTitle')),
+        content: Text(tr('kg.clearGraphBody')),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('취소')),
+              child: Text(tr('common.cancel'))),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('전체 삭제'),
+            child: Text(tr('kg.clearGraphAction')),
           ),
         ],
       ),
@@ -1278,14 +1288,18 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '삭제됨: 노드 ${stats['nodes_deleted']} · 엣지 ${stats['edges_deleted']} · 청크 ${stats['chunks_deleted']}',
+            tr('kg.deletedStats', {
+              'nodes': stats['nodes_deleted'],
+              'edges': stats['edges_deleted'],
+              'chunks': stats['chunks_deleted'],
+            }),
           ),
         ),
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('삭제 실패: $e')),
+        SnackBar(content: Text(tr('kg.deleteFailed', {'error': e}))),
       );
     }
   }
@@ -1313,7 +1327,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
                 style: const TextStyle(fontSize: 13),
               ),
               const SizedBox(height: 16),
-              FilledButton(onPressed: _load, child: const Text('다시 시도')),
+              FilledButton(onPressed: _load, child: Text(tr('kg.retry'))),
             ],
           ),
         ),
@@ -1651,11 +1665,13 @@ class _CompactGraphHeader extends StatelessWidget {
             child: TextField(
               style: TextStyle(fontSize: 13, color: shell.primaryText),
               decoration: InputDecoration(
-                hintText: '노드 검색…',
+                hintText: tr('kg.searchHintLong'),
                 hintStyle: TextStyle(color: shell.mutedText, fontSize: 13),
                 prefixIcon:
                     Icon(Icons.search, size: 18, color: shell.mutedText),
-                suffixText: matchCount == null ? null : '$matchCount개',
+                suffixText: matchCount == null
+                    ? null
+                    : tr('kg.matchCount', {'count': matchCount}),
                 suffixStyle: TextStyle(
                   fontSize: 11,
                   color: matchCount == 0
@@ -1684,13 +1700,13 @@ class _CompactGraphHeader extends StatelessWidget {
             style: TextStyle(fontSize: 11, color: shell.mutedText),
           ),
           IconButton(
-            tooltip: '새로고침',
+            tooltip: tr('kg.refreshTooltip'),
             visualDensity: VisualDensity.compact,
             onPressed: onRefresh,
             icon: Icon(Icons.refresh, size: 20, color: shell.mutedText),
           ),
           IconButton(
-            tooltip: '전체 화면',
+            tooltip: tr('kg.fullscreenTooltip'),
             visualDensity: VisualDensity.compact,
             onPressed: onOpenFullscreen,
             icon: Icon(Icons.open_in_full, size: 20, color: shell.mutedText),
@@ -1764,7 +1780,7 @@ class _FloatingSearchBar extends StatelessWidget {
           children: [
             if (onOpenMenu != null)
               IconButton(
-                tooltip: '메뉴',
+                tooltip: tr('kg.menuTooltip'),
                 onPressed: onOpenMenu,
                 icon: Icon(Icons.menu_rounded, color: shell.primaryText),
               )
@@ -1777,9 +1793,11 @@ class _FloatingSearchBar extends StatelessWidget {
               child: TextField(
                 style: TextStyle(color: shell.primaryText, fontSize: 14.5),
                 decoration: InputDecoration(
-                  hintText: '노드 검색',
+                  hintText: tr('kg.searchHintShort'),
                   hintStyle: TextStyle(color: hintColor, fontSize: 14),
-                  suffixText: matchCount == null ? null : '$matchCount개',
+                  suffixText: matchCount == null
+                      ? null
+                      : tr('kg.matchCount', {'count': matchCount}),
                   suffixStyle: TextStyle(
                     fontSize: 11.5,
                     color: matchCount == 0
@@ -1797,7 +1815,7 @@ class _FloatingSearchBar extends StatelessWidget {
               ),
             ),
             IconButton(
-              tooltip: chatVisible ? '梨꾪똿 ?④湲' : '梨꾪똿 ?쒖떆',
+              tooltip: chatVisible ? tr('kg.collapseChatTooltip') : tr('kg.showChatTooltip'),
               onPressed: onToggleChat,
               icon: Icon(
                 chatVisible
@@ -1809,7 +1827,7 @@ class _FloatingSearchBar extends StatelessWidget {
             // Destructive / rarely-used actions live behind the overflow menu
             // so they can't be fat-fingered while exploring.
             PopupMenuButton<String>(
-              tooltip: '더보기',
+              tooltip: tr('kg.moreTooltip'),
               icon: Icon(Icons.more_vert, color: shell.primaryText),
               color: shell.barBackground,
               onSelected: (v) {
@@ -1833,7 +1851,9 @@ class _FloatingSearchBar extends StatelessWidget {
                       color: AppColors.textMuted,
                     ),
                     title: Text(
-                      graphToolsVisible ? '그래프 도구 숨김' : '그래프 도구 표시',
+                      graphToolsVisible
+                          ? tr('kg.hideGraphTools')
+                          : tr('kg.showGraphTools'),
                       style: TextStyle(color: shell.primaryText, fontSize: 13),
                     ),
                   ),
@@ -1841,7 +1861,11 @@ class _FloatingSearchBar extends StatelessWidget {
                 PopupMenuItem(
                   enabled: false,
                   height: 32,
-                  child: Text('노드 $nodeCount · 관계 $edgeCount',
+                  child: Text(
+                      tr('kg.nodeEdgeCount', {
+                        'nodes': nodeCount,
+                        'edges': edgeCount,
+                      }),
                       style:
                           TextStyle(color: shell.mutedText, fontSize: 12)),
                 ),
@@ -1852,7 +1876,7 @@ class _FloatingSearchBar extends StatelessWidget {
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.category_outlined,
                         color: AppColors.textMuted),
-                    title: Text('온톨로지',
+                    title: Text(tr('kg.ontology'),
                         style:
                             TextStyle(color: shell.primaryText, fontSize: 13)),
                   ),
@@ -1864,7 +1888,7 @@ class _FloatingSearchBar extends StatelessWidget {
                     contentPadding: EdgeInsets.zero,
                     leading:
                         const Icon(Icons.refresh, color: AppColors.textMuted),
-                    title: Text('새로고침',
+                    title: Text(tr('kg.refreshTooltip'),
                         style:
                             TextStyle(color: shell.primaryText, fontSize: 13)),
                   ),
@@ -1876,7 +1900,7 @@ class _FloatingSearchBar extends StatelessWidget {
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.add_circle_outline,
                         color: AppColors.textMuted),
-                    title: Text('노드 추가',
+                    title: Text(tr('kg.addNodeTitle'),
                         style:
                             TextStyle(color: shell.primaryText, fontSize: 13)),
                   ),
@@ -1888,20 +1912,21 @@ class _FloatingSearchBar extends StatelessWidget {
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.delete_outline,
                         color: AppColors.textMuted),
-                    title: Text('휴지통',
+                    title: Text(tr('kg.trash'),
                         style:
                             TextStyle(color: shell.primaryText, fontSize: 13)),
                   ),
                 ),
-                const PopupMenuItem(
+                PopupMenuItem(
                   value: 'clear',
                   child: ListTile(
                     dense: true,
                     contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.delete_sweep, color: Colors.redAccent),
-                    title: Text('그래프 전체 삭제',
-                        style:
-                            TextStyle(color: Colors.redAccent, fontSize: 13)),
+                    leading: const Icon(Icons.delete_sweep,
+                        color: Colors.redAccent),
+                    title: Text(tr('kg.clearGraphMenu'),
+                        style: const TextStyle(
+                            color: Colors.redAccent, fontSize: 13)),
                   ),
                 ),
               ],
@@ -1932,8 +1957,7 @@ class _HideHeadsToggle extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
         child: Tooltip(
-          message:
-              active ? '기본 모드로 — 화자 노드 다시 표시' : '화자 숨기기 — Statement를 화자색으로 표시',
+          message: active ? tr('kg.hideModeOff') : tr('kg.hideModeOn'),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
@@ -1953,7 +1977,7 @@ class _HideHeadsToggle extends StatelessWidget {
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  active ? '화자 숨김' : '기본 모드',
+                  active ? tr('kg.hideModeLabelOn') : tr('kg.hideModeLabelOff'),
                   style: TextStyle(
                     fontSize: 11.5,
                     fontWeight: FontWeight.w600,
@@ -2078,7 +2102,7 @@ class _SelectionInfoCard extends StatelessWidget {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Text(
-                      '$type · 연결 $degree개',
+                      tr('kg.connectionsCount', {'type': type, 'degree': degree}),
                       style: TextStyle(
                           fontSize: 11, color: color.withValues(alpha: 0.9)),
                     ),
@@ -2114,7 +2138,7 @@ class _SelectionInfoCard extends StatelessWidget {
                       const SizedBox(width: 6),
                       Flexible(
                         child: Text(
-                          '${isSpeakerLikeType(headNode['type']?.toString()) ? '화자' : '출처'}: ${headNode['name'] ?? '?'}',
+                          '${isSpeakerLikeType(headNode['type']?.toString()) ? tr('kg.speakerLabel') : tr('kg.sourceLabel')}: ${headNode['name'] ?? '?'}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -2224,7 +2248,9 @@ class _SelectionInfoCard extends StatelessWidget {
               children: [
             if (n != null && isStatement)
               IconButton(
-                tooltip: n['is_pinned'] == true ? '핀 해제' : '최우선 과제로 핀',
+                tooltip: n['is_pinned'] == true
+                    ? tr('kg.unpinTooltip')
+                    : tr('kg.pinTooltip'),
                 visualDensity: VisualDensity.compact,
                 onPressed: pinning ? null : () => onPin(n),
                 icon: pinning
@@ -2253,10 +2279,10 @@ class _SelectionInfoCard extends StatelessWidget {
                 visualDensity: VisualDensity.compact,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
               ),
-              child: const Text('자세히', style: TextStyle(fontSize: 12.5)),
+              child: Text(tr('kg.detail'), style: const TextStyle(fontSize: 12.5)),
             ),
             IconButton(
-              tooltip: '닫기',
+              tooltip: tr('common.close'),
               visualDensity: VisualDensity.compact,
               onPressed: onClose,
               icon: Icon(Icons.close, size: 18, color: shell.mutedText),

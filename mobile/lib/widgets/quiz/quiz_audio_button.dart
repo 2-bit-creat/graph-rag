@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../api/config.dart';
+import '../../l10n/app_strings.dart';
 
 class QuizAudioButton extends StatefulWidget {
   const QuizAudioButton({
@@ -66,7 +67,7 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
     if (resolved == null) {
       if (showError && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('이 문제에는 음성 파일이 없습니다.')),
+          SnackBar(content: Text(tr('quizAudio.noAudioFile'))),
         );
       }
       return;
@@ -90,11 +91,8 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
       if (mounted) setState(() => _playing = false);
       if (showError && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              '음성 플러그인이 등록되지 않았습니다.\n'
-              '앱을 완전히 종료한 뒤 run_windows.ps1로 다시 실행하세요.',
-            ),
+          SnackBar(
+            content: Text(tr('quizAudio.pluginNotRegistered')),
           ),
         );
       }
@@ -103,17 +101,14 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
       if (showError && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              '음성 서버에 연결할 수 없습니다.\n$resolved\n'
-              '백엔드가 실행 중인지 확인하세요.',
-            ),
+            content: Text(tr('quizAudio.connectionFailed', {'url': resolved})),
           ),
         );
       }
     } catch (e) {
       if (showError && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('음성 재생 실패: $e')),
+          SnackBar(content: Text(tr('quizAudio.playbackFailed', {'error': e}))),
         );
       }
       if (mounted) setState(() => _playing = false);

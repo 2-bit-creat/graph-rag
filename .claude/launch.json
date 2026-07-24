@@ -8,6 +8,12 @@
       "port": 8123
     },
     {
+      "name": "web-alt",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "cd mobile && flutter run -d web-server --web-port 8124"],
+      "port": 8124
+    },
+    {
       "name": "web-build-preview",
       "runtimeExecutable": "py",
       "runtimeArgs": ["-3.12", "-m", "http.server", "5436", "--directory", "mobile/build/web"],

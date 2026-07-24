@@ -16,6 +16,7 @@ from pathlib import Path
 import httpx
 
 from .config import get_settings
+from .languages import spec as language_spec
 
 
 @dataclass
@@ -39,7 +40,9 @@ def segments_to_labeled_transcript(segments: list[SpeakerSegment]) -> str:
     return "\n".join(lines)
 
 
-async def diarize_audio(audio_path: Path) -> tuple[list[SpeakerSegment], str, dict]:
+async def diarize_audio(
+    audio_path: Path, native_language: str = "korean"
+) -> tuple[list[SpeakerSegment], str, dict]:
     """Return speaker segments, provider note, and optional refinement metadata."""
     settings = get_settings()
     if not settings.speaker_diarization_enabled:
@@ -51,7 +54,9 @@ async def diarize_audio(audio_path: Path) -> tuple[list[SpeakerSegment], str, di
 
     if settings.deepgram_api_key:
         try:
-            segments = await _deepgram_diarize(audio_path, settings.deepgram_api_key)
+            segments = await _deepgram_diarize(
+                audio_path, settings.deepgram_api_key, native_language
+            )
             provider = "deepgram"
         except Exception as exc:
             return [], f"deepgram_failed:{exc}", {}
@@ -162,11 +167,14 @@ def _merge_deepgram_segments(
     return word_segments or utt_segments
 
 
-async def _deepgram_diarize(audio_path: Path, api_key: str) -> list[SpeakerSegment]:
-    """Deepgram listen API with diarize=true (Korean)."""
+async def _deepgram_diarize(
+    audio_path: Path, api_key: str, native_language: str = "korean"
+) -> list[SpeakerSegment]:
+    """Deepgram listen API with diarize=true, in the user's native language."""
+    dg_lang = language_spec(native_language, default="korean").deepgram
     url = (
         "https://api.deepgram.com/v1/listen"
-        "?model=nova-2&language=ko&diarize=true&diarize_version=latest"
+        f"?model=nova-2&language={dg_lang}&diarize=true&diarize_version=latest"
         "&utterances=true&punctuate=true&smart_format=true"
     )
     headers = {

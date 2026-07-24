@@ -136,7 +136,7 @@ async def test_data_export_bundles_user_data_without_secrets(client, monkeypatch
         marker = f"EXPORT-{uuid.uuid4().hex[:8]}"
         async with async_session_factory() as s:
             user = await crud.get_user_by_email(s, f"simple:{handle}@local")
-            s.add(JournalEntry(user_id=user.id, status="ready", transcript_ko=marker))
+            s.add(JournalEntry(user_id=user.id, status="ready", transcript_native=marker))
             await crud._get_or_create_node(s, name=marker, type_="Statement", user_id=user.id)
             await s.commit()
 
@@ -147,7 +147,7 @@ async def test_data_export_bundles_user_data_without_secrets(client, monkeypatch
 
         assert bundle["account"]["email"] == f"simple:{handle}@local"
         assert "password_hash" not in bundle["account"]  # secret excluded
-        assert any(e.get("transcript_ko") == marker for e in bundle["journal_entries"])
+        assert any(e.get("transcript_native") == marker for e in bundle["journal_entries"])
         assert any(n.get("name") == marker for n in bundle["graph_nodes"])
         # Vector columns are excluded from the export.
         assert all("name_embedding" not in n for n in bundle["graph_nodes"])

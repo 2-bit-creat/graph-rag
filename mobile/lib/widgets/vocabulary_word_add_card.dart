@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import 'app_ui.dart';
 
@@ -47,7 +48,7 @@ class VocabularyWordAddCardState extends State<VocabularyWordAddCard> {
     final meaning = _meaningCtrl.text.trim();
     if (word.isEmpty || meaning.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('단어와 뜻을 모두 입력해 주세요')),
+        SnackBar(content: Text(tr('vocabAddCard.missingFieldsSnackbar'))),
       );
       return;
     }
@@ -67,7 +68,7 @@ class VocabularyWordAddCardState extends State<VocabularyWordAddCard> {
             children: [
               Icon(Icons.post_add_rounded, color: AppColors.accentWarm, size: 22),
               const SizedBox(width: AppSpacing.sm),
-              Text('새 카드 추가', style: Theme.of(context).textTheme.titleSmall),
+              Text(tr('vocabAddCard.title'), style: Theme.of(context).textTheme.titleSmall),
             ],
           ),
           const SizedBox(height: AppSpacing.md),
@@ -77,8 +78,8 @@ class VocabularyWordAddCardState extends State<VocabularyWordAddCard> {
             enabled: !widget.loading,
             textInputAction: TextInputAction.next,
             decoration: InputDecoration(
-              labelText: '단어 (영어)',
-              hintText: '예: itinerary',
+              labelText: tr('vocabAddCard.wordLabel'),
+              hintText: tr('vocabAddCard.wordHint'),
               filled: true,
               fillColor: colorScheme.surface,
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppSpacing.radiusSm)),
@@ -91,8 +92,8 @@ class VocabularyWordAddCardState extends State<VocabularyWordAddCard> {
             enabled: !widget.loading,
             textInputAction: TextInputAction.done,
             decoration: InputDecoration(
-              labelText: '뜻 (한국어)',
-              hintText: '예: 여행 일정',
+              labelText: tr('vocabAddCard.meaningLabel'),
+              hintText: tr('vocabAddCard.meaningHint'),
               filled: true,
               fillColor: colorScheme.surface,
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppSpacing.radiusSm)),
@@ -109,7 +110,7 @@ class VocabularyWordAddCardState extends State<VocabularyWordAddCard> {
                     child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                   )
                 : const Icon(Icons.add, size: 20),
-            label: Text(widget.loading ? '추가 중…' : '카드 추가'),
+            label: Text(widget.loading ? tr('vocabAddCard.addingLabel') : tr('vocabAddCard.addButton')),
           ),
         ],
       ),

@@ -30,7 +30,7 @@ async def _fresh_entry(db_session, user_id) -> JournalEntry:
         user_id=user_id,
         status="graph_staging_ready",
         source_type="개인일기",
-        transcript_clean_ko="테스트",
+        transcript_clean_native="테스트",
     )
     db_session.add(entry)
     await db_session.commit()

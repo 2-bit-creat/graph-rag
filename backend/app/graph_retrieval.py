@@ -286,32 +286,47 @@ async def rank_packages(
     return sorted(packages, key=_score, reverse=True)
 
 
-def _identity_label(node: Node) -> str:
-    return "나" if node.is_self else node.name
+def _identity_label(node: Node, self_label: str = "나") -> str:
+    return self_label if node.is_self else node.name
 
 
-def _format_package(index: int, pkg: ContextPackage) -> str:
-    lines = [f"기록 {index}:"]
+# Extra LLM-facing context labels not already in NativePack (which only covers
+# the fields graph_chat's persona prompt explicitly warns about).
+_EXTRA_LABELS: dict[str, dict[str, str]] = {
+    "korean": {"statement": "진술", "concepts": "연관 개념", "known_entities": "알고 있는 대상"},
+    "english": {"statement": "Statement", "concepts": "Related concepts", "known_entities": "Known entities"},
+}
+
+
+def _format_package(index: int, pkg: ContextPackage, native_language: str = "korean") -> str:
+    from .prompts import native_pack
+
+    pack = native_pack(native_language)
+    extra = _EXTRA_LABELS.get(native_language, _EXTRA_LABELS["korean"])
+    lines = [f"{pack.memory_label} {index}:"]
     if pkg.speaker is not None:
         suffix = "" if pkg.speaker.is_self else f" ({pkg.speaker.type})"
-        lines.append(f"- 화자: {_identity_label(pkg.speaker)}{suffix}")
-    lines.append(f"- 일시: {pkg.occurred_at.isoformat()}")
-    lines.append(f'- 진술: "{statement_content(pkg.statement)}"')
+        lines.append(f"- {pack.speaker_label}: {_identity_label(pkg.speaker, pack.self_label)}{suffix}")
+    lines.append(f"- {pack.datetime_label}: {pkg.occurred_at.isoformat()}")
+    lines.append(f'- {extra["statement"]}: "{statement_content(pkg.statement)}"')
     if pkg.concepts:
-        lines.append(f"- 연관 개념: {', '.join(c.name for c in pkg.concepts)}")
+        lines.append(f"- {extra['concepts']}: {', '.join(c.name for c in pkg.concepts)}")
     if pkg.mentions:
-        # Kept separate from 연관 개념 on purpose: these are people the statement
+        # Kept separate from concepts on purpose: these are people the statement
         # talks ABOUT, not who said it — conflating the two is a bug we've hit
-        # before (see graph_chat._build_system_prompt's explicit warning).
-        lines.append(f"- 언급된 인물: {', '.join(m.name for m in pkg.mentions)}")
+        # before (see the chat persona prompt's explicit warning in prompts/native.py).
+        lines.append(f"- {pack.mentioned_label}: {', '.join(m.name for m in pkg.mentions)}")
     return "\n".join(lines)
 
 
-def _seed_description_lines(seeds: list[Node]) -> list[str]:
+def _seed_description_lines(seeds: list[Node], native_language: str = "korean") -> list[str]:
     """A seeded Identity/Concept's own ``description`` (who/what it is) — e.g.
     마야's "내 고양이". Context Packages are Statement-centric, so without this
     a seed with no Statement of its own (or one that only gets pulled in via a
     MENTIONS fallback) would never have its own description surface at all."""
+    from .prompts import native_pack
+
+    self_label = native_pack(native_language).self_label
     lines: list[str] = []
     seen: set[uuid.UUID] = set()
     for node in seeds:
@@ -321,26 +336,33 @@ def _seed_description_lines(seeds: list[Node]) -> list[str]:
         if not desc:
             continue
         seen.add(node.id)
-        lines.append(f"- {_identity_label(node)}: {desc}")
+        lines.append(f"- {_identity_label(node, self_label)}: {desc}")
     return lines
 
 
 def build_final_prompt_context(
-    packages: list[ContextPackage], *, top_k: int | None = None, seeds: list[Node] | None = None
+    packages: list[ContextPackage],
+    *,
+    top_k: int | None = None,
+    seeds: list[Node] | None = None,
+    native_language: str = "korean",
 ) -> str:
     """Render the (already RRF-ranked) top packages into LLM-ready text, with
     any seeded identity/concept's own description surfaced first."""
     settings = get_settings()
     k = top_k if top_k is not None else settings.graph_context_top_k
     top = packages[:k]
+    extra = _EXTRA_LABELS.get(native_language, _EXTRA_LABELS["korean"])
 
     parts: list[str] = []
-    desc_lines = _seed_description_lines(seeds or [])
+    desc_lines = _seed_description_lines(seeds or [], native_language)
     if desc_lines:
-        parts.append("알고 있는 대상:\n" + "\n".join(desc_lines))
+        parts.append(f"{extra['known_entities']}:\n" + "\n".join(desc_lines))
     if top:
         parts.append(
-            "\n\n".join(_format_package(i, pkg) for i, pkg in enumerate(top, start=1))
+            "\n\n".join(
+                _format_package(i, pkg, native_language) for i, pkg in enumerate(top, start=1)
+            )
         )
     return "\n\n".join(parts)
 
@@ -353,6 +375,7 @@ async def build_ranked_context(
     query_vec: list[float] | None = None,
     time_window: tuple[date, date] | None = None,
     top_k: int | None = None,
+    native_language: str = "korean",
 ) -> RankedContext:
     """End-to-end: seeds -> Context Packages -> RRF rerank -> prompt text.
 
@@ -366,7 +389,9 @@ async def build_ranked_context(
     ranked = await rank_packages(
         session, packages, query_vec=query_vec, time_window=time_window
     )
-    text = build_final_prompt_context(ranked, top_k=top_k, seeds=seeds)
+    text = build_final_prompt_context(
+        ranked, top_k=top_k, seeds=seeds, native_language=native_language
+    )
 
     cutoff = top_k if top_k is not None else settings.graph_context_top_k
     node_ids: list[uuid.UUID] = []

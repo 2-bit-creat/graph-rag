@@ -470,8 +470,8 @@ async def get_node_out(
         entry = await session.get(JournalEntry, linked_entry_id)
         if entry is not None and entry.user_id == user_id:
             source_entry_id = linked_entry_id
-            source_transcript_ko = entry.transcript_ko
-            source_transcript_clean_ko = entry.transcript_clean_ko
+            source_transcript_ko = entry.transcript_native
+            source_transcript_clean_ko = entry.transcript_clean_native
             entry_created_at = entry.created_at
         else:
             entry_created_at = None
@@ -493,7 +493,7 @@ async def get_node_out(
                     select(JournalEntry)
                     .where(
                         JournalEntry.user_id == user_id,
-                        JournalEntry.transcript_clean_ko.ilike(f"%{search_phrase}%"),
+                        JournalEntry.transcript_clean_native.ilike(f"%{search_phrase}%"),
                     )
                     .order_by(JournalEntry.created_at.desc())
                     .limit(1)
@@ -505,7 +505,7 @@ async def get_node_out(
                         select(JournalEntry)
                         .where(
                             JournalEntry.user_id == user_id,
-                            JournalEntry.transcript_ko.ilike(f"%{search_phrase[:40]}%"),
+                            JournalEntry.transcript_native.ilike(f"%{search_phrase[:40]}%"),
                         )
                         .order_by(JournalEntry.created_at.desc())
                         .limit(1)
@@ -513,8 +513,8 @@ async def get_node_out(
                     found = text_match2.scalar_one_or_none()
                 if found is not None:
                     source_entry_id = found.id
-                    source_transcript_ko = found.transcript_ko
-                    source_transcript_clean_ko = found.transcript_clean_ko
+                    source_transcript_ko = found.transcript_native
+                    source_transcript_clean_ko = found.transcript_clean_native
                     entry_created_at = found.created_at
         except (ValueError, TypeError, AttributeError):
             pass
@@ -1384,7 +1384,16 @@ async def update_journal_entry(
     **fields,
 ) -> JournalEntry:
     jsonb_fields = {"pipeline_trace", "transcript_segments", "graph_staging", "translations"}
+    # transcript_ko/transcript_clean_ko were renamed to transcript_native/
+    # transcript_clean_native (see languages.py) — remap any caller still using
+    # the old keyword so setattr can't silently create a stray, unpersisted
+    # attribute instead of raising.
+    legacy_key_map = {
+        "transcript_ko": "transcript_native",
+        "transcript_clean_ko": "transcript_clean_native",
+    }
     for key, value in fields.items():
+        key = legacy_key_map.get(key, key)
         if key in jsonb_fields and value is not None:
             from .json_util import json_safe
 
@@ -2435,7 +2444,7 @@ async def clear_user_knowledge_graph(
     )
     # 번역 제거 후 그래프 재생성 가능 조건 = 정제(또는 원문) 텍스트 유무.
     for entry in entries.scalars():
-        has_text = bool(entry.transcript_clean_ko or entry.transcript_ko)
+        has_text = bool(entry.transcript_clean_native or entry.transcript_native)
         if entry.status == "graph_processing":
             entry.status = "ready" if has_text else "ready_no_graph"
         elif entry.status in ("graph_staging_ready", "graph_ready", "completed"):
@@ -3591,8 +3600,10 @@ def quiz_to_dict(quiz: Quiz) -> dict:
         "quiz_type": quiz.quiz_type,
         "difficulty_level": quiz.difficulty_level,
         "queue_kind": quiz.queue_kind,
-        "question_ko": quiz.question_ko,
-        "sentence_en": quiz.sentence_en,
+        "question_ko": quiz.question_native,
+        "sentence_en": quiz.sentence_target,
+        "question_native": quiz.question_native,
+        "sentence_target": quiz.sentence_target,
         "quiz_data": quiz.quiz_data,
         "repetitions": quiz.repetitions,
         "next_review_at": quiz.next_review_at.isoformat() if quiz.next_review_at else None,
@@ -3630,8 +3641,8 @@ async def create_quiz(
         language=(language or "").lower() or None,
         source_nodes=source_nodes,
         generation_key=generation_key,
-        question_ko=question_ko,
-        sentence_en=sentence_en,
+        question_native=question_ko,
+        sentence_target=sentence_en,
         quiz_data=quiz_data,
         difficulty_level=difficulty_level,
         queue_kind=queue_kind,

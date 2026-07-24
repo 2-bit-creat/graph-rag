@@ -344,13 +344,16 @@ def _client() -> AsyncOpenAI:
     return AsyncOpenAI(api_key=get_settings().openai_api_key)
 
 
-async def transcribe_audio(file_path: Path) -> str:
+async def transcribe_audio(file_path: Path, native_language: str = "korean") -> str:
+    from .languages import spec as language_spec
+
     client = _client()
+    whisper_lang = language_spec(native_language, default="korean").whisper
     with file_path.open("rb") as f:
         resp = await client.audio.transcriptions.create(
             model="whisper-1",
             file=f,
-            language="ko",
+            language=whisper_lang,
         )
     return resp.text.strip()
 

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../api/client.dart';
 import '../compose/compose_session_controller.dart';
 import '../compose/journal_phase.dart';
+import '../l10n/app_strings.dart';
 
 /// Headless journal pipeline for inline chat compose.
 ///
@@ -70,7 +71,7 @@ class JournalTaskController extends ChangeNotifier {
     String? attributionName,
   }) {
     return _runWork(
-      '받아쓰기 · 정제 중',
+      tr('journal.stageTranscribing'),
       () => apiClient.createTextJournalEntry(
         paragraphText,
         attributionKind: attributionKind,
@@ -85,7 +86,7 @@ class JournalTaskController extends ChangeNotifier {
     String? sourceType,
   }) {
     return _runWork(
-      '받아쓰기 · 정제 중',
+      tr('journal.stageTranscribing'),
       () => apiClient.uploadAudio(filePath,
           filename: filename, sourceType: sourceType),
     );
@@ -98,7 +99,7 @@ class JournalTaskController extends ChangeNotifier {
     String? sourceType,
   }) {
     return _runWork(
-      '받아쓰기 · 정제 중',
+      tr('journal.stageTranscribing'),
       () => apiClient.uploadAudioBytes(
         bytes,
         filename: filename,
@@ -135,7 +136,7 @@ class JournalTaskController extends ChangeNotifier {
     } catch (e) {
       if (serial != _workSerial) rethrow;
       _phase = ComposePhase.error;
-      _stageLabel = '처리 실패';
+      _stageLabel = tr('journal.stageFailed');
       notifyListeners();
       rethrow;
     }
@@ -168,8 +169,8 @@ class JournalTaskController extends ChangeNotifier {
     if (_speakerReviewOverride && _entry != null) {
       _phase = ComposePhase.needsInput;
       _stageLabel = speakersPending(_entry)
-          ? '화자 확인 필요'
-          : '화자 매칭 확인';
+          ? tr('journal.stageSpeakerConfirmNeeded')
+          : tr('journal.stageSpeakerMatchConfirm');
       return;
     }
     final derived = deriveChatJournalPhase(
@@ -237,7 +238,7 @@ class JournalTaskController extends ChangeNotifier {
     if (id == null) return;
     final serial = _workSerial;
     _phase = ComposePhase.working;
-    _stageLabel = '그래프 초안 생성 중';
+    _stageLabel = tr('journal.stageGraphDrafting');
     notifyListeners();
 
     try {
@@ -246,7 +247,7 @@ class JournalTaskController extends ChangeNotifier {
       if (serial != _workSerial || _entryId != id) return;
       _graphBuildStarted = false;
       _phase = ComposePhase.error;
-      _stageLabel = '그래프 생성 실패';
+      _stageLabel = tr('journal.stageGraphFailed');
       notifyListeners();
       return;
     }
@@ -271,7 +272,7 @@ class JournalTaskController extends ChangeNotifier {
     _pollTimer?.cancel();
     _pollTimer = null;
     _phase = ComposePhase.working;
-    _stageLabel = '지식그래프 확정 중';
+    _stageLabel = tr('journal.stageGraphCommitting');
     notifyListeners();
 
     try {
@@ -283,7 +284,7 @@ class JournalTaskController extends ChangeNotifier {
     } catch (_) {
       if (serial != _workSerial || _entryId != entryId) return;
       _phase = ComposePhase.error;
-      _stageLabel = '지식그래프 확정 실패';
+      _stageLabel = tr('journal.stageGraphCommitFailed');
       notifyListeners();
       return;
     }

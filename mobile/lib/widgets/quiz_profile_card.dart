@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 
@@ -86,13 +87,13 @@ class _QuizProfileCardState extends State<QuizProfileCard> {
         });
         widget.onUpdated?.call(profile);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('레벨이 저장되었습니다')),
+          SnackBar(content: Text(tr('quizProfile.levelSaved'))),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('저장 실패: $e')),
+          SnackBar(content: Text(tr('quizProfile.saveFailed', {'error': e}))),
         );
       }
     } finally {
@@ -136,9 +137,14 @@ class _QuizProfileCardState extends State<QuizProfileCard> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('학습 프로필', style: Theme.of(context).textTheme.titleSmall),
+                    Text(tr('quizProfile.title'), style: Theme.of(context).textTheme.titleSmall),
                     Text(
-                      'Lv.${_level.round()} · $_cefr · 윈도우 Lv.${_window[0]}~${_window[1]}',
+                      tr('quizProfile.summary', {
+                        'level': _level.round(),
+                        'cefr': _cefr,
+                        'low': _window[0],
+                        'high': _window[1],
+                      }),
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
@@ -170,7 +176,7 @@ class _QuizProfileCardState extends State<QuizProfileCard> {
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Text('레벨 저장'),
+                  : Text(tr('quizProfile.saveLevel')),
             ),
           ),
         ],

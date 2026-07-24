@@ -405,8 +405,15 @@ class JournalEntryOut(BaseModel):
     id: uuid.UUID
     audio_url: str | None = None
     entry_source: str | None = None
-    transcript_ko: str | None = None
-    transcript_clean_ko: str | None = None
+    # Legacy field names — the underlying ORM attribute was renamed to
+    # transcript_native/transcript_clean_native (see languages.py), so these
+    # read from the new attribute via alias to keep old mobile builds working.
+    transcript_ko: str | None = Field(default=None, validation_alias="transcript_native")
+    transcript_clean_ko: str | None = Field(
+        default=None, validation_alias="transcript_clean_native"
+    )
+    transcript_native: str | None = None
+    transcript_clean_native: str | None = None
     translation_en: str | None = None
     translation_de: str | None = None
     translations: dict | None = None
@@ -589,8 +596,15 @@ class QuizItemOut(BaseModel):
     quiz_type: str
     difficulty_level: int
     queue_kind: str
+    # Legacy field names (kept so existing mobile builds keep working).
     question_ko: str | None = None
     sentence_en: str | None = None
+    # New field names — same values, named for what they actually hold
+    # (native-language instruction / target-language sentence). Prefer these
+    # in new client code; the _ko/_en names above will be dropped once the
+    # mobile app no longer reads them.
+    question_native: str | None = None
+    sentence_target: str | None = None
     quiz_data: dict | None = None
     audio_url: str | None = None
     associated_entry_id: uuid.UUID | None = None
@@ -671,6 +685,8 @@ class QuizQueueItemOut(BaseModel):
     source_label: str = ""
     context_sentence: str
     question_ko: str | None = None
+    question_native: str | None = None
+    sentence_target: str | None = None
     quiz_data: dict | None = None
     next_review_at: datetime | None = None
     streak: int = 0

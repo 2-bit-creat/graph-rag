@@ -205,7 +205,7 @@ async def run_quiz_generate_pipeline(
         if entry is None:
             raise ValueError("Entry not found")
         translation_en = entry.translation_en or ""
-        transcript_clean_ko = entry.transcript_clean_ko or ""
+        transcript_clean_ko = entry.transcript_clean_native or ""
         if translation_en:
             source = "journal"
 

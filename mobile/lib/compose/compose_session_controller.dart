@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import 'journal_phase.dart' as jp;
 
 export 'journal_phase.dart'
@@ -119,7 +120,7 @@ class ComposeSessionController extends ChangeNotifier {
     String? sourceType,
   }) {
     return _runWork(
-      '받아쓰기 · 정제 중',
+      tr('journal.stageTranscribing'),
       () => apiClient.uploadAudio(filePath,
           filename: filename, sourceType: sourceType),
     );
@@ -132,7 +133,7 @@ class ComposeSessionController extends ChangeNotifier {
     String? sourceType,
   }) {
     return _runWork(
-      '받아쓰기 · 정제 중',
+      tr('journal.stageTranscribing'),
       () => apiClient.uploadAudioBytes(
         bytes,
         filename: filename,
@@ -148,7 +149,7 @@ class ComposeSessionController extends ChangeNotifier {
     String? attributionName,
   }) {
     return _runWork(
-      '일기 정제하는 중',
+      tr('journal.stageTextRefining'),
       () => apiClient.createTextJournalEntry(
         paragraphText,
         attributionKind: attributionKind,
@@ -170,7 +171,7 @@ class ComposeSessionController extends ChangeNotifier {
     _entryId = entryId;
     _entry = null;
     _phase = jp.ComposePhase.working;
-    _stageLabel = '그래프 초안 생성 중';
+    _stageLabel = tr('journal.stageGraphDrafting');
     _lastStatusKey = null;
     // 세션이 꺼져 있으면(타임라인 등에서 진입) 미니 카드로 띄우고, 펼쳐져 있으면
     // (작성 창) 접는다 — 어느 경로든 "AI 대기 = 창이 접힌다" 규칙을 지킨다.
@@ -184,7 +185,7 @@ class ComposeSessionController extends ChangeNotifier {
     } catch (e) {
       if (_entryId != entryId) return; // 그 사이 다른 작업으로 교체됨
       _phase = jp.ComposePhase.error;
-      _stageLabel = '그래프 생성 실패';
+      _stageLabel = tr('journal.stageGraphFailed');
       notifyListeners();
       return;
     }
@@ -209,7 +210,7 @@ class ComposeSessionController extends ChangeNotifier {
     _pollTimer = null;
     _entryId = entryId;
     _phase = jp.ComposePhase.working;
-    _stageLabel = '지식그래프 확정 중';
+    _stageLabel = tr('journal.stageGraphCommitting');
     _lastStatusKey = null;
     // "AI 대기 = 창이 접힌다" 규칙 — 확정 커밋도 예외가 아니다.
     if (_window != ComposeWindowState.minimized) {
@@ -226,7 +227,7 @@ class ComposeSessionController extends ChangeNotifier {
     } catch (e) {
       if (serial != _workSerial) return; // 그 사이 다른 작업으로 교체됨
       _phase = jp.ComposePhase.error;
-      _stageLabel = '지식그래프 확정 실패';
+      _stageLabel = tr('journal.stageGraphCommitFailed');
       notifyListeners();
       return;
     }
@@ -280,7 +281,7 @@ class ComposeSessionController extends ChangeNotifier {
     } catch (e) {
       if (serial != _workSerial) rethrow;
       _phase = jp.ComposePhase.error;
-      _stageLabel = '처리 실패';
+      _stageLabel = tr('journal.stageFailed');
       notifyListeners();
       rethrow;
     }

@@ -1,15 +1,23 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 
-const _kLangDisplay = {
-  'english': '영어', 'german': '독일어', 'japanese': '일본어',
-  'chinese': '중국어', 'spanish': '스페인어', 'french': '프랑스어',
-  'portuguese': '포르투갈어', 'italian': '이탈리아어',
-  'arabic': '아랍어', 'russian': '러시아어',
-};
+Map<String, String> get _kLangDisplay => {
+      'english': tr('kg.langEnglish'),
+      'german': tr('kg.langGerman'),
+      'korean': tr('kg.langKorean'),
+      'japanese': tr('lang.japanese'),
+      'chinese': tr('lang.chinese'),
+      'spanish': tr('lang.spanish'),
+      'french': tr('lang.french'),
+      'portuguese': tr('lang.portuguese'),
+      'italian': tr('lang.italian'),
+      'arabic': tr('lang.arabic'),
+      'russian': tr('lang.russian'),
+    };
 
 class StatementBankScreen extends StatefulWidget {
   const StatementBankScreen({super.key, required this.language});
@@ -35,18 +43,16 @@ class _StatementBankScreenState extends State<StatementBankScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('전체 재추출'),
+        title: Text(tr('statementBank.reextractAllTitle')),
         content: Text(
-          '현재 저장된 $langLabel 표현을 모두 삭제하고\n'
-          '모든 Statement 노드에서 다시 추출합니다.\n\n'
-          '새로 추출된 표현에는 CEFR 난이도가 포함됩니다.',
+          tr('statementBank.reextractAllBody', {'lang': langLabel}),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('common.cancel'))),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: FilledButton.styleFrom(backgroundColor: Colors.orange.shade700),
-            child: const Text('삭제 후 재추출'),
+            child: Text(tr('vocabHub.deleteAndReextract')),
           ),
         ],
       ),
@@ -58,7 +64,7 @@ class _StatementBankScreenState extends State<StatementBankScreen> {
       final result = await apiClient.deleteAndReextractLanguage(widget.language);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(result['message']?.toString() ?? '재추출이 시작됐습니다')),
+          SnackBar(content: Text(result['message']?.toString() ?? tr('vocabHub.reextractStartedSnackbar'))),
         );
         await _load();
       }
@@ -66,7 +72,7 @@ class _StatementBankScreenState extends State<StatementBankScreen> {
       if (mounted) {
         setState(() => _loading = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('실패: $e')),
+          SnackBar(content: Text(tr('statementBank.failed', {'error': e}))),
         );
       }
     }
@@ -97,17 +103,18 @@ class _StatementBankScreenState extends State<StatementBankScreen> {
     final ok = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: const Text('표현 삭제'),
+            title: Text(tr('statementBank.deleteExprTitle')),
             content: Text(
               originCount > 1
-                  ? '「$expression」을(를) 단어장에서 삭제할까요?\n\n'
-                      '이 표현이 나온 $originCount개 노드 모두에서 제거됩니다. '
-                      '개별 노드만 빼려면 지식그래프에서 해당 노드를 삭제하세요.'
-                  : '「$expression」을(를) 삭제할까요?\n\n모든 표현이 삭제된 노드는 다시 추출될 수 있습니다.',
+                  ? tr('statementBank.deleteExprMultiBody', {
+                      'expr': expression,
+                      'count': originCount,
+                    })
+                  : tr('statementBank.deleteExprSingleBody', {'expr': expression}),
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
-              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('삭제')),
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('common.cancel'))),
+              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr('common.delete'))),
             ],
           ),
         ) ??
@@ -122,14 +129,14 @@ class _StatementBankScreenState extends State<StatementBankScreen> {
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('「$expression」 삭제됨')),
+          SnackBar(content: Text(tr('statementBank.deletedSnackbar', {'expr': expression}))),
         );
         await _load(silent: true);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('삭제 실패: $e')),
+          SnackBar(content: Text(tr('statementBank.deleteFailed', {'error': e}))),
         );
       }
     }
@@ -141,26 +148,26 @@ class _StatementBankScreenState extends State<StatementBankScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('$langLabel 학습 표현'),
+        title: Text(tr('statementBank.pageTitle', {'lang': langLabel})),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            tooltip: '전체 삭제 후 재추출',
+            tooltip: tr('statementBank.reextractTooltip'),
             onPressed: _loading ? null : () => _confirmReextract(langLabel),
           ),
         ],
       ),
       body: _loading
-          ? const AppLoadingScreen(message: '표현 불러오는 중…')
+          ? AppLoadingScreen(message: tr('statementBank.loadingExpr'))
           : RefreshIndicator(
               onRefresh: () => _load(silent: true),
               child: _error != null
                   ? Center(child: Text(_error!))
                   : _items.isEmpty
-                      ? const AppEmptyState(
+                      ? AppEmptyState(
                           icon: Icons.translate_outlined,
-                          title: '아직 추출된 표현이 없습니다',
-                          subtitle: '지식 그래프가 생성된 후 백그라운드에서 자동 추출됩니다',
+                          title: tr('statementBank.emptyTitle'),
+                          subtitle: tr('statementBank.emptySubtitle'),
                         )
                       : ListView.separated(
                           padding: const EdgeInsets.fromLTRB(
@@ -205,8 +212,8 @@ class _ExpressionCard extends StatelessWidget {
     final name = o['node_name']?.toString() ?? '';
     if (name.isNotEmpty) return name;
     final id = o['node_id']?.toString() ?? '';
-    if (id.isEmpty) return '노드';
-    return '노드 ${id.length > 8 ? id.substring(0, 8) : id}…';
+    if (id.isEmpty) return tr('statementBank.unnamedNode');
+    return tr('statementBank.nodeIdShort', {'id': id.length > 8 ? id.substring(0, 8) : id});
   }
 
   @override
@@ -300,7 +307,7 @@ class _ExpressionCard extends StatelessWidget {
             IconButton(
               icon: Icon(Icons.delete_outline, size: 20, color: Colors.grey[500]),
               onPressed: onDelete,
-              tooltip: '삭제',
+              tooltip: tr('common.delete'),
             ),
           ],
         ),
@@ -326,7 +333,7 @@ class _SharedBadge extends StatelessWidget {
         border: Border.all(color: color.withValues(alpha: 0.5)),
       ),
       child: Text(
-        '공유 ×$count',
+        tr('statementBank.sharedBadge', {'count': count}),
         style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: color),
       ),
     );

@@ -20,7 +20,7 @@ async def test_confirm_existing_speaker_node_uses_node_name(db_session, dev_user
     entry = JournalEntry(
         user_id=user_id,
         status="ready",
-        transcript_ko="[Speaker_1] 안녕",
+        transcript_native="[Speaker_1] 안녕",
         transcript_segments=[{"speaker": "Speaker_1", "text": "안녕"}],
     )
     db_session.add(entry)
@@ -75,8 +75,8 @@ async def test_confirm_existing_speaker_node_uses_node_name(db_session, dev_user
     assert profile.label == "장세영"
     assert profile.node_id == speaker_node.id
     assert speaker_node.speaker_profile_id == profile.id
-    assert "[장세영]" in (entry.transcript_ko or "")
-    assert "[Speaker_1]" not in (entry.transcript_ko or "")
+    assert "[장세영]" in (entry.transcript_native or "")
+    assert "[Speaker_1]" not in (entry.transcript_native or "")
 
 
 @pytest.mark.asyncio
@@ -151,7 +151,7 @@ async def test_confirm_uses_session_label_when_segment_profile_stale(db_session,
     entry = JournalEntry(
         user_id=user_id,
         status="ready",
-        transcript_ko="[Speaker_1] 안녕",
+        transcript_native="[Speaker_1] 안녕",
         transcript_segments=[{"speaker": "Speaker_1", "text": "안녕"}],
     )
     db_session.add(entry)

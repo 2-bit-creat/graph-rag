@@ -316,6 +316,70 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_nodes_name_embedding ON nodes USING hnsw (name_embedding vector_cosine_ops)",
     "DROP INDEX IF EXISTS idx_alias_embeddings_embedding",
     "CREATE INDEX IF NOT EXISTS idx_alias_embeddings_embedding ON node_alias_embeddings USING hnsw (embedding vector_cosine_ops)",
+    # Multi-native-language support: these columns were named after the one
+    # native language the app originally assumed (Korean/English pivot).
+    # Renamed to _native/_target so the name reflects what the field actually
+    # holds regardless of the user's chosen native/target language (see
+    # languages.py). Each block is idempotent — safe to run on every startup,
+    # both on a DB that still has the old column and on a fresh one created
+    # directly with the new name (create_all already used the new name, so the
+    # old-name column never existed and the IF EXISTS check is simply false).
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'journal_entries' AND column_name = 'transcript_ko'
+        ) AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'journal_entries' AND column_name = 'transcript_native'
+        ) THEN
+            ALTER TABLE journal_entries RENAME COLUMN transcript_ko TO transcript_native;
+        END IF;
+    END $$;
+    """,
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'journal_entries' AND column_name = 'transcript_clean_ko'
+        ) AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'journal_entries' AND column_name = 'transcript_clean_native'
+        ) THEN
+            ALTER TABLE journal_entries RENAME COLUMN transcript_clean_ko TO transcript_clean_native;
+        END IF;
+    END $$;
+    """,
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'quizzes' AND column_name = 'question_ko'
+        ) AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'quizzes' AND column_name = 'question_native'
+        ) THEN
+            ALTER TABLE quizzes RENAME COLUMN question_ko TO question_native;
+        END IF;
+    END $$;
+    """,
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'quizzes' AND column_name = 'sentence_en'
+        ) AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'quizzes' AND column_name = 'sentence_target'
+        ) THEN
+            ALTER TABLE quizzes RENAME COLUMN sentence_en TO sentence_target;
+        END IF;
+    END $$;
+    """,
 ]
 
 

@@ -352,7 +352,7 @@ async def test_multiple_segments_and_inflected_surface_answers_are_created(
         "composition", "composition", "cloze", "cloze"
     ]
     compositions = [quiz for quiz in created if quiz.quiz_type == "composition"]
-    assert [quiz.question_ko for quiz in compositions] == [
+    assert [quiz.question_native for quiz in compositions] == [
         "보고서를 확인했습니다.", "화면을 더 자세히 살펴봤습니다."
     ]
     closer = next(

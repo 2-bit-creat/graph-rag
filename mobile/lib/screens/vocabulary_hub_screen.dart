@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../models/vocabulary.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
@@ -60,23 +61,23 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
     final ok = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: const Text('새 단어장'),
+            title: Text(tr('vocabHub.newVocabTitle')),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
                   controller: nameCtrl,
-                  decoration: const InputDecoration(
-                    labelText: '이름',
-                    hintText: '예: 여행 표현',
+                  decoration: InputDecoration(
+                    labelText: tr('sidebar.nameLabel'),
+                    hintText: tr('vocabHub.nameHint'),
                   ),
                   autofocus: true,
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: descCtrl,
-                  decoration: const InputDecoration(
-                    labelText: '설명 (선택)',
+                  decoration: InputDecoration(
+                    labelText: tr('vocabHub.descLabelOptional'),
                   ),
                   maxLines: 2,
                 ),
@@ -85,11 +86,11 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('취소')),
+                  child: Text(tr('common.cancel'))),
               FilledButton(
                 onPressed: () =>
                     Navigator.pop(ctx, nameCtrl.text.trim().isNotEmpty),
-                child: const Text('만들기'),
+                child: Text(tr('common.create')),
               ),
             ],
           ),
@@ -104,14 +105,14 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('단어장을 만들었습니다')),
+          SnackBar(content: Text(tr('vocabHub.createdSnackbar'))),
         );
         await _load(silent: true);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('생성 실패: $e')),
+          SnackBar(content: Text(tr('vocabHub.createFailed', {'error': e}))),
         );
       }
     }
@@ -122,15 +123,15 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
     final ok = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: const Text('단어장 삭제'),
-            content: Text('「${vocab.name}」 단어장을 삭제할까요?'),
+            title: Text(tr('vocabHub.deleteTitle')),
+            content: Text(tr('vocabHub.deleteBody', {'name': vocab.name})),
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('취소')),
+                  child: Text(tr('common.cancel'))),
               FilledButton(
                   onPressed: () => Navigator.pop(ctx, true),
-                  child: const Text('삭제')),
+                  child: Text(tr('common.delete'))),
             ],
           ),
         ) ??
@@ -141,14 +142,14 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
       await apiClient.deleteVocabulary(vocab.id);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('단어장을 삭제했습니다')),
+          SnackBar(content: Text(tr('vocabHub.deletedSnackbar'))),
         );
         await _load(silent: true);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('삭제 실패: $e')),
+          SnackBar(content: Text(tr('vocabHub.deleteFailed', {'error': e}))),
         );
       }
     }
@@ -158,21 +159,19 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
     final ok = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: const Text('추출 표현 삭제'),
+            title: Text(tr('vocabHub.deleteExtractedTitle')),
             content: Text(
-              '「$displayName」에서 추출된 모든 표현을 삭제하고\n'
-              '백그라운드에서 다시 소급 추출합니다.\n\n'
-              '새로 추출된 표현에는 CEFR 난이도가 포함됩니다.',
+              tr('vocabHub.deleteExtractedBody', {'name': displayName}),
             ),
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('취소')),
+                  child: Text(tr('common.cancel'))),
               FilledButton(
                 onPressed: () => Navigator.pop(ctx, true),
                 style: FilledButton.styleFrom(
                     backgroundColor: Colors.orange.shade700),
-                child: const Text('삭제 후 재추출'),
+                child: Text(tr('vocabHub.deleteAndReextract')),
               ),
             ],
           ),
@@ -185,14 +184,14 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(result['message']?.toString() ?? '재추출이 시작됐습니다')),
+              content: Text(result['message']?.toString() ?? tr('vocabHub.reextractStartedSnackbar'))),
         );
         await _load(silent: true);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('삭제 실패: $e')),
+          SnackBar(content: Text(tr('vocabHub.deleteFailed', {'error': e}))),
         );
       }
     }
@@ -202,30 +201,30 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('단어장'),
+        title: Text(tr('vocabHub.pageTitle')),
         actions: [
           IconButton(
             icon: const Icon(Icons.add),
-            tooltip: '새 단어장',
+            tooltip: tr('vocabHub.newVocabTooltip'),
             onPressed: _createVocabulary,
           ),
         ],
       ),
       body: _loading
-          ? const AppLoadingScreen(message: '단어장 불러오는 중…')
-          // A failed load used to render the error card *and* the "단어장이
-          // 없습니다" empty state, which reads as "your list is empty" when the
-          // truth is "we couldn't fetch it". Show one centered failure with a
-          // retry instead; the inline banner below is kept for the case where a
+          ? AppLoadingScreen(message: tr('vocabHub.loadingVocab'))
+          // A failed load used to render the error card *and* the empty state,
+          // which reads as "your list is empty" when the truth is "we
+          // couldn't fetch it". Show one centered failure with a retry
+          // instead; the inline banner below is kept for the case where a
           // refresh fails but we still have data to show.
           : (_error != null && _items.isEmpty)
               ? AppEmptyState(
                   icon: Icons.cloud_off_rounded,
-                  title: '단어장을 불러오지 못했어요',
+                  title: tr('vocabHub.loadFailedTitle'),
                   subtitle: _error,
                   action: FilledButton(
                     onPressed: _load,
-                    child: const Text('다시 시도'),
+                    child: Text(tr('kg.retry')),
                   ),
                 )
               : RefreshIndicator(
@@ -248,16 +247,16 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
                     ),
                     const SizedBox(height: AppSpacing.md),
                   ],
-                  const AppSectionHeader(
-                    title: '내 단어장',
-                    subtitle: '퀴즈 자유도 모드에서 문제 소스로 사용할 수 있습니다',
+                  AppSectionHeader(
+                    title: tr('vocabHub.myVocabTitle'),
+                    subtitle: tr('vocabHub.myVocabSubtitle'),
                   ),
                   const SizedBox(height: AppSpacing.md),
                   if (_items.isEmpty)
-                    const AppEmptyState(
+                    AppEmptyState(
                       icon: Icons.menu_book_outlined,
-                      title: '단어장이 없습니다',
-                      subtitle: '우측 상단 + 버튼으로 만들어 보세요',
+                      title: tr('vocabHub.emptyTitle'),
+                      subtitle: tr('vocabHub.emptySubtitle'),
                     )
                   else
                     ..._items.map((vocab) {
@@ -294,9 +293,9 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
                           title: Text(vocab.name),
                           subtitle: Text(
                             [
-                              if (vocab.isDefault) '서버 디폴트',
-                              if (isStatementBank) '자동 추출',
-                              '${vocab.wordCount}개 표현',
+                              if (vocab.isDefault) tr('vocabHub.serverDefault'),
+                              if (isStatementBank) tr('vocabHub.autoExtracted'),
+                              tr('vocabHub.expressionCount', {'count': vocab.wordCount}),
                             ].join(' · '),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
@@ -306,7 +305,7 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
                               : isStatementBank
                                   ? IconButton(
                                       icon: const Icon(Icons.refresh, size: 20),
-                                      tooltip: '삭제 후 재추출',
+                                      tooltip: tr('vocabHub.reextractTooltip'),
                                       onPressed: () => _deleteStatementBank(
                                         langKey!,
                                         vocab.name,

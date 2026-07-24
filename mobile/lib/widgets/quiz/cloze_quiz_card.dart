@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_strings.dart';
 import 'quiz_audio_button.dart';
 
 class ClozeQuizCard extends StatefulWidget {
@@ -345,9 +346,9 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
       widget.onSolved();
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('오답이에요. 힌트를 참고하거나 정답 보기를 눌러 확인해 보세요.'),
-          duration: Duration(seconds: 1),
+        SnackBar(
+          content: Text(tr('chat.wrongAnswerHint')),
+          duration: const Duration(seconds: 1),
         ),
       );
     }
@@ -438,7 +439,9 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
     final color = isCorrect
         ? const Color(0xFF22C55E)
         : (wrongFirstTry ? const Color(0xFFFF6B6B) : scheme.primary);
-    final label = isCorrect ? '정답' : (wrongFirstTry ? '정답 확인' : '정답 보기');
+    final label = isCorrect
+        ? tr('clozeCard.answerLabelCorrect')
+        : (wrongFirstTry ? tr('clozeCard.answerLabelConfirm') : tr('clozeCard.showAnswer'));
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
@@ -510,7 +513,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
         if (contextKo.isNotEmpty && !_isAnswerOnlyContext(contextKo)) ...[
           SizedBox(height: sectionGap),
           Text(
-            '문장 뜻',
+            tr('clozeCard.sentenceMeaning'),
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
                   color: scheme.onSurfaceVariant,
                   fontWeight: FontWeight.w800,
@@ -528,11 +531,11 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
           Text(
             _effectiveAnswerRevealed
                 ? (widget.externalInput
-                    ? '위 정답을 보고 아래 채팅 입력창에 다시 입력해 완료해 보세요.'
-                    : '위 정답을 보고 직접 입력해 완료해 보세요.')
+                    ? tr('clozeCard.retypeExternalAfterReveal')
+                    : tr('clozeCard.retypeInternalAfterReveal'))
                 : (widget.externalInput
-                    ? '오답이에요. 힌트를 참고해서 아래 채팅 입력창에 다시 입력해 보세요.'
-                    : '오답이에요. 힌트를 참고해서 다시 입력해 보세요.'),
+                    ? tr('clozeCard.wrongExternalHint')
+                    : tr('clozeCard.wrongInternalHint')),
             style: const TextStyle(fontSize: 13, color: Color(0xFFFF8A80)),
           ),
         ],
@@ -550,13 +553,13 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
               _actionButton(
                 icon: Icons.tips_and_updates_outlined,
                 label: _hintLevel == 0
-                    ? '글자 힌트'
-                    : (_hintLevel == 1 ? '단어 보기' : '힌트 확인됨'),
+                    ? tr('clozeCard.letterHint')
+                    : (_hintLevel == 1 ? tr('clozeCard.showWord') : tr('clozeCard.hintConfirmed')),
                 onPressed: _hintLevel >= 2 ? null : _revealHint,
               ),
               _actionButton(
                 icon: Icons.visibility_outlined,
-                label: '정답 보기',
+                label: tr('clozeCard.showAnswer'),
                 onPressed: _effectiveAnswerRevealed
                     ? null
                     : () => _revealAnswer(fillField: true),
@@ -582,7 +585,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
             minLines: 1,
             maxLines: 3,
             decoration: InputDecoration(
-              hintText: '빈칸에 들어갈 표현을 입력하세요',
+              hintText: tr('chat.hint.word'),
               prefixIcon: const Icon(Icons.edit_rounded, size: 20),
               filled: true,
               fillColor: scheme.surfaceContainerHighest.withValues(alpha: 0.24),
@@ -615,7 +618,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
                     width: 20,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : Text(wrongFirstTry ? '다시 확인' : '확인'),
+                : Text(wrongFirstTry ? tr('clozeCard.recheck') : tr('common.confirm')),
           ),
         ],
       ],

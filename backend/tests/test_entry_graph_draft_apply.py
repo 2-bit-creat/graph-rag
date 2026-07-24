@@ -22,7 +22,7 @@ async def _staged_entry(db_session, user_id) -> JournalEntry:
         user_id=user_id,
         status="graph_staging_ready",
         source_type="개인일기",
-        transcript_clean_ko="나는 말차를 만들었다.",
+        transcript_clean_native="나는 말차를 만들었다.",
         translation_en="I made matcha.",
         graph_staging={
             "claims": [{

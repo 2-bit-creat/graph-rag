@@ -31,64 +31,36 @@ from . import crud
 from .config import get_settings
 from .graph_retrieval import statement_content as _statement_content
 from .models import ChatSession, User
+from .prompts import native_pack
 from .rag import _get_client, embed_texts
 
 logger = logging.getLogger(__name__)
 
-_EXTRACT_SYSTEM = (
-    "당신은 사용자가 AI와 나눈 대화를 일기로 정리해 주는 도우미입니다. "
-    "입력으로는 '사용자 본인이 한 발화'만 시간순으로 주어집니다. "
-    "사용자가 새롭게 밝힌 사실·경험·감정·계획을 1인칭 한국어 일기 문장으로 정리하세요. "
-    "규칙:\n"
-    "- AI의 답변이나 일반 상식·백과사전적 정보는 절대 넣지 마세요. 오직 사용자가 말한 것만.\n"
-    "- 질문·인사·잡담처럼 기록할 사실이 없는 발화는 버리세요.\n"
-    "- 각 문장은 독립적이고 간결하게, 한 문장에 하나의 사실만.\n"
-    "- 추측하거나 없는 내용을 지어내지 마세요.\n"
-    "- 기본 speaker는 \"나\"입니다. 사용자가 타인의 말·행동을 묘사·전달·간접인용한 경우"
-    "(예: \"엄마가 10시래\", \"친구가 바쁘대\")도 speaker는 \"나\"이고, "
-    "text는 사용자 시점의 일기 문장으로 남기세요"
-    '(예: "엄마가 10시까지 오라고 했다"). '
-    "그 내용을 타인 일인칭으로 바꾸거나 speaker를 그 사람으로 바꾸지 마세요.\n"
-    "- speaker를 타인으로 두는 것은, 그 사람이 실제로 일인칭으로 말한 발화가 "
-    "그대로 기록된 경우뿐입니다(직접 화법·대화 스크립트처럼 그 사람의 '나/저' 발화). "
-    "간접 화법·요약·전달은 절대 해당하지 않습니다.\n"
-    '반드시 {"sentences": [{"text": "문장", "speaker": "나"}, ...]} 형식의 JSON으로만 답하세요.'
-)
 
-_REFINE_SYSTEM = (
-    "당신은 사용자의 일기 초안을 다듬어 주는 도우미입니다. "
-    "현재 초안은 '- [화자] 문장' 목록과 사용자의 수정 지시가 주어집니다. "
-    "지시에 따라 문장을 삭제·수정·병합·추가하세요. 사용자가 말하지 않은 새 사실을 "
-    "지어내지 마세요. "
-    "화자 태그는 유지하되, 지시가 화자를 바꾸면 따르세요. "
-    "타인의 말을 묘사·전달한 문장을 그 사람 일인칭으로 바꾸거나 speaker를 "
-    "그 사람으로 바꾸지 마세요 — speaker가 타인인 것은 그 사람의 실제 일인칭 "
-    "발화일 때만 허용됩니다. "
-    '반드시 {"sentences": [{"text": "문장", "speaker": "나"}, ...]} 형식의 JSON으로만 답하세요.'
-)
-
-
-def _normalize_sentence_item(raw) -> dict | None:
-    """Accept {text, speaker} objects or legacy plain strings (speaker defaults to 나)."""
+def _normalize_sentence_item(raw, self_label: str = "나") -> dict | None:
+    """Accept {text, speaker} objects or legacy plain strings (speaker defaults
+    to the native pack's self label — "나" for Korean natives, "Me" for English)."""
     if isinstance(raw, str):
         text = raw.strip()
         if not text:
             return None
-        return {"text": text, "speaker": "나"}
+        return {"text": text, "speaker": self_label}
     if isinstance(raw, dict):
         text = (raw.get("text") or "").strip() if isinstance(raw.get("text"), str) else ""
         if not text:
             return None
         speaker = raw.get("speaker")
         if not isinstance(speaker, str) or not speaker.strip():
-            speaker = "나"
+            speaker = self_label
         else:
             speaker = speaker.strip()
         return {"text": text, "speaker": speaker}
     return None
 
 
-async def _extract_sentences(system: str, user_content: str) -> list[dict]:
+async def _extract_sentences(
+    system: str, user_content: str, self_label: str = "나"
+) -> list[dict]:
     settings = get_settings()
     resp = await _get_client().chat.completions.create(
         model=settings.openai_model,
@@ -108,7 +80,7 @@ async def _extract_sentences(system: str, user_content: str) -> list[dict]:
         return []
     out: list[dict] = []
     for s in data.get("sentences", []) or []:
-        item = _normalize_sentence_item(s)
+        item = _normalize_sentence_item(s, self_label)
         if item:
             out.append(item)
     return out
@@ -119,13 +91,14 @@ async def _flag_duplicates(
     user_id: uuid.UUID,
     sentences: list[dict],
     referenced_ids: set[str],
+    self_label: str = "나",
 ) -> list[dict]:
     """Annotate each sentence with duplicate/referenced status via embedding search."""
     settings = get_settings()
     result: list[dict] = [
         {
             "text": s["text"],
-            "speaker": s.get("speaker") or "나",
+            "speaker": s.get("speaker") or self_label,
             "included": True,
             "duplicate": False,
             "matched_statement": None,
@@ -184,19 +157,16 @@ async def build_distill_draft(
         if m.role == "assistant":
             referenced_ids.update(str(x) for x in (m.referenced_node_ids or []))
 
+    pack = native_pack(getattr(user, "native_language", None))
+
     sentences: list[dict] = []
     if user_lines:
-        from .tutor import _lang_label
-
-        native_label = _lang_label(getattr(user, "native_language", None) or "korean")
-        system = _EXTRACT_SYSTEM.replace(
-            "1인칭 한국어 일기 문장", f"1인칭 일기 문장({native_label})"
-        )
+        user_content = pack.distill_user_lines_header + "\n".join(f"- {l}" for l in user_lines)
         sentences = await _extract_sentences(
-            system, "사용자 발화:\n" + "\n".join(f"- {l}" for l in user_lines)
+            pack.distill_extract_system, user_content, pack.self_label
         )
 
-    flagged = await _flag_duplicates(session, user.id, sentences, referenced_ids)
+    flagged = await _flag_duplicates(session, user.id, sentences, referenced_ids, pack.self_label)
     draft = {"draft_id": str(uuid.uuid4()), "sentences": flagged}
     await crud.set_chat_session_distill_state(session, chat_session, draft)
     return draft
@@ -209,9 +179,10 @@ async def refine_distill_draft(
     instruction: str,
 ) -> dict:
     """Rewrite the current draft per a natural-language instruction, then re-flag."""
+    pack = native_pack(getattr(user, "native_language", None))
     state = chat_session.distill_state or {}
     current = [
-        {"text": s.get("text", ""), "speaker": s.get("speaker") or "나"}
+        {"text": s.get("text", ""), "speaker": s.get("speaker") or pack.self_label}
         for s in state.get("sentences", [])
         if s.get("text")
     ]
@@ -222,16 +193,16 @@ async def refine_distill_draft(
             referenced_ids.update(str(x) for x in (m.referenced_node_ids or []))
 
     user_content = (
-        "현재 초안:\n"
+        pack.distill_current_draft_header
         + "\n".join(f"- [{s['speaker']}] {s['text']}" for s in current)
-        + f"\n\n수정 지시: {instruction}"
+        + f"\n\n{pack.distill_instruction_label}{instruction}"
     )
-    sentences = await _extract_sentences(_REFINE_SYSTEM, user_content)
+    sentences = await _extract_sentences(pack.distill_refine_system, user_content, pack.self_label)
     if not sentences:
         # LLM returned nothing usable — keep the current draft rather than wiping it.
         sentences = current
 
-    flagged = await _flag_duplicates(session, user.id, sentences, referenced_ids)
+    flagged = await _flag_duplicates(session, user.id, sentences, referenced_ids, pack.self_label)
     draft = {"draft_id": str(uuid.uuid4()), "sentences": flagged}
     await crud.set_chat_session_distill_state(session, chat_session, draft)
     return draft

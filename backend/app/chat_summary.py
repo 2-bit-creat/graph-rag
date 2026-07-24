@@ -12,17 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import get_settings
 from .crud import get_chat_session, set_chat_session_summary_state
 from .db import async_session_factory
-from .models import ChatMessage, ChatSession
+from .models import ChatMessage, ChatSession, User
+from .prompts import native_pack
 from .rag import _get_client
 
 logger = logging.getLogger(__name__)
-
-_SUMMARY_SYSTEM = (
-    "당신은 대화 요약 도우미입니다. [기존 요약]과 [새 대화]를 합쳐 하나의 최신 요약으로 "
-    "갱신하세요. 다음을 우선 보존하세요: 사용자에 대해 새로 드러난 사실, 감정 상태와 그 "
-    "이유, 진행 중인 대화 주제, 사용자가 언급한 계획·약속. 인사말과 단순 잡담은 "
-    "생략하세요. 한국어 개조식(불릿 '-')으로, 전체 800자 이내로 쓰세요."
-)
 
 
 def needs_summary_update(
@@ -99,18 +93,20 @@ async def apply_summary_update(
     if current_state.get("upto_message_id") != expected_watermark_id:
         return False
 
+    owner = await session.get(User, row.user_id)
+    pack = native_pack(getattr(owner, "native_language", None))
+
     old_summary = (state.get("text") or "").strip()
-    user_prompt = (
-        f"[기존 요약]\n{old_summary or '(없음)'}\n\n"
-        f"[새 대화]\n{_format_dialogue(to_summarize)}\n\n"
-        "갱신된 요약:"
+    user_prompt = pack.summary_user_template.format(
+        prior=old_summary or pack.summary_no_prior,
+        dialogue=_format_dialogue(to_summarize),
     )
 
     try:
         resp = await _get_client().chat.completions.create(
             model=settings.openai_model,
             messages=[
-                {"role": "system", "content": _SUMMARY_SYSTEM},
+                {"role": "system", "content": pack.summary_system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.2,

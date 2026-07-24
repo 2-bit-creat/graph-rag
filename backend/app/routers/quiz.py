@@ -20,6 +20,7 @@ from ..composition_quiz import (
 from ..config import get_settings
 from ..db import get_session
 from ..deps import request_user_dep
+from ..languages import DEFAULT_NATIVE, SUPPORTED_NATIVE, valid_target_for_native
 from ..level_adjuster import reclassify_queue_by_level
 from ..level_guidelines import cefr_label, window_for_level
 from ..models import User
@@ -71,8 +72,10 @@ def _quiz_out(quiz) -> QuizItemOut:
         quiz_type=quiz.quiz_type,
         difficulty_level=quiz.difficulty_level,
         queue_kind=quiz.queue_kind,
-        question_ko=quiz.question_ko,
-        sentence_en=quiz.sentence_en,
+        question_ko=quiz.question_native,
+        sentence_en=quiz.sentence_target,
+        question_native=quiz.question_native,
+        sentence_target=quiz.sentence_target,
         quiz_data=quiz.quiz_data,
         audio_url=_quiz_audio_url(quiz),
         associated_entry_id=quiz.associated_entry_id,
@@ -121,7 +124,7 @@ async def _ensure_cloze_audio(session: AsyncSession, quizzes: list) -> None:
         if qd.get("audio_url"):
             continue
         text = resolve_quiz_tts_text(
-            "cloze", {"sentence_en": quiz.sentence_en, "quiz_data": qd}
+            "cloze", {"sentence_en": quiz.sentence_target, "quiz_data": qd}
         )
         audio_url, _ = await synthesize_quiz_audio(
             quiz.id,
@@ -494,9 +497,14 @@ async def update_profile_settings(
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> LearningProfileOut:
-    # Whitelist: learn English/German/Korean; explanations in Korean or English.
-    allowed_targets = {"english", "german", "korean"}
-    allowed_natives = {"korean", "english"}
+    native = (payload.native_language or getattr(user, "native_language", None) or DEFAULT_NATIVE).lower()
+    if payload.native_language is not None and native not in SUPPORTED_NATIVE:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "unsupported_native", "language": payload.native_language},
+        )
+    # A learner can't "learn" their own native language.
+    allowed_targets = valid_target_for_native(native)
     if payload.target_languages is not None:
         bad = {l.lower() for l in payload.target_languages} - allowed_targets
         if bad:
@@ -508,11 +516,6 @@ async def update_profile_settings(
         raise HTTPException(
             status_code=400,
             detail={"code": "unsupported_target", "languages": [payload.target_language]},
-        )
-    if payload.native_language is not None and payload.native_language.lower() not in allowed_natives:
-        raise HTTPException(
-            status_code=400,
-            detail={"code": "unsupported_native", "language": payload.native_language},
         )
 
     prev_level = user.current_level
@@ -635,7 +638,7 @@ async def submit_quiz(
         qd = quiz.quiz_data or {}
         eval_result = await evaluate_attempt_against_reference(
             user,
-            prompt=quiz.question_ko or qd.get("prompt") or "",
+            prompt=quiz.question_native or qd.get("prompt") or "",
             user_answer=payload.answer or "",
             language=qd.get("language") or getattr(user, "target_language", None) or "english",
             model_answers=qd.get("model_answers"),

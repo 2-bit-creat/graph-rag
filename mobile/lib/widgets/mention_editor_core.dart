@@ -162,6 +162,24 @@ String toLabeledLines(List<MapEntry<String, String>> segs) {
   return segs.map((e) => '[${e.key}]: ${e.value}').join('\n');
 }
 
+/// Speaker-labeled lines ("[name]: text") built from a mention field's current
+/// text — shared by every composer that saves journal text, so the @-mention →
+/// per-speaker-line rule lives in exactly one place.
+String labeledTextFromMentionField(MentionAutocompleteFieldState field) {
+  final raw = field.text;
+  final text = raw.trim();
+  if (text.isEmpty) return '';
+  final hits = findMentions(raw, field.matchableNames());
+  if (hits.isNotEmpty) {
+    return toLabeledLines(splitByMentions(raw, hits));
+  }
+  final legacy = parseDialogueLines(text);
+  if (legacy != null) {
+    return toLabeledLines(legacy.lines);
+  }
+  return toLabeledLines([MapEntry('나', text)]);
+}
+
 /// @멘션 부분(배지)의 흰 글자만 그려주는 컨트롤러 — 배지의 색 배경 자체는
 /// [MentionHighlightPainter]가 실제 글자 상자(getBoxesForSelection) 기준으로
 /// 따로 그린다. TextStyle.background로 직접 칠하면 굵기가 다른 런(run)끼리

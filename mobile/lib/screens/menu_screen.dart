@@ -67,7 +67,7 @@ class _MenuScreenState extends State<MenuScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('계정 · 설정')),
+      appBar: AppBar(title: Text(tr('menu.accountSettingsTitle'))),
       body: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(
           AppSpacing.pageH, AppSpacing.pageV, AppSpacing.pageH, AppSpacing.xxl,
@@ -240,13 +240,13 @@ class _ThemeModeTile extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('화면 모드',
+                        Text(tr('menu.displayModeTitle'),
                             style: Theme.of(context)
                                 .textTheme
                                 .titleSmall
                                 ?.copyWith(fontWeight: FontWeight.w700)),
                         const SizedBox(height: 2),
-                        Text(dark ? '야간 모드' : '일반 모드',
+                        Text(dark ? tr('menu.nightMode') : tr('menu.normalMode'),
                             style: Theme.of(context)
                                 .textTheme
                                 .bodySmall
@@ -297,13 +297,13 @@ class _ProfileHeader extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('내 프로필',
+                  Text(tr('menu.myProfile'),
                       style: Theme.of(context)
                           .textTheme
                           .titleMedium
                           ?.copyWith(fontWeight: FontWeight.w700)),
                   const SizedBox(height: 2),
-                  Text('레벨 · 목표 언어 · 학습 목적 설정',
+                  Text(tr('menu.myProfileSubtitle'),
                       style: Theme.of(context)
                           .textTheme
                           .bodySmall

@@ -112,7 +112,7 @@ async def test_distill_ignores_assistant_utterances(
 
     captured: dict = {}
 
-    async def _capture(system, user_content):
+    async def _capture(system, user_content, self_label="나"):
         captured["user_content"] = user_content
         return []
 

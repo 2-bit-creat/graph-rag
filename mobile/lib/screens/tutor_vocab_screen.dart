@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import '../utils/tutor_lang_label.dart';
@@ -49,11 +50,11 @@ class _TutorVocabScreenState extends State<TutorVocabScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('표현 삭제'),
-        content: Text('“$word”을(를) 단어장에서 지울까요?'),
+        title: Text(tr('statementBank.deleteExprTitle')),
+        content: Text(tr('tutorVocab.deleteConfirmBody', {'word': word})),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('삭제')),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('common.cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr('common.delete'))),
         ],
       ),
     );
@@ -74,16 +75,16 @@ class _TutorVocabScreenState extends State<TutorVocabScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppHubAppBar(
-        title: '튜터와 배운 표현',
-        subtitle: _loading ? null : '${_items.length}개 · 길게 눌러 삭제',
+        title: tr('tutorVocab.pageTitle'),
+        subtitle: _loading ? null : tr('tutorVocab.subtitle', {'count': _items.length}),
       ),
       body: _loading
           ? const AppLoadingScreen()
           : _items.isEmpty
-              ? const AppEmptyState(
+              ? AppEmptyState(
                   icon: Icons.style_outlined,
-                  title: '아직 담은 표현이 없어요',
-                  subtitle: '드릴 첨삭에서 헷갈린 표현을 담으면 여기 쌓여요.',
+                  title: tr('tutorVocab.emptyTitle'),
+                  subtitle: tr('tutorVocab.emptySubtitle'),
                 )
               : ListView.separated(
                   padding: const EdgeInsets.fromLTRB(AppSpacing.pageH,
@@ -158,7 +159,7 @@ class _VocabTile extends StatelessWidget {
                       size: 14, color: AppColors.hubQuiz),
                   const SizedBox(width: 4),
                   Expanded(
-                    child: Text('이 문장에서 헷갈렸어요: $promptKo',
+                    child: Text(tr('tutorVocab.confusedInSentence', {'prompt': promptKo}),
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
                               color: AppColors.hubQuiz,
                             )),

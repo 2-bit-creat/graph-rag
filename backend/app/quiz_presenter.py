@@ -17,14 +17,14 @@ def _target_from_quiz_data(quiz: Quiz) -> str:
         accepted = data.get("accepted_answers") or []
         return str(accepted[0]) if accepted else ""
     if qt == "scramble":
-        return str(data.get("sentence_en") or quiz.sentence_en or "")
+        return str(data.get("sentence_en") or quiz.sentence_target or "")
     if qt == "mcq_nuance":
         opts = data.get("options") or []
         idx = data.get("correct_index")
         if idx is not None and 0 <= int(idx) < len(opts):
             return str(opts[int(idx)])
-        return str(data.get("prompt_ko") or quiz.question_ko or "")
-    return quiz.sentence_en or quiz.question_ko or ""
+        return str(data.get("prompt_ko") or quiz.question_native or "")
+    return quiz.sentence_target or quiz.question_native or ""
 
 
 _LANG_LABEL = {
@@ -56,12 +56,12 @@ def _source_label(quiz: Quiz) -> str:
 def _context_sentence(quiz: Quiz) -> str:
     data = quiz.quiz_data or {}
     if quiz.quiz_type == "cloze":
-        return str(data.get("prompt_en") or quiz.sentence_en or "")
+        return str(data.get("prompt_en") or quiz.sentence_target or "")
     if quiz.quiz_type == "scramble":
-        return str(data.get("sentence_en") or quiz.sentence_en or "")
+        return str(data.get("sentence_en") or quiz.sentence_target or "")
     if quiz.quiz_type == "mcq_nuance":
-        return str(data.get("prompt_ko") or quiz.question_ko or "")
-    return quiz.sentence_en or quiz.question_ko or ""
+        return str(data.get("prompt_ko") or quiz.question_native or "")
+    return quiz.sentence_target or quiz.question_native or ""
 
 
 def quiz_queue_item_dict(
@@ -97,8 +97,12 @@ def quiz_queue_item_dict(
         "target_node": target_node,
         "source_label": _source_label(quiz),
         "context_sentence": _context_sentence(quiz),
-        "question_ko": quiz.question_ko,
-        "sentence_en": quiz.sentence_en,
+        # Legacy keys kept for existing mobile builds; _native/_target are the
+        # same values under the names that reflect what they actually hold.
+        "question_ko": quiz.question_native,
+        "sentence_en": quiz.sentence_target,
+        "question_native": quiz.question_native,
+        "sentence_target": quiz.sentence_target,
         "quiz_data": quiz.quiz_data if isinstance(quiz.quiz_data, dict) else None,
         "next_review_at": quiz.next_review_at,
         "streak": quiz.repetitions,

@@ -134,7 +134,7 @@ class ChatSessionController extends ChangeNotifier {
     _journalCompleteNotified.add(key);
     await _ensureSession();
     if (_activeId == null) return;
-    final content = '지식그래프 완성';
+    final content = tr('chat.graphCompleteMsg');
     _messages.add(GraphChatMessage(
       role: 'assistant',
       kind: 'journal_complete',
@@ -165,7 +165,7 @@ class ChatSessionController extends ChangeNotifier {
     errors.value = tr('journal.failed');
     await _ensureSession();
     if (_activeId == null) return;
-    const content = '일기 처리 실패';
+    final content = tr('chat.journalFailedMsg');
     try {
       await apiClient.appendChatEvent(
         _activeId!,
@@ -285,7 +285,7 @@ class ChatSessionController extends ChangeNotifier {
   /// 일기 쓰기 모드 진입 — 대화창에 모드 경계 표시.
   void enterJournalMode() {
     if (journalTask.isBusy) {
-      errors.value = '진행 중인 일기 처리를 먼저 마쳐 주세요.';
+      errors.value = tr('chat.journalBusyEnterMode');
       return;
     }
     if (_mode == ChatMode.journal) return;
@@ -302,9 +302,7 @@ class ChatSessionController extends ChangeNotifier {
     final msg = GraphChatMessage(
       role: 'assistant',
       kind: 'journal_mode',
-      content: '일기 쓰기 모드\n'
-          '@화자로 작성한 뒤 저장하면, 받아쓰기 → 화자 확인 → 그래프 검토 순으로 '
-          '아래에서 진행 상황을 확인할 수 있어요.',
+      content: tr('chat.journalModeBanner'),
     );
     _messages.add(msg);
     if (_activeId != null) {
@@ -337,7 +335,7 @@ class ChatSessionController extends ChangeNotifier {
         await answerComposition(text);
         break;
       case ChatMode.journal:
-        // Save is a dedicated button on ChatJournalComposeBar; Enter = newline.
+        // Save is a dedicated button on the composer pill; Enter = newline.
         break;
       case ChatMode.normal:
         await sendMessage(text);
@@ -352,7 +350,7 @@ class ChatSessionController extends ChangeNotifier {
   Future<void> saveJournalText(String labeledText,
       {String? displayText}) async {
     if (journalTask.isBusy) {
-      errors.value = '이미 일기 처리가 진행 중이에요. 완료된 뒤 다시 저장해 주세요.';
+      errors.value = tr('chat.journalAlreadyProcessing');
       return;
     }
     await _ensureSession();
@@ -361,7 +359,7 @@ class ChatSessionController extends ChangeNotifier {
       final entry = await journalTask.submitText(labeledText);
       final id = entry['id']?.toString();
       if (id == null || id.isEmpty) {
-        errors.value = '일기 저장에 실패했어요.';
+        errors.value = tr('chat.journalSaveFailed');
         return;
       }
       _appendJournalProgress(id);
@@ -378,7 +376,7 @@ class ChatSessionController extends ChangeNotifier {
     String mimeType = 'audio/wav',
   }) async {
     if (journalTask.isBusy) {
-      errors.value = '이미 일기 처리가 진행 중이에요. 완료된 뒤 다시 저장해 주세요.';
+      errors.value = tr('chat.journalAlreadyProcessing');
       return;
     }
     await _ensureSession();
@@ -394,12 +392,12 @@ class ChatSessionController extends ChangeNotifier {
       } else if (path != null) {
         entry = await journalTask.uploadAudio(path, filename: filename);
       } else {
-        errors.value = '녹음 데이터가 없어요.';
+        errors.value = tr('chat.noRecordingData');
         return;
       }
       final id = entry['id']?.toString();
       if (id == null || id.isEmpty) {
-        errors.value = '일기 저장에 실패했어요.';
+        errors.value = tr('chat.journalSaveFailed');
         return;
       }
       _appendJournalProgress(id);
@@ -439,7 +437,7 @@ class ChatSessionController extends ChangeNotifier {
     final msg = GraphChatMessage(
       role: 'assistant',
       kind: 'journal_progress',
-      content: '일기 처리 중…',
+      content: tr('chat.journalProcessing'),
       meta: {'entry_id': entryId},
     );
     _messages.add(msg);
@@ -449,7 +447,7 @@ class ChatSessionController extends ChangeNotifier {
         _activeId!,
         role: 'assistant',
         kind: 'journal_progress',
-        content: '일기 처리 중…',
+        content: tr('chat.journalProcessing'),
         meta: {'entry_id': entryId},
       ));
     }
@@ -583,7 +581,7 @@ class ChatSessionController extends ChangeNotifier {
         // transient snackbar — the learner is typing in the composer, not
         // looking at where a snackbar appears.
         _quizFeedback = {..._quizFeedback!, 'is_correct': false};
-        errors.value = '오답이에요. 힌트를 참고하거나 정답 보기를 눌러 확인해 보세요.';
+        errors.value = tr('chat.wrongAnswerHint');
       }
       notifyListeners();
       return;
@@ -710,7 +708,7 @@ class ChatSessionController extends ChangeNotifier {
     // Show it in the live feed immediately — this used to only persist to
     // the backend, so every answer past the first (loaded on the next full
     // history fetch) was invisible until the room was reopened.
-    final content = '퀴즈: $answer';
+    final content = tr('chat.quizAnswerContent', {'answer': answer});
     _messages.add(GraphChatMessage(
       role: 'assistant',
       kind: 'quiz_result',
@@ -737,7 +735,7 @@ class ChatSessionController extends ChangeNotifier {
   /// Enter distill mode and ask the server for a draft of the conversation.
   Future<void> startDistill() async {
     if (_activeId == null) {
-      errors.value = '먼저 대화를 시작해 주세요.';
+      errors.value = tr('chat.startConversationFirst');
       return;
     }
     _mode = ChatMode.distill;
@@ -794,25 +792,26 @@ class ChatSessionController extends ChangeNotifier {
   /// Hand the confirmed draft to the inline journal pipeline (same card as chat save).
   Future<void> saveDistillAsJournal() async {
     if (journalTask.isBusy) {
-      errors.value = '이미 일기 처리가 진행 중이에요. 완료된 뒤 다시 저장해 주세요.';
+      errors.value = tr('chat.journalAlreadyProcessing');
       return;
     }
+    final selfLabel = selfSpeakerLabel;
     final included = _distillSentences
         .where((s) => s['included'] == true)
         .map((s) => (
               text: (s['text'] ?? '').toString().trim(),
-              speaker: (s['speaker'] ?? '나').toString().trim().isEmpty
-                  ? '나'
-                  : (s['speaker'] ?? '나').toString().trim(),
+              speaker: (s['speaker'] ?? selfLabel).toString().trim().isEmpty
+                  ? selfLabel
+                  : (s['speaker'] ?? selfLabel).toString().trim(),
             ))
         .where((s) => s.text.isNotEmpty)
         .toList();
     if (included.isEmpty) {
-      errors.value = '일기에 담을 문장을 하나 이상 선택해 주세요.';
+      errors.value = tr('chat.selectAtLeastOneSentence');
       return;
     }
 
-    final allSelf = included.every((s) => s.speaker == '나');
+    final allSelf = included.every((s) => s.speaker == selfLabel);
     late final String paragraph;
     String? attributionKind;
     if (allSelf) {
@@ -829,7 +828,7 @@ class ChatSessionController extends ChangeNotifier {
       );
       final id = entry['id']?.toString();
       if (id == null || id.isEmpty) {
-        errors.value = '일기 저장에 실패했어요.';
+        errors.value = tr('chat.journalSaveFailed');
         return;
       }
       _appendJournalProgress(id);

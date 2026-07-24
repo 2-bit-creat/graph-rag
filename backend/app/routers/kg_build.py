@@ -1471,9 +1471,9 @@ async def extract_statement_graph_draft(
     # original mishearing. So: diary (single speaker) uses cleaned text directly;
     # the external (multi-speaker) branch keeps the labeled raw for attribution and
     # passes the cleaned text as a corrected-wording reference for the LLM.
-    clean_text = (entry.transcript_clean_ko or "").strip()
+    clean_text = (entry.transcript_clean_native or "").strip()
     raw_labeled = segments_to_paragraph_text(segments) if segments else ""
-    diary_text = clean_text or (entry.transcript_ko or "").strip()
+    diary_text = clean_text or (entry.transcript_native or "").strip()
     labeled_text = raw_labeled or clean_text or diary_text
     if not labeled_text.strip() and not diary_text:
         raise ValueError("empty transcript for graph build")
@@ -1532,10 +1532,13 @@ async def extract_statement_graph_draft(
         # clip can be someone else (a lecture, a forwarded memo). Only fall back to
         # the canonical self node (creating it) for legacy auto-'나' entries or
         # genuinely unconfirmed cases — never spuriously for a named speaker.
+        from ..languages import spec as _language_spec
+
+        self_label = _language_spec(native_language, default="korean").self_label or "나"
         lone_label = speakers[0] if speakers else None
         resolved = None
         resolved_type = None
-        if lone_label and lone_label != "나":
+        if lone_label and lone_label not in ("나", self_label):
             resolved, resolved_type = await _confirmed_speaker_identity(
                 session, user_id, entry_id, lone_label
             )
@@ -1547,7 +1550,9 @@ async def extract_statement_graph_draft(
             if resolved_type and is_source_like_type(resolved_type):
                 speaker_type = "Source"
         else:
-            self_node = await crud.get_or_create_self_node(session, user_id)
+            self_node = await crud.get_or_create_self_node(
+                session, user_id, default_name=self_label
+            )
             speaker_name = self_node.name
         context_type = "개인일기"
         system_prompt = _build_extraction_system_prompt(
@@ -1736,12 +1741,14 @@ async def kg_transcribe(
     # both take a Path, which S3-backed storage cannot provide on its own.
     audio_key, audio_path = await save_audio_workfile(file_bytes, filename, user.id)
 
+    native_language = getattr(user, "native_language", None) or "korean"
+
     # Run diarization first (non-blocking if disabled)
     segments: list[SpeakerSegment]
-    segments, _, _ = await diarize_audio(audio_path)
+    segments, _, _ = await diarize_audio(audio_path, native_language)
 
     # STT transcription
-    transcript = await transcribe_audio(audio_path)
+    transcript = await transcribe_audio(audio_path, native_language)
 
     # If diarization ran, overlay text onto segments; otherwise single-speaker
     if segments:
@@ -1969,7 +1976,7 @@ async def kg_timeline(
         if statements_out:
             preview = " · ".join(st["title"] for st in statements_out[:2])
         else:
-            preview = (entry.transcript_clean_ko or entry.transcript_ko or "").strip()[:60]
+            preview = (entry.transcript_clean_native or entry.transcript_native or "").strip()[:60]
 
         cards.append({
             "entry_id": str(entry.id),

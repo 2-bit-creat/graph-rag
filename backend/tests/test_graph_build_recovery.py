@@ -44,8 +44,8 @@ async def _two_speaker_entry(db_session, user_id):
         user_id=user_id,
         status="ready",
         translation_en="I made matcha. I will drink matcha.",
-        transcript_ko="[Speaker_1] 저는 마차를 만들었어요.\n[Speaker_2] 저는 마차를 마실 거예요.",
-        transcript_clean_ko="[Speaker_1] 저는 말차를 만들었어요.\n[Speaker_2] 저는 말차를 마실 거예요.",
+        transcript_native="[Speaker_1] 저는 마차를 만들었어요.\n[Speaker_2] 저는 마차를 마실 거예요.",
+        transcript_clean_native="[Speaker_1] 저는 말차를 만들었어요.\n[Speaker_2] 저는 말차를 마실 거예요.",
         transcript_segments=[
             {"speaker": "Speaker_1", "text": "저는 마차를 만들었어요."},
             {"speaker": "Speaker_2", "text": "저는 마차를 마실 거예요."},

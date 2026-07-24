@@ -56,6 +56,17 @@ _ENGLISH_LEADING_DETERMINERS = frozenset({
     "her", "its", "our", "their",
 })
 
+_LATIN_WORD_RE = re.compile(r"[A-Za-z]")
+
+
+def _native_script_re(native_language: str) -> re.Pattern[str]:
+    """Regex matching one character of the given native language's script —
+    used to sanity-check that a "native text" field is actually in that
+    script rather than accidentally left in the target language."""
+    from .languages import spec as _language_spec
+
+    return _HANGUL_RE if _language_spec(native_language, default="korean").script == "hangul" else _LATIN_WORD_RE
+
 # Target-language teaching focus, injected into the generation prompt so quizzes
 # stress what actually matters in each language. Shared with the composition
 # tutor (see tutor.py) so drill coaching and quiz generation stay aligned.
@@ -562,6 +573,7 @@ def _normalize_bundle_cloze(
     item: dict,
     *,
     language: str,
+    native_language: str = "korean",
 ) -> tuple[str, str, str, str] | None:
     """Return ``(full_sentence, prompt, blank, context_ko)`` for a safe cloze.
 
@@ -599,7 +611,8 @@ def _normalize_bundle_cloze(
     target_ko = str(item.get("target_ko") or "").strip()
     if not sentence_ko:
         return None
-    if target_ko and _HANGUL_RE.search(sentence_ko) and not _HANGUL_RE.search(target_ko):
+    native_script = _native_script_re(native_language)
+    if target_ko and native_script.search(sentence_ko) and not native_script.search(target_ko):
         return None
     # Some models incorrectly blank the native translation too. Unlike guessing
     # a translation, restoring the explicitly supplied target_ko into one marker
@@ -760,7 +773,7 @@ def _usable_expression_chunks(raw_chunks: Any, *, language: str) -> set[str]:
     return chunks
 
 
-def _cloze_structural_reason(item: Any, raw_index: int) -> str:
+def _cloze_structural_reason(item: Any, raw_index: int, native_language: str = "korean") -> str:
     """Give the repair model a field-specific reason instead of a generic failure."""
     if not isinstance(item, dict):
         return f"candidate {raw_index}: item must be a JSON object"
@@ -790,10 +803,11 @@ def _cloze_structural_reason(item: Any, raw_index: int) -> str:
     native_markers = _BLANK_RUN_RE.findall(native_completed)
     if len(native_markers) == 1:
         native_completed = _BLANK_RUN_RE.sub(target_ko, native_completed, count=1)
-    if _HANGUL_RE.search(sentence_ko) and not _HANGUL_RE.search(target_ko):
+    native_script = _native_script_re(native_language)
+    if native_script.search(sentence_ko) and not native_script.search(target_ko):
         return (
             f"candidate {raw_index}: target_ko {target_ko!r} is target-language text; "
-            "target_ko must be Korean copied verbatim from sentence_ko"
+            "target_ko must be the native-language text copied verbatim from sentence_ko"
         )
     if not target_ko or target_ko not in native_completed:
         return (
@@ -813,6 +827,7 @@ def _prepare_cloze_candidates(
     level: int,
     source_meta: dict[str, Any],
     expression_contracts: dict[str, dict[str, Any]] | None = None,
+    native_language: str = "korean",
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Apply every deterministic guard and return actionable rejection reasons."""
     candidates: list[dict[str, Any]] = []
@@ -822,9 +837,9 @@ def _prepare_cloze_candidates(
         if not isinstance(item, dict):
             reasons.append(f"candidate {raw_index}: item is not an object")
             continue
-        normalized = _normalize_bundle_cloze(item, language=language)
+        normalized = _normalize_bundle_cloze(item, language=language, native_language=native_language)
         if normalized is None:
-            reasons.append(_cloze_structural_reason(item, raw_index))
+            reasons.append(_cloze_structural_reason(item, raw_index, native_language))
             continue
         sentence_full, prompt_en, blank, context_ko = normalized
         expression_id = str(item.get("expression_id") or "").strip()
@@ -1177,6 +1192,7 @@ async def generate_quiz_bundle(
         expression_contracts={
             str(chunk["expression_id"]): chunk for chunk in accepted_chunks
         },
+        native_language=native_language,
     )
     chunks_by_id = {str(chunk["expression_id"]): chunk for chunk in accepted_chunks}
     for candidate in cloze_candidates:

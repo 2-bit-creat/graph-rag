@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
 import 'quiz_audio_button.dart';
 
@@ -177,7 +178,7 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
         ),
         const SizedBox(height: AppSpacing.xxl),
         Text(
-          '내 답안',
+          tr('scrambleCard.myAnswer'),
           style: Theme.of(context).textTheme.titleSmall?.copyWith(
                 color: AppColors.textMuted,
               ),
@@ -196,7 +197,7 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
           ),
           child: _selectedIndices.isEmpty
               ? Text(
-                  '아래 단어를 순서대로 탭하세요',
+                  tr('scrambleCard.tapWordsInOrder'),
                   style: TextStyle(
                     color: AppColors.textMuted.withValues(alpha: 0.8),
                     fontSize: 14,
@@ -217,7 +218,7 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
         ),
         const SizedBox(height: AppSpacing.xxl),
         Text(
-          '단어 조각',
+          tr('scrambleCard.wordPieces'),
           style: Theme.of(context).textTheme.titleSmall?.copyWith(
                 color: AppColors.textMuted,
               ),
@@ -238,8 +239,8 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
         const SizedBox(height: AppSpacing.xxl),
         Row(
           children: [
-            TextButton(onPressed: _undoLast, child: const Text('되돌리기')),
-            TextButton(onPressed: _resetPool, child: const Text('초기화')),
+            TextButton(onPressed: _undoLast, child: Text(tr('scrambleCard.undo'))),
+            TextButton(onPressed: _resetPool, child: Text(tr('scrambleCard.reset'))),
             const Spacer(),
             FilledButton(
               onPressed: widget.enabled &&
@@ -253,7 +254,7 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
                       width: 20,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Text('확인'),
+                  : Text(tr('common.confirm')),
             ),
           ],
         ),

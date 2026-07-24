@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../auth/account_controller.dart';
 import '../compose/compose_session_controller.dart';
+import '../l10n/app_strings.dart';
 import '../screens/kg_insight_screen.dart';
 import '../screens/kg_timeline_screen.dart';
 import '../screens/menu_screen.dart';
@@ -69,20 +70,22 @@ class _ChatSidebarState extends State<ChatSidebar> {
     final title = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('채팅방 이름 변경'),
+        title: Text(tr('sidebar.renameRoomTitle')),
         content: TextField(
           controller: ctrl,
           autofocus: true,
-          decoration: const InputDecoration(
-              hintText: '이름', border: OutlineInputBorder(), isDense: true),
+          decoration: InputDecoration(
+              hintText: tr('sidebar.nameLabel'),
+              border: const OutlineInputBorder(),
+              isDense: true),
           onSubmitted: (v) => Navigator.pop(ctx, v),
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('취소')),
+              onPressed: () => Navigator.pop(ctx), child: Text(tr('common.cancel'))),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, ctrl.text),
-              child: const Text('저장')),
+              child: Text(tr('common.save'))),
         ],
       ),
     );
@@ -94,13 +97,15 @@ class _ChatSidebarState extends State<ChatSidebar> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('채팅방 삭제'),
-        content: const Text('이 채팅방을 삭제할까요? 지식그래프는 유지돼요.'),
+        title: Text(tr('sidebar.deleteRoomTitle')),
+        content: Text(tr('sidebar.deleteRoomBody')),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(tr('common.cancel'))),
           FilledButton(
-              onPressed: () => Navigator.pop(ctx, true), child: const Text('삭제')),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(tr('common.delete'))),
         ],
       ),
     );
@@ -129,7 +134,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
 
   void _pushInsight() => _push(
         Scaffold(
-          appBar: AppBar(title: const Text('돌아보기')),
+          appBar: AppBar(title: Text(tr('sidebar.reviewTitle'))),
           body: const KgInsightScreen(),
         ),
       );
@@ -147,13 +152,18 @@ class _ChatSidebarState extends State<ChatSidebar> {
   String? _resolvedPreview(String? preview, {required bool active}) {
     final p = preview?.trim();
     if (p == null || p.isEmpty) return null;
-    if (!active || !p.contains('일기 처리')) return p;
+    // The stored preview is whatever localized text was shown when the
+    // message was created, so check both locales' "journal processing" text
+    // rather than assuming Korean.
+    final looksLikeJournalProgress =
+        p.contains('일기 처리') || p.contains('Processing journal');
+    if (!active || !looksLikeJournalProgress) return p;
     if (journalTask.phase == ComposePhase.done &&
         journalTask.entryId != null) {
-      return '지식그래프 완성';
+      return tr('chat.graphCompleteMsg');
     }
     if (journalTask.phase == ComposePhase.error) {
-      return '일기 처리 실패';
+      return tr('chat.journalFailedMsg');
     }
     if (journalTask.phase == ComposePhase.needsInput &&
         journalTask.stageLabel.isNotEmpty) {
@@ -203,7 +213,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
               ),
               if (widget.onCollapse != null || widget.onNavigate != null)
                 IconButton(
-                  tooltip: '사이드바 접기',
+                  tooltip: tr('sidebar.collapseTooltip'),
                   visualDensity: VisualDensity.compact,
                   iconSize: 20,
                   onPressed: widget.onCollapse ?? widget.onNavigate,
@@ -221,7 +231,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
           child: FilledButton.tonalIcon(
             onPressed: _newChat,
             icon: const Icon(Icons.add_rounded, size: 18),
-            label: const Text('새 채팅'),
+            label: Text(tr('sidebar.newChat')),
             style: FilledButton.styleFrom(
               foregroundColor: shell.primaryText,
               backgroundColor: shell.subtleSurface,
@@ -245,7 +255,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
                   autofocus: true,
                   onChanged: (_) => setState(() {}),
                   decoration: InputDecoration(
-                    hintText: '채팅 검색',
+                    hintText: tr('sidebar.searchChats'),
                     prefixIcon: const Icon(Icons.search_rounded, size: 19),
                     suffixIcon: IconButton(
                       onPressed: _toggleSearch,
@@ -262,28 +272,30 @@ class _ChatSidebarState extends State<ChatSidebar> {
                 )
               : _CompactNavTile(
                   icon: Icons.search_rounded,
-                  label: '채팅 검색',
+                  label: tr('sidebar.searchChats'),
                   onTap: _toggleSearch,
                 ),
         ),
 
         // ── Gemini-style compact nav block (fixed, small) ────────────────
-        // Each item opens its destination directly — no intermediate "메뉴"
-        // hub page to pass through first. ("내 일기" = the timeline/기록 view;
-        // the old separate JournalHub "내 일기" was near-duplicate and removed.)
+        // Each item opens its destination directly — no intermediate menu
+        // hub page to pass through first. (myJournal = the timeline view;
+        // the old separate JournalHub was near-duplicate and removed.)
         _CompactNavTile(
             icon: Icons.auto_stories_outlined,
-            label: '내 일기',
+            label: tr('sidebar.myJournal'),
             onTap: _pushTimeline),
         _CompactNavTile(
-            icon: Icons.bar_chart_rounded, label: '돌아보기', onTap: _pushInsight),
+            icon: Icons.bar_chart_rounded,
+            label: tr('sidebar.reviewTitle'),
+            onTap: _pushInsight),
         _CompactNavTile(
             icon: Icons.menu_book_rounded,
-            label: '단어장 · 표현 은행',
+            label: tr('sidebar.vocabBank'),
             onTap: _pushVocab),
         _CompactNavTile(
             icon: Icons.playlist_add_check_rounded,
-            label: '퀴즈 큐',
+            label: tr('sidebar.quizQueue'),
             onTap: _pushQuizQueue),
         const SizedBox(height: 4),
         Divider(height: 1, color: shell.panelBorder),
@@ -295,7 +307,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
         // profile row stays pinned and the list never overflows. ───────────
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
-          child: Text('최근 대화',
+          child: Text(tr('sidebar.recentChats'),
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
@@ -320,7 +332,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
                 return Center(
                   child: Padding(
                     padding: const EdgeInsets.all(20),
-                    child: Text('아직 채팅방이 없어요.\n"새 채팅"으로 시작하세요.',
+                    child: Text(tr('sidebar.noRoomsYet'),
                         textAlign: TextAlign.center,
                         style: TextStyle(
                             fontSize: 12.5, color: context.shell.mutedText)),
@@ -340,7 +352,9 @@ class _ChatSidebarState extends State<ChatSidebar> {
                     active: active,
                   );
                   return _RoomTile(
-                    title: title?.isNotEmpty == true ? title! : '새 대화',
+                    title: title?.isNotEmpty == true
+                        ? title!
+                        : tr('sidebar.newRoomDefaultTitle'),
                     subtitle: preview,
                     active: active,
                     onTap: () => _select(id),
@@ -377,18 +391,18 @@ class _ChatSidebarRailState extends State<ChatSidebarRail> {
       children: [
         const SizedBox(height: 8),
         IconButton(
-          tooltip: '사이드바 펼치기',
+          tooltip: tr('sidebar.expandTooltip'),
           onPressed: widget.onExpand,
           icon: const Icon(Icons.keyboard_double_arrow_right_rounded),
         ),
         IconButton(
-          tooltip: '새 채팅',
+          tooltip: tr('sidebar.newChat'),
           onPressed: () => chatSession.newSession(),
           icon: const Icon(Icons.add_rounded),
         ),
         const Spacer(),
         IconButton(
-          tooltip: '내 일기',
+          tooltip: tr('sidebar.myJournal'),
           onPressed: () {
             Navigator.push(
               context,
@@ -402,7 +416,7 @@ class _ChatSidebarRailState extends State<ChatSidebarRail> {
           icon: const Icon(Icons.auto_stories_outlined),
         ),
         IconButton(
-          tooltip: '메뉴',
+          tooltip: tr('sidebar.menuTooltip'),
           onPressed: () {
             Navigator.push(
               context,
@@ -473,16 +487,16 @@ class _RoomTile extends StatelessWidget {
                 ),
               ),
               PopupMenuButton<String>(
-                tooltip: '옵션',
+                tooltip: tr('sidebar.optionsTooltip'),
                 icon: const Icon(Icons.more_horiz_rounded, size: 18),
                 padding: EdgeInsets.zero,
                 onSelected: (v) {
                   if (v == 'rename') onRename();
                   if (v == 'delete') onDelete();
                 },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'rename', child: Text('이름 변경')),
-                  PopupMenuItem(value: 'delete', child: Text('삭제')),
+                itemBuilder: (_) => [
+                  PopupMenuItem(value: 'rename', child: Text(tr('sidebar.rename'))),
+                  PopupMenuItem(value: 'delete', child: Text(tr('common.delete'))),
                 ],
               ),
             ],
@@ -571,7 +585,7 @@ class _ProfileFooterRow extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('내 프로필',
+                    Text(tr('sidebar.myProfile'),
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w700,

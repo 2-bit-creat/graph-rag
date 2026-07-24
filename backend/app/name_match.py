@@ -30,9 +30,19 @@ _PARTICLE_SUFFIXES: tuple[str, ...] = (
     "만", "로", "과", "와", "께", "랑",
 )
 
-# Bare 1-char pronouns that would otherwise false-positive on every message
-# (e.g. the user's own self node is often literally named "나").
-_STOPLIST: frozenset[str] = frozenset({"나", "저", "너", "내", "제"})
+# Bare pronouns that would otherwise false-positive on every message (e.g. the
+# user's own self node is literally named "나" for Korean natives, "Me" for
+# English natives — both are common enough words to need an explicit stoplist).
+_STOPLIST_BY_LANG: dict[str, frozenset[str]] = {
+    "korean": frozenset({"나", "저", "너", "내", "제"}),
+    "english": frozenset({"i", "me", "my", "you", "your", "he", "she", "they", "we"}),
+}
+
+# English honorifics — no Korean-style postpositions to strip, so the particle
+# table stays empty for English.
+_EN_TITLE_SUFFIXES: tuple[str, ...] = (
+    "mr.", "mrs.", "ms.", "dr.", "prof.",
+)
 
 
 def norm_compact(s: str | None) -> str:
@@ -86,18 +96,29 @@ def _is_word_boundary(message: str, idx: int) -> bool:
     return not ("가" <= ch <= "힣")  # not a Hangul syllable
 
 
-def scan_identity_mentions(message: str, identities: list[Node]) -> list[NameMatch]:
+def scan_identity_mentions(
+    message: str, identities: list[Node], native_language: str = "korean"
+) -> list[NameMatch]:
     """Find identity nodes whose name/alias is literally present in ``message``,
     tolerating whitespace variants and an optional trailing title/particle.
 
     Deterministic, zero LLM/embedding calls. One match per node (first/longest
     span); overlapping candidate spans keep the longer, more literal one.
     """
+    native_language = (native_language or "korean").lower()
+    stoplist = _STOPLIST_BY_LANG.get(native_language, _STOPLIST_BY_LANG["korean"])
+    if native_language == "english":
+        title_alt = "|".join(re.escape(t) for t in _EN_TITLE_SUFFIXES)
+        particle_group = ""  # English has no postpositions to strip
+    else:
+        title_alt = _TITLE_ALT
+        particle_group = rf"(?P<particle>{_PARTICLE_ALT})?"
+
     candidates: list[tuple[NameMatch, bool]] = []  # (match, consumed_title)
     for node in identities:
         for surface in _surface_forms(node):
             compact = norm_compact(surface)
-            if len(compact) < 2 or compact in _STOPLIST:
+            if len(compact) < 2 or compact in stoplist:
                 continue
             # Match the surface char-by-char allowing whitespace between any
             # two chars (so "하승목 연구원" matches "하승목연구원" in either
@@ -105,11 +126,11 @@ def scan_identity_mentions(message: str, identities: list[Node]) -> list[NameMat
             # particle/postposition for span purposes only.
             char_pattern = r"\s*".join(re.escape(ch) for ch in compact)
             pattern = (
-                rf"{char_pattern}(?P<title>\s*(?:{_TITLE_ALT}))?(?P<particle>{_PARTICLE_ALT})?"
+                rf"{char_pattern}(?P<title>\s*(?:{title_alt}))?{particle_group}"
             )
             for m in re.finditer(pattern, message, re.IGNORECASE):
                 consumed_title = m.group("title") is not None
-                consumed_particle = m.group("particle") is not None
+                consumed_particle = "particle" in m.groupdict() and m.group("particle") is not None
                 # A bare literal match (no recognized title/particle attached)
                 # is only trusted at a real word boundary — short (<=2 char)
                 # names are the highest false-positive risk (e.g. "민수" inside

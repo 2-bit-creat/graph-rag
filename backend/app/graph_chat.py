@@ -126,7 +126,7 @@ def _split_speaker_residual(message: str, matches: list) -> str:
 
 
 async def _scan_speaker_matches(
-    session: AsyncSession, user_id: uuid.UUID, message: str
+    session: AsyncSession, user_id: uuid.UUID, message: str, *, native_language: str = "korean"
 ) -> tuple[list, str]:
     """Deterministic (zero LLM/embedding cost) speaker detection: scan the raw
     message text for identity names/aliases the user already has in their
@@ -139,7 +139,7 @@ async def _scan_speaker_matches(
         return [], message
     try:
         identities = await _identity_nodes_self_first(session, user_id)
-        matches = scan_identity_mentions(message, identities)
+        matches = scan_identity_mentions(message, identities, native_language)
     except Exception as exc:  # noqa: BLE001 — never block the embedding-only path
         logger.warning("graph_chat: speaker scan failed for user %s: %s", user_id, exc)
         return [], message
@@ -197,43 +197,25 @@ async def _build_context(
     query_vec: list[float] | None = None,
     time_window: tuple[date, date] | None = None,
     time_window_label: str | None = None,
+    native_language: str = "korean",
 ) -> RankedContext:
     """Delegate 1-hop expansion + RRF rerank + prompt rendering to the shared
     :mod:`graph_retrieval` core (Context Packages, Case A/B/C seed handling)."""
     if not seeds:
         return RankedContext(text=time_window_label or "")
     ranked = await build_ranked_context(
-        session, user_id, seeds, query_vec=query_vec, time_window=time_window
+        session,
+        user_id,
+        seeds,
+        query_vec=query_vec,
+        time_window=time_window,
+        native_language=native_language,
     )
     if time_window_label:
         ranked.text = (
             f"{time_window_label}\n\n{ranked.text}" if ranked.text else time_window_label
         )
     return ranked
-
-
-def _build_system_prompt(native_label: str = "Korean (한국어)") -> str:
-    return (
-        "당신은 사용자의 일기를 기억하는 친근한 대화 상대입니다. 사용자가 심심할 때 "
-        "편하게 수다를 떨러 오는 공간이에요. "
-        f"기본적으로 사용자의 모국어({native_label})로 따뜻하고 자연스럽게 대화하세요 "
-        "(사용자가 다른 언어로 물으면 그 언어에 맞춰주세요). "
-        "아래에 '기록 1, 기록 2, ...' 형태로 제공되는 항목들은 사용자가 실제로 쓴 "
-        "일기에서 나온 것입니다. 관련이 있을 때 자연스럽게 언급하며 대화하되, 기억에 "
-        "없는 내용을 지어내지 마세요. 관련 기억이 없으면 솔직하게 모른다고 하고 가볍게 "
-        "되물어보세요. "
-        "'지금까지의 대화 요약'은 이 채팅방의 이전 대화를 압축한 것이지 일기 기억이 "
-        "아닙니다 — 요약을 일기 기억처럼 인용하지 마세요. "
-        "각 기록의 '일시'는 그 사건이 일어난 날(또는 일기에 기록된 날)입니다 — "
-        "'언제 …했지?' 같은 질문에는 이 날짜로 답하세요. "
-        "'화자'는 그 '진술'을 실제로 말한 사람입니다. '언급된 인물'은 그 진술 "
-        "속에 이름이 등장할 뿐 그 말을 한 사람이 아닙니다 — 언급된 인물이 그 날짜에 "
-        "무언가를 말했다거나 행동했다고 답하지 마세요. 화자와 언급된 인물을 절대 "
-        "혼동하지 마세요. "
-        "요청 기간이 명시되어 있고 그 기간의 기록이 없으면 지어내지 말고 "
-        "그 기간의 기록이 없다고 말하세요. "
-        "답변은 수다 톤으로 짧고 편하게 — 강의하지 마세요."
-    )
 
 
 def build_graph_chat_messages(
@@ -243,15 +225,19 @@ def build_graph_chat_messages(
     context: str,
     summary: str | None = None,
     native_label: str = "Korean (한국어)",
+    native_language: str = "korean",
 ) -> list[dict[str, str]]:
     """Assemble the LLM message list (persona → summary → history → RAG → user)."""
+    from .prompts import native_pack
+
     settings = get_settings()
+    pack = native_pack(native_language)
     messages: list[dict[str, str]] = [
-        {"role": "system", "content": _build_system_prompt(native_label)},
+        {"role": "system", "content": pack.chat_system_prompt},
     ]
     if summary:
         messages.append(
-            {"role": "system", "content": f"지금까지의 대화 요약:\n{summary}"}
+            {"role": "system", "content": f"{pack.summary_prefix}{summary}"}
         )
     max_history = settings.graph_chat_history_turns + settings.graph_chat_summary_batch
     for m in history[-max_history:]:
@@ -262,7 +248,7 @@ def build_graph_chat_messages(
     messages.append(
         {
             "role": "system",
-            "content": context or "(이번 메시지와 관련된 일기 기억이 없습니다.)",
+            "content": context or pack.no_context_placeholder,
         }
     )
     messages.append({"role": "user", "content": message})
@@ -279,6 +265,7 @@ async def graph_chat_answer(
     settings = get_settings()
     tz = ZoneInfo(settings.chat_timezone)
     now = datetime.now(tz)
+    native_language = getattr(user, "native_language", None) or "korean"
 
     time_window = parse_time_window(message, tz, now)
     time_window_label: str | None = None
@@ -318,7 +305,7 @@ async def graph_chat_answer(
     # sharper topic-only query (질의 분해), and both searches share that one
     # embedding call.
     speaker_matches, residual_message = await _scan_speaker_matches(
-        session, user.id, message
+        session, user.id, message, native_language=native_language
     )
 
     query_vec: list[float] | None = None
@@ -356,6 +343,7 @@ async def graph_chat_answer(
             query_vec=query_vec,
             time_window=time_window,
             time_window_label=time_window_label,
+            native_language=native_language,
         )
         context = ranked.text
         if ranked.node_ids:
@@ -366,15 +354,16 @@ async def graph_chat_answer(
         context = time_window_label or ""
         referenced_node_ids = [str(n.id) for n in temporal_seeds]
 
-    from .tutor import _lang_label
+    from .languages import label as _language_label
 
-    native_label = _lang_label(getattr(user, "native_language", None) or "korean")
+    native_label = _language_label(native_language, default="korean")
     messages = build_graph_chat_messages(
         message=message,
         history=history,
         context=context,
         summary=summary,
         native_label=native_label,
+        native_language=native_language,
     )
 
     resp = await _get_client().chat.completions.create(

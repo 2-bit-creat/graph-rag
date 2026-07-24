@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../models/vocabulary.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
@@ -68,20 +69,20 @@ class _VocabularyDetailScreenState extends State<VocabularyDetailScreen> {
     final ok = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: const Text('단어장 이름 수정'),
+            title: Text(tr('vocabDetail.editNameTitle')),
             content: TextField(
               controller: nameCtrl,
-              decoration: const InputDecoration(
-                labelText: '이름',
-                hintText: '예: IELTS 핵심 단어',
+              decoration: InputDecoration(
+                labelText: tr('sidebar.nameLabel'),
+                hintText: tr('vocabDetail.nameHint'),
               ),
               autofocus: true,
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('common.cancel'))),
               FilledButton(
                 onPressed: () => Navigator.pop(ctx, nameCtrl.text.trim().isNotEmpty),
-                child: const Text('저장'),
+                child: Text(tr('common.save')),
               ),
             ],
           ),
@@ -98,13 +99,13 @@ class _VocabularyDetailScreenState extends State<VocabularyDetailScreen> {
       if (mounted) {
         setState(() => _name = newName);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('단어장 이름을 수정했습니다')),
+          SnackBar(content: Text(tr('vocabDetail.nameEditedSnackbar'))),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('수정 실패: $e')),
+          SnackBar(content: Text(tr('vocabDetail.editFailed', {'error': e}))),
         );
       }
     } finally {
@@ -117,21 +118,21 @@ class _VocabularyDetailScreenState extends State<VocabularyDetailScreen> {
     final ok = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: Text('「${word.word}」 뜻 수정'),
+            title: Text(tr('vocabDetail.editMeaningTitle', {'word': word.word})),
             content: TextField(
               controller: meaningCtrl,
-              decoration: const InputDecoration(
-                labelText: '뜻',
-                hintText: '한국어 또는 영문 정의',
+              decoration: InputDecoration(
+                labelText: tr('vocabDetail.meaningLabel'),
+                hintText: tr('vocabDetail.meaningHint'),
               ),
               autofocus: true,
               maxLines: 4,
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('common.cancel'))),
               FilledButton(
                 onPressed: () => Navigator.pop(ctx, meaningCtrl.text.trim().isNotEmpty),
-                child: const Text('저장'),
+                child: Text(tr('common.save')),
               ),
             ],
           ),
@@ -150,14 +151,14 @@ class _VocabularyDetailScreenState extends State<VocabularyDetailScreen> {
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('「${word.word}」 뜻을 수정했습니다')),
+          SnackBar(content: Text(tr('vocabDetail.meaningEditedSnackbar', {'word': word.word}))),
         );
         await _load(silent: true);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('수정 실패: $e')),
+          SnackBar(content: Text(tr('vocabDetail.editFailed', {'error': e}))),
         );
       }
     }
@@ -175,7 +176,7 @@ class _VocabularyDetailScreenState extends State<VocabularyDetailScreen> {
       if (mounted) {
         _addCardKey.currentState?.clear();
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('「$word」을(를) 추가했습니다')),
+          SnackBar(content: Text(tr('vocabDetail.wordAddedSnackbar', {'word': word}))),
         );
         await _load(silent: true);
         _addCardKey.currentState?.focusWord();
@@ -183,7 +184,7 @@ class _VocabularyDetailScreenState extends State<VocabularyDetailScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('추가 실패: $e')),
+          SnackBar(content: Text(tr('vocabDetail.addFailed', {'error': e}))),
         );
       }
     } finally {
@@ -195,11 +196,11 @@ class _VocabularyDetailScreenState extends State<VocabularyDetailScreen> {
     final ok = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: const Text('단어 삭제'),
-            content: Text('「${word.word}」을(를) 삭제할까요?'),
+            title: Text(tr('vocabDetail.deleteWordTitle')),
+            content: Text(tr('vocabDetail.deleteWordBody', {'word': word.word})),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
-              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('삭제')),
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('common.cancel'))),
+              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr('common.delete'))),
             ],
           ),
         ) ??
@@ -210,14 +211,14 @@ class _VocabularyDetailScreenState extends State<VocabularyDetailScreen> {
       await apiClient.deleteVocabularyWord(widget.vocabId, word.word);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('단어를 삭제했습니다')),
+          SnackBar(content: Text(tr('vocabDetail.wordDeletedSnackbar'))),
         );
         await _load(silent: true);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('삭제 실패: $e')),
+          SnackBar(content: Text(tr('vocabDetail.editFailed', {'error': e}))),
         );
       }
     }
@@ -250,12 +251,12 @@ class _VocabularyDetailScreenState extends State<VocabularyDetailScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.drive_file_rename_outline),
-            tooltip: '이름 수정',
+            tooltip: tr('vocabDetail.editNameTooltip'),
             onPressed: _savingMeta ? null : _editVocabName,
           ),
           IconButton(
             icon: const Icon(Icons.add),
-            tooltip: '단어 추가',
+            tooltip: tr('vocabDetail.addWordTooltip'),
             onPressed: _adding ? null : () => _addCardKey.currentState?.focusWord(),
           ),
         ],
@@ -263,10 +264,10 @@ class _VocabularyDetailScreenState extends State<VocabularyDetailScreen> {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _adding ? null : () => _addCardKey.currentState?.focusWord(),
         icon: const Icon(Icons.add),
-        label: const Text('단어 추가'),
+        label: Text(tr('vocabDetail.addWordTooltip')),
       ),
       body: _loading
-          ? const AppLoadingScreen(message: '단어 불러오는 중…')
+          ? AppLoadingScreen(message: tr('vocabDetail.loadingWords'))
           : RefreshIndicator(
               onRefresh: () => _load(silent: true),
               child: ListView(
@@ -294,15 +295,15 @@ class _VocabularyDetailScreenState extends State<VocabularyDetailScreen> {
                   ),
                   const SizedBox(height: AppSpacing.lg),
                   AppSectionHeader(
-                    title: '단어 목록 (${_words.length})',
-                    subtitle: '탭하여 뜻 수정 · 스와이프로 삭제',
+                    title: tr('vocabDetail.wordListTitle', {'count': _words.length}),
+                    subtitle: tr('vocabDetail.wordListSubtitle'),
                   ),
                   const SizedBox(height: AppSpacing.md),
                   if (_words.isEmpty)
-                    const AppEmptyState(
+                    AppEmptyState(
                       icon: Icons.style_outlined,
-                      title: '아직 카드가 없습니다',
-                      subtitle: '위 입력란에 단어와 뜻을 적고 추가해 보세요',
+                      title: tr('vocabDetail.emptyTitle'),
+                      subtitle: tr('vocabDetail.emptySubtitle'),
                     )
                   else
                     ..._words.map((w) {
@@ -330,12 +331,12 @@ class _VocabularyDetailScreenState extends State<VocabularyDetailScreen> {
                                 Text(w.meaning),
                                 if (w.linkedDiaryId != null)
                                   Text(
-                                    '일기 연결 · 복습 ${w.reviewCount}회',
+                                    tr('vocabDetail.journalLinkedReview', {'count': w.reviewCount}),
                                     style: Theme.of(context).textTheme.bodySmall,
                                   )
                                 else if (w.reviewCount > 0)
                                   Text(
-                                    '복습 ${w.reviewCount}회',
+                                    tr('vocabDetail.reviewCount', {'count': w.reviewCount}),
                                     style: Theme.of(context).textTheme.bodySmall,
                                   ),
                               ],
@@ -345,12 +346,12 @@ class _VocabularyDetailScreenState extends State<VocabularyDetailScreen> {
                               children: [
                                 IconButton(
                                   icon: const Icon(Icons.edit_outlined),
-                                  tooltip: '뜻 수정',
+                                  tooltip: tr('vocabDetail.editMeaningTooltip'),
                                   onPressed: () => _editWordMeaning(w),
                                 ),
                                 IconButton(
                                   icon: const Icon(Icons.delete_outline),
-                                  tooltip: '삭제',
+                                  tooltip: tr('common.delete'),
                                   onPressed: () => _deleteWord(w),
                                 ),
                               ],

@@ -15,17 +15,19 @@ import 'quiz_queue_screen.dart';
 // ─── Static data ──────────────────────────────────────────────────────────────
 
 // Learnable target languages (the quiz engine is tuned for these three).
-const _kLanguages = [
-  (key: 'english', label: '영어',   flag: '🇺🇸'),
-  (key: 'german',  label: '독일어', flag: '🇩🇪'),
-  (key: 'korean',  label: '한국어', flag: '🇰🇷'),
-];
+// A learner can't "learn" their own native language, so [forNative] excludes
+// it — mirrors the backend's languages.valid_target_for_native().
+List<({String key, String label, String flag})> _kLanguages({String? forNative}) => [
+      (key: 'english', label: tr('kg.langEnglish'), flag: '🇺🇸'),
+      (key: 'german', label: tr('kg.langGerman'), flag: '🇩🇪'),
+      (key: 'korean', label: tr('kg.langKorean'), flag: '🇰🇷'),
+    ].where((l) => l.key != forNative).toList();
 
 // Native languages (UI + graph + explanations are generated in this language).
-const _kNativeLanguages = [
-  (key: 'korean',  label: '한국어 🇰🇷'),
-  (key: 'english', label: '영어 🇺🇸'),
-];
+List<({String key, String label})> get _kNativeLanguages => [
+      (key: 'korean', label: '${tr('kg.langKorean')} 🇰🇷'),
+      (key: 'english', label: '${tr('kg.langEnglish')} 🇺🇸'),
+    ];
 
 String _cefrLabel(int level) {
   if (level <= 15) return 'Pre-A1~A1';
@@ -91,13 +93,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) {
         setState(() => _speakerConsent = value);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(value ? '화자 식별에 동의했어요' : '화자 식별 동의를 철회했어요')),
+          SnackBar(
+            content: Text(value
+                ? tr('settings.speakerConsentGiven')
+                : tr('settings.speakerConsentWithdrawn')),
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('변경 실패: ${e.toString().replaceFirst('Exception: ', '')}')),
+          SnackBar(
+            content: Text(tr('settings.changeFailed', {
+              'error': e.toString().replaceFirst('Exception: ', ''),
+            })),
+          ),
         );
       }
     } finally {
@@ -113,7 +123,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       String? savedPath;
       try {
         savedPath = await FilePicker.platform.saveFile(
-          dialogTitle: '내 데이터 저장',
+          dialogTitle: tr('settings.exportSaveDialogTitle'),
           fileName: 'my-data.json',
           bytes: bytes,
         );
@@ -123,21 +133,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
       if (savedPath != null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('내 데이터를 파일로 저장했어요')),
+          SnackBar(content: Text(tr('settings.exportSavedToFile'))),
         );
       } else {
         // Universal fallback so the right is always exercisable.
         await Clipboard.setData(ClipboardData(text: json));
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('내 데이터를 클립보드에 복사했어요')),
+            SnackBar(content: Text(tr('settings.exportCopiedToClipboard'))),
           );
         }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('내보내기 실패: ${e.toString().replaceFirst('Exception: ', '')}')),
+          SnackBar(
+            content: Text(tr('settings.exportFailed', {
+              'error': e.toString().replaceFirst('Exception: ', ''),
+            })),
+          ),
         );
       }
     } finally {
@@ -186,7 +200,7 @@ final rawLangs = profile['target_languages'];
   Future<void> _save() async {
     if (_targetLanguages.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('언어를 최소 하나 선택해 주세요')),
+        SnackBar(content: Text(tr('settings.selectAtLeastOneLanguage'))),
       );
       return;
     }
@@ -211,14 +225,14 @@ final rawLangs = profile['target_languages'];
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('프로필이 저장되었습니다')),
+          SnackBar(content: Text(tr('settings.profileSaved'))),
         );
         _showReprocessDialogIfNeeded(langs);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('저장 실패: $e')),
+          SnackBar(content: Text(tr('settings.saveFailed', {'error': e}))),
         );
       }
     } finally {
@@ -237,28 +251,33 @@ final rawLangs = profile['target_languages'];
     if (pending == 0) return;
 
     final perLang = info?['per_language'] as Map? ?? {};
-    final breakdown = languages.map((l) => '• $l: ${perLang[l] ?? 0}개 노드').join('\n');
+    final breakdown = languages
+        .map((l) => tr('settings.reprocessNodeCountLine', {
+              'lang': l,
+              'count': perLang[l] ?? 0,
+            }))
+        .join('\n');
 
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('표현 추출 실행'),
+        title: Text(tr('settings.reprocessDialogTitle')),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('미처리 $pending개(노드×언어)에 대해 표현을 추출합니다.\n'),
+            Text(tr('settings.reprocessBody', {'pending': pending})),
             Text(breakdown, style: const TextStyle(fontSize: 13)),
             const SizedBox(height: 12),
-            const Text(
-              '노드당 1번의 API 호출로 모든 언어를 처리합니다.',
-              style: TextStyle(fontSize: 12),
+            Text(
+              tr('settings.reprocessOneApiCallNote'),
+              style: const TextStyle(fontSize: 12),
             ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('나중에')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('지금 실행')),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('common.later'))),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr('settings.runNow'))),
         ],
       ),
     );
@@ -268,7 +287,11 @@ final rawLangs = profile['target_languages'];
         final result = await apiClient.triggerReprocess(languages);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('${result['enqueued'] ?? 0}개 추출 작업 시작됨')),
+            SnackBar(
+              content: Text(tr('settings.reprocessStartedSnackbar', {
+                'count': result['enqueued'] ?? 0,
+              })),
+            ),
           );
         }
       } catch (_) {}
@@ -278,7 +301,9 @@ final rawLangs = profile['target_languages'];
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppHubAppBar(title: '내 프로필', subtitle: '언어 · 레벨'),
+      appBar: AppHubAppBar(
+          title: tr('settings.myProfileTitle'),
+          subtitle: tr('settings.langLevelSubtitle')),
       body: _loading
           ? const AppLoadingScreen()
           : ListView(
@@ -286,10 +311,10 @@ final rawLangs = profile['target_languages'];
                 AppSpacing.pageH, AppSpacing.md, AppSpacing.pageH, AppSpacing.xxl,
               ),
               children: [
-                // ── 모국어 ──────────────────────────────────────────────────
+                // ── Native language ─────────────────────────────────────────
                 _SectionCard(
-                  title: '모국어',
-                  subtitle: '힌트·설명이 이 언어로 생성됩니다',
+                  title: tr('settings.nativeLanguageTitle'),
+                  subtitle: tr('settings.nativeLanguageSubtitle'),
                   child: Wrap(
                     spacing: AppSpacing.sm,
                     runSpacing: AppSpacing.xs,
@@ -298,23 +323,34 @@ final rawLangs = profile['target_languages'];
                       selected: _nativeLanguage == lang.key,
                       onSelected: _saving
                           ? null
-                          : (_) => setState(() => _nativeLanguage = lang.key),
+                          : (_) => setState(() {
+                                _nativeLanguage = lang.key;
+                                // A learner can't "learn" their own native
+                                // language — drop it if it was already picked
+                                // as a target.
+                                if (_targetLanguages.remove(lang.key) &&
+                                    _targetLanguages.isEmpty) {
+                                  _targetLanguages.add(
+                                    _kLanguages(forNative: lang.key).first.key,
+                                  );
+                                }
+                              }),
                     )).toList(),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.md),
 
-                // ── 학습 언어 + 레벨 ────────────────────────────────────────
+                // ── Learning languages + level ──────────────────────────────
                 _SectionCard(
-                  title: '학습 언어 및 레벨',
-                  subtitle: '연습할 언어를 등록하고 레벨을 설정하세요 · 세션별 전환은 튜터에서',
+                  title: tr('settings.learningLanguagesTitle'),
+                  subtitle: tr('settings.learningLanguagesSubtitle'),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Wrap(
                         spacing: AppSpacing.sm,
                         runSpacing: AppSpacing.xs,
-                        children: _kLanguages.map((lang) {
+                        children: _kLanguages(forNative: _nativeLanguage).map((lang) {
                           final selected = _targetLanguages.contains(lang.key);
                           return FilterChip(
                             label: Text('${lang.flag} ${lang.label}'),
@@ -334,7 +370,7 @@ final rawLangs = profile['target_languages'];
                       ),
                       const SizedBox(height: 16),
                       ..._targetLanguages.map((lang) {
-                        final langInfo = _kLanguages.firstWhere(
+                        final langInfo = _kLanguages(forNative: _nativeLanguage).firstWhere(
                           (l) => l.key == lang,
                           orElse: () => (key: lang, label: lang, flag: '🌐'),
                         );
@@ -356,18 +392,18 @@ final rawLangs = profile['target_languages'];
                 const SizedBox(height: AppSpacing.md),
 
                 _SectionCard(
-                  title: '하루 퀴즈 목표',
-                  subtitle: '오늘의 세트에 자동으로 채울 문제 수입니다.',
+                  title: tr('settings.dailyQuizGoalTitle'),
+                  subtitle: tr('settings.dailyQuizGoalSubtitle'),
                   child: Column(
                     children: [
                       _QuotaSlider(
-                        label: '단어 빈칸',
+                        label: tr('settings.clozeLabel'),
                         value: _dailyClozeTarget,
                         max: 100,
                         onChanged: (v) => setState(() => _dailyClozeTarget = v),
                       ),
                       _QuotaSlider(
-                        label: '작문',
+                        label: tr('settings.compositionLabel'),
                         value: _dailyCompositionTarget,
                         max: 50,
                         onChanged: (v) => setState(() => _dailyCompositionTarget = v),
@@ -376,14 +412,17 @@ final rawLangs = profile['target_languages'];
                       Align(
                         alignment: Alignment.centerLeft,
                         child: Text(
-                          '복습 ${(_quizReviewRatio * 100).round()}%  ·  랜덤 탐험 ${(100 - _quizReviewRatio * 100).round()}%',
+                          tr('settings.reviewRandomRatio', {
+                            'review': (_quizReviewRatio * 100).round(),
+                            'random': (100 - _quizReviewRatio * 100).round(),
+                          }),
                           style: Theme.of(context).textTheme.titleSmall,
                         ),
                       ),
                       const SizedBox(height: 4),
-                      const Align(
+                      Align(
                         alignment: Alignment.centerLeft,
-                        child: Text('복습: 저장한 튜터 표현·오답  /  랜덤 탐험: 최근 일기 Statement'),
+                        child: Text(tr('settings.reviewRandomExplain')),
                       ),
                       Slider(
                         value: _quizReviewRatio,
@@ -394,7 +433,11 @@ final rawLangs = profile['target_languages'];
                       Wrap(
                         spacing: 8,
                         children: [
-                          for (final preset in [(0.25, '복습 25%'), (0.5, '균형 50%'), (0.75, '복습 75%')])
+                          for (final preset in [
+                            (0.25, tr('settings.reviewPreset25')),
+                            (0.5, tr('settings.reviewPresetBalanced')),
+                            (0.75, tr('settings.reviewPreset75')),
+                          ])
                             ChoiceChip(
                               label: Text(preset.$2),
                               selected: (_quizReviewRatio - preset.$1).abs() < 0.01,
@@ -417,7 +460,7 @@ final rawLangs = profile['target_languages'];
                           height: 20, width: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('프로필 저장'),
+                      : Text(tr('settings.saveProfileButton')),
                 ),
                 const SizedBox(height: AppSpacing.md),
 
@@ -427,17 +470,17 @@ final rawLangs = profile['target_languages'];
                     MaterialPageRoute(builder: (_) => const QuizQueueScreen()),
                   ),
                   icon: const Icon(Icons.inventory_2_outlined),
-                  label: const Text('내 퀴즈 큐 보러가기'),
+                  label: Text(tr('settings.goToQuizQueue')),
                 ),
                 const SizedBox(height: AppSpacing.lg),
 
-                // ── 개인정보 및 데이터 ────────────────────────────────────────
+                // ── Privacy & data ───────────────────────────────────────────
                 Card(
                   child: Column(children: [
                     ListTile(
                       leading: const Icon(Icons.description_outlined),
-                      title: const Text('개인정보 처리방침'),
-                      subtitle: const Text('수집 항목·국외 이전·보유기간·권리 안내'),
+                      title: Text(tr('settings.privacyPolicyTitle')),
+                      subtitle: Text(tr('settings.privacyPolicySubtitle')),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => Navigator.push(
                         context,
@@ -448,17 +491,16 @@ final rawLangs = profile['target_languages'];
                     const Divider(height: 1),
                     SwitchListTile(
                       secondary: const Icon(Icons.record_voice_over_outlined),
-                      title: const Text('음성 화자 식별 동의'),
-                      subtitle: const Text(
-                          '대화 속 화자를 구분(성문·생체정보). 끄면 이후 생성을 중단합니다.'),
+                      title: Text(tr('settings.speakerConsentTitle')),
+                      subtitle: Text(tr('settings.speakerConsentSubtitle')),
                       value: _speakerConsent,
                       onChanged: _speakerBusy ? null : _toggleSpeakerConsent,
                     ),
                     const Divider(height: 1),
                     ListTile(
                       leading: const Icon(Icons.download_outlined),
-                      title: const Text('내 데이터 내보내기'),
-                      subtitle: const Text('보관 중인 전체 데이터를 JSON으로 저장'),
+                      title: Text(tr('settings.exportDataTitle')),
+                      subtitle: Text(tr('settings.exportDataSubtitle')),
                       trailing: _exporting
                           ? const SizedBox(
                               width: 18,
@@ -477,14 +519,14 @@ final rawLangs = profile['target_languages'];
                     ListTile(
                       leading: Icon(Icons.developer_mode,
                           color: Theme.of(context).colorScheme.primary),
-                      title: const Text('Dev Mode'),
-                      subtitle: const Text('로그인 없이 dev@local 사용자로 동작합니다.'),
+                      title: Text(tr('settings.devModeTitle')),
+                      subtitle: Text(tr('settings.devModeSubtitle')),
                     ),
                     const Divider(height: 1),
-                    const ListTile(
-                      leading: Icon(Icons.folder_outlined),
-                      title: Text('Debug artifacts'),
-                      subtitle: Text('backend/debug_runs/{entry_id}/ 에 파이프라인 단계별 산출물'),
+                    ListTile(
+                      leading: const Icon(Icons.folder_outlined),
+                      title: Text(tr('settings.debugArtifactsTitle')),
+                      subtitle: Text(tr('settings.debugArtifactsSubtitle')),
                     ),
                   ]),
                 ),

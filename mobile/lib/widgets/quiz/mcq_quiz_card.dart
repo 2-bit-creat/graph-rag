@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
 import 'quiz_audio_button.dart';
 
@@ -161,7 +162,7 @@ class _McqQuizCardState extends State<McqQuizCard> {
         ),
         const SizedBox(height: AppSpacing.lg),
         Text(
-          '가장 자연스러운 영어 표현을 고르세요',
+          tr('mcqCard.instruction'),
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: AppColors.textMuted,
@@ -181,7 +182,7 @@ class _McqQuizCardState extends State<McqQuizCard> {
                   width: 20,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('확인'),
+              : Text(tr('common.confirm')),
         ),
       ],
     );

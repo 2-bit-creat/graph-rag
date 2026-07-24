@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/client.dart';
 import '../app_navigator.dart';
+import '../l10n/app_strings.dart';
 import '../screens/graph_review_screen.dart';
 import '../screens/journal_hub_screen.dart' show JournalEntryDetailScreen;
 import '../theme/app_theme.dart';
@@ -162,17 +163,17 @@ class _WindowTitleBar extends StatelessWidget {
         final leave = await showDialog<bool>(
           context: ctx,
           builder: (dialogCtx) => AlertDialog(
-            title: const Text('작성 중인 기록이 있어요'),
-            content: const Text('지금 닫으면 저장되지 않은 내용이 사라집니다.'),
+            title: Text(tr('compose.unsavedDraftTitle')),
+            content: Text(tr('compose.unsavedDraftBody')),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(dialogCtx, false),
-                child: const Text('계속 작성'),
+                child: Text(tr('compose.keepWriting')),
               ),
               FilledButton(
                 style: FilledButton.styleFrom(backgroundColor: Colors.red[700]),
                 onPressed: () => Navigator.pop(dialogCtx, true),
-                child: const Text('닫기'),
+                child: Text(tr('common.close')),
               ),
             ],
           ),
@@ -217,7 +218,9 @@ class _WindowTitleBar extends StatelessWidget {
               const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Text(
-                  hasEntry ? '내 일기' : '일기 쓰기',
+                  hasEntry
+                      ? tr('compose.myJournalTitle')
+                      : tr('compose.writeJournalTitle'),
                   style: Theme.of(context)
                       .textTheme
                       .titleSmall
@@ -314,14 +317,14 @@ class _ComposeProcessingView extends StatelessWidget {
               animation: composeSession,
               builder: (context, _) => Text(
                 composeSession.stageLabel.isEmpty
-                    ? '처리 중'
+                    ? tr('compose.processingLabel')
                     : composeSession.stageLabel,
                 style: theme.textTheme.titleSmall,
               ),
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
-              '잠시만요 — 끝나면 정제된 일기를 보여드릴게요.',
+              tr('compose.processingHint'),
               textAlign: TextAlign.center,
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: AppColors.textMuted),
@@ -366,7 +369,7 @@ class _ComposeBodyState extends State<_ComposeBody> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('저장 실패: $e')),
+          SnackBar(content: Text(tr('compose.saveFailed', {'error': e}))),
         );
       }
     } finally {
@@ -387,16 +390,16 @@ class _ComposeBodyState extends State<_ComposeBody> {
             AppSpacing.sm,
           ),
           child: SegmentedButton<JournalInputMode>(
-            segments: const [
+            segments: [
               ButtonSegment(
                 value: JournalInputMode.voice,
-                icon: Icon(Icons.mic_rounded, size: 18),
-                label: Text('음성'),
+                icon: const Icon(Icons.mic_rounded, size: 18),
+                label: Text(tr('compose.voiceTab')),
               ),
               ButtonSegment(
                 value: JournalInputMode.text,
-                icon: Icon(Icons.edit_note_rounded, size: 18),
-                label: Text('텍스트'),
+                icon: const Icon(Icons.edit_note_rounded, size: 18),
+                label: Text(tr('compose.textTab')),
               ),
             ],
             selected: {_inputMode},
@@ -494,7 +497,7 @@ class _MiniWindowCard extends StatelessWidget {
       final ctx = _windowNavKey.currentContext;
       if (ctx != null && ctx.mounted) {
         ScaffoldMessenger.of(ctx).showSnackBar(
-          const SnackBar(content: Text('지식그래프 확정 완료')),
+          SnackBar(content: Text(tr('compose.graphCommitCompleteSnackbar'))),
         );
       }
     }
@@ -522,13 +525,13 @@ class _MiniWindowCard extends StatelessWidget {
       ComposePhase.composing => s.recording
           ? (
               const _PulsingDot(color: AppColors.hubRecord),
-              '녹음 중',
-              '탭하여 돌아가기',
+              tr('compose.recordingLabel'),
+              tr('compose.tapToReturn'),
             )
           : (
               Icon(Icons.edit_note_rounded, size: 20, color: scheme.primary),
-              '일기 작성 중',
-              '탭하여 돌아가기',
+              tr('compose.writingLabel'),
+              tr('compose.tapToReturn'),
             ),
       ComposePhase.working => (
           const SizedBox(
@@ -537,23 +540,23 @@ class _MiniWindowCard extends StatelessWidget {
             child: CircularProgressIndicator(strokeWidth: 2.2),
           ),
           s.stageLabel,
-          'AI 처리 중 · 기다리는 동안 자유롭게 쓰세요',
+          tr('compose.aiProcessingHint'),
         ),
       ComposePhase.needsInput => (
           const Icon(Icons.touch_app_rounded,
               size: 20, color: AppColors.accentWarm),
           s.stageLabel,
-          '탭하여 계속하기',
+          tr('compose.tapToContinue'),
         ),
       ComposePhase.done => (
           Icon(Icons.check_circle_rounded, size: 20, color: Colors.green[600]),
           s.stageLabel,
-          '탭하여 확인하기',
+          tr('compose.tapToCheck'),
         ),
       ComposePhase.error => (
           Icon(Icons.error_rounded, size: 20, color: Colors.red[600]),
           s.stageLabel,
-          '탭하여 다시 시도',
+          tr('compose.tapToRetry'),
         ),
     };
 

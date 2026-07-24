@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import 'quiz_session_screen.dart';
 
 class QuizQueueScreen extends StatefulWidget {
@@ -25,24 +26,25 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
   int _total = 0;
   Map<String, dynamic>? _profile;
 
-  static const _typeChips = [
-    (null, '전체'),
-    ('cloze', '단어완성'),
-    ('composition', '작문'),
-  ];
+  static List<(String?, String)> get _typeChips => [
+        (null, tr('quizQueue.filterAll')),
+        ('cloze', tr('quizQueue.filterCloze')),
+        ('composition', tr('quizQueue.filterComposition')),
+      ];
 
-  static const _languageLabels = <String, String>{
-    'english': '영어',
-    'german': '독일어',
-    'japanese': '일본어',
-    'chinese': '중국어',
-    'spanish': '스페인어',
-    'french': '프랑스어',
-    'portuguese': '포르투갈어',
-    'italian': '이탈리아어',
-    'arabic': '아랍어',
-    'russian': '러시아어',
-  };
+  static Map<String, String> get _languageLabels => {
+        'english': tr('kg.langEnglish'),
+        'german': tr('kg.langGerman'),
+        'korean': tr('kg.langKorean'),
+        'japanese': tr('lang.japanese'),
+        'chinese': tr('lang.chinese'),
+        'spanish': tr('lang.spanish'),
+        'french': tr('lang.french'),
+        'portuguese': tr('lang.portuguese'),
+        'italian': tr('lang.italian'),
+        'arabic': tr('lang.arabic'),
+        'russian': tr('lang.russian'),
+      };
 
   @override
   void initState() {
@@ -166,16 +168,16 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
     return await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: const Text('큐에서 제거'),
-            content: const Text('이 문제를 학습 큐에서 삭제할까요?'),
+            title: Text(tr('quizQueue.removeFromQueueTitle')),
+            content: Text(tr('quizQueue.removeFromQueueBody')),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('취소'),
+                child: Text(tr('common.cancel')),
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('삭제'),
+                child: Text(tr('common.delete')),
               ),
             ],
           ),
@@ -188,14 +190,14 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
       await apiClient.deleteQuizItem(quizId);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('큐에서 제거했습니다')),
+          SnackBar(content: Text(tr('quizQueue.removedFromQueueSnackbar'))),
         );
         await _load();
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('삭제 실패: $e')),
+          SnackBar(content: Text(tr('quizQueue.deleteFailed', {'error': e}))),
         );
       }
     }
@@ -204,42 +206,41 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
   String _typeLabel(String type) {
     switch (type) {
       case 'cloze':
-        return '단어완성';
+        return tr('quizQueue.filterCloze');
       case 'composition':
-        return '작문';
+        return tr('quizQueue.filterComposition');
       default:
         return type;
     }
   }
 
   String _reviewLabel(String? iso) {
-    if (iso == null || iso.isEmpty) return '복습 예정 없음';
+    if (iso == null || iso.isEmpty) return tr('quizQueue.reviewNoneScheduled');
     final dt = DateTime.tryParse(iso);
     if (dt == null) return iso;
     final now = DateTime.now().toUtc();
     final diff = dt.difference(now);
-    if (diff.isNegative) return '복습 가능';
-    if (diff.inHours < 24) return '${diff.inHours}시간 후 복습';
-    return '${diff.inDays}일 후 복습';
+    if (diff.isNegative) return tr('quizQueue.reviewAvailable');
+    if (diff.inHours < 24) {
+      return tr('quizQueue.reviewInHours', {'hours': diff.inHours});
+    }
+    return tr('quizQueue.reviewInDays', {'days': diff.inDays});
   }
 
   Future<void> _refillQueue() async {
     final confirmed = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: const Text('부족한 문제 채우기'),
-            content: const Text(
-              '부족한 퀴즈 유형만 지식그래프에서 탐색해 생성합니다. '
-              '새로운 소스가 없거나 이미 탐색한 소스라면 추가 API 호출 없이 종료됩니다.',
-            ),
+            title: Text(tr('quizQueue.refillTitle')),
+            content: Text(tr('quizQueue.refillBody')),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('취소'),
+                child: Text(tr('common.cancel')),
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('생성'),
+                child: Text(tr('common.generate')),
               ),
             ],
           ),
@@ -254,8 +255,8 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
 
       if (result['status'] == 'scheduled') {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('문제 생성을 시작했습니다. 잠시 후 새로고침하면 결과가 표시됩니다.'),
+          SnackBar(
+            content: Text(tr('quizQueue.refillScheduledSnackbar')),
           ),
         );
         return;
@@ -276,15 +277,15 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
         SnackBar(
           content: Text(
             generatedCloze > 0
-                ? '단어 문제 $generatedCloze개를 생성했습니다.'
-                : '새 단어 문제를 만들 수 있는 미탐색 표현이 없습니다. 복습 문제를 이용해 보세요.',
+                ? tr('quizQueue.generatedClozeSnackbar', {'count': generatedCloze})
+                : tr('quizQueue.noNewExpressionsSnackbar'),
           ),
         ),
       );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('문제 생성 실패: $e')),
+          SnackBar(content: Text(tr('quizQueue.refillFailed', {'error': e}))),
         );
       }
     } finally {
@@ -317,16 +318,16 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
     final ok = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: const Text('선택한 문제 삭제'),
-            content: Text('${ids.length}개 문제를 큐에서 제거할까요?'),
+            title: Text(tr('quizQueue.deleteSelectedTitle')),
+            content: Text(tr('quizQueue.deleteSelectedBody', {'count': ids.length})),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('취소'),
+                child: Text(tr('common.cancel')),
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('삭제'),
+                child: Text(tr('common.delete')),
               ),
             ],
           ),
@@ -339,14 +340,14 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
       if (!mounted) return;
       _selectedIds.clear();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${ids.length}개 문제를 큐에서 제거했습니다')),
+        SnackBar(content: Text(tr('quizQueue.deletedSelectedSnackbar', {'count': ids.length}))),
       );
       await _load();
     } catch (e) {
       if (mounted) {
         setState(() => _loading = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('일괄 삭제 실패: $e')),
+          SnackBar(content: Text(tr('quizQueue.bulkDeleteFailed', {'error': e}))),
         );
       }
     }
@@ -356,18 +357,16 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
     final ok = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: const Text('퀴즈 큐 전체 초기화'),
-            content: const Text(
-              '모든 언어의 신규·복습 단어/작문 문제를 비우고, 보이지 않는 소스 탐색 이력도 초기화합니다. 계속할까요?',
-            ),
+            title: Text(tr('quizQueue.resetAllTitle')),
+            content: Text(tr('quizQueue.resetAllBody')),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('취소'),
+                child: Text(tr('common.cancel')),
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('전체 초기화'),
+                child: Text(tr('quizQueue.resetAllAction')),
               ),
             ],
           ),
@@ -381,14 +380,14 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
       _selectedIds.clear();
       final archived = (result['archived'] as num?)?.toInt() ?? 0;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$archived개 문제와 탐색 이력을 초기화했습니다')),
+        SnackBar(content: Text(tr('quizQueue.resetDoneSnackbar', {'count': archived}))),
       );
       await _load();
     } catch (e) {
       if (mounted) {
         setState(() => _loading = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('전체 초기화 실패: $e')),
+          SnackBar(content: Text(tr('quizQueue.resetFailed', {'error': e}))),
         );
       }
     }
@@ -410,7 +409,8 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
           future: apiClient.listQuizExplorations(),
           builder: (context, snapshot) {
             if (snapshot.hasError) {
-              return Center(child: Text('탐색 이력을 불러오지 못했어요: ${snapshot.error}'));
+              return Center(
+                  child: Text(tr('quizQueue.explorationLoadFailed', {'error': snapshot.error})));
             }
             if (!snapshot.hasData) {
               return const Center(child: CircularProgressIndicator());
@@ -429,9 +429,9 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                       children: [
                         const Icon(Icons.account_tree_outlined),
                         const SizedBox(width: 8),
-                        const Expanded(
-                          child: Text('그래프 노드 탐색 현황',
-                              style: TextStyle(
+                        Expanded(
+                          child: Text(tr('quizQueue.explorationSheetTitle'),
+                              style: const TextStyle(
                                   fontSize: 18, fontWeight: FontWeight.w700)),
                         ),
                         IconButton(
@@ -447,21 +447,21 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                       runSpacing: 6,
                       children: [
                         _explorationCountChip(
-                            '탐색 완료', explored, const Color(0xFF22C55E)),
+                            tr('quizQueue.explorationDone'), explored, const Color(0xFF22C55E)),
                         if (partial > 0) ...[
                           _explorationCountChip(
-                              '일부 완료', partial, const Color(0xFFF59E0B)),
+                              tr('quizQueue.explorationPartial'), partial, const Color(0xFFF59E0B)),
                         ],
                         _explorationCountChip(
-                            '미탐색', unexplored, const Color(0xFF64748B)),
+                            tr('quizQueue.explorationUnexplored'), unexplored, const Color(0xFF64748B)),
                       ],
                     ),
                   ),
                   const Divider(height: 1),
                   Expanded(
                     child: items.isEmpty
-                        ? const Center(
-                            child: Text('퀴즈에 사용할 Statement 노드가 아직 없습니다.'))
+                        ? Center(
+                            child: Text(tr('quizQueue.noStatementNodes')))
                         : ListView.separated(
                             controller: controller,
                             itemCount: items.length,
@@ -495,7 +495,7 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                                                 .radio_button_unchecked_rounded,
                                     color: statusColor),
                                 title: Text(node['node_name']?.toString() ??
-                                    '이름 없는 노드'),
+                                    tr('quizQueue.unnamedNode')),
                                 subtitle: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
@@ -506,7 +506,7 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                                           overflow: TextOverflow.ellipsis),
                                     const SizedBox(height: 8),
                                     if (languageStats.isEmpty)
-                                      Text('언어별 탐색 정보가 없습니다',
+                                      Text(tr('quizQueue.noLanguageStats'),
                                           style: TextStyle(
                                               fontSize: 12,
                                               color: Colors.grey.shade600))
@@ -566,7 +566,7 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '$label · ${explored ? '탐색 완료' : '미탐색'}',
+            '$label · ${explored ? tr('quizQueue.explorationDone') : tr('quizQueue.explorationUnexplored')}',
             style: TextStyle(
               color: color,
               fontSize: 12,
@@ -574,13 +574,13 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
             ),
           ),
           const SizedBox(height: 7),
-          _generatedQuizTypeRow('단어 빈칸', cloze),
+          _generatedQuizTypeRow(tr('settings.clozeLabel'), cloze),
           const SizedBox(height: 3),
-          _generatedQuizTypeRow('작문', composition),
+          _generatedQuizTypeRow(tr('settings.compositionLabel'), composition),
           if (expressions > 0) ...[
             const SizedBox(height: 6),
             Text(
-              '추출 표현 $expressions개',
+              tr('quizQueue.extractedExpressions', {'count': expressions}),
               style: TextStyle(fontSize: 11, color: color.withValues(alpha: 0.8)),
             ),
           ],
@@ -593,7 +593,7 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
         children: [
           Expanded(child: Text(type, style: const TextStyle(fontSize: 11.5))),
           Text(
-            '$count문제',
+            tr('quizQueue.questionCountSuffix', {'count': count}),
             style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700),
           ),
         ],
@@ -615,7 +615,12 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
         borderRadius: BorderRadius.circular(10),
       ),
       child: Text(
-        '$label · 작문 $composition · 추출 표현 $expressions · 단어 퀴즈 $words',
+        tr('quizQueue.legacyChipLine', {
+          'label': label,
+          'composition': composition,
+          'expressions': expressions,
+          'words': words,
+        }),
         style: TextStyle(
           color: color,
           fontSize: 12,
@@ -647,18 +652,22 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
     final date = meta['date']?.toString() ?? created?.toIso8601String();
     final dt = DateTime.tryParse(date ?? '')?.toLocal();
     final time = dt == null
-        ? '생성 시각 알 수 없음'
-        : '${dt.month}/${dt.day} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')} 생성';
+        ? tr('quizQueue.generationTimeUnknown')
+        : tr('quizQueue.generatedAt', {
+            'datetime':
+                '${dt.month}/${dt.day} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}',
+          });
     final sequence = meta['sequence']?.toString();
     final source = item['source_kind']?.toString();
     final sourceLabel = source == 'review'
-        ? '복습'
+        ? tr('quizQueue.sourceReview')
         : source == 'exploration'
-            ? '랜덤 탐험'
+            ? tr('quizQueue.sourceExploration')
             : source == 'pin'
-                ? '핀'
+                ? tr('quizQueue.sourcePin')
                 : null;
-    final batchLabel = sequence == null ? '' : '배치 #$sequence · ';
+    final batchLabel =
+        sequence == null ? '' : tr('quizQueue.batchLabel', {'sequence': sequence});
     return '$batchLabel$time${sourceLabel == null ? '' : ' · $sourceLabel'}';
   }
 
@@ -666,10 +675,10 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('내 학습 큐 관리'),
+        title: Text(tr('quizQueue.pageTitle')),
         actions: [
           IconButton(
-            tooltip: '노드 탐색 현황',
+            tooltip: tr('quizQueue.explorationTooltip'),
             onPressed: _showExplorationSheet,
             icon: const Icon(Icons.account_tree_outlined),
           ),
@@ -683,14 +692,14 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.auto_awesome_outlined),
-              label: const Text('문제 채우기'),
+              label: Text(tr('quizQueue.fillQueueButton')),
             ),
         ],
         bottom: TabBar(
           controller: _tabController,
-          tabs: const [
-            Tab(text: '새로 배울 문제 (NEW)'),
-            Tab(text: '복습 대기 중 (REVIEW)'),
+          tabs: [
+            Tab(text: tr('quizQueue.tabNew')),
+            Tab(text: tr('quizQueue.tabReview')),
           ],
         ),
       ),
@@ -703,7 +712,7 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
               child: Row(
                 children: [
                   ChoiceChip(
-                    label: const Text('오늘의 세트'),
+                    label: Text(tr('quizQueue.todaySet')),
                     selected: _track == 'daily',
                     onSelected: (_) {
                       setState(() => _track = 'daily');
@@ -712,7 +721,7 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                   ),
                   const SizedBox(width: 8),
                   ChoiceChip(
-                    label: const Text('최우선 과제'),
+                    label: Text(tr('quizQueue.pinnedTrack')),
                     selected: _track == 'pinned',
                     onSelected: (_) {
                       setState(() => _track = 'pinned');
@@ -734,16 +743,16 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                       tristate: true,
                       onChanged: (value) => _toggleSelectAll(value == true),
                     ),
-                    Text(_allSelected ? '전체 해제' : '전체선택'),
+                    Text(_allSelected ? tr('quizQueue.deselectAll') : tr('quizQueue.selectAll')),
                   ],
                   if (_selectedIds.isNotEmpty) ...[
                     const SizedBox(width: 8),
-                    Text('${_selectedIds.length}개 선택',
+                    Text(tr('quizQueue.selectedCount', {'count': _selectedIds.length}),
                         style: TextStyle(fontSize: 12, color: Colors.grey)),
                     OutlinedButton.icon(
                       onPressed: _deleteSelected,
                       icon: const Icon(Icons.delete_outline, size: 16),
-                      label: const Text('선택 삭제'),
+                      label: Text(tr('quizQueue.deleteSelectedButton')),
                       style: OutlinedButton.styleFrom(
                         visualDensity: VisualDensity.compact,
                         foregroundColor: Colors.red.shade700,
@@ -754,7 +763,7 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                   TextButton.icon(
                     onPressed: _loading ? null : _resetAllQueue,
                     icon: const Icon(Icons.restart_alt_rounded, size: 16),
-                    label: const Text('큐 전체 초기화'),
+                    label: Text(tr('quizQueue.resetQueueButton')),
                   ),
                 ],
               ),
@@ -767,9 +776,15 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('오늘의 세트 진행률'),
+                        Text(tr('quizQueue.todayProgressLabel')),
                         Text(
-                            '${(_dailyProgress * 100).round()}% · 단어 ${_dailyGoalSummary['clozeDone']}/${_dailyGoalSummary['clozeTarget']} · 작문 ${_dailyGoalSummary['compositionDone']}/${_dailyGoalSummary['compositionTarget']}'),
+                            tr('quizQueue.progressSummary', {
+                              'percent': (_dailyProgress * 100).round(),
+                              'clozeDone': _dailyGoalSummary['clozeDone'],
+                              'clozeTarget': _dailyGoalSummary['clozeTarget'],
+                              'compDone': _dailyGoalSummary['compositionDone'],
+                              'compTarget': _dailyGoalSummary['compositionTarget'],
+                            })),
                       ],
                     ),
                   ),
@@ -779,22 +794,21 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                     child: LinearProgressIndicator(
                         value: _dailyProgress, minHeight: 6),
                   ),
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(16, 2, 16, 4),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 2, 16, 4),
                     child: Align(
                       alignment: Alignment.centerLeft,
-                      child: Text(
-                          '오늘 실제로 푼 신규 문제 기준입니다. 문제 채우기를 누르면 부족한 유형만 생성합니다.'),
+                      child: Text(tr('quizQueue.progressExplain')),
                     ),
                   ),
                 ],
               ),
             if (_track == 'pinned')
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 6, 16, 4),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: Text('핀 문제는 오늘의 세트와 별도로 즉시 생성됩니다.'),
+                  child: Text(tr('quizQueue.pinnedExplain')),
                 ),
               ),
             Padding(
@@ -804,7 +818,7 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                 child: Row(
                   children: [
                     FilterChip(
-                      label: const Text('전체 언어'),
+                      label: Text(tr('quizQueue.allLanguages')),
                       selected: _languageFilter == null,
                       onSelected: (_) {
                         setState(() => _languageFilter = null);
@@ -852,7 +866,7 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: Text('$_total개',
+                  child: Text(tr('quizQueue.itemCount', {'count': _total}),
                       style: TextStyle(fontSize: 12, color: Colors.grey[600])),
                 ),
               ),
@@ -860,12 +874,12 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _error != null
-                      ? Center(child: Text('불러오기 실패: $_error'))
+                      ? Center(child: Text(tr('quizQueue.loadFailed', {'error': _error})))
                       : _items.isEmpty
-                          ? const Center(
+                          ? Center(
                               child: Padding(
-                                padding: EdgeInsets.all(24),
-                                child: Text('큐가 비어 있습니다 — 저널에서 퀴즈를 생성해 보세요'),
+                                padding: const EdgeInsets.all(24),
+                                child: Text(tr('quizQueue.emptyQueue')),
                               ),
                             )
                           : RefreshIndicator(
@@ -950,7 +964,7 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                                         title: Text(
                                           target.isNotEmpty
                                               ? target
-                                              : '(대상 없음)',
+                                              : tr('quizQueue.noTarget'),
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                         ),
@@ -1068,7 +1082,7 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                                                   ),
                                                   if (streak > 0)
                                                     Text(
-                                                      '스트릭 $streak회',
+                                                      tr('quizQueue.streakCount', {'count': streak}),
                                                       style: TextStyle(
                                                           fontSize: 10,
                                                           color:

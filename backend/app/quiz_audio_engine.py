@@ -9,30 +9,20 @@ import uuid
 from pathlib import Path
 
 from .config import get_settings
+from .languages import LANGUAGES, DEFAULT_TARGET
 from .storage import public_media_url, save_media
 
 logger = logging.getLogger(__name__)
 
 AUDIO_DIR = Path(__file__).resolve().parent.parent / "static" / "audio"
-DEFAULT_VOICE = "en-US-JennyNeural"
+DEFAULT_VOICE = LANGUAGES[DEFAULT_TARGET].tts_voice
 MIN_AUDIO_BYTES = 512
-
-_LANGUAGE_VOICES: dict[str, str] = {
-    "english":    "en-US-JennyNeural",
-    "german":     "de-DE-KatjaNeural",
-    "japanese":   "ja-JP-NanamiNeural",
-    "chinese":    "zh-CN-XiaoxiaoNeural",
-    "french":     "fr-FR-DeniseNeural",
-    "spanish":    "es-ES-ElviraNeural",
-    "portuguese": "pt-BR-FranciscaNeural",
-    "italian":    "it-IT-ElsaNeural",
-    "arabic":     "ar-EG-SalmaNeural",
-    "russian":    "ru-RU-SvetlanaNeural",
-}
 
 
 def voice_for_language(language: str) -> str:
-    return _LANGUAGE_VOICES.get((language or "english").strip().lower(), DEFAULT_VOICE)
+    lang = (language or DEFAULT_TARGET).strip().lower()
+    spec = LANGUAGES.get(lang)
+    return spec.tts_voice if spec else DEFAULT_VOICE
 
 _BLANK_RE = re.compile(r"_{2,}|___+")
 

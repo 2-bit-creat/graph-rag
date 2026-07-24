@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_strings.dart';
+
 /// Free-writing answer surface. It deliberately avoids one fixed "model
 /// answer": writing is graded for grammar and naturalness instead.
 class CompositionQuizCard extends StatefulWidget {
@@ -47,7 +49,7 @@ class _CompositionQuizCardState extends State<CompositionQuizCard> {
         .toList();
     final prompt = widget.question.isNotEmpty
         ? widget.question
-        : (widget.quizData['prompt']?.toString() ?? '아래 상황을 영어로 자연스럽게 표현해 보세요.');
+        : (widget.quizData['prompt']?.toString() ?? tr('compQuizCard.defaultPrompt'));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -61,7 +63,7 @@ class _CompositionQuizCardState extends State<CompositionQuizCard> {
         ),
         if (expressions.isNotEmpty) ...[
           const SizedBox(height: 14),
-          Text('사용해 보면 좋은 표현', style: Theme.of(context).textTheme.labelLarge),
+          Text(tr('compQuizCard.usefulExpressions'), style: Theme.of(context).textTheme.labelLarge),
           const SizedBox(height: 7),
           Wrap(spacing: 7, runSpacing: 7, children: [
             for (final expression in expressions)
@@ -76,8 +78,8 @@ class _CompositionQuizCardState extends State<CompositionQuizCard> {
           enabled: !_submitting,
           textCapitalization: TextCapitalization.sentences,
           decoration: InputDecoration(
-            labelText: '영어로 답하기',
-            hintText: '정답은 하나가 아니에요. 자연스러운 문장으로 써 보세요.',
+            labelText: tr('compQuizCard.answerLabel'),
+            hintText: tr('compQuizCard.answerHint'),
             alignLabelWithHint: true,
             filled: true,
             fillColor: scheme.surfaceContainerHighest.withValues(alpha: 0.28),
@@ -90,7 +92,7 @@ class _CompositionQuizCardState extends State<CompositionQuizCard> {
           icon: _submitting
               ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
               : const Icon(Icons.rate_review_outlined),
-          label: const Text('문장 채점받기'),
+          label: Text(tr('compQuizCard.gradeButton')),
           style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
         ),
       ],

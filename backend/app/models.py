@@ -61,8 +61,11 @@ class JournalEntry(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     audio_url: Mapped[str | None] = mapped_column(String, nullable=True)
-    transcript_ko: Mapped[str | None] = mapped_column(Text, nullable=True)
-    transcript_clean_ko: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Raw / cleaned STT transcript in the user's NATIVE language (not always
+    # Korean — see languages.py). Renamed from transcript_ko/transcript_clean_ko;
+    # see db._MIGRATIONS for the guarded RENAME COLUMN that carries old rows over.
+    transcript_native: Mapped[str | None] = mapped_column(Text, nullable=True)
+    transcript_clean_native: Mapped[str | None] = mapped_column(Text, nullable=True)
     translation_en: Mapped[str | None] = mapped_column(Text, nullable=True)
     translation_de: Mapped[str | None] = mapped_column(Text, nullable=True)
     # All target-language translations keyed by ISO code, e.g. {"en": ..., "ja": ...}.
@@ -369,8 +372,11 @@ class Quiz(Base):
     # Stable per-source/per-expression identity.  It prevents a refill race or
     # repeated click from storing the same learning target twice.
     generation_key: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
-    question_ko: Mapped[str | None] = mapped_column(Text, nullable=True)
-    sentence_en: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Question instruction in the learner's NATIVE language, and the drilled
+    # sentence in the TARGET language. Renamed from question_ko/sentence_en —
+    # see db._MIGRATIONS for the guarded RENAME COLUMN carrying old rows over.
+    question_native: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sentence_target: Mapped[str | None] = mapped_column(Text, nullable=True)
     quiz_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     difficulty_level: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     queue_kind: Mapped[str] = mapped_column(String, nullable=False, default="new")

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/client.dart';
 import '../auth/account_controller.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import 'privacy_policy_screen.dart';
 
@@ -48,7 +49,7 @@ class _ConsentScreenState extends State<ConsentScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _loadError = '약관을 불러오지 못했어요. 네트워크를 확인해 주세요.';
+        _loadError = tr('consent.loadError');
         _loading = false;
       });
     }
@@ -104,7 +105,7 @@ class _ConsentScreenState extends State<ConsentScreen> {
           Icon(Icons.privacy_tip_outlined, size: 40, color: AppColors.hubGraph),
           const SizedBox(height: 16),
           Text(
-            '개인정보 수집·이용 동의',
+            tr('consent.title'),
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 21,
@@ -114,8 +115,7 @@ class _ConsentScreenState extends State<ConsentScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            '일기·대화 내용은 AI 처리를 위해 국외(OpenAI 등)로 전송·위탁됩니다. '
-            '자세한 항목·국가·보유기간은 처리방침에서 확인할 수 있어요.',
+            tr('consent.intro'),
             textAlign: TextAlign.center,
             style: TextStyle(color: shell.mutedText, height: 1.5, fontSize: 13.5),
           ),
@@ -146,14 +146,14 @@ class _ConsentScreenState extends State<ConsentScreen> {
           _ConsentTile(
             value: _agreeRequired,
             onChanged: (v) => setState(() => _agreeRequired = v),
-            title: '[필수] 개인정보 수집·이용 및 국외 이전에 동의합니다.',
-            subtitle: '일기·음성·대화 내용의 처리와 국외 위탁을 포함합니다.',
+            title: tr('consent.requiredTitle'),
+            subtitle: tr('consent.requiredSubtitle'),
           ),
           _ConsentTile(
             value: _agreeSpeaker,
             onChanged: (v) => setState(() => _agreeSpeaker = v),
-            title: '[선택] 음성 화자 식별(성문) 처리에 동의합니다.',
-            subtitle: '대화 속 화자를 구분합니다. 생체정보로, 동의하지 않아도 이용에 제한이 없습니다.',
+            title: tr('consent.speakerOptionalTitle'),
+            subtitle: tr('consent.speakerOptionalSubtitle'),
           ),
           const SizedBox(height: 4),
           TextButton.icon(
@@ -162,7 +162,7 @@ class _ConsentScreenState extends State<ConsentScreen> {
               MaterialPageRoute(builder: (_) => const PrivacyPolicyScreen()),
             ),
             icon: const Icon(Icons.description_outlined, size: 18),
-            label: const Text('개인정보 처리방침 전체 보기'),
+            label: Text(tr('consent.viewFullPolicy')),
           ),
           const SizedBox(height: 8),
           FilledButton(
@@ -173,7 +173,7 @@ class _ConsentScreenState extends State<ConsentScreen> {
                     height: 18,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Text('동의하고 시작'),
+                : Text(tr('consent.agreeAndStart')),
           ),
         ],
       ),
@@ -251,7 +251,7 @@ class _ErrorRetry extends StatelessWidget {
       children: [
         Text(message, textAlign: TextAlign.center),
         const SizedBox(height: 12),
-        FilledButton.tonal(onPressed: onRetry, child: const Text('다시 시도')),
+        FilledButton.tonal(onPressed: onRetry, child: Text(tr('kg.retry'))),
       ],
     );
   }

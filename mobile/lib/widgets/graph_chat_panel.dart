@@ -1,11 +1,19 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../chat/chat_session_controller.dart' show chatSession;
+import '../chat/chat_suggestions.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
+import '../utils/audio_file_import.dart';
+import '../utils/audio_mime.dart';
 import '../utils/graph_layout.dart';
+import 'audio_record_core.dart';
 import 'chat_rich_text.dart';
+import 'chat_suggestion_rail.dart';
 import 'journal_progress_card.dart';
+import 'mention_editor_core.dart';
 import 'thinking_orbs.dart';
 
 /// 지식그래프 화면 위에 떠 있는 바텀시트 형태의 대화 패널 (헤더 + 메시지 피드만).
@@ -155,7 +163,7 @@ class GraphChatPanel extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  '떠오르는 생각, 오늘 있었던 일, 궁금한 것 —\n무엇이든 편하게 적어보세요.',
+                  tr('chat.emptySubtitle'),
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: shell.mutedText,
@@ -201,7 +209,13 @@ class GraphChatPanel extends StatelessWidget {
         } else if (m.role == 'user') {
           child = _UserBubble(text: m.content);
         } else {
+          // Consecutive assistant turns read as one voice — only the first of
+          // a run carries the avatar, the rest indent to align under it.
+          final prev = i > 0 ? messages[i - 1] : null;
           child = _AssistantBubble(
+            showAvatar: !(prev != null &&
+                prev.role == 'assistant' &&
+                prev.kind == 'text'),
             text: m.content,
             referencedNodes: [
               for (final id in m.referencedNodeIds)
@@ -316,14 +330,22 @@ class ChatInputBar extends StatelessWidget {
     this.onExitMode,
     this.onModeSelected,
     this.inputEnabled = true,
-    this.inputHint = '아무 얘기나 해보세요…',
-    this.inputBarOverride,
+    this.inputHint = 'Say anything…', // always overridden by callers via tr()
+    this.journalMode = false,
     this.inputFocusNode,
+    this.suggestions = const [],
+    this.onSuggestionPrompt,
   });
 
   final TextEditingController inputController;
   final bool busy;
   final ValueChanged<String> onSend;
+
+  /// Tappable options rendered in the keypad area above the pill. Prompt chips
+  /// route to [onSuggestionPrompt] (falling back to [onSend]); action chips
+  /// reuse [onModeSelected], the same path as the "+" menu.
+  final List<ChatSuggestion> suggestions;
+  final ValueChanged<String>? onSuggestionPrompt;
 
   /// When non-null, a mode chip is shown with an X that calls [onExitMode].
   final String? modeLabel;
@@ -335,8 +357,11 @@ class ChatInputBar extends StatelessWidget {
   final bool inputEnabled;
   final String inputHint;
 
-  /// When non-null, replaces the default [_InputBar] (e.g. journal compose).
-  final Widget? inputBarOverride;
+  /// Journal mode reuses this same docked pill instead of a separate composer
+  /// card — the field grows an @-mention popup for speaker tagging, and a
+  /// mic/attach pair appears next to send. Only the surface swaps; there is
+  /// never a second input competing with this one.
+  final bool journalMode;
 
   /// Owned by the screen so it can re-request focus after a tap elsewhere
   /// in the tree (e.g. a quiz card's "다음 문제" button) steals it away.
@@ -356,6 +381,16 @@ class ChatInputBar extends StatelessWidget {
           children: [
             if (modeLabel != null)
               _ModeChip(label: modeLabel!, onExit: onExitMode),
+            // Keypad area — the likely next turns, one tap away. Rendered
+            // above the pill and inside the same measured block so the feed's
+            // bottom inset already accounts for it. Not relevant while writing
+            // a diary entry, so it steps aside in journal mode.
+            if (!journalMode && onModeSelected != null)
+              ChatSuggestionRail(
+                suggestions: suggestions,
+                onPrompt: onSuggestionPrompt ?? onSend,
+                onAction: onModeSelected!,
+              ),
             // Gemini-style detached floating pill: opaque, rounded-full, soft
             // shadow — reads as its own surface instead of a bar glued to the
             // sheet (whose content used to show through behind it).
@@ -375,16 +410,16 @@ class ChatInputBar extends StatelessWidget {
               ),
               child: Material(
                 color: Colors.transparent,
-                child: inputBarOverride ??
-                    _InputBar(
-                      controller: inputController,
-                      busy: busy,
-                      enabled: inputEnabled,
-                      hint: inputHint,
-                      onSend: onSend,
-                      onModeSelected: onModeSelected,
-                      focusNode: inputFocusNode,
-                    ),
+                child: _InputBar(
+                  controller: inputController,
+                  busy: busy,
+                  enabled: inputEnabled,
+                  hint: inputHint,
+                  journalMode: journalMode,
+                  onSend: onSend,
+                  onModeSelected: onModeSelected,
+                  focusNode: inputFocusNode,
+                ),
               ),
             ),
           ],
@@ -404,6 +439,7 @@ class _InputBar extends StatefulWidget {
     required this.hint,
     required this.onSend,
     required this.onModeSelected,
+    this.journalMode = false,
     this.focusNode,
   });
 
@@ -413,6 +449,11 @@ class _InputBar extends StatefulWidget {
   final String hint;
   final ValueChanged<String> onSend;
   final ValueChanged<String>? onModeSelected;
+
+  /// Swaps the plain [TextField] for a [MentionAutocompleteField] (@-mention
+  /// speaker tagging) and adds mic/attach actions; send saves the journal
+  /// entry instead of calling [onSend].
+  final bool journalMode;
 
   /// Owned by the screen (not this widget) so it can be re-requested after
   /// an action elsewhere in the tree — e.g. tapping a quiz card's "다음
@@ -427,13 +468,18 @@ class _InputBarState extends State<_InputBar> {
   FocusNode? _ownedFocusNode;
   FocusNode get _focusNode => widget.focusNode ?? (_ownedFocusNode ??= FocusNode());
 
+  final _mentionFieldKey = GlobalKey<MentionAutocompleteFieldState>();
+  AudioRecordController? _recorder;
+  bool _journalSaving = false;
+
   @override
   void dispose() {
     _ownedFocusNode?.dispose();
+    _recorder?.dispose();
     super.dispose();
   }
 
-  bool get _canType => widget.enabled && !widget.busy;
+  bool get _canType => widget.enabled && !widget.busy && !_journalSaving;
 
   void _insertNewline() {
     final value = widget.controller.value;
@@ -465,10 +511,178 @@ class _InputBarState extends State<_InputBar> {
     return KeyEventResult.handled;
   }
 
+  // ── Journal mode: save / mic / attach (folded in from the old standalone
+  // ChatJournalComposeBar card so writing a diary entry no longer needs a
+  // second input surface — this pill, with its hint + mode chip banner above
+  // it, is the whole story). ─────────────────────────────────────────────
+
+  AudioRecordController get _recorderController {
+    final existing = _recorder;
+    if (existing != null) return existing;
+    final created = AudioRecordController();
+    created.attachStateListener();
+    created.onMaxDurationReached = () {
+      if (!mounted) return;
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(tr('chat.recordingLimitSnackbar')),
+          duration: const Duration(seconds: 5),
+        ),
+      );
+      _uploadRecording();
+    };
+    created.onBrowserInterrupted = (msg) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(msg), duration: const Duration(seconds: 5)),
+        );
+        setState(() {});
+      }
+    };
+    created.addListener(() {
+      if (mounted) setState(() {});
+    });
+    _recorder = created;
+    return created;
+  }
+
+  Future<void> _saveJournal() async {
+    if (_journalSaving) return;
+    final field = _mentionFieldKey.currentState;
+    if (field == null) return;
+    final text = field.text.trim();
+    if (text.isEmpty) return;
+    if (text.length > kMaxJournalTextChars) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(tr('chat.textTooLongTitle')),
+          content: Text(
+            tr('chat.textTooLongBody', {
+              'current': text.length,
+              'max': kMaxJournalTextChars,
+            }),
+          ),
+          actions: [
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(tr('common.confirm'))),
+          ],
+        ),
+      );
+      return;
+    }
+    final labeled = labeledTextFromMentionField(field);
+    setState(() => _journalSaving = true);
+    try {
+      await chatSession.saveJournalText(labeled, displayText: text);
+    } finally {
+      if (mounted) setState(() => _journalSaving = false);
+    }
+  }
+
+  Future<void> _toggleMic() async {
+    final recorder = _recorderController;
+    if (recorder.recording) {
+      final result = await recorder.stop();
+      if (!mounted) return;
+      setState(() {});
+      if (result == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr('chat.noRecordingSnackbar'))),
+        );
+        return;
+      }
+      await _saveAudioResult(result);
+      return;
+    }
+    try {
+      final ok = await recorder.start();
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(tr('chat.micPermissionSnackbar')),
+          ),
+        );
+      }
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr('chat.recordingStartFailed', {'error': e}))),
+        );
+      }
+    }
+  }
+
+  Future<void> _uploadRecording() async {
+    final result = await _recorderController.stop();
+    if (result == null || !mounted) return;
+    await _saveAudioResult(result);
+  }
+
+  Future<void> _saveAudioResult(AudioRecordResult result) async {
+    setState(() => _journalSaving = true);
+    try {
+      await chatSession.saveJournalAudio(
+        path: result.path,
+        bytes: result.bytes,
+        filename: result.filename,
+        mimeType: result.mimeType,
+      );
+    } finally {
+      if (mounted) setState(() => _journalSaving = false);
+    }
+  }
+
+  Future<void> _pickFile() async {
+    if (_recorderController.recording) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr('chat.stopRecordingFirstSnackbar'))),
+      );
+      return;
+    }
+    try {
+      final picked = await pickAudioFile();
+      if (picked == null || !mounted) return;
+      setState(() => _journalSaving = true);
+      if (kIsWeb) {
+        final bytes = picked.bytes;
+        if (bytes == null || bytes.isEmpty) {
+          throw Exception(tr('chat.fileReadError'));
+        }
+        await chatSession.saveJournalAudio(
+          bytes: bytes,
+          filename: picked.name,
+          mimeType: audioMimeTypeForFilename(picked.name),
+        );
+      } else {
+        final path = picked.path;
+        if (path == null) throw Exception(tr('chat.filePathError'));
+        await chatSession.saveJournalAudio(
+          path: path,
+          filename: picked.name,
+          mimeType: audioMimeTypeForFilename(picked.name),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr('chat.fileSelectFailed', {'error': e}))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _journalSaving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final canType = _canType;
     final shell = context.shell;
+    final journalMode = widget.journalMode;
+    final recording = _recorder?.recording ?? false;
     // Chrome (pill surface, shadow, SafeArea) is owned by [ChatInputBar] —
     // this is just the naked row so the pill stays one clean surface.
     return Padding(
@@ -477,78 +691,83 @@ class _InputBarState extends State<_InputBar> {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           if (widget.onModeSelected != null)
-            PopupMenuButton<String>(
-              tooltip: '모드',
-              icon: Icon(Icons.add_circle_outline_rounded,
-                  color: shell.primaryText.withValues(alpha: 0.75)),
-              color: shell.barBackground,
-              elevation: 10,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(18),
-              ),
-              menuPadding: const EdgeInsets.symmetric(vertical: 6),
-              offset: const Offset(0, -8),
-              onSelected: widget.onModeSelected,
-              itemBuilder: (_) => [
-                PopupMenuItem(
-                  value: 'journal',
-                  child: _ModeMenuRow(
-                      icon: Icons.auto_stories_rounded,
-                      label: tr('chat.menu.journal')),
-                ),
-                PopupMenuItem(
-                  value: 'distill',
-                  child: _ModeMenuRow(
-                      icon: Icons.playlist_add_check_rounded,
-                      label: tr('chat.menu.distill')),
-                ),
-                PopupMenuItem(
-                  value: 'composition',
-                  child: _ModeMenuRow(
-                      icon: Icons.edit_note_rounded,
-                      label: tr('chat.menu.composition')),
-                ),
-                PopupMenuItem(
-                  value: 'word',
-                  child: _ModeMenuRow(
-                      icon: Icons.style_rounded,
-                      label: tr('chat.menu.word')),
-                ),
-              ],
+            _ModeMenuButton(onSelected: widget.onModeSelected!),
+          if (journalMode) ...[
+            _CompactIconButton(
+              tooltip:
+                  recording ? tr('chat.micTooltipStop') : tr('chat.micTooltipStart'),
+              icon: recording ? Icons.stop_rounded : Icons.mic_none_rounded,
+              active: recording,
+              onTap: _journalSaving ? null : _toggleMic,
             ),
+            _CompactIconButton(
+              tooltip: tr('chat.attachAudioTooltip'),
+              icon: Icons.attach_file_rounded,
+              onTap: _journalSaving || recording ? null : _pickFile,
+            ),
+          ],
           Expanded(
-            child: Focus(
-              onKeyEvent: _onKey,
-              child: TextField(
-                controller: widget.controller,
-                focusNode: _focusNode,
-                enabled: canType,
-                minLines: 1,
-                // Auto-grows with content up to ~6 lines, then scrolls — the
-                // standard composer behavior; capped so it never eats the feed.
-                maxLines: 6,
-                keyboardType: TextInputType.multiline,
-                style: TextStyle(color: shell.primaryText, fontSize: 14),
-                textInputAction: TextInputAction.send,
-                onSubmitted: canType ? widget.onSend : null,
-                decoration: InputDecoration(
-                  hintText: widget.hint,
-                  hintStyle: TextStyle(color: shell.mutedText, fontSize: 13.5),
-                  isDense: true,
-                  filled: false,
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.sm, vertical: 2),
-                ),
-              ),
-            ),
+            child: journalMode
+                ? MentionAutocompleteField(
+                    key: _mentionFieldKey,
+                    focusNode: _focusNode,
+                    minLines: 1,
+                    maxLines: 8,
+                    showCounter: false,
+                    // Docked at the bottom of the screen — open upward so the
+                    // popup never renders off-screen below the viewport.
+                    openUpward: true,
+                    enabled: canType && !recording,
+                    decoration: InputDecoration(
+                      hintText: widget.hint,
+                      hintStyle:
+                          TextStyle(color: shell.mutedText, fontSize: 13.5),
+                      isDense: true,
+                      filled: false,
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.sm, vertical: 8),
+                    ),
+                  )
+                : Focus(
+                    onKeyEvent: _onKey,
+                    child: TextField(
+                      controller: widget.controller,
+                      focusNode: _focusNode,
+                      enabled: canType,
+                      minLines: 1,
+                      // Auto-grows with content up to ~6 lines, then scrolls —
+                      // the standard composer behavior; capped so it never
+                      // eats the feed.
+                      maxLines: 6,
+                      keyboardType: TextInputType.multiline,
+                      style: TextStyle(color: shell.primaryText, fontSize: 14),
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: canType ? widget.onSend : null,
+                      decoration: InputDecoration(
+                        hintText: widget.hint,
+                        hintStyle:
+                            TextStyle(color: shell.mutedText, fontSize: 13.5),
+                        isDense: true,
+                        filled: false,
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.sm, vertical: 2),
+                      ),
+                    ),
+                  ),
           ),
           const SizedBox(width: AppSpacing.xs),
           _SendButton(
-            enabled: canType,
+            enabled: journalMode ? (canType && !recording) : canType,
+            busy: journalMode && _journalSaving,
             onSend: () {
               HapticFeedback.lightImpact();
-              widget.onSend(widget.controller.text);
+              if (journalMode) {
+                _saveJournal();
+              } else {
+                widget.onSend(widget.controller.text);
+              }
             },
           ),
         ],
@@ -560,9 +779,14 @@ class _InputBarState extends State<_InputBar> {
 /// Circular send button with a subtle press-scale + a color/fill transition
 /// between its disabled and active states.
 class _SendButton extends StatefulWidget {
-  const _SendButton({required this.enabled, required this.onSend});
+  const _SendButton({
+    required this.enabled,
+    required this.onSend,
+    this.busy = false,
+  });
 
   final bool enabled;
+  final bool busy;
   final VoidCallback onSend;
 
   @override
@@ -575,7 +799,7 @@ class _SendButtonState extends State<_SendButton> {
   @override
   Widget build(BuildContext context) {
     final shell = context.shell;
-    final enabled = widget.enabled;
+    final enabled = widget.enabled && !widget.busy;
     return GestureDetector(
       onTapDown: enabled ? (_) => setState(() => _pressed = true) : null,
       onTapCancel: enabled ? () => setState(() => _pressed = false) : null,
@@ -601,11 +825,119 @@ class _SendButtonState extends State<_SendButton> {
                   ]
                 : null,
           ),
-          child: Icon(
-            Icons.send_rounded,
-            size: 18,
-            color: enabled ? Colors.white : shell.mutedText,
-          ),
+          child: widget.busy
+              ? SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: shell.mutedText),
+                )
+              : Icon(
+                  Icons.send_rounded,
+                  size: 18,
+                  color: enabled ? Colors.white : shell.mutedText,
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+/// "+" mode menu — anchored to the button via a composited-layer follower
+/// (the same [LayerLink]/[OverlayPortal] mechanism [MentionAutocompleteField]
+/// already uses for its own @-mention popup) instead of [PopupMenuButton]'s
+/// built-in [showMenu] route. showMenu's RelativeRect is computed against the
+/// Navigator's overlay bounds, which drifted from this bar's actual on-screen
+/// position inside its nested Positioned/SafeArea/AnimatedPositioned stack —
+/// the menu rendered detached from the button instead of docked above it. A
+/// follower layer tracks the button's real RenderBox directly, so it can't drift.
+class _ModeMenuButton extends StatefulWidget {
+  const _ModeMenuButton({required this.onSelected});
+  final ValueChanged<String> onSelected;
+
+  @override
+  State<_ModeMenuButton> createState() => _ModeMenuButtonState();
+}
+
+class _ModeMenuButtonState extends State<_ModeMenuButton> {
+  final _link = LayerLink();
+  final _popupController = OverlayPortalController();
+
+  void _toggle() {
+    if (_popupController.isShowing) {
+      _popupController.hide();
+    } else {
+      _popupController.show();
+    }
+  }
+
+  void _select(String value) {
+    _popupController.hide();
+    widget.onSelected(value);
+  }
+
+  Widget _item(String value, IconData icon, String label) {
+    return InkWell(
+      onTap: () => _select(value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        child: _ModeMenuRow(icon: icon, label: label),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final shell = context.shell;
+    return CompositedTransformTarget(
+      link: _link,
+      child: OverlayPortal(
+        controller: _popupController,
+        overlayChildBuilder: (context) {
+          // Follower's bottom-left docks to the button's top-left, nudged up
+          // a hair — the menu grows upward, pinned to the button itself.
+          return CompositedTransformFollower(
+            link: _link,
+            showWhenUnlinked: false,
+            targetAnchor: Alignment.topLeft,
+            followerAnchor: Alignment.bottomLeft,
+            offset: const Offset(0, -8),
+            child: TapRegion(
+              onTapOutside: (_) => _popupController.hide(),
+              child: Material(
+                color: shell.barBackground,
+                elevation: 10,
+                shadowColor: Colors.black.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(18),
+                clipBehavior: Clip.antiAlias,
+                child: SizedBox(
+                  width: 210,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _item('journal', Icons.auto_stories_rounded,
+                            tr('chat.menu.journal')),
+                        _item('distill', Icons.playlist_add_check_rounded,
+                            tr('chat.menu.distill')),
+                        _item('composition', Icons.edit_note_rounded,
+                            tr('chat.menu.composition')),
+                        _item('word', Icons.style_rounded,
+                            tr('chat.menu.word')),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+        child: IconButton(
+          tooltip: tr('chat.modeTooltip'),
+          onPressed: _toggle,
+          icon: Icon(Icons.add_circle_outline_rounded,
+              color: shell.primaryText.withValues(alpha: 0.75)),
         ),
       ),
     );
@@ -626,6 +958,41 @@ class _ModeMenuRow extends StatelessWidget {
         const SizedBox(width: 10),
         Text(label, style: TextStyle(color: color, fontSize: 13)),
       ],
+    );
+  }
+}
+
+/// Small tappable icon (mic / attach) shown beside the composer in journal
+/// mode — the compact-bar equivalent of the old compose card's action row.
+class _CompactIconButton extends StatelessWidget {
+  const _CompactIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+    this.active = false,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onTap;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    final shell = context.shell;
+    final color = onTap == null
+        ? shell.mutedText
+        : (active ? Colors.redAccent : shell.primaryText.withValues(alpha: 0.72));
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Padding(
+          padding: const EdgeInsets.all(7),
+          child: Icon(icon, size: 19, color: color),
+        ),
+      ),
     );
   }
 }
@@ -734,6 +1101,7 @@ class _AssistantBubble extends StatelessWidget {
     required this.typeColors,
     required this.onNodeTap,
     required this.onNodeOpen,
+    this.showAvatar = true,
   });
 
   final String text;
@@ -742,39 +1110,82 @@ class _AssistantBubble extends StatelessWidget {
   final void Function(Map<String, dynamic> node) onNodeTap;
   final void Function(Map<String, dynamic> node) onNodeOpen;
 
+  /// False for the 2nd+ message of a consecutive assistant run — the gutter
+  /// stays reserved so the bubbles still line up under the first avatar.
+  final bool showAvatar;
+
   @override
   Widget build(BuildContext context) {
+    final shell = context.shell;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.sm, right: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
+          SizedBox(
             width: 22,
             height: 22,
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [AppColors.hubGraph, AppColors.hubQuiz],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.auto_awesome_rounded,
-                size: 12, color: Colors.white),
+            child: showAvatar
+                ? Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [AppColors.hubGraph, AppColors.hubQuiz],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.auto_awesome_rounded,
+                        size: 12, color: Colors.white),
+                  )
+                : null,
           ),
           const SizedBox(width: 6),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ChatRichText(text: text),
+                // A real surface for the answer — the assistant's turn used to
+                // be bare text floating on the panel, which read as chrome
+                // rather than as one side of a conversation.
+                Container(
+                  padding: const EdgeInsets.fromLTRB(11, 8, 11, 9),
+                  decoration: BoxDecoration(
+                    color: shell.subtleSurface,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(4),
+                      topRight: Radius.circular(AppSpacing.radiusMd),
+                      bottomLeft: Radius.circular(AppSpacing.radiusMd),
+                      bottomRight: Radius.circular(AppSpacing.radiusMd),
+                    ),
+                    border: Border.all(
+                      color: shell.panelBorder
+                          .withValues(alpha: isDark ? 0.55 : 0.75),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ChatRichText(text: text),
+                      if (referencedNodes.isNotEmpty) ...[
+                        const SizedBox(height: 9),
+                        _SourceCardRail(
+                          nodes: referencedNodes,
+                          typeColors: typeColors,
+                          onNodeTap: onNodeTap,
+                          onNodeOpen: onNodeOpen,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
                 const SizedBox(height: 3),
                 Row(
                   children: [
                     // AI Basic Act (2026) generated-content marking.
                     Text(
-                      'AI 생성',
+                      tr('chat.aiGeneratedLabel'),
                       style: TextStyle(
                         fontSize: 10,
                         height: 1.2,
@@ -789,27 +1200,156 @@ class _AssistantBubble extends StatelessWidget {
                     _CopyMessageButton(text: text),
                   ],
                 ),
-                if (referencedNodes.isNotEmpty) ...[
-                  const SizedBox(height: 5),
-                  Wrap(
-                    spacing: 4,
-                    runSpacing: 4,
-                    children: [
-                      for (final node in referencedNodes.take(5))
-                        _NodeChip(
-                          node: node,
-                          color: colorForType(
-                              node['type']?.toString() ?? '', typeColors),
-                          onTap: () => onNodeTap(node),
-                          onLongPress: () => onNodeOpen(node),
-                        ),
-                    ],
-                  ),
-                ],
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The nodes an answer was grounded in, as a scrollable card rail.
+///
+/// These used to be 10px name-only chips — technically the same information,
+/// but too small to convey what the answer actually stood on. Cards give each
+/// source its type color, its kind, and room for the statement behind it, so
+/// the grounding is legible at a glance instead of decorative.
+class _SourceCardRail extends StatelessWidget {
+  const _SourceCardRail({
+    required this.nodes,
+    required this.typeColors,
+    required this.onNodeTap,
+    required this.onNodeOpen,
+  });
+
+  final List<Map<String, dynamic>> nodes;
+  final Map<String, Color> typeColors;
+  final void Function(Map<String, dynamic> node) onNodeTap;
+  final void Function(Map<String, dynamic> node) onNodeOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = context.shell.mutedText;
+    final shown = nodes.take(8).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.hub_outlined, size: 11, color: muted),
+            const SizedBox(width: 4),
+            Text(
+              '${tr('chat.sources.title')} ${shown.length}',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.2,
+                color: muted,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        SizedBox(
+          height: 52,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: EdgeInsets.zero,
+            itemCount: shown.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 6),
+            itemBuilder: (context, i) => _SourceCard(
+              node: shown[i],
+              color:
+                  colorForType(shown[i]['type']?.toString() ?? '', typeColors),
+              onTap: () => onNodeTap(shown[i]),
+              onOpen: () => onNodeOpen(shown[i]),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SourceCard extends StatelessWidget {
+  const _SourceCard({
+    required this.node,
+    required this.color,
+    required this.onTap,
+    required this.onOpen,
+  });
+
+  final Map<String, dynamic> node;
+  final Color color;
+  final VoidCallback onTap;
+  final VoidCallback onOpen;
+
+  static Map<String, String> get _typeLabels => {
+        'Statement': tr('chat.typeStatement'),
+        'Concept': tr('chat.typeConcept'),
+        'Identity': tr('chat.typeIdentity'),
+        'Person': tr('chat.typePerson'),
+        'Source': tr('chat.typeSource'),
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final shell = context.shell;
+    final name = node['name']?.toString() ?? '';
+    final type = node['type']?.toString() ?? '';
+    final label = _typeLabels[type] ?? type;
+    return Material(
+      color: color.withValues(alpha: 0.10),
+      borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        onLongPress: onOpen,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 96, maxWidth: 190),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Type stripe — same color language as the canvas, so a card
+              // and its node on the graph are recognizably the same thing.
+              Container(width: 3, height: 52, color: color),
+              Flexible(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 7, 9, 7),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (label.isNotEmpty)
+                        Text(
+                          label,
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.3,
+                            color: color,
+                          ),
+                        ),
+                      const SizedBox(height: 2),
+                      Text(
+                        name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          height: 1.25,
+                          fontWeight: FontWeight.w600,
+                          color: shell.primaryText.withValues(alpha: 0.92),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -856,7 +1396,7 @@ class _CopyMessageButtonState extends State<_CopyMessageButton> {
             ),
             const SizedBox(width: 3),
             Text(
-              _copied ? '복사됨' : '복사',
+              _copied ? tr('chat.copiedLabel') : tr('chat.copyLabel'),
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.w600,
@@ -864,58 +1404,6 @@ class _CopyMessageButtonState extends State<_CopyMessageButton> {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _NodeChip extends StatelessWidget {
-  const _NodeChip({
-    required this.node,
-    required this.color,
-    required this.onTap,
-    required this.onLongPress,
-  });
-
-  final Map<String, dynamic> node;
-  final Color color;
-  final VoidCallback onTap;
-  final VoidCallback onLongPress;
-
-  @override
-  Widget build(BuildContext context) {
-    final name = node['name']?.toString() ?? '';
-    return Material(
-      color: color.withValues(alpha: 0.14),
-      borderRadius: BorderRadius.circular(8),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        onLongPress: onLongPress,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 5,
-                height: 5,
-                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-              ),
-              const SizedBox(width: 4),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 110),
-                child: Text(name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        color: color)),
-              ),
-            ],
-          ),
         ),
       ),
     );
@@ -1161,7 +1649,7 @@ class _JournalSubmitBubble extends StatelessWidget {
                       color: AppColors.hubVoice.withValues(alpha: 0.95)),
                   const SizedBox(width: 4),
                   Text(
-                    '일기 저장',
+                    tr('chat.journalSavedLabel'),
                     style: TextStyle(
                       fontSize: 10.5,
                       fontWeight: FontWeight.w700,

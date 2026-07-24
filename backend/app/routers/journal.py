@@ -374,7 +374,7 @@ async def build_entry_graph(
         raise HTTPException(status_code=404, detail="Entry not found")
     # GraphRAG는 한국어 정제 텍스트로 추출한다(번역 불필요) — 쓰기는 정제만 하고
     # 번역은 온디맨드이므로, 여기서는 정제 텍스트 유무만 확인한다.
-    if not ((entry.transcript_clean_ko or "").strip() or (entry.transcript_ko or "").strip()):
+    if not ((entry.transcript_clean_native or "").strip() or (entry.transcript_native or "").strip()):
         raise HTTPException(status_code=400, detail="정제된 텍스트가 아직 없습니다")
 
     # 화자 확인 게이트 — 텍스트도 음성과 동일하게 적용(사후 귀속 통일 흐름).

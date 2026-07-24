@@ -702,12 +702,11 @@ def _strict_fact_based_prompt(quiz_type: str) -> str:
     return base
 
 
-_LANG_DISPLAY_NAMES: dict[str, str] = {
-    "korean": "Korean (한국어)", "english": "English", "german": "German (Deutsch)",
-    "japanese": "Japanese (日本語)", "chinese": "Chinese (中文)", "spanish": "Spanish (Español)",
-    "french": "French (Français)", "portuguese": "Portuguese (Português)",
-    "italian": "Italian (Italiano)", "arabic": "Arabic (عربي)", "russian": "Russian (Русский)",
-}
+# Kept as a re-export — tutor.py and quiz_bundle.py import this name directly.
+# Single source of truth is languages.LANGUAGES; see that module's docstring.
+from .languages import LANGUAGES as _LANGUAGES_REGISTRY
+
+_LANG_DISPLAY_NAMES: dict[str, str] = {k: v.label for k, v in _LANGUAGES_REGISTRY.items()}
 
 _LANG_GRAMMAR_NOTES: dict[str, str] = {
     "german": (

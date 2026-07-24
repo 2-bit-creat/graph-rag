@@ -718,12 +718,21 @@ async def confirm_speaker_identity(
     # with no node link leaves the speaker looking unconfirmed, because
     # build_speaker_summaries_for_entry can't tell it apart from an auto-assigned
     # monologue '나'. Treat it exactly like the "이 화자는 나(본인)예요" path.
-    if not as_self and node_id is None and (new_node_name or "").strip() == "나":
+    if not as_self and node_id is None and (new_node_name or "").strip() in ("나", "Me"):
         as_self = True
 
     if as_self:
         # Resolve to the one canonical self node, ignoring any typed name.
-        self_node = await crud.get_or_create_self_node(session, user_id)
+        from .languages import spec as _language_spec
+        from .models import User
+
+        owner = await session.get(User, user_id)
+        self_label = _language_spec(
+            getattr(owner, "native_language", None), default="korean"
+        ).self_label or "나"
+        self_node = await crud.get_or_create_self_node(
+            session, user_id, default_name=self_label
+        )
         node_id = self_node.id
         new_node_name = None
 
@@ -954,7 +963,7 @@ def _replace_speaker_label_in_entry_texts(
     ko_tag = f"[{session_label}]"
     ko_replacement = f"[{canonical_name}]"
 
-    for field in ("transcript_ko", "transcript_clean_ko", "translation_en"):
+    for field in ("transcript_native", "transcript_clean_native", "translation_en"):
         text = getattr(entry, field)
         if not isinstance(text, str) or ko_tag not in text:
             continue
@@ -981,7 +990,7 @@ def _replace_speaker_label_in_entry_texts(
 def _replace_in_entry_texts(entry: JournalEntry, wrong: str, correct: str) -> int:
     """Replace misrecognized speaker/name strings across entry transcript fields."""
     count = 0
-    for field in ("transcript_ko", "transcript_clean_ko", "translation_en"):
+    for field in ("transcript_native", "transcript_clean_native", "translation_en"):
         text = getattr(entry, field)
         if isinstance(text, str) and wrong in text:
             setattr(entry, field, text.replace(wrong, correct))
@@ -1025,7 +1034,7 @@ def _sync_translation_speaker_brackets(
     correct_ko: str,
 ) -> int:
     """Align [Speaker] tags in translation_en with corrected Korean speaker names."""
-    clean = entry.transcript_clean_ko
+    clean = entry.transcript_clean_native
     trans = entry.translation_en
     if not isinstance(clean, str) or not isinstance(trans, str):
         return 0

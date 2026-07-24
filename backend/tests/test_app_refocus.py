@@ -63,7 +63,7 @@ async def test_build_session_new_queue_is_fifo(db_session, iso_user):
             queue_kind="new",
             repetitions=0,
             difficulty_level=iso_user.current_level,
-            question_ko=label,
+            question_native=label,
             language="english",
             quiz_data={"language": "english"},
             created_at=base + timedelta(seconds=i),
@@ -77,7 +77,7 @@ async def test_build_session_new_queue_is_fifo(db_session, iso_user):
         db_session, iso_user.id, "composition", size=3, language="english"
     )
     new_only = [q for q in picked if q.queue_kind == "new"]
-    assert [q.question_ko for q in new_only] == ["first", "second", "third"]
+    assert [q.question_native for q in new_only] == ["first", "second", "third"]
 
 
 @pytest.mark.asyncio
@@ -91,7 +91,7 @@ async def test_build_session_filters_by_language(db_session, iso_user):
                 queue_kind="new",
                 repetitions=0,
                 difficulty_level=iso_user.current_level,
-                question_ko=f"{lang} item",
+                question_native=f"{lang} item",
                 language=lang,
                 quiz_data={"language": lang},
             )

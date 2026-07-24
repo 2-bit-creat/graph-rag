@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../models/vocabulary.dart';
 import '../theme/app_theme.dart';
 
@@ -97,7 +98,7 @@ class _VocabularyPickerSheetState extends State<VocabularyPickerSheet> {
       if (mounted) {
         setState(() => _saving = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('단어장 생성 실패: $e')),
+          SnackBar(content: Text(tr('vocabPicker.createFailed', {'error': e}))),
         );
       }
     }
@@ -123,7 +124,7 @@ class _VocabularyPickerSheetState extends State<VocabularyPickerSheet> {
               children: [
                 Expanded(
                   child: Text(
-                    '단어장 선택',
+                    tr('vocabPicker.title'),
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
@@ -131,7 +132,7 @@ class _VocabularyPickerSheetState extends State<VocabularyPickerSheet> {
                   TextButton.icon(
                     onPressed: _showCreateForm,
                     icon: const Icon(Icons.add, size: 18),
-                    label: const Text('새 단어장'),
+                    label: Text(tr('vocabHub.newVocabTitle')),
                     style: TextButton.styleFrom(
                       visualDensity: VisualDensity.compact,
                     ),
@@ -169,7 +170,7 @@ class _VocabularyPickerSheetState extends State<VocabularyPickerSheet> {
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
                 child: Text(
-                  '아직 만든 단어장이 없어요.\n위 버튼으로 새 단어장을 만들어 추가해 보세요!',
+                  tr('vocabPicker.emptyState'),
                   style: Theme.of(context).textTheme.bodyMedium,
                   textAlign: TextAlign.center,
                 ),
@@ -204,7 +205,7 @@ class _VocabularyPickerSheetState extends State<VocabularyPickerSheet> {
                         vocab.name,
                         style: const TextStyle(fontWeight: FontWeight.w500),
                       ),
-                      subtitle: Text('${vocab.wordCount}개 단어'),
+                      subtitle: Text(tr('vocabPicker.wordCount', {'count': vocab.wordCount})),
                       trailing: const Icon(Icons.chevron_right, size: 18),
                       onTap: () => Navigator.pop(context, vocab),
                     );
@@ -248,7 +249,7 @@ class _CreateVocabForm extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            '새 단어장 만들기',
+            tr('vocabPicker.createFormTitle'),
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
                   color: Theme.of(context).colorScheme.primary,
                 ),
@@ -259,7 +260,7 @@ class _CreateVocabForm extends StatelessWidget {
             focusNode: focusNode,
             enabled: !saving,
             decoration: InputDecoration(
-              hintText: '단어장 이름 (예: 비즈니스 영어)',
+              hintText: tr('vocabPicker.createFormHint'),
               isDense: true,
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -279,7 +280,7 @@ class _CreateVocabForm extends StatelessWidget {
                   style: OutlinedButton.styleFrom(
                     visualDensity: VisualDensity.compact,
                   ),
-                  child: const Text('취소'),
+                  child: Text(tr('common.cancel')),
                 ),
               ),
               const SizedBox(width: 8),
@@ -295,7 +296,7 @@ class _CreateVocabForm extends StatelessWidget {
                           height: 16,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('만들기'),
+                      : Text(tr('common.create')),
                 ),
               ),
             ],
@@ -355,7 +356,10 @@ Future<bool> _showWordConfirmDialog(
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '「${wordCtrl.text.trim()}」을(를) ${vocab.name}에 추가했습니다',
+            tr('vocabPicker.addedToVocabSnackbar', {
+              'word': wordCtrl.text.trim(),
+              'vocab': vocab.name,
+            }),
           ),
         ),
       );
@@ -364,7 +368,7 @@ Future<bool> _showWordConfirmDialog(
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('추가 실패: $e')),
+        SnackBar(content: Text(tr('vocabDetail.addFailed', {'error': e}))),
       );
     }
     return false;
@@ -416,7 +420,7 @@ class _WordConfirmDialogState extends State<_WordConfirmDialog> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '「${widget.vocab.name}」에 추가',
+              tr('vocabPicker.addToVocabTitle', {'vocab': widget.vocab.name}),
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -428,9 +432,9 @@ class _WordConfirmDialogState extends State<_WordConfirmDialog> {
         children: [
           TextField(
             controller: widget.wordCtrl,
-            decoration: const InputDecoration(
-              labelText: '단어 (영어)',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              labelText: tr('vocabAddCard.wordLabel'),
+              border: const OutlineInputBorder(),
             ),
             autofocus: false,
           ),
@@ -438,8 +442,8 @@ class _WordConfirmDialogState extends State<_WordConfirmDialog> {
           TextField(
             controller: widget.meaningCtrl,
             decoration: InputDecoration(
-              labelText: '뜻 (한국어)',
-              hintText: '선택사항',
+              labelText: tr('vocabAddCard.meaningLabel'),
+              hintText: tr('vocabPicker.optional'),
               border: const OutlineInputBorder(),
               suffixIcon: ValueListenableBuilder(
                 valueListenable: widget.meaningCtrl,
@@ -455,7 +459,7 @@ class _WordConfirmDialogState extends State<_WordConfirmDialog> {
           ),
           const SizedBox(height: 4),
           Text(
-            '뜻은 나중에 단어장에서 추가할 수 있어요',
+            tr('vocabPicker.meaningLaterNote'),
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: Theme.of(context).colorScheme.outline,
                 ),
@@ -465,11 +469,11 @@ class _WordConfirmDialogState extends State<_WordConfirmDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context, false),
-          child: const Text('취소'),
+          child: Text(tr('common.cancel')),
         ),
         FilledButton(
           onPressed: _canAdd ? () => Navigator.pop(context, true) : null,
-          child: const Text('추가'),
+          child: Text(tr('common.add')),
         ),
       ],
     );

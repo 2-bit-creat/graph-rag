@@ -1,7 +1,9 @@
-/// Shared journal-entry phase derivation for compose PiP and inline chat tasks.
-///
-/// Status → phase mapping is identical whether the UI is a minimized window or
-/// an in-feed progress card — keep the rules in one place.
+// Shared journal-entry phase derivation for compose PiP and inline chat tasks.
+//
+// Status → phase mapping is identical whether the UI is a minimized window or
+// an in-feed progress card — keep the rules in one place.
+
+import '../l10n/app_strings.dart';
 
 /// Session stage — mini-card badge/label and auto-minimize decisions.
 ///
@@ -43,29 +45,29 @@ bool isGraphReviewPending(Map<String, dynamic>? entry) {
 
   if (status == 'processing') {
     phase = ComposePhase.working;
-    label = '받아쓰기 · 정제 중';
+    label = tr('journal.stageTranscribing');
   } else if (status == 'graph_processing' || graphStatus == 'graph_processing') {
     phase = ComposePhase.working;
-    label = '그래프 초안 생성 중';
+    label = tr('journal.stageGraphDrafting');
   } else if (status == 'failed') {
     phase = ComposePhase.error;
-    label = '처리 실패';
+    label = tr('journal.stageFailed');
   } else if (status == 'graph_failed' || graphStatus == 'graph_failed') {
     phase = ComposePhase.error;
-    label = '그래프 생성 실패';
+    label = tr('journal.stageGraphFailed');
   } else if (status == 'graph_staging_ready' ||
       graphStatus == 'graph_staging_ready') {
     phase = ComposePhase.needsInput;
-    label = '그래프 검토 필요';
+    label = tr('journal.stageGraphReviewNeeded');
   } else if (speakers) {
     phase = ComposePhase.needsInput;
-    label = '화자 확인 필요';
+    label = tr('journal.stageSpeakerConfirmNeeded');
   } else if (status == 'graph_ready' || graphStatus == 'graph_ready') {
     phase = ComposePhase.done;
-    label = '지식그래프 완성';
+    label = tr('journal.stageGraphComplete');
   } else {
     phase = ComposePhase.done;
-    label = '일기 준비 완료';
+    label = tr('journal.stageReady');
   }
 
   return (
@@ -164,7 +166,7 @@ bool hasSpeakerScript(Map<String, dynamic>? entry) {
   if (graphInFlight) {
     return (
       phase: ComposePhase.working,
-      label: '그래프 초안 생성 중',
+      label: tr('journal.stageGraphDrafting'),
       speakersPending: base.speakersPending,
       graphReviewPending: false,
       awaitingSpeakerAck: false,
@@ -192,8 +194,8 @@ bool hasSpeakerScript(Map<String, dynamic>? entry) {
     // graph was never built.
     if (!speakersAcknowledged && hasSpeakerScript(entry)) {
       final label = base.speakersPending
-          ? '화자 확인 필요'
-          : '화자 매칭 확인';
+          ? tr('journal.stageSpeakerConfirmNeeded')
+          : tr('journal.stageSpeakerMatchConfirm');
       return (
         phase: ComposePhase.needsInput,
         label: label,
@@ -207,7 +209,7 @@ bool hasSpeakerScript(Map<String, dynamic>? entry) {
     // intermediate state as "완성"; keep it as work-in-progress.
     return (
       phase: ComposePhase.working,
-      label: '그래프 초안 생성 중',
+      label: tr('journal.stageGraphDrafting'),
       speakersPending: base.speakersPending,
       graphReviewPending: false,
       awaitingSpeakerAck: false,

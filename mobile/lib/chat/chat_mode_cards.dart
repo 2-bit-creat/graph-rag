@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/quiz/cloze_quiz_card.dart';
 import '../widgets/quiz/mcq_quiz_card.dart';
@@ -78,19 +79,19 @@ class DistillDraftCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (loading && sentences.isEmpty) {
-      return const _CardShell(
-        title: '이 대화 → 일기 초안',
+      return _CardShell(
+        title: tr('chat.distillCardTitle'),
         child: Padding(
-          padding: EdgeInsets.symmetric(vertical: 12),
+          padding: const EdgeInsets.symmetric(vertical: 12),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              SizedBox(
+              const SizedBox(
                   width: 16,
                   height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2)),
-              SizedBox(width: 10),
-              Text('대화를 정리하는 중…', style: TextStyle(fontSize: 13)),
+              const SizedBox(width: 10),
+              Text(tr('chat.distillProcessing'), style: const TextStyle(fontSize: 13)),
             ],
           ),
         ),
@@ -99,17 +100,17 @@ class DistillDraftCard extends StatelessWidget {
 
     final includedCount = sentences.where((s) => s['included'] == true).length;
     return _CardShell(
-      title: '이 대화 → 일기 초안',
+      title: tr('chat.distillCardTitle'),
       onClose: onCancel,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
           if (sentences.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
-              child: Text('대화에서 새로 정리할 내용을 찾지 못했어요.',
-                  style: TextStyle(fontSize: 13)),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(tr('chat.distillEmpty'),
+                  style: const TextStyle(fontSize: 13)),
             )
           else
             for (var i = 0; i < sentences.length; i++)
@@ -119,7 +120,7 @@ class DistillDraftCard extends StatelessWidget {
               ),
           const SizedBox(height: 6),
           Text(
-            '빼거나 고칠 부분은 아래 입력창에 말해보세요. 예) "첫 문장 빼줘"',
+            tr('chat.distillEditHint'),
             style: TextStyle(fontSize: 11.5, color: AppColors.textMuted),
           ),
           const SizedBox(height: 10),
@@ -133,12 +134,12 @@ class DistillDraftCard extends StatelessWidget {
                 const SizedBox(width: 8),
               ],
               const Spacer(),
-              TextButton(onPressed: onCancel, child: const Text('취소')),
+              TextButton(onPressed: onCancel, child: Text(tr('common.cancel'))),
               const SizedBox(width: 4),
               FilledButton.icon(
                 onPressed: includedCount > 0 ? onSave : null,
                 icon: const Icon(Icons.auto_stories_rounded, size: 16),
-                label: Text('일기로 저장 ($includedCount)'),
+                label: Text(tr('chat.saveAsJournal', {'count': includedCount})),
               ),
             ],
           ),
@@ -188,8 +189,8 @@ class _SentenceRow extends StatelessWidget {
                       Flexible(
                         child: Text(
                           matched.isEmpty
-                              ? '이미 그래프에 있음'
-                              : '이미 그래프에 있음: "$matched"',
+                              ? tr('chat.alreadyInGraph')
+                              : tr('chat.alreadyInGraphMatched', {'matched': matched}),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -235,12 +236,14 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
   Widget build(BuildContext context) {
     final qd =
         (widget.quiz['quiz_data'] as Map?)?.cast<String, dynamic>() ?? {};
-    final prompt = widget.quiz['question_ko']?.toString() ?? '';
+    final prompt = (widget.quiz['question_native'] ?? widget.quiz['question_ko'])
+            ?.toString() ??
+        '';
     final glossary = (qd['glossary'] as List?) ?? [];
     final fb = widget.feedback;
 
     return _CardShell(
-      title: '작문 퀴즈',
+      title: tr('chat.compositionQuizTitle'),
       onClose: widget.onExit,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -277,10 +280,10 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
                       height: 14,
                       child: CircularProgressIndicator(strokeWidth: 2)),
                   const SizedBox(width: 8),
-                  const Text('채점 중…', style: TextStyle(fontSize: 12.5)),
+                  Text(tr('chat.grading'), style: const TextStyle(fontSize: 12.5)),
                 ] else
                   Expanded(
-                    child: Text('아래 입력창에 영어로 작문해서 보내보세요.',
+                    child: Text(tr('chat.compositionHint'),
                         style: TextStyle(
                             fontSize: 12.5, color: AppColors.textMuted)),
                   ),
@@ -296,7 +299,7 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
                 FilledButton.icon(
                   onPressed: widget.onNext,
                   icon: const Icon(Icons.arrow_forward_rounded, size: 16),
-                  label: const Text('다음 문장'),
+                  label: Text(tr('chat.nextSentence')),
                 ),
               ],
             ),
@@ -336,7 +339,7 @@ class _FeedbackBody extends StatelessWidget {
         ],
         if (saveSuggestions.isNotEmpty) ...[
           const SizedBox(height: 10),
-          Text('유용한 표현',
+          Text(tr('chat.usefulExpressions'),
               style: TextStyle(fontSize: 11.5, color: AppColors.textMuted)),
           const SizedBox(height: 4),
           for (final item in saveSuggestions)
@@ -349,7 +352,7 @@ class _FeedbackBody extends StatelessWidget {
         ],
         if (naturalVersions.isNotEmpty) ...[
           const SizedBox(height: 8),
-          Text('이렇게도 말할 수 있어요',
+          Text(tr('chat.alsoSaySo'),
               style: TextStyle(fontSize: 11.5, color: AppColors.textMuted)),
           const SizedBox(height: 4),
           for (final v in naturalVersions)
@@ -534,7 +537,7 @@ class _WordQuizCardState extends State<WordQuizCard> {
     final readyForNext = isCloze ? clozeComplete : answered;
 
     return _CardShell(
-      title: '단어 퀴즈',
+      title: tr('chat.wordQuizTitle'),
       onClose: widget.onExit,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -546,7 +549,7 @@ class _WordQuizCardState extends State<WordQuizCard> {
             FilledButton.icon(
               onPressed: widget.onNext,
               icon: const Icon(Icons.arrow_forward_rounded, size: 18),
-              label: const Text('다음 문제'),
+              label: Text(tr('chat.nextQuestion')),
             ),
           ] else if (answered && !isCloze) ...[
             const SizedBox(height: 10),
@@ -566,7 +569,11 @@ class _WordQuizCardState extends State<WordQuizCard> {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    isCorrect ? '정답!' : (isCloze ? '정답을 직접 입력해서 완성해보세요' : '오답'),
+                    isCorrect
+                        ? tr('chat.correctAnswer')
+                        : (isCloze
+                            ? tr('chat.typeAnswerToComplete')
+                            : tr('chat.incorrectAnswer')),
                     style: const TextStyle(
                         fontSize: 13, fontWeight: FontWeight.w700),
                   ),
@@ -575,7 +582,7 @@ class _WordQuizCardState extends State<WordQuizCard> {
                   FilledButton.icon(
                     onPressed: widget.onNext,
                     icon: const Icon(Icons.arrow_forward_rounded, size: 16),
-                    label: const Text('다음 문제'),
+                    label: Text(tr('chat.nextQuestion')),
                   ),
               ],
             ),
