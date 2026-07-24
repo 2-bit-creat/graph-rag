@@ -23,7 +23,7 @@ from .journal_pipeline import (
 from .pipeline_trace import PipelineTracer
 from .speaker_diarization import diarize_audio, segments_to_labeled_transcript
 from .speaker_profiles import process_entry_speaker_profiles
-from .storage import local_path, save_audio
+from .storage import save_audio_workfile
 
 
 async def run_journal_fast_pipeline(
@@ -49,8 +49,10 @@ async def run_journal_fast_pipeline(
         input_data={"filename": filename, "size_bytes": len(file_bytes)},
     )
     try:
-        audio_key = await save_audio(file_bytes, filename, user_id)
-        path = local_path(audio_key)
+        # The durable copy (S3 in production) and a scratch copy on a writable
+        # filesystem — every step below takes a Path, and with S3 configured the
+        # durable copy has no local file to point at.
+        audio_key, path = await save_audio_workfile(file_bytes, filename, user_id)
         art = tracer.save_audio_bytes(file_bytes, filename)
         tracer.finish_step(
             step,
@@ -113,7 +115,10 @@ async def run_journal_fast_pipeline(
             "note": "Skipped when Deepgram/pyannote enabled; else conservative edge trim only",
         },
     )
-    trim_dir = tracer.root / "audio"
+    # Scratch, not tracer.root: the debug tree is only created when debug
+    # tracing is on (off in production), but trimming has to write somewhere
+    # regardless of whether anyone is collecting artifacts.
+    trim_dir = path.parent
     stt_path = path
     try:
         if skip_trim:

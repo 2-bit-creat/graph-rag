@@ -298,7 +298,6 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
             ),
             const SizedBox(height: 16),
             _actionButton(
-              icon: '🔍',
               label: '기존 정체성에서 고르기',
               onPressed: () => setState(() => _mode = _Mode.pickOther),
               filled: true,
@@ -306,7 +305,6 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
             ..._altCandidateButtons(null, skipPickOtherFallback: true),
             const SizedBox(height: 8),
             _actionButton(
-              icon: '✏️',
               label: '새 정체성 등록',
               onPressed: () {
                 _manualController.clear();
@@ -329,7 +327,6 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
               ),
             const SizedBox(height: 16),
             _actionButton(
-              icon: '👍',
               label: '${recommended['name']} 맞아요',
               onPressed: _confirmRecommended,
               filled: true,
@@ -337,7 +334,6 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
             ..._altCandidateButtons(recommended),
             const SizedBox(height: 8),
             _actionButton(
-              icon: '✏️',
               label: '기존 정체성에서 고르기 / 새로 등록',
               onPressed: () => setState(() => _mode = _Mode.pickOther),
             ),
@@ -361,7 +357,6 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
             ..._altCandidateButtons(null, filledFirst: true, skipPickOtherFallback: true),
             const SizedBox(height: 8),
             _actionButton(
-              icon: '✨',
               label: '새 정체성 등록',
               onPressed: () {
                 _manualController.clear();
@@ -372,7 +367,6 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
             ),
             const SizedBox(height: 8),
             _actionButton(
-              icon: '📋',
               label: '기존 정체성에서 고르기',
               onPressed: () => setState(() => _mode = _Mode.pickOther),
             ),
@@ -561,7 +555,6 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
       widgets.add(Padding(
         padding: const EdgeInsets.only(top: 8),
         child: _actionButton(
-          icon: '',
           label: name,
           onPressed: () => _confirmPicked(Map<String, dynamic>.from(raw)),
           filled: filledFirst && idx == 0,
@@ -573,7 +566,6 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
       widgets.add(Padding(
         padding: const EdgeInsets.only(top: 8),
         child: _actionButton(
-          icon: '🔍',
           label: '기존 정체성에서 고르기',
           onPressed: () => setState(() => _mode = _Mode.pickOther),
         ),
@@ -591,21 +583,11 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
   }
 
   Widget _actionButton({
-    required String icon,
     required String label,
     required VoidCallback onPressed,
     bool filled = false,
   }) {
-    final child = Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        if (icon.isNotEmpty) ...[
-          Text(icon, style: const TextStyle(fontSize: 18)),
-          const SizedBox(width: 8),
-        ],
-        Text(label),
-      ],
-    );
+    final child = Text(label);
     if (filled) {
       return FilledButton(
         onPressed: _submitting ? null : onPressed,

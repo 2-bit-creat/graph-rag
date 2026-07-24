@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../api/client.dart';
 import '../theme/app_theme.dart';
-import '../widgets/app_ui.dart';
 import '../widgets/speaker_merge_sheet.dart';
 import '../widgets/transcript_speaker_view.dart';
 import '../widgets/vocabulary_picker_sheet.dart';
@@ -41,20 +40,30 @@ class TranslationEntryPanel extends StatelessWidget {
     final hasCurrent = current != null && current.isNotEmpty;
     if (!hasSuggestion && !hasCurrent) return const SizedBox.shrink();
     final label = hasCurrent ? current : '$suggested (추천)';
+    final theme = Theme.of(context);
+    // A metadata line, not a chip: one small label + an inline change action,
+    // so the entry type stops looking like a tappable pill it never was.
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.sm),
       child: Row(
         children: [
-          Chip(
-            avatar: const Icon(Icons.category_outlined, size: 16),
-            label: Text('유형: $label'),
-            visualDensity: VisualDensity.compact,
+          Text(
+            '유형 · $label',
+            style: theme.textTheme.bodySmall?.copyWith(color: AppColors.textMuted),
           ),
-          if (!locked)
+          if (!locked) ...[
+            const SizedBox(width: AppSpacing.sm),
             TextButton(
               onPressed: () => _pickType(context, hasCurrent ? current : suggested),
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(0, 0),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+              ),
               child: const Text('변경'),
             ),
+          ],
         ],
       ),
     );
@@ -228,8 +237,6 @@ class TranslationEntryPanel extends StatelessWidget {
           _VocabTextSection(
             title: '정제된 일기',
             content: primaryClean,
-            icon: Icons.auto_fix_high_rounded,
-            highlight: true,
             pinned: true,
             // 번역 카드가 사라져 단어장 추가 진입점을 여기로 — 단어를 드래그해 추가.
             showVocab: true,
@@ -253,21 +260,27 @@ class TranslationEntryPanel extends StatelessWidget {
 }
 
 /// 잠금 안내 — 컴팩트 한 줄.
+///
+/// A passive explanation of why the controls below are read-only, so it reads
+/// as a footnote: muted text and a small outline glyph, no card or tint.
 class _LockedNote extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return AppSurfaceCard(
-      tint: AppColors.hubGraph,
-      padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+    final muted = AppColors.textMuted;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.lock_outline_rounded, color: AppColors.hubGraph, size: 18),
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(Icons.lock_outline, color: muted, size: 14),
+          ),
           const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Text(
               '지식그래프 생성 후 유형·화자는 잠깁니다. 수정하려면 그래프를 삭제 후 다시 생성하세요.',
-              style: Theme.of(context).textTheme.bodySmall,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: muted),
             ),
           ),
         ],
@@ -297,32 +310,34 @@ class _CollapsibleSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-      child: Card(
-        child: Theme(
-          data: theme.copyWith(dividerColor: Colors.transparent),
-          child: ExpansionTile(
-            tilePadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-            childrenPadding:
-                const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.md),
-            initiallyExpanded: initiallyExpanded,
-            leading: icon == null
-                ? null
-                : Icon(icon, size: 20, color: accent ?? theme.colorScheme.primary),
-            title: Text(
-              title,
-              style: theme.textTheme.titleSmall?.copyWith(
-                color: accent,
-                fontWeight: accent != null ? FontWeight.w700 : null,
-              ),
+    // Hairline-separated sections instead of stacked elevated cards, and no
+    // leading glyph — the section title carries the meaning on its own, and a
+    // column of coloured icons was the main source of visual noise here.
+    // `icon` is kept in the API for callers but intentionally not rendered.
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: theme.dividerColor.withValues(alpha: 0.5)),
+        ),
+      ),
+      child: Theme(
+        data: theme.copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          childrenPadding: const EdgeInsets.only(bottom: AppSpacing.md),
+          initiallyExpanded: initiallyExpanded,
+          title: Text(
+            title,
+            style: theme.textTheme.titleSmall?.copyWith(
+              color: accent,
+              fontWeight: FontWeight.w500,
             ),
-            subtitle: subtitle == null
-                ? null
-                : Text(subtitle!,
-                    style: theme.textTheme.bodySmall?.copyWith(color: accent)),
-            children: [child],
           ),
+          subtitle: subtitle == null
+              ? null
+              : Text(subtitle!,
+                  style: theme.textTheme.bodySmall?.copyWith(color: accent)),
+          children: [child],
         ),
       ),
     );
@@ -367,22 +382,16 @@ class _VocabTextSection extends StatefulWidget {
     required this.title,
     required this.content,
     required this.entryId,
-    this.highlight = false,
     this.pinned = false,
-    this.icon = Icons.translate_rounded,
     this.showVocab = true,
   });
 
   final String title;
   final String content;
   final String entryId;
-  final bool highlight;
 
-  /// 1차 콘텐츠용 — 접기 없이 항상 펼쳐진 강조 카드로 렌더.
+  /// 1차 콘텐츠용 — 카드 없이 본문 그대로 항상 펼쳐서 렌더.
   final bool pinned;
-
-  /// pinned 카드의 헤더 아이콘.
-  final IconData icon;
 
   /// '단어장에 추가' 노출 여부 — 한국어 정제 본문에는 숨긴다(학습 대상은 번역).
   final bool showVocab;
@@ -437,20 +446,30 @@ class _VocabTextSectionState extends State<_VocabTextSection> {
   }
 
   Widget _buildTextBody(BuildContext context) {
+    final theme = Theme.of(context);
+    // The pinned (primary) copy is the reason the screen exists, so it is set
+    // as prose — larger, looser leading, on the page background. Only the
+    // secondary collapsed sections keep a tinted well to mark them as excerpts.
+    final primary = widget.pinned;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(AppSpacing.md),
-      decoration: BoxDecoration(
-        color: widget.highlight
-            ? Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.35)
-            : Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-      ),
+      padding: primary
+          ? EdgeInsets.zero
+          : const EdgeInsets.all(AppSpacing.md),
+      decoration: primary
+          ? null
+          : BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest
+                  .withValues(alpha: 0.4),
+              borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+            ),
       child: TextField(
         controller: _controller,
         readOnly: true,
         maxLines: null,
-        style: Theme.of(context).textTheme.bodyMedium?.copyWith(height: 1.5),
+        style: primary
+            ? theme.textTheme.bodyLarge?.copyWith(height: 1.75)
+            : theme.textTheme.bodyMedium?.copyWith(height: 1.5),
         decoration: const InputDecoration(
           border: InputBorder.none,
           isDense: true,
@@ -461,12 +480,14 @@ class _VocabTextSectionState extends State<_VocabTextSection> {
   }
 
   Widget _buildVocabButton() {
+    // Text button, not a filled tonal one with a glyph: adding a word is a
+    // secondary affordance next to reading the entry.
     return Align(
-      alignment: Alignment.centerRight,
-      child: FilledButton.tonalIcon(
+      alignment: Alignment.centerLeft,
+      child: TextButton(
         onPressed: _addToVocabulary,
-        icon: const Icon(Icons.bookmark_add_outlined, size: 18),
-        label: Text(
+        style: TextButton.styleFrom(padding: EdgeInsets.zero),
+        child: Text(
           _selected.isNotEmpty ? '「$_selected」 단어장에 추가' : '단어장에 추가',
         ),
       ),
@@ -480,33 +501,32 @@ class _VocabTextSectionState extends State<_VocabTextSection> {
 
     // 1차 콘텐츠: 접기 없이 항상 펼쳐진 강조 카드 — 사용자가 가장 먼저 보게 될 것.
     if (widget.pinned) {
+      // No card, no icon, no coloured title — the entry text sits directly on
+      // the page under a quiet eyebrow label, so nothing frames or competes
+      // with it. The chrome that used to wrap it was the "AI스러운" part.
       return Padding(
-        padding: const EdgeInsets.only(bottom: AppSpacing.md),
-        child: Card(
-          child: Padding(
-            padding: const EdgeInsets.all(AppSpacing.md),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Icon(widget.icon,
-                        size: 18, color: theme.colorScheme.primary),
-                    const SizedBox(width: 6),
-                    Text(widget.title,
-                        style: theme.textTheme.titleSmall
-                            ?.copyWith(color: theme.colorScheme.primary)),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                _buildTextBody(context),
-                if (!empty && widget.showVocab) ...[
-                  const SizedBox(height: AppSpacing.sm),
-                  _buildVocabButton(),
-                ],
-              ],
+        padding: const EdgeInsets.only(
+          top: AppSpacing.sm,
+          bottom: AppSpacing.lg,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              widget.title,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: AppColors.textMuted,
+                letterSpacing: 0.8,
+                fontWeight: FontWeight.w500,
+              ),
             ),
-          ),
+            const SizedBox(height: AppSpacing.sm),
+            _buildTextBody(context),
+            if (!empty && widget.showVocab) ...[
+              const SizedBox(height: AppSpacing.xs),
+              _buildVocabButton(),
+            ],
+          ],
         ),
       );
     }

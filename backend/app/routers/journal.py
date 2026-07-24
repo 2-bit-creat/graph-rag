@@ -55,9 +55,21 @@ def _schedule_graph_ingest(
 
 
 async def _entry_out(
-    session: AsyncSession, user_id: uuid.UUID, entry
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    entry,
+    *,
+    has_graph_nodes: bool | None = None,
+    with_speakers: bool = True,
 ) -> JournalEntryOut:
-    """Journal entry + per-session speaker confirmation status for STT UI."""
+    """Journal entry + per-session speaker confirmation status for STT UI.
+
+    ``has_graph_nodes`` lets a caller rendering many entries pass in a value it
+    already resolved in bulk (see crud.entries_with_graph_nodes) instead of
+    paying one query per entry. ``with_speakers=False`` drops the speaker
+    summary block — several queries and a possible repair *write* per entry,
+    which only the detail views actually consume.
+    """
     out = JournalEntryOut.model_validate(entry)
     trace = entry.pipeline_trace if isinstance(entry.pipeline_trace, dict) else {}
     entry_source = trace.get("entry_source")
@@ -81,7 +93,12 @@ async def _entry_out(
     # Authoritative override: if graph nodes are actually committed for this entry,
     # the graph IS ready — self-heal a stuck 'graph_processing'/'graph_failed'.
     if graph_status != "graph_ready":
-        if await crud.entry_has_graph_nodes(session, entry.id):
+        committed = (
+            has_graph_nodes
+            if has_graph_nodes is not None
+            else await crud.entry_has_graph_nodes(session, entry.id)
+        )
+        if committed:
             graph_status = "graph_ready"
     ingest_summary = trace.get("ingest_summary")
     if graph_status or ingest_summary:
@@ -91,6 +108,9 @@ async def _entry_out(
                 "ingest_summary": ingest_summary,
             }
         )
+
+    if not with_speakers:
+        return out
 
     from ..speaker_profiles import (
         entry_speaker_bindings_mismatched,
@@ -513,7 +533,20 @@ async def list_entries(
     session: AsyncSession = Depends(get_session),
 ) -> list[JournalEntryOut]:
     entries = await crud.list_journal_entries(session, user.id)
-    return [await _entry_out(session, user.id, e) for e in entries]
+    # One query for the whole list's graph-commit status, and no speaker
+    # summaries here — the detail endpoint serves those, and building them per
+    # row turned this into dozens of round trips (the "불러오기 실패" timeout).
+    committed = await crud.entries_with_graph_nodes(session, [e.id for e in entries])
+    return [
+        await _entry_out(
+            session,
+            user.id,
+            e,
+            has_graph_nodes=e.id in committed,
+            with_speakers=False,
+        )
+        for e in entries
+    ]
 
 
 @router.get("/entries/{entry_id}", response_model=JournalEntryOut)
@@ -526,6 +559,42 @@ async def get_entry(
     if entry is None:
         raise HTTPException(status_code=404, detail="Entry not found")
     return await _entry_out(session, user.id, entry)
+
+
+@router.get("/entries/{entry_id}/nodes")
+async def list_entry_nodes(
+    entry_id: uuid.UUID,
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    """Graph nodes committed from this entry, for "이 일기의 노드 보기".
+
+    Statements first, then everything else — the diary detail focuses the graph
+    on the first one, and a Statement is the entry's own claim, whereas a
+    Concept/Person is usually shared with other entries.
+    """
+    from sqlalchemy import case, select
+
+    from ..models import JournalGraphLink, Node
+
+    entry = await crud.get_journal_entry(session, entry_id, user.id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Entry not found")
+
+    result = await session.execute(
+        select(Node.id, Node.name, Node.type)
+        .join(JournalGraphLink, JournalGraphLink.node_id == Node.id)
+        .where(
+            JournalGraphLink.journal_entry_id == entry_id,
+            Node.user_id == user.id,
+            Node.deleted_at.is_(None),
+        )
+        .order_by(case((Node.type == "Statement", 0), else_=1), Node.name)
+    )
+    return [
+        {"id": str(row.id), "name": row.name, "type": row.type}
+        for row in result.all()
+    ]
 
 
 @router.post("/entries/{entry_id}/quiz/generate", response_model=QuizGenerateOut)

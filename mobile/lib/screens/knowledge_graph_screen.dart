@@ -14,8 +14,6 @@ import '../utils/statement_display.dart';
 import '../widgets/chat_journal_compose_bar.dart';
 import '../widgets/graph_chat_panel.dart';
 import '../widgets/graph_inspector_panel.dart';
-import '../widgets/journal_progress_card.dart';
-import '../widgets/journal_status_pill.dart';
 import '../widgets/knowledge_graph_canvas.dart';
 import '../widgets/ontology_settings_sheet.dart';
 import '../widgets/thinking_orbs.dart';
@@ -243,9 +241,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
       onClearHistory: _deleteActiveRoom,
       listFooter: _chatListFooter(),
       quizMode: _isQuizMode,
-      statusPill: journalTask.showsPill
-          ? JournalStatusPill(onTap: _onStatusPillTap)
-          : null,
       onPanelTap: _chatVisible ? null : () {
         _chatInputFocusNode.unfocus();
         setState(() => _chatVisible = true);
@@ -306,9 +301,11 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
       bottom: 0,
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
-      // While typing, use every pixel above the keyboard. The Scaffold/SafeArea
-      // viewport already excludes the IME, so this keeps the composer and the
-      // latest messages visible on short and tall phones alike.
+      // While typing, use every pixel above the keyboard. graphAreaHeight comes
+      // from a LayoutBuilder inside the Scaffold body, so it already excludes
+      // the IME — on web that only holds because KeyboardInsetScope injects the
+      // measured keyboard height into MediaQuery (see utils/keyboard_inset.dart);
+      // without it the browser reports no inset and the keyboard covers the feed.
       height: !_chatVisible
           ? 0
           : (_isQuizMode || _isJournalMode || _chatExpandedForInput
@@ -368,23 +365,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView> {
         );
       },
     );
-  }
-
-  /// Tap the floating status pill: scroll to the inline progress card if it's in
-  /// the feed, otherwise open the review surface directly.
-  void _onStatusPillTap() {
-    final entryId = journalTask.entryId;
-    final hasCard = entryId != null &&
-        chatSession.messages.any((m) =>
-            m.kind == 'journal_progress' &&
-            (m.meta?['entry_id']?.toString() == entryId));
-    if (hasCard) {
-      _scrollChatToBottom();
-      return;
-    }
-    if (entryId != null) {
-      openJournalReviewFallback(context, entryId);
-    }
   }
 
 

@@ -26,7 +26,6 @@ class GraphChatPanel extends StatelessWidget {
     required this.onClearHistory,
     this.title,
     this.listFooter,
-    this.statusPill,
     this.onHandleDragUpdate,
     this.onHandleDragEnd,
     this.onPanelTap,
@@ -49,10 +48,6 @@ class GraphChatPanel extends StatelessWidget {
   /// Optional block appended after messages inside the chat scroll (e.g. distill draft).
   final Widget? listFooter;
 
-  /// Floating status pill overlaid at the top of the chat feed while a journal
-  /// pipeline runs (Feature C — non-invasive background processing). Chat stays
-  /// usable; the pill reports progress and, when tapped, opens review.
-  final Widget? statusPill;
   final ValueChanged<double>? onHandleDragUpdate;
   final VoidCallback? onHandleDragEnd;
   final VoidCallback? onPanelTap;
@@ -101,16 +96,6 @@ class GraphChatPanel extends StatelessWidget {
                   : Stack(
                       children: [
                         Positioned.fill(child: _buildMessageList(context)),
-                        if (statusPill != null)
-                          Positioned(
-                            top: 8,
-                            left: 0,
-                            right: 0,
-                            child: Align(
-                              alignment: Alignment.topCenter,
-                              child: statusPill,
-                            ),
-                          ),
                         Positioned(
                           right: 14,
                           bottom: 100,

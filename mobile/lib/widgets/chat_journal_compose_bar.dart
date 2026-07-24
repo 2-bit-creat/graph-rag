@@ -155,7 +155,7 @@ class _ChatJournalComposeBarState extends State<ChatJournalComposeBar> {
       if (!ok && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('마이크 권한이 필요합니다. 브라우저 주소창 옆 🔒에서 허용해 주세요.'),
+            content: Text('마이크 권한이 필요합니다. 브라우저 주소창 옆 자물쇠 아이콘에서 허용해 주세요.'),
           ),
         );
       }

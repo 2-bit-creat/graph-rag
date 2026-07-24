@@ -1133,7 +1133,9 @@ async def generate_vocab_cloze_from_context(
 ) -> dict:
     settings = get_settings()
     model = settings.openai_model
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    # Shared cached client — a fresh AsyncOpenAI here meant a new connection
+    # pool (and TLS handshake) for every call, unlike every other call site.
+    client = _client()
 
     user_content = (
         f"Target vocabulary phrase: {context.vocab_lemma}\n"

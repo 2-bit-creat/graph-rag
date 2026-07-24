@@ -42,10 +42,26 @@ class _JournalUserDetailPanelState extends State<JournalUserDetailPanel> {
     return graphStatus == 'graph_staging_ready' || status == 'graph_staging_ready';
   }
 
-  void _openKnowledgeGraph() {
+  /// Open the graph focused on THIS entry's nodes rather than the whole graph.
+  ///
+  /// Previously this pushed a bare KnowledgeGraphScreen, which dropped the user
+  /// into the full graph with nothing selected — "이 일기에서 생성된 노드를
+  /// 확인" without actually showing which ones those were. The entry's Statement
+  /// node is the anchor; the canvas focuses its neighbourhood from there.
+  Future<void> _openKnowledgeGraph() async {
+    String? focusId;
+    try {
+      final nodes = await apiClient.listEntryNodes(widget.entryId);
+      if (nodes.isNotEmpty) focusId = nodes.first['id']?.toString();
+    } catch (_) {
+      // Fall through to the unfocused graph — still better than blocking.
+    }
+    if (!mounted) return;
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const KnowledgeGraphScreen()),
+      MaterialPageRoute(
+        builder: (_) => KnowledgeGraphScreen(initialNodeId: focusId),
+      ),
     );
   }
 
@@ -154,7 +170,7 @@ class _JournalUserDetailPanelState extends State<JournalUserDetailPanel> {
       return const _EntryJourneyCard(
         currentStep: 1,
         // ctaIcon만 지정하고 ctaLabel은 비워, 버튼 없이 리딩 아이콘만 '화자'로.
-        ctaIcon: Icons.record_voice_over_rounded,
+        ctaIcon: Icons.record_voice_over_outlined,
         message: '아래 화자 칩에서 누가 말했는지 지정해 주세요. 화자를 확정해야 그래프를 만들 수 있어요.',
       );
     }
@@ -164,7 +180,7 @@ class _JournalUserDetailPanelState extends State<JournalUserDetailPanel> {
         error: true,
         message: '그래프 생성에 실패했어요. 다시 시도해 주세요.',
         ctaLabel: '다시 시도',
-        ctaIcon: Icons.refresh_rounded,
+        ctaIcon: Icons.refresh,
         onCta: _openManualGraphAdd,
       );
     }
@@ -196,32 +212,25 @@ class _JournalUserDetailPanelState extends State<JournalUserDetailPanel> {
           AppSpacing.xxl,
         ),
         children: [
+          // Provenance is metadata, not an announcement — a quiet eyebrow line
+          // rather than a tinted card competing with the diary text itself.
           if (_isText)
             Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-              child: AppSurfaceCard(
-                tint: AppColors.accent,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.md,
-                  vertical: AppSpacing.sm,
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.edit_note_rounded, color: AppColors.accent, size: 20),
-                    const SizedBox(width: AppSpacing.sm),
-                    Expanded(
-                      child: Text(
-                        '직접 입력한 일기',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
+              padding: const EdgeInsets.only(bottom: AppSpacing.md),
+              child: Text(
+                '직접 입력',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: AppColors.textMuted,
+                      letterSpacing: 0.8,
+                      fontWeight: FontWeight.w500,
                     ),
-                  ],
-                ),
               ),
             ),
           if (_hasGraph) ...[
+            const Divider(height: 1),
             _GraphViewBanner(onTap: _openKnowledgeGraph),
-            const SizedBox(height: AppSpacing.md),
+            const Divider(height: 1),
+            const SizedBox(height: AppSpacing.lg),
           ] else ...[
             _buildJourneyCard(context),
             const SizedBox(height: AppSpacing.md),
@@ -270,20 +279,20 @@ class _EntryJourneyCard extends StatelessWidget {
     final accent = error ? colorScheme.error : AppColors.accent;
 
     // 리딩 상태 아이콘 — 4점 스텝퍼 대신 현재 상태 하나만 표현(정보 과부하 제거).
+    // Thin outline glyphs at text scale, no filled disc behind them: the status
+    // reads from the eyebrow copy, so the icon only needs to be a quiet marker.
     final Widget leadingIcon;
     if (inProgress) {
       leadingIcon = SizedBox(
-        width: 20,
-        height: 20,
-        child: CircularProgressIndicator(strokeWidth: 2.4, color: accent),
+        width: 16,
+        height: 16,
+        child: CircularProgressIndicator(strokeWidth: 1.6, color: accent),
       );
     } else {
       leadingIcon = Icon(
-        error
-            ? Icons.error_outline_rounded
-            : (ctaIcon ?? Icons.check_circle_outline_rounded),
+        error ? Icons.error_outline : (ctaIcon ?? Icons.check_circle_outline),
         color: accent,
-        size: 24,
+        size: 18,
       );
     }
 
@@ -302,15 +311,13 @@ class _EntryJourneyCard extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 40,
-                height: 40,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: accent.withValues(alpha: 0.12),
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: Center(child: leadingIcon),
                 ),
-                child: leadingIcon,
               ),
               const SizedBox(width: AppSpacing.md),
               Expanded(
@@ -339,10 +346,9 @@ class _EntryJourneyCard extends StatelessWidget {
             const SizedBox(height: AppSpacing.md),
             SizedBox(
               width: double.infinity,
-              child: FilledButton.icon(
+              child: FilledButton(
                 onPressed: onCta,
-                icon: Icon(ctaIcon ?? Icons.arrow_forward_rounded),
-                label: Text(ctaLabel!),
+                child: Text(ctaLabel!),
               ),
             ),
           ],
@@ -352,44 +358,38 @@ class _EntryJourneyCard extends StatelessWidget {
   }
 }
 
+/// Link to this entry's nodes in the graph.
+///
+/// Deliberately understated: a hairline row with a thin chevron, no fill and no
+/// coloured glyph. It is a navigation affordance, and letting it shout competes
+/// with the diary text, which is what the screen is actually for.
 class _GraphViewBanner extends StatelessWidget {
   const _GraphViewBanner({required this.onTap});
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return AppSurfaceCard(
-      tint: AppColors.hubGraph,
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.sm,
-      ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
         child: Row(
           children: [
-            const Icon(Icons.account_tree_rounded, color: AppColors.hubGraph, size: 20),
-            const SizedBox(width: AppSpacing.sm),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '지식그래프 보기',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.hubGraph,
-                    ),
-                  ),
-                  Text(
-                    '이 일기에서 생성된 노드를 그래프에서 확인',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
+              child: Text(
+                '지식그래프에서 보기',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ),
-            const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: AppColors.hubGraph),
+            Icon(
+              Icons.arrow_forward,
+              size: 16,
+              color: theme.textTheme.bodySmall?.color,
+            ),
           ],
         ),
       ),

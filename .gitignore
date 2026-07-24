@@ -12,6 +12,13 @@ pgdata/
 minio_data/
 backend/uploads/
 backend/debug_runs/
+# Runtime artifacts written to the repo root when the backend runs from here
+# (per-user audio + file stores, pipeline traces) — local only, never tracked.
+uploads/
+debug_runs/
+
+# Codex/editor scratch app-data
+.codex-dart-appdata/
 
 # Flutter
 mobile/.dart_tool/

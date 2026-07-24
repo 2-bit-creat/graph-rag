@@ -12,15 +12,20 @@ import uuid
 
 import pytest
 
+from app import json_doc_store
 from app import node_expression_store as store
 
 
 @pytest.fixture
 def user_id(tmp_path, monkeypatch) -> uuid.UUID:
+    # The store now reads/writes through json_doc_store, which picks S3 vs local
+    # disk off the settings — so redirect the settings there, and keep s3_bucket
+    # empty to stay on the local-file branch.
     class _S:
         upload_dir = str(tmp_path)
+        s3_bucket = ""
 
-    monkeypatch.setattr(store, "get_settings", lambda: _S())
+    monkeypatch.setattr(json_doc_store, "get_settings", lambda: _S())
     return uuid.uuid4()
 
 

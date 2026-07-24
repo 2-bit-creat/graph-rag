@@ -48,6 +48,13 @@ class Settings(BaseSettings):
 
     upload_dir: str = "./uploads"
     debug_runs_dir: str = "./debug_runs"
+    # Writable scratch space for pipeline steps that need a real file on disk
+    # (VAD trim, diarization, voice embedding all take a path, not bytes).
+    # upload_dir is the *durable* store and cannot serve this purpose in a
+    # deployed environment: on Lambda it resolves under /var/task, which is
+    # read-only, and when S3_BUCKET is set the audio is never written locally at
+    # all. Empty = the OS temp dir (/tmp on Lambda), which is always writable.
+    scratch_dir: str = ""
     # Debug tracing (pipeline_trace DB column + debug_runs/ artifacts + the
     # /kg/debug/runs and entry trace/artifacts endpoints). These retain raw
     # prompts, transcripts, and audio, so they are OFF in production by default.

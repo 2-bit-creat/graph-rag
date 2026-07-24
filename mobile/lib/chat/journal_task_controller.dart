@@ -43,9 +43,6 @@ class JournalTaskController extends ChangeNotifier {
   /// True only while the backend/AI is actively processing (not user review).
   bool get systemProcessing => _phase == ComposePhase.working;
 
-  /// The floating status pill is shown while a journal pipeline is alive.
-  bool get showsPill => isActive;
-
   /// True while the pipeline is waiting on the user (speaker/graph review).
   bool get needsInput => _phase == ComposePhase.needsInput;
 

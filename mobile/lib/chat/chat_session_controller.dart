@@ -134,7 +134,7 @@ class ChatSessionController extends ChangeNotifier {
     _journalCompleteNotified.add(key);
     await _ensureSession();
     if (_activeId == null) return;
-    final content = '📔 지식그래프 완성';
+    final content = '지식그래프 완성';
     _messages.add(GraphChatMessage(
       role: 'assistant',
       kind: 'journal_complete',
@@ -165,7 +165,7 @@ class ChatSessionController extends ChangeNotifier {
     errors.value = tr('journal.failed');
     await _ensureSession();
     if (_activeId == null) return;
-    const content = '📔 일기 처리 실패';
+    const content = '일기 처리 실패';
     try {
       await apiClient.appendChatEvent(
         _activeId!,
@@ -298,7 +298,7 @@ class ChatSessionController extends ChangeNotifier {
     final msg = GraphChatMessage(
       role: 'assistant',
       kind: 'journal_mode',
-      content: '📔 일기 쓰기 모드\n'
+      content: '일기 쓰기 모드\n'
           '@화자로 작성한 뒤 저장하면, 받아쓰기 → 화자 확인 → 그래프 검토 순으로 '
           '아래에서 진행 상황을 확인할 수 있어요.',
     );
@@ -379,7 +379,7 @@ class ChatSessionController extends ChangeNotifier {
     }
     await _ensureSession();
     try {
-      _appendJournalSubmit('🎙️ $filename');
+      _appendJournalSubmit(filename);
       late Map<String, dynamic> entry;
       if (bytes != null) {
         entry = await journalTask.uploadAudioBytes(
@@ -435,7 +435,7 @@ class ChatSessionController extends ChangeNotifier {
     final msg = GraphChatMessage(
       role: 'assistant',
       kind: 'journal_progress',
-      content: '📔 일기 처리 중…',
+      content: '일기 처리 중…',
       meta: {'entry_id': entryId},
     );
     _messages.add(msg);
@@ -445,7 +445,7 @@ class ChatSessionController extends ChangeNotifier {
         _activeId!,
         role: 'assistant',
         kind: 'journal_progress',
-        content: '📔 일기 처리 중…',
+        content: '일기 처리 중…',
         meta: {'entry_id': entryId},
       ));
     }

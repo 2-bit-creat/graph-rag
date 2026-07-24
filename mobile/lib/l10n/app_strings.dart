@@ -81,7 +81,7 @@ const Map<String, String> _ko = {
   'graph.pinEmpty': '이 진술에서는 문제를 만들지 못했어요. 표현이 너무 짧거나 반려됐을 수 있어요.',
   'journal.failed': '일기 처리에 실패했어요. 잠시 후 다시 시도해 주세요.',
   'quiz.empty': '아직 풀 문제가 없어요. 방금 문제를 만들기 시작했으니 잠시 후 다시 눌러 주세요.',
-  'quiz.sessionDone': '이 세션을 다 풀었어요! 👏',
+  'quiz.sessionDone': '이 세션을 다 풀었어요!',
   'quiz.close': '닫기',
   'quiz.more': '더 풀기',
   // Settings
@@ -137,7 +137,7 @@ const Map<String, String> _en = {
       "Couldn't process the journal. Please try again in a moment.",
   'quiz.empty':
       'No questions yet. I just started generating some — try again in a moment.',
-  'quiz.sessionDone': 'You finished this session! 👏',
+  'quiz.sessionDone': 'You finished this session!',
   'quiz.close': 'Close',
   'quiz.more': 'More',
   'settings.title': 'Settings',

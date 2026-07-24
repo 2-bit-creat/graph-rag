@@ -18,6 +18,18 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <!--
+    This tag was missing entirely, so mobile browsers laid the app out at a
+    desktop width and then scaled it down.
+
+    interactive-widget=resizes-content asks the browser to shrink the layout
+    viewport when the on-screen keyboard opens, which is what makes
+    MediaQuery.viewInsets work on its own. Safari ignores it today — see
+    lib/utils/keyboard_inset_web.dart for the visualViewport fallback that
+    covers it.
+  -->
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="description" content="A new Flutter project.">
 
   <!-- iOS meta tags & icons -->

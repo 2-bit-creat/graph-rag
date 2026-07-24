@@ -150,14 +150,14 @@ class _ChatSidebarState extends State<ChatSidebar> {
     if (!active || !p.contains('일기 처리')) return p;
     if (journalTask.phase == ComposePhase.done &&
         journalTask.entryId != null) {
-      return '📔 지식그래프 완성';
+      return '지식그래프 완성';
     }
     if (journalTask.phase == ComposePhase.error) {
-      return '📔 일기 처리 실패';
+      return '일기 처리 실패';
     }
     if (journalTask.phase == ComposePhase.needsInput &&
         journalTask.stageLabel.isNotEmpty) {
-      return '📔 ${journalTask.stageLabel}';
+      return journalTask.stageLabel;
     }
     return p;
   }

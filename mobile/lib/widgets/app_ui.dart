@@ -302,6 +302,18 @@ class AppSurfaceCard extends StatelessWidget {
   }
 }
 
+/// Strips Dart's `Exception: ` prefix from a caught error's toString().
+///
+/// The API client already throws messages written for the user; showing them
+/// verbatim leaked "Exception: 서버에 연결할 수 없어요" into the UI.
+String friendlyError(Object error) {
+  final text = error.toString();
+  for (final prefix in const ['Exception: ', 'Error: ']) {
+    if (text.startsWith(prefix)) return text.substring(prefix.length);
+  }
+  return text;
+}
+
 class AppEmptyState extends StatelessWidget {
   const AppEmptyState({
     super.key,
@@ -319,35 +331,44 @@ class AppEmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              color: scheme.primaryContainer.withValues(alpha: 0.35),
-              shape: BoxShape.circle,
+    // Center vertically, not just horizontally. Given a bounded height (a
+    // Scaffold body showing a failure, say) this sits in the middle of the
+    // screen instead of clinging to the top; inside a scrolling list the
+    // height is unbounded and Center shrink-wraps, leaving those layouts
+    // exactly as they were.
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: scheme.primaryContainer.withValues(alpha: 0.35),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, size: 30, color: scheme.primary),
             ),
-            child: Icon(icon, size: 30, color: scheme.primary),
-          ),
-          const SizedBox(height: AppSpacing.lg),
-          Text(title, style: Theme.of(context).textTheme.titleMedium, textAlign: TextAlign.center),
-          if (subtitle != null) ...[
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              subtitle!,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
-          if (action != null) ...[
             const SizedBox(height: AppSpacing.lg),
-            action!,
+            Text(title,
+                style: Theme.of(context).textTheme.titleMedium,
+                textAlign: TextAlign.center),
+            if (subtitle != null) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                subtitle!,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+            if (action != null) ...[
+              const SizedBox(height: AppSpacing.lg),
+              action!,
+            ],
           ],
-        ],
+        ),
       ),
     );
   }

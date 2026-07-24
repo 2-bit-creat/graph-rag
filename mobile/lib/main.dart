@@ -13,9 +13,14 @@ import 'screens/consent_screen.dart';
 import 'screens/knowledge_graph_screen.dart';
 import 'theme/app_theme.dart';
 import 'theme/app_theme_controller.dart';
+import 'utils/keyboard_inset.dart';
+import 'widgets/keyboard_inset_scope.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // No-op on native; on web this starts the visualViewport listener that
+  // KeyboardInsetScope feeds into MediaQuery.
+  startKeyboardInsetTracking();
   await appThemeController.load();
   await appLocaleController.load();
   await accountController.load();
@@ -39,11 +44,13 @@ class GraphRagApp extends StatelessWidget {
           themeMode: appThemeController.mode,
           navigatorKey: appNavigatorKey,
           navigatorObservers: [appRouteObserver],
-          builder: (context, child) => Stack(
-            children: [
-              if (child != null) child,
-              const ComposeWindowHost(),
-            ],
+          builder: (context, child) => KeyboardInsetScope(
+            child: Stack(
+              children: [
+                if (child != null) child,
+                const ComposeWindowHost(),
+              ],
+            ),
           ),
           // Gate: pick an account → accept consent → app. Keying the shell by the
           // current handle remounts (fresh chat/profile) when switching accounts.

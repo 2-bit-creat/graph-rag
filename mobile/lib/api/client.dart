@@ -152,6 +152,19 @@ class ApiClient {
     }
   }
 
+  /// Graph nodes committed from this entry, Statement nodes first.
+  Future<List<Map<String, dynamic>>> listEntryNodes(String id) async {
+    try {
+      final resp = await _dio.get('/journal/entries/$id/nodes');
+      return (resp.data as List)
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    } on DioException catch (e) {
+      throw _friendlyError(e, '일기 노드');
+    }
+  }
+
   Future<Map<String, dynamic>> getEntryTrace(String id) async {
     final resp = await _dio.get('/journal/entries/$id/trace');
     return resp.data as Map<String, dynamic>;

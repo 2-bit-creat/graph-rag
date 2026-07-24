@@ -237,7 +237,6 @@ class _StatsGrid extends StatelessWidget {
           value: '${stats['streak_days'] ?? 0}일',
           icon: Icons.local_fire_department_rounded,
           color: AppColors.accentWarm,
-          suffix: (stats['streak_days'] ?? 0) > 0 ? '🔥' : null,
         )),
       ],
     );
@@ -250,13 +249,11 @@ class _StatCard extends StatelessWidget {
     required this.value,
     required this.icon,
     required this.color,
-    this.suffix,
   });
   final String label;
   final String value;
   final IconData icon;
   final Color color;
-  final String? suffix;
 
   @override
   Widget build(BuildContext context) {
@@ -278,10 +275,6 @@ class _StatCard extends StatelessWidget {
                   height: 1.1,
                 ),
               ),
-              if (suffix != null) ...[
-                const SizedBox(width: 4),
-                Text(suffix!, style: const TextStyle(fontSize: 16)),
-              ],
             ],
           ),
           const SizedBox(height: 2),

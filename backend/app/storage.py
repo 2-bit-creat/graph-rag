@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import tempfile
 import uuid
 from collections.abc import Iterable
 from pathlib import Path
@@ -14,6 +15,46 @@ def _local_root() -> Path:
     root = Path(get_settings().upload_dir)
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def scratch_root() -> Path:
+    """Writable working directory for steps that need a real file on disk.
+
+    Distinct from ``_local_root``: that is the durable store, which is read-only
+    on Lambda (/var/task) and, once S3 is configured, never written to at all.
+    See Settings.scratch_dir.
+    """
+    settings = get_settings()
+    root = (
+        Path(settings.scratch_dir)
+        if settings.scratch_dir
+        else Path(tempfile.gettempdir()) / "graphrag"
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+async def save_audio_workfile(
+    data: bytes, filename: str, user_id: uuid.UUID
+) -> tuple[str, Path]:
+    """Persist audio durably AND hand back a real path to the same bytes.
+
+    ``save_audio`` alone is not enough for the STT pipeline: with S3 configured
+    it returns a key whose bytes live only in the bucket, so the trim/diarize/
+    voice-embedding steps that take a ``Path`` were being handed a local file
+    that never existed. Writing the scratch copy from the bytes already in
+    memory avoids a redundant download.
+    """
+    key = await save_audio(data, filename, user_id)
+    return key, write_scratch(data, key)
+
+
+def write_scratch(data: bytes, key: str) -> Path:
+    """Write bytes under ``scratch_root()`` and return the path."""
+    path = scratch_root() / key
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return path
 
 
 async def save_audio(data: bytes, filename: str, user_id: uuid.UUID) -> str:

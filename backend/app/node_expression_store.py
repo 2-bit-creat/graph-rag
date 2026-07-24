@@ -20,10 +20,9 @@ import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
-from .config import get_settings
+from . import json_doc_store
 
 _FILENAME = "user_node_expressions.json"
 
@@ -46,34 +45,21 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _store_path(user_id: uuid.UUID) -> Path:
-    root = Path(get_settings().upload_dir) / str(user_id)
-    root.mkdir(parents=True, exist_ok=True)
-    return root / _FILENAME
-
-
 def _empty_store() -> dict[str, Any]:
     return {"expressions": {}, "extraction_done": {}}
 
 
 def _read_store_sync(user_id: uuid.UUID) -> dict[str, Any]:
-    path = _store_path(user_id)
-    if not path.is_file():
+    data = json_doc_store.read_doc(user_id, _FILENAME)
+    if not isinstance(data, dict):
         return _empty_store()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            return _empty_store()
-        data.setdefault("expressions", {})
-        data.setdefault("extraction_done", {})
-        return data
-    except (json.JSONDecodeError, OSError):
-        return _empty_store()
+    data.setdefault("expressions", {})
+    data.setdefault("extraction_done", {})
+    return data
 
 
 def _write_store_sync(user_id: uuid.UUID, data: dict[str, Any]) -> None:
-    path = _store_path(user_id)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    json_doc_store.write_doc(user_id, _FILENAME, data)
 
 
 # ── Public async API ────────────────────────────────────────────────────────

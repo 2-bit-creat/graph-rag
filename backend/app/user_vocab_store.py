@@ -1,17 +1,15 @@
-"""Per-user custom vocabulary lists stored as JSON under upload_dir."""
+"""Per-user custom vocabulary lists, stored as JSON via json_doc_store."""
 
 from __future__ import annotations
 
 import asyncio
-import json
 import random
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
-from .config import get_settings
+from . import json_doc_store
 
 DEFAULT_VOCAB_ID = "default"          # legacy alias → english
 DEFAULT_VOCAB_ID_ENGLISH = "default:english"
@@ -51,12 +49,6 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _store_path(user_id: uuid.UUID) -> Path:
-    root = Path(get_settings().upload_dir) / str(user_id)
-    root.mkdir(parents=True, exist_ok=True)
-    return root / _FILENAME
-
-
 def _empty_store() -> dict[str, Any]:
     return {"version": _STORE_VERSION, "vocabularies": []}
 
@@ -66,10 +58,7 @@ def _normalize_word(raw: str) -> str:
 
 
 def _read_store_sync(user_id: uuid.UUID) -> dict[str, Any]:
-    path = _store_path(user_id)
-    if not path.is_file():
-        return _empty_store()
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = json_doc_store.read_doc(user_id, _FILENAME)
     if not isinstance(data, dict):
         return _empty_store()
     if data.get("version") != _STORE_VERSION:
@@ -80,8 +69,7 @@ def _read_store_sync(user_id: uuid.UUID) -> dict[str, Any]:
 
 
 def _write_store_sync(user_id: uuid.UUID, data: dict[str, Any]) -> None:
-    path = _store_path(user_id)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    json_doc_store.write_doc(user_id, _FILENAME, data)
 
 
 def _find_vocab(store: dict[str, Any], vocab_id: str) -> dict[str, Any] | None:
@@ -460,20 +448,8 @@ _TUTOR_HISTORY_FILENAME = "tutor_history.json"
 _TUTOR_HISTORY_CAP = 60
 
 
-def _tutor_history_path(user_id: uuid.UUID) -> Path:
-    root = Path(get_settings().upload_dir) / str(user_id)
-    root.mkdir(parents=True, exist_ok=True)
-    return root / _TUTOR_HISTORY_FILENAME
-
-
 def _read_tutor_history_sync(user_id: uuid.UUID) -> list[dict[str, Any]]:
-    path = _tutor_history_path(user_id)
-    if not path.is_file():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return []
+    data = json_doc_store.read_doc(user_id, _TUTOR_HISTORY_FILENAME)
     return [x for x in data if isinstance(x, dict)] if isinstance(data, list) else []
 
 
@@ -484,9 +460,7 @@ async def append_tutor_history(user_id: uuid.UUID, record: dict[str, Any]) -> No
         items.append({**record, "created_at": _utc_now()})
         if len(items) > _TUTOR_HISTORY_CAP:
             items = items[-_TUTOR_HISTORY_CAP:]
-        _tutor_history_path(user_id).write_text(
-            json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        json_doc_store.write_doc(user_id, _TUTOR_HISTORY_FILENAME, items)
 
     await asyncio.to_thread(_append)
 

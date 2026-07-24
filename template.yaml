@@ -55,7 +55,13 @@ Parameters:
 Globals:
   Function:
     Timeout: 120
-    MemorySize: 1024
+    # 2048, not 1024: Lambda scales CPU with memory, and this is a container
+    # image importing llama-index/openai/sqlalchemy at cold start — an
+    # import-bound workload that gets nearly linearly faster with more CPU.
+    # Billing is GB-ms, so doubling memory is cost-neutral whenever it more
+    # than halves duration, which is the usual outcome for a cold start
+    # dominated by module imports.
+    MemorySize: 2048
     # x86_64, not arm64/Graviton: emulated arm64 builds hit a Docker Desktop
     # containerd export bug on this machine (see backend/Dockerfile). Costs
     # ~20% more per ms than Graviton would, but builds reliably.

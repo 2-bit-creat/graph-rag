@@ -42,7 +42,7 @@ from ..entity_types import (
 from ..journal_pipeline import transcribe_audio
 from ..models import JournalGraphLink, Node, SpeakerProfile, User
 from ..speaker_diarization import SpeakerSegment, diarize_audio
-from ..storage import save_audio, local_path
+from ..storage import save_audio_workfile
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/kg", tags=["kg-build"])
@@ -1732,8 +1732,9 @@ async def kg_transcribe(
     file_bytes = await file.read()
     filename = file.filename or "audio.wav"
 
-    audio_key = await save_audio(file_bytes, filename, user.id)
-    audio_path = local_path(audio_key)
+    # Scratch copy alongside the durable one — diarize_audio/transcribe_audio
+    # both take a Path, which S3-backed storage cannot provide on its own.
+    audio_key, audio_path = await save_audio_workfile(file_bytes, filename, user.id)
 
     # Run diarization first (non-blocking if disabled)
     segments: list[SpeakerSegment]

@@ -1347,7 +1347,7 @@ class _ClaimCard extends StatelessWidget {
           Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              '개념·정체성 — 개념: 탭=중요도, 길게=정체성 전환 · 👤 정체성: 탭=연결 대상 지정',
+              '개념·정체성 — 개념: 탭=중요도, 길게=정체성 전환 · 정체성: 탭=연결 대상 지정',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),

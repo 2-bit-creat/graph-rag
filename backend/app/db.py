@@ -342,54 +342,69 @@ async def _wait_for_db(*, attempts: int = 12, delay_sec: float = 2.5) -> None:
 
 
 async def init_db() -> None:
-    from . import models
+    if not settings.run_db_migrations:
+        # Nothing below this point changes anything once the schema and the
+        # ontology presets are in place — but it all still costs round trips to
+        # a remote DB on EVERY Lambda cold start (the readiness probe, the
+        # ontology lookup, the preset scan). Skipping it is the difference
+        # between a cold start that pays ~4 sequential Neon round trips before
+        # serving its first byte and one that pays none. Flip
+        # RUN_DB_MIGRATIONS=true for one deploy after a schema change.
+        return
 
     await _wait_for_db()
+    await _run_migrations()
+    await _seed_ontology_presets()
 
-    if settings.run_db_migrations:
-        # One physical connection for the whole DDL sequence below, not one per
-        # statement — with db_lambda_pooling's NullPool (no connection reuse
-        # across requests, only within one), opening a fresh connection per
-        # migration statement meant a full TCP+TLS handshake to Neon for each of
-        # 60+ statements sequentially, easily exceeding the Lambda timeout on cold
-        # start. Per-statement failure isolation is now a SAVEPOINT
-        # (begin_nested) instead of a separate connection+transaction.
-        #
-        # Even so, ~90 statements against a remote cross-region DB is ~60-70s
-        # of pure round-trip time (measured against Neon) — fine once, not on
-        # every cold start. See Settings.run_db_migrations.
-        async with engine.begin() as conn:
-            await conn.exec_driver_sql("SET lock_timeout = '10s'")
+
+async def _run_migrations() -> None:
+    # One physical connection for the whole DDL sequence below, not one per
+    # statement — with db_lambda_pooling's NullPool (no connection reuse
+    # across requests, only within one), opening a fresh connection per
+    # migration statement meant a full TCP+TLS handshake to Neon for each of
+    # 60+ statements sequentially, easily exceeding the Lambda timeout on cold
+    # start. Per-statement failure isolation is now a SAVEPOINT
+    # (begin_nested) instead of a separate connection+transaction.
+    #
+    # Even so, ~90 statements against a remote cross-region DB is ~60-70s
+    # of pure round-trip time (measured against Neon) — fine once, not on
+    # every cold start. See Settings.run_db_migrations.
+    async with engine.begin() as conn:
+        await conn.exec_driver_sql("SET lock_timeout = '10s'")
+        try:
+            async with conn.begin_nested():
+                await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
+        except Exception:
+            pass
+        await conn.run_sync(Base.metadata.create_all)
+
+        for sql in _MIGRATIONS:
             try:
                 async with conn.begin_nested():
-                    await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
-            except Exception:
-                pass
-            await conn.run_sync(Base.metadata.create_all)
-
-            for sql in _MIGRATIONS:
-                try:
-                    async with conn.begin_nested():
-                        await conn.exec_driver_sql(sql)
-                except Exception as exc:
-                    # Vector index builds (ivfflat/hnsw) may fail on empty/small datasets
-                    # or if the installed pgvector predates HNSW support — non-fatal.
-                    is_vector_index_sql = "USING ivfflat" in sql or "USING hnsw" in sql
-                    if not is_vector_index_sql and "lock timeout" not in str(exc).lower():
-                        raise
-                    logger.warning("Migration skipped (non-fatal): %s", exc)
-
-            try:
-                async with conn.begin_nested():
-                    await conn.exec_driver_sql(
-                        "ALTER TABLE nodes DROP CONSTRAINT IF EXISTS uq_node_name_type"
-                    )
-                    await conn.exec_driver_sql(
-                        "ALTER TABLE nodes ADD CONSTRAINT uq_node_user_name_type "
-                        "UNIQUE (user_id, name, type)"
-                    )
+                    await conn.exec_driver_sql(sql)
             except Exception as exc:
-                logger.warning("Constraint migration skipped (non-fatal): %s", exc)
+                # Vector index builds (ivfflat/hnsw) may fail on empty/small datasets
+                # or if the installed pgvector predates HNSW support — non-fatal.
+                is_vector_index_sql = "USING ivfflat" in sql or "USING hnsw" in sql
+                if not is_vector_index_sql and "lock timeout" not in str(exc).lower():
+                    raise
+                logger.warning("Migration skipped (non-fatal): %s", exc)
+
+        try:
+            async with conn.begin_nested():
+                await conn.exec_driver_sql(
+                    "ALTER TABLE nodes DROP CONSTRAINT IF EXISTS uq_node_name_type"
+                )
+                await conn.exec_driver_sql(
+                    "ALTER TABLE nodes ADD CONSTRAINT uq_node_user_name_type "
+                    "UNIQUE (user_id, name, type)"
+                )
+        except Exception as exc:
+            logger.warning("Constraint migration skipped (non-fatal): %s", exc)
+
+
+async def _seed_ontology_presets() -> None:
+    from . import models
 
     async with async_session_factory() as session:
         from . import crud

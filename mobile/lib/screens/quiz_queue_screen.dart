@@ -712,7 +712,7 @@ class _QuizQueueScreenState extends State<QuizQueueScreen>
                   ),
                   const SizedBox(width: 8),
                   ChoiceChip(
-                    label: const Text('📌 최우선 과제'),
+                    label: const Text('최우선 과제'),
                     selected: _track == 'pinned',
                     onSelected: (_) {
                       setState(() => _track = 'pinned');

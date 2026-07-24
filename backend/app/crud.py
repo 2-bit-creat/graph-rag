@@ -1,5 +1,6 @@
 import json
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -1298,6 +1299,28 @@ async def entry_has_graph_nodes(
         .limit(1)
     )
     return result.first() is not None
+
+
+async def entries_with_graph_nodes(
+    session: AsyncSession, entry_ids: Sequence[uuid.UUID]
+) -> set[uuid.UUID]:
+    """Batch form of ``entry_has_graph_nodes`` — one query for many entries.
+
+    The journal list needs this signal for every row; asking per entry meant one
+    round trip each, which against a remote pooled Postgres is what made
+    GET /journal/entries time out on larger accounts.
+    """
+    if not entry_ids:
+        return set()
+    result = await session.execute(
+        select(JournalGraphLink.journal_entry_id)
+        .where(
+            JournalGraphLink.journal_entry_id.in_(list(entry_ids)),
+            JournalGraphLink.node_id.is_not(None),
+        )
+        .distinct()
+    )
+    return set(result.scalars().all())
 
 
 async def node_is_journal_locked(
@@ -4246,8 +4269,8 @@ async def _journal_sidebar_preview(
     user_id: uuid.UUID | None,
 ) -> str | None:
     if message.kind == "journal_complete":
-        return (message.content or "").strip() or "📔 지식그래프 완성"
-    content = (message.content or "").strip() or "📔 일기 처리 중…"
+        return (message.content or "").strip() or "지식그래프 완성"
+    content = (message.content or "").strip() or "일기 처리 중…"
     if user_id is None:
         return content
     meta = message.meta if isinstance(message.meta, dict) else {}
@@ -4271,15 +4294,15 @@ async def _journal_sidebar_preview(
     ):
         graph_status = status
     if status in ("graph_ready", "completed") or graph_status == "graph_ready":
-        return "📔 지식그래프 완성"
+        return "지식그래프 완성"
     if status in ("failed", "graph_failed") or graph_status == "graph_failed":
-        return "📔 일기 처리 실패"
+        return "일기 처리 실패"
     if status == "graph_staging_ready" or graph_status == "graph_staging_ready":
-        return "📔 그래프 검토 필요"
+        return "그래프 검토 필요"
     if status in ("processing", "graph_processing") or graph_status == "graph_processing":
-        return "📔 일기 처리 중…"
+        return "일기 처리 중…"
     if status == "ready":
-        return "📔 화자 확인 필요"
+        return "화자 확인 필요"
     return content
 
 

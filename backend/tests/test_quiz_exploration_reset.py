@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from app import crud, node_expression_store
+from app import crud, json_doc_store, node_expression_store
 from app.models import Node, QuizGenerationState, QuizSourceExploration
 from app.quiz_batch import _source_state
 from app.quiz_bundle import CLOZE_GENERATOR_VERSION
@@ -100,10 +100,12 @@ async def test_archiving_cloze_reopens_its_source_and_language(db_session, iso_u
 async def test_full_queue_reset_clears_invisible_unavailable_sources(
     db_session, iso_user, tmp_path, monkeypatch
 ) -> None:
+    # node_expression_store persists through json_doc_store now; redirect its
+    # local-file branch rather than the store's own (removed) path helper.
     monkeypatch.setattr(
-        node_expression_store,
-        "_store_path",
-        lambda user_id: tmp_path / f"{user_id}-expressions.json",
+        json_doc_store,
+        "_local_path",
+        lambda user_id, filename: tmp_path / f"{user_id}-{filename}",
     )
     node = Node(
         user_id=iso_user.id,

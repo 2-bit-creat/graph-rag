@@ -48,7 +48,7 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = e.toString();
+          _error = friendlyError(e);
         });
       }
     }
@@ -213,7 +213,22 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
       ),
       body: _loading
           ? const AppLoadingScreen(message: '단어장 불러오는 중…')
-          : RefreshIndicator(
+          // A failed load used to render the error card *and* the "단어장이
+          // 없습니다" empty state, which reads as "your list is empty" when the
+          // truth is "we couldn't fetch it". Show one centered failure with a
+          // retry instead; the inline banner below is kept for the case where a
+          // refresh fails but we still have data to show.
+          : (_error != null && _items.isEmpty)
+              ? AppEmptyState(
+                  icon: Icons.cloud_off_rounded,
+                  title: '단어장을 불러오지 못했어요',
+                  subtitle: _error,
+                  action: FilledButton(
+                    onPressed: _load,
+                    child: const Text('다시 시도'),
+                  ),
+                )
+              : RefreshIndicator(
               onRefresh: () => _load(silent: true),
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(
