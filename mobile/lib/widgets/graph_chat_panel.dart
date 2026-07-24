@@ -894,43 +894,59 @@ class _ModeMenuButtonState extends State<_ModeMenuButton> {
       child: OverlayPortal(
         controller: _popupController,
         overlayChildBuilder: (context) {
-          // Follower's bottom-left docks to the button's top-left, nudged up
-          // a hair — the menu grows upward, pinned to the button itself.
-          return CompositedTransformFollower(
-            link: _link,
-            showWhenUnlinked: false,
-            targetAnchor: Alignment.topLeft,
-            followerAnchor: Alignment.bottomLeft,
-            offset: const Offset(0, -8),
-            child: TapRegion(
-              onTapOutside: (_) => _popupController.hide(),
-              child: Material(
-                color: shell.barBackground,
-                elevation: 10,
-                shadowColor: Colors.black.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(18),
-                clipBehavior: Clip.antiAlias,
-                child: SizedBox(
-                  width: 210,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _item('journal', Icons.auto_stories_rounded,
-                            tr('chat.menu.journal')),
-                        _item('distill', Icons.playlist_add_check_rounded,
-                            tr('chat.menu.distill')),
-                        _item('composition', Icons.edit_note_rounded,
-                            tr('chat.menu.composition')),
-                        _item('word', Icons.style_rounded,
-                            tr('chat.menu.word')),
-                      ],
+          // A full-screen dimmed barrier BEHIND the menu — same role as the
+          // ModalRoute PopupMenuButton's showMenu() used to draw for us. Without
+          // it the menu just sat on top of the live chat feed with nothing
+          // separating "menu" from "page behind it", which read as broken/stray
+          // rather than as a floating menu. Tapping it (or anywhere outside the
+          // menu) dismisses, same as before.
+          return Stack(
+            children: [
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _popupController.hide,
+                  child: Container(
+                    color: Colors.black.withValues(alpha: 0.32),
+                  ),
+                ),
+              ),
+              // Follower's bottom-left docks to the button's top-left, nudged
+              // up a hair — the menu grows upward, pinned to the button itself.
+              CompositedTransformFollower(
+                link: _link,
+                showWhenUnlinked: false,
+                targetAnchor: Alignment.topLeft,
+                followerAnchor: Alignment.bottomLeft,
+                offset: const Offset(0, -8),
+                child: Material(
+                  color: shell.barBackground,
+                  elevation: 10,
+                  shadowColor: Colors.black.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(18),
+                  clipBehavior: Clip.antiAlias,
+                  child: SizedBox(
+                    width: 210,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _item('journal', Icons.auto_stories_rounded,
+                              tr('chat.menu.journal')),
+                          _item('distill', Icons.playlist_add_check_rounded,
+                              tr('chat.menu.distill')),
+                          _item('composition', Icons.edit_note_rounded,
+                              tr('chat.menu.composition')),
+                          _item('word', Icons.style_rounded,
+                              tr('chat.menu.word')),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
+            ],
           );
         },
         child: IconButton(
