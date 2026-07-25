@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 
 /// Native "thinking orbs" loading animation — a cluster of soft, glowing orbs
@@ -147,10 +148,10 @@ class _ThinkingIndicatorState extends State<ThinkingIndicator> {
       widget.phrases ?? (widget.label != null ? [widget.label!] : _defaults);
   int _idx = 0;
 
-  static const _defaults = [
-    '기억을 뒤적이는 중…',
-    '생각을 정리하는 중…',
-    '연결고리를 찾는 중…',
+  static List<String> get _defaults => [
+    tr('thinking.memoryDefault1'),
+    tr('thinking.memoryDefault2'),
+    tr('thinking.memoryDefault3'),
   ];
 
   @override

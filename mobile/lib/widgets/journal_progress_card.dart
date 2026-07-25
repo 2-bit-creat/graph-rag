@@ -4,6 +4,7 @@ import '../api/client.dart';
 import '../app_navigator.dart';
 import '../chat/journal_task_controller.dart';
 import '../compose/journal_phase.dart';
+import '../l10n/app_strings.dart';
 import '../screens/graph_review_screen.dart';
 import '../screens/journal_hub_screen.dart';
 import '../theme/app_theme.dart';
@@ -117,7 +118,7 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
     }
     if (committed == true && navCtx.mounted) {
       ScaffoldMessenger.of(navCtx).showSnackBar(
-        const SnackBar(content: Text('지식그래프 확정 완료')),
+        SnackBar(content: Text(tr('progressCard.graphConfirmedSnackbar'))),
       );
     }
   }
@@ -179,7 +180,7 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
     if (_staticError != null || _staticEntry == null) {
       return _Shell(
         child: Text(
-          _staticError ?? '일기 상태를 불러오지 못했어요.',
+          _staticError ?? tr('progressCard.loadFailed'),
           style: Theme.of(context).textTheme.bodySmall,
         ),
       );
@@ -271,11 +272,11 @@ class _CardBody extends StatelessWidget {
 
   final VoidCallback? onDismiss;
 
-  static const _steps = [
-    '받아쓰기',
-    '화자 확인',
-    '그래프 생성',
-    '완료',
+  static List<String> get _steps => [
+    tr('progressCard.stepTranscribe'),
+    tr('progressCard.stepSpeakerConfirm'),
+    tr('progressCard.stepGraphBuild'),
+    tr('progressCard.stepDone'),
   ];
 
   int get _activeStep {
@@ -285,7 +286,8 @@ class _CardBody extends StatelessWidget {
         final graphStatus = entry?['graph_status']?.toString() ?? '';
         if (status == 'graph_processing' ||
             graphStatus == 'graph_processing' ||
-            label.contains('그래프')) {
+            label.contains('그래프') ||
+            label.toLowerCase().contains('graph')) {
           return 2;
         }
         return 0;
@@ -326,7 +328,7 @@ class _CardBody extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  label.isEmpty ? '일기 처리' : label,
+                  label.isEmpty ? tr('progressCard.defaultLabel') : label,
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
@@ -396,7 +398,7 @@ class _CardBody extends StatelessWidget {
           if (phase == ComposePhase.error) ...[
             const SizedBox(height: 8),
             Text(
-              '처리에 실패했어요. 닫은 뒤 다시 시도해 주세요.',
+              tr('progressCard.failedMessage'),
               style: TextStyle(
                 fontSize: 11.5,
                 color: Colors.red.shade300,
@@ -448,8 +450,8 @@ class _InlineSpeakerConfirm extends StatelessWidget {
         children: [
           Text(
             pending
-                ? '누가 쓴/말한 글인지 화자를 지정하세요.'
-                : '화자를 확인하고 그래프를 만들어요. 필요하면 화자를 탭해 바꿀 수 있어요.',
+                ? tr('progressCard.pendingHint')
+                : tr('progressCard.confirmHint'),
             style: TextStyle(
               fontSize: 11.5,
               color: context.shell.mutedText,
@@ -474,14 +476,14 @@ class _InlineSpeakerConfirm extends StatelessWidget {
             FilledButton.icon(
               onPressed: pending ? null : () => onConfirm!(),
               icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
-              label: Text(pending ? '화자를 먼저 지정하세요' : '확인하고 그래프 만들기'),
+              label: Text(pending ? tr('progressCard.assignSpeakerFirst') : tr('progressCard.confirmAndBuildGraph')),
             )
           else
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.tonal(
                 onPressed: onFallback,
-                child: const Text('화자 확인'),
+                child: Text(tr('progressCard.confirmSpeakersButton')),
               ),
             ),
         ],
@@ -537,7 +539,7 @@ class _InlineGraphReview extends StatelessWidget {
         alignment: Alignment.centerRight,
         child: FilledButton.tonal(
           onPressed: onFallback,
-          child: const Text('그래프 검토'),
+          child: Text(tr('progressCard.reviewGraphButton')),
         ),
       );
     }
@@ -639,7 +641,7 @@ Future<void> openJournalReviewFallback(
     );
     if (committed == true && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('지식그래프 확정 완료')),
+        SnackBar(content: Text(tr('progressCard.graphConfirmedSnackbar'))),
       );
     }
     return;

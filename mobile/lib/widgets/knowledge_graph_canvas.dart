@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart';
 
@@ -1493,14 +1494,14 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
               ),
             ),
             if (widget.compactMode && widget.showControls)
-              const Positioned(
+              Positioned(
                 left: 10,
                 top: 8,
                 right: 56,
                 child: IgnorePointer(
                   child: Text(
-                    '빈 곳 드래그=이동 · 노드 드래그=개별 이동 · 휠=확대',
-                    style: TextStyle(fontSize: 10, color: Color(0xFF6B7280)),
+                    tr('canvas.dragHint'),
+                    style: const TextStyle(fontSize: 10, color: Color(0xFF6B7280)),
                   ),
                 ),
               ),
@@ -1708,10 +1709,10 @@ class _ZoomControls extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 2),
-        _ZoomBtn(icon: Icons.add, tooltip: '확대', onTap: onZoomIn),
-        _ZoomBtn(icon: Icons.remove, tooltip: '축소', onTap: onZoomOut),
-        _ZoomBtn(icon: Icons.fit_screen, tooltip: '전체 보기', onTap: onFit),
-        _ZoomBtn(icon: Icons.auto_awesome, tooltip: '레이아웃 재정렬', onTap: onRelayout),
+        _ZoomBtn(icon: Icons.add, tooltip: tr('canvas.zoomIn'), onTap: onZoomIn),
+        _ZoomBtn(icon: Icons.remove, tooltip: tr('canvas.zoomOut'), onTap: onZoomOut),
+        _ZoomBtn(icon: Icons.fit_screen, tooltip: tr('canvas.fitView'), onTap: onFit),
+        _ZoomBtn(icon: Icons.auto_awesome, tooltip: tr('canvas.relayout'), onTap: onRelayout),
         Padding(
           padding: const EdgeInsets.only(top: 8, bottom: 2),
           child: SizedBox(
@@ -1720,13 +1721,13 @@ class _ZoomControls extends StatelessWidget {
         ),
         _ZoomBtn(
           icon: showNodeLabels ? Icons.label : Icons.label_off_outlined,
-          tooltip: showNodeLabels ? '노드 이름 숨기기' : '노드 이름 보기',
+          tooltip: showNodeLabels ? tr('canvas.hideNodeLabels') : tr('canvas.showNodeLabels'),
           active: showNodeLabels,
           onTap: onToggleNodeLabels,
         ),
         _ZoomBtn(
           icon: showEdgeLabels ? Icons.link : Icons.link_off,
-          tooltip: showEdgeLabels ? '관계 라벨 숨기기' : '관계 라벨 보기',
+          tooltip: showEdgeLabels ? tr('canvas.hideEdgeLabels') : tr('canvas.showEdgeLabels'),
           active: showEdgeLabels,
           onTap: onToggleEdgeLabels,
         ),
@@ -1816,7 +1817,7 @@ class SpeakerColorLegendCard extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              '화자 색상',
+              tr('canvas.speakerColorLegend'),
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.w700,
@@ -1869,7 +1870,7 @@ class SpeakerColorLegendCard extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(top: 3),
                 child: Text(
-                  '외 $overflow명',
+                  tr('canvas.overflowSuffix', {'count': overflow}),
                   style: TextStyle(fontSize: 10.5, color: shell.mutedText),
                 ),
               ),
@@ -1976,7 +1977,7 @@ class _LegendChip extends StatelessWidget {
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  label,
+                  isAll ? tr('common.all') : label,
                   style: TextStyle(
                     fontSize: 11,
                     color: textColor,

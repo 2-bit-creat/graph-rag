@@ -2109,7 +2109,7 @@ class _SelectionInfoCard extends StatelessWidget {
                     if (stmtPreview?.contextType != null) ...[
                       const SizedBox(width: 6),
                       StatementContextBadge(
-                        label: stmtPreview!.contextType!,
+                        type: stmtPreview!.contextType!,
                         compact: true,
                       ),
                     ],

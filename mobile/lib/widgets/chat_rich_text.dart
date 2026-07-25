@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/chat_message_format.dart';
 
@@ -249,7 +250,7 @@ class _CodeBlockState extends State<_CodeBlock> {
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          _copied ? '복사됨' : '복사',
+                          _copied ? tr('chatRichText.copied') : tr('chatRichText.copy'),
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,

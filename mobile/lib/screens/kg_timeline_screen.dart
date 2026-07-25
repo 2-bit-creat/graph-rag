@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 import '../api/client.dart';
 import '../app_route_observer.dart';
 import '../chat/chat_session_controller.dart' show openChatJournalCompose;
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import 'journal_hub_screen.dart';
 
-// Context type → display color mapping
+// Context type (canonical Korean value from backend taxonomy) → display color.
+// Keys MUST stay Korean — they're matched against source_type from the API.
 const _kTypeColors = {
   '개인일기': Color(0xFF14B8A6), // teal
   '회의록': Color(0xFF5B5FEF), // primary purple
@@ -21,7 +23,33 @@ const _kTypeColors = {
   '미분류': Color(0xFF94A3B8), // slate
 };
 
+// Same canonical keys → localized display label (data value stays Korean).
+Map<String, String> get _kTypeLabels => {
+      '개인일기': tr('timeline.typePersonalDiary'),
+      '회의록': tr('timeline.typeMeetingNotes'),
+      '책': tr('timeline.typeBook'),
+      '뉴스': tr('timeline.typeNews'),
+      '강연': tr('timeline.typeLecture'),
+      '논문': tr('timeline.typePaper'),
+      '대화': tr('timeline.typeConversation'),
+      '잡지': tr('timeline.typeMagazine'),
+      '자료': tr('timeline.typeMaterial'),
+      '미분류': tr('timeline.typeUncategorized'),
+    };
+
 Color _colorFor(String type) => _kTypeColors[type] ?? const Color(0xFF94A3B8);
+String _labelFor(String type) => _kTypeLabels[type] ?? type;
+
+// DateTime.weekday-indexed (Mon=1..Sun=7).
+List<String> get _kWeekdayLabels => [
+      tr('timeline.weekdayMon'),
+      tr('timeline.weekdayTue'),
+      tr('timeline.weekdayWed'),
+      tr('timeline.weekdayThu'),
+      tr('timeline.weekdayFri'),
+      tr('timeline.weekdaySat'),
+      tr('timeline.weekdaySun'),
+    ];
 
 // ─── Public screen ────────────────────────────────────────────────────────────
 
@@ -165,7 +193,7 @@ class _KgTimelineScreenState extends State<KgTimelineScreen> with RouteAware {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('내 일기'),
+        title: Text(tr('timeline.pageTitle')),
         centerTitle: false,
         titleTextStyle: theme.textTheme.titleLarge?.copyWith(
           fontWeight: FontWeight.w700,
@@ -176,7 +204,7 @@ class _KgTimelineScreenState extends State<KgTimelineScreen> with RouteAware {
           IconButton(
             icon: const Icon(Icons.refresh_rounded, size: 22),
             onPressed: _load,
-            tooltip: '새로고침',
+            tooltip: tr('common.refresh'),
           ),
           const SizedBox(width: 4),
         ],
@@ -191,12 +219,12 @@ class _KgTimelineScreenState extends State<KgTimelineScreen> with RouteAware {
                 child: Row(
                   children: [
                     _ViewTab(
-                      label: '타임라인',
+                      label: tr('timeline.tabTimeline'),
                       selected: _subView == 0,
                       onTap: () => setState(() => _subView = 0),
                     ),
                     _ViewTab(
-                      label: '캘린더',
+                      label: tr('timeline.tabCalendar'),
                       selected: _subView == 1,
                       onTap: () => setState(() => _subView = 1),
                     ),
@@ -212,13 +240,13 @@ class _KgTimelineScreenState extends State<KgTimelineScreen> with RouteAware {
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     children: [
                       _FilterChipWidget(
-                        label: '전체',
+                        label: tr('common.all'),
                         color: theme.colorScheme.primary,
                         selected: _catFilter == null,
                         onTap: () => setState(() => _catFilter = null),
                       ),
                       ..._allCategories.map((cat) => _FilterChipWidget(
-                            label: cat,
+                            label: _labelFor(cat),
                             color: _colorFor(cat),
                             selected: _catFilter == cat,
                             onTap: () => setState(() =>
@@ -233,7 +261,7 @@ class _KgTimelineScreenState extends State<KgTimelineScreen> with RouteAware {
         ),
       ),
       body: _loading
-          ? const AppLoadingScreen(message: '기록을 불러오는 중...')
+          ? AppLoadingScreen(message: tr('timeline.loadingMessage'))
           : _error != null
               ? _ErrorView(error: _error!, onRetry: _load)
               : IndexedStack(
@@ -256,7 +284,7 @@ class _KgTimelineScreenState extends State<KgTimelineScreen> with RouteAware {
       // 일기 쓰기 모드를 연다 — 일기 작성 경로를 채팅 하나로 통일.
       floatingActionButton: FloatingActionButton(
         onPressed: openChatJournalCompose,
-        tooltip: '새 일기 쓰기',
+        tooltip: tr('timeline.newEntryTooltip'),
         child: const Icon(Icons.add),
       ),
     );
@@ -367,11 +395,11 @@ class _TimelineSubView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (cards.isEmpty) {
-      return const Center(
+      return Center(
         child: AppEmptyState(
           icon: Icons.auto_stories_outlined,
-          title: '아직 기록이 없습니다',
-          subtitle: '+ 버튼을 눌러 첫 번째 기록을 남겨보세요',
+          title: tr('timeline.emptyTitle'),
+          subtitle: tr('timeline.emptySubtitle'),
         ),
       );
     }
@@ -379,7 +407,7 @@ class _TimelineSubView extends StatelessWidget {
     final groups = <String, List<Map<String, dynamic>>>{};
     for (final c in cards) {
       final raw = c['created_at'] as String? ?? '';
-      final date = raw.length >= 10 ? raw.substring(0, 10) : '알 수 없음';
+      final date = raw.length >= 10 ? raw.substring(0, 10) : tr('common.unknown');
       groups.putIfAbsent(date, () => []).add(c);
     }
     final sortedDates = groups.keys.toList()..sort((a, b) => b.compareTo(a));
@@ -423,42 +451,42 @@ class _EntryCard extends StatelessWidget {
     switch (status) {
       case 'processing':
         return (
-          'AI 처리 중',
+          tr('timeline.hintAiProcessing'),
           Icons.hourglass_top_rounded,
           theme.colorScheme.onSurfaceVariant,
           true
         );
       case 'graph_processing':
         return (
-          '그래프 생성 중',
+          tr('timeline.hintGraphProcessing'),
           Icons.hourglass_top_rounded,
           theme.colorScheme.onSurfaceVariant,
           true
         );
       case 'graph_staging_ready':
         return (
-          '그래프 초안 검토 대기 — 탭해서 확정',
+          tr('timeline.hintGraphStagingReady'),
           Icons.fact_check_outlined,
           const Color(0xFFB45309),
           false
         );
       case 'failed':
         return (
-          '처리 실패',
+          tr('timeline.hintFailed'),
           Icons.error_outline_rounded,
           theme.colorScheme.error,
           false
         );
       case 'graph_failed':
         return (
-          '그래프 생성 실패 — 탭해서 다시 시도',
+          tr('timeline.hintGraphFailed'),
           Icons.refresh_rounded,
           theme.colorScheme.error,
           false
         );
       default:
         return (
-          '탭해서 지식그래프 만들기',
+          tr('timeline.hintMakeGraph'),
           Icons.account_tree_outlined,
           AppColors.primary,
           false
@@ -469,10 +497,11 @@ class _EntryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final label = (card['source_type']?.toString() ?? '').trim().isEmpty
+    final rawType = (card['source_type']?.toString() ?? '').trim().isEmpty
         ? '미분류'
         : card['source_type'].toString();
-    final color = _colorFor(label);
+    final label = _labelFor(rawType);
+    final color = _colorFor(rawType);
     final statements = ((card['statements'] as List?) ?? [])
         .map((e) => Map<String, dynamic>.from(e as Map))
         .toList();
@@ -527,7 +556,7 @@ class _EntryCard extends StatelessWidget {
                     ),
                     if (statements.length > 1) ...[
                       const SizedBox(width: 8),
-                      Text('· 진술 ${statements.length}',
+                      Text(tr('timeline.statementCountSuffix', {'count': statements.length}),
                           style: TextStyle(
                               fontSize: 11.5,
                               color: theme.colorScheme.onSurfaceVariant
@@ -666,11 +695,10 @@ class _DateHeader extends StatelessWidget {
     final dt = DateTime.tryParse(date);
     String label;
     if (dt != null) {
-      const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-      final wd = weekdays[dt.weekday - 1];
+      final wd = _kWeekdayLabels[dt.weekday - 1];
       label = isToday
-          ? '오늘 · ${dt.month}/${dt.day}($wd)'
-          : '${dt.month}/${dt.day}($wd)';
+          ? tr('timeline.dateTodayLabel', {'month': dt.month, 'day': dt.day, 'weekday': wd})
+          : tr('timeline.dateLabel', {'month': dt.month, 'day': dt.day, 'weekday': wd});
     } else {
       label = date;
     }
@@ -785,10 +813,10 @@ class _CalendarSubViewState extends State<_CalendarSubView> {
     messenger.hideCurrentSnackBar();
     messenger.showSnackBar(
       SnackBar(
-        content: Text(isToday ? '오늘은 아직 기록이 없어요' : '이 날의 기록이 없어요'),
+        content: Text(isToday ? tr('timeline.noEntriesToday') : tr('timeline.noEntriesDay')),
         duration: const Duration(seconds: 2),
         action: isToday && widget.onAddEntry != null
-            ? SnackBarAction(label: '기록하기', onPressed: widget.onAddEntry!)
+            ? SnackBarAction(label: tr('timeline.recordAction'), onPressed: widget.onAddEntry!)
             : null,
       ),
     );
@@ -829,7 +857,7 @@ class _CalendarSubViewState extends State<_CalendarSubView> {
                   ),
                   Expanded(
                     child: Text(
-                      '${month.year}년 ${month.month}월',
+                      tr('timeline.monthYearLabel', {'year': month.year, 'month': month.month}),
                       style: theme.textTheme.titleMedium
                           ?.copyWith(fontWeight: FontWeight.w700),
                       textAlign: TextAlign.center,
@@ -846,7 +874,7 @@ class _CalendarSubViewState extends State<_CalendarSubView> {
                         _monthOffset = 0;
                         _selectedDate = null;
                       }),
-                      child: const Text('오늘'),
+                      child: Text(tr('common.today')),
                     ),
                   IconButton(
                     icon: const Icon(Icons.chevron_right_rounded),
@@ -928,7 +956,15 @@ class _MonthGrid extends StatelessWidget {
   final String? catFilter;
   final void Function(String) onDayTap;
 
-  static const _weekLabels = ['일', '월', '화', '수', '목', '금', '토'];
+  static List<String> get _weekLabels => [
+        tr('timeline.weekdaySun'),
+        tr('timeline.weekdayMon'),
+        tr('timeline.weekdayTue'),
+        tr('timeline.weekdayWed'),
+        tr('timeline.weekdayThu'),
+        tr('timeline.weekdayFri'),
+        tr('timeline.weekdaySat'),
+      ];
 
   @override
   Widget build(BuildContext context) {
@@ -968,16 +1004,18 @@ class _MonthGrid extends StatelessWidget {
         // Weekday header
         Row(
           children: _weekLabels
-              .map((l) => Expanded(
+              .asMap()
+              .entries
+              .map((entry) => Expanded(
                     child: Center(
                       child: Text(
-                        l,
+                        entry.value,
                         style: TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.w600,
-                          color: l == '일'
+                          color: entry.key == 0
                               ? Colors.red.shade400
-                              : l == '토'
+                              : entry.key == 6
                                   ? Colors.blue.shade400
                                   : theme.colorScheme.onSurface
                                       .withOpacity(0.5),
@@ -1120,8 +1158,11 @@ class _DayPanel extends StatelessWidget {
     final dt = DateTime.tryParse(date);
     String dateLabel = date;
     if (dt != null) {
-      const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-      dateLabel = '${dt.month}월 ${dt.day}일 (${weekdays[dt.weekday - 1]})';
+      dateLabel = tr('timeline.dayPanelDateLabel', {
+        'month': dt.month,
+        'day': dt.day,
+        'weekday': _kWeekdayLabels[dt.weekday - 1],
+      });
     }
     return Container(
       constraints: const BoxConstraints(maxHeight: 360),
@@ -1149,7 +1190,7 @@ class _DayPanel extends StatelessWidget {
                 ),
                 const Spacer(),
                 Text(
-                  '${cards.length}건',
+                  tr('timeline.countUnit', {'count': cards.length}),
                   style: theme.textTheme.bodySmall,
                 ),
                 IconButton(
@@ -1195,7 +1236,7 @@ class _ErrorView extends StatelessWidget {
             const SizedBox(height: 12),
             Text(error, textAlign: TextAlign.center),
             const SizedBox(height: 16),
-            FilledButton.tonal(onPressed: onRetry, child: const Text('다시 시도')),
+            FilledButton.tonal(onPressed: onRetry, child: Text(tr('common.retry'))),
           ],
         ),
       ),

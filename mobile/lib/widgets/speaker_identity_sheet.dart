@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 
 /// Bottom sheet: confirm who a diarized/session speaker label actually is.
@@ -161,7 +162,7 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
   void _confirmNewName(String raw, {bool asSource = false}) {
     final name = raw.trim();
     if (name.isEmpty) {
-      setState(() => _error = '이름을 입력해 주세요.');
+      setState(() => _error = tr('speakerId.nameRequired'));
       return;
     }
     if (_submitting) return;
@@ -261,14 +262,14 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
         if (_mode == _Mode.main) ...[
           if (already && confirmed != null) ...[
             Text(
-              '${confirmed['name']} (으)로 확인되었습니다.',
+              tr('speakerId.confirmedAs', {'name': confirmed['name']}),
               style: TextStyle(color: Colors.green[800]),
             ),
             if (score != null)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
-                  '음성 유사도 ${(score as num).toStringAsFixed(2)}',
+                  tr('speakerId.voiceSimilarity', {'score': (score as num).toStringAsFixed(2)}),
                   style: TextStyle(fontSize: 12, color: context.mutedText),
                 ),
               ),
@@ -276,7 +277,7 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
             OutlinedButton.icon(
               onPressed: _submitting ? null : () => setState(() => _mode = _Mode.pickOther),
               icon: const Icon(Icons.edit),
-              label: const Text('기존 정체성에서 고르기'),
+              label: Text(tr('speakerId.pickExisting')),
             ),
             const SizedBox(height: 8),
             OutlinedButton.icon(
@@ -288,24 +289,24 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
                       setState(() => _mode = _Mode.manual);
                     },
               icon: const Icon(Icons.person_add_outlined),
-              label: const Text('새 정체성 등록'),
+              label: Text(tr('speakerId.registerNew')),
             ),
           ] else if (likelyUnregistered || (conflictHint != null && conflictHint.isNotEmpty)) ...[
             Text(
               conflictHint ??
-                  '「${widget.speakerLabel}」은 아직 등록되지 않은 정체성일 가능성이 높습니다.',
+                  tr('speakerId.likelyUnregisteredHint', {'label': widget.speakerLabel}),
               style: TextStyle(fontSize: 14, color: Colors.orange[900]),
             ),
             const SizedBox(height: 16),
             _actionButton(
-              label: '기존 정체성에서 고르기',
+              label: tr('speakerId.pickExisting'),
               onPressed: () => setState(() => _mode = _Mode.pickOther),
               filled: true,
             ),
             ..._altCandidateButtons(null, skipPickOtherFallback: true),
             const SizedBox(height: 8),
             _actionButton(
-              label: '새 정체성 등록',
+              label: tr('speakerId.registerNew'),
               onPressed: () {
                 _manualController.clear();
                 _newIsSource = false;
@@ -314,27 +315,27 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
             ),
           ] else if (above && recommended != null) ...[
             Text(
-              '목소리가 「${recommended['name']}」와(과) 비슷합니다. 맞나요?',
+              tr('speakerId.voiceSimilarTo', {'name': recommended['name']}),
               style: const TextStyle(fontSize: 15),
             ),
             if (score != null)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
-                  '음성 유사도 ${(score as num).toStringAsFixed(2)}',
+                  tr('speakerId.voiceSimilarity', {'score': (score as num).toStringAsFixed(2)}),
                   style: TextStyle(fontSize: 12, color: context.mutedText),
                 ),
               ),
             const SizedBox(height: 16),
             _actionButton(
-              label: '${recommended['name']} 맞아요',
+              label: tr('speakerId.correctName', {'name': recommended['name']}),
               onPressed: _confirmRecommended,
               filled: true,
             ),
             ..._altCandidateButtons(recommended),
             const SizedBox(height: 8),
             _actionButton(
-              label: '기존 정체성에서 고르기 / 새로 등록',
+              label: tr('speakerId.pickOrRegisterNew'),
               onPressed: () => setState(() => _mode = _Mode.pickOther),
             ),
           ] else ...[
@@ -342,14 +343,14 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
             // present the two top-level choices side by side: every identity
             // (not just a "person") can be this segment's speaker.
             Text(
-              '「${widget.speakerLabel}」 화자가 누구인가요?',
+              tr('speakerId.whoIsSpeaker', {'label': widget.speakerLabel}),
               style: const TextStyle(fontSize: 15),
             ),
             if (score != null)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
-                  '최고 유사도 ${(score as num).toStringAsFixed(2)} (임계값 미달)',
+                  tr('speakerId.topSimilarityBelowThreshold', {'score': (score as num).toStringAsFixed(2)}),
                   style: TextStyle(fontSize: 12, color: context.mutedText),
                 ),
               ),
@@ -357,7 +358,7 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
             ..._altCandidateButtons(null, filledFirst: true, skipPickOtherFallback: true),
             const SizedBox(height: 8),
             _actionButton(
-              label: '새 정체성 등록',
+              label: tr('speakerId.registerNew'),
               onPressed: () {
                 _manualController.clear();
                 _newIsSource = false;
@@ -367,7 +368,7 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
             ),
             const SizedBox(height: 8),
             _actionButton(
-              label: '기존 정체성에서 고르기',
+              label: tr('speakerId.pickExisting'),
               onPressed: () => setState(() => _mode = _Mode.pickOther),
             ),
           ],
@@ -390,16 +391,16 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          '기존 정체성을 고르거나, 없으면 새로 등록하세요.',
+          tr('speakerId.pickOrRegisterHint'),
           style: TextStyle(fontSize: 13, color: context.subtleText),
         ),
         const SizedBox(height: 10),
         TextField(
           autofocus: true,
-          decoration: const InputDecoration(
-            labelText: '이름 검색 또는 새 이름',
-            hintText: '예: 장덕환 · 기업은행',
-            prefixIcon: Icon(Icons.search),
+          decoration: InputDecoration(
+            labelText: tr('speakerId.nameSearchLabel'),
+            hintText: tr('speakerId.nameSearchHint'),
+            prefixIcon: const Icon(Icons.search),
             isDense: true,
           ),
           textInputAction: TextInputAction.done,
@@ -420,13 +421,15 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
                 : () => _confirmNewName(_search, asSource: _newIsSource),
             icon: Icon(_newIsSource ? Icons.menu_book_rounded : Icons.person_add),
             label: Text(
-              _newIsSource ? '「$_search」 출처로 등록' : '「$_search」 새 정체성으로 등록',
+              _newIsSource
+                  ? tr('speakerId.registerAsSource', {'name': _search})
+                  : tr('speakerId.registerAsNewIdentity', {'name': _search}),
             ),
           ),
         ],
         if (items.isNotEmpty) ...[
           const SizedBox(height: 12),
-          Text('기존 정체성', style: TextStyle(fontSize: 12, color: context.mutedText)),
+          Text(tr('speakerId.existingIdentities'), style: TextStyle(fontSize: 12, color: context.mutedText)),
           const SizedBox(height: 4),
           ConstrainedBox(
             constraints: BoxConstraints(
@@ -445,8 +448,8 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
                   ),
                   title: Text(node['name']?.toString() ?? ''),
                   subtitle: score != null
-                      ? Text('음성 유사도 ${(score as num).toStringAsFixed(2)}')
-                      : Text(isSource ? '지식 그래프에 있는 출처' : '지식 그래프에 있는 정체성'),
+                      ? Text(tr('speakerId.voiceSimilarity', {'score': (score as num).toStringAsFixed(2)}))
+                      : Text(isSource ? tr('speakerId.sourceInGraph') : tr('speakerId.identityInGraph')),
                   onTap: _submitting ? null : () => _confirmPicked(node),
                 );
               }).toList(),
@@ -455,14 +458,14 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
         ] else if (_search.isEmpty) ...[
           const SizedBox(height: 12),
           Text(
-            '등록된 정체성이 없습니다. 이름을 입력해 새로 만드세요.',
+            tr('speakerId.noRegisteredIdentities'),
             style: TextStyle(fontSize: 12, color: context.mutedText),
           ),
         ],
         const SizedBox(height: 8),
         TextButton(
           onPressed: _submitting ? null : () => setState(() => _mode = _Mode.main),
-          child: const Text('뒤로'),
+          child: Text(tr('speakerId.backButton')),
         ),
       ],
     );
@@ -474,7 +477,7 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          '지식 그래프에 새 정체성을 만들고 이 화자에 연결합니다.',
+          tr('speakerId.manualIntro'),
           style: TextStyle(fontSize: 13, color: context.subtleText),
         ),
         const SizedBox(height: 10),
@@ -485,8 +488,8 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
           autofocus: true,
           enabled: !_submitting,
           decoration: InputDecoration(
-            labelText: _newIsSource ? '새 출처 이름' : '새 인물 이름',
-            hintText: _newIsSource ? '예: 기업은행 · 한국경제' : '예: 장덕환',
+            labelText: _newIsSource ? tr('speakerId.newSourceNameLabel') : tr('speakerId.newPersonNameLabel'),
+            hintText: _newIsSource ? tr('speakerId.newSourceNameHint') : tr('speakerId.newPersonNameHint'),
           ),
           textInputAction: TextInputAction.done,
           onSubmitted: (_) => _confirmManual(),
@@ -500,12 +503,12 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
                   height: 20,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : Text(_newIsSource ? '출처로 등록' : '인물로 등록'),
+              : Text(_newIsSource ? tr('speakerId.registerAsSourceButton') : tr('speakerId.registerAsPersonButton')),
         ),
         const SizedBox(height: 8),
         TextButton(
           onPressed: _submitting ? null : () => setState(() => _mode = _Mode.main),
-          child: const Text('뒤로'),
+          child: Text(tr('speakerId.backButton')),
         ),
       ],
     );
@@ -516,16 +519,16 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
   /// (기업은행 같은) will ever actually carry one.
   Widget _typeToggle() {
     return SegmentedButton<bool>(
-      segments: const [
+      segments: [
         ButtonSegment(
           value: false,
-          label: Text('인물'),
-          icon: Icon(Icons.person_outline, size: 16),
+          label: Text(tr('speakerId.typePerson')),
+          icon: const Icon(Icons.person_outline, size: 16),
         ),
         ButtonSegment(
           value: true,
-          label: Text('출처'),
-          icon: Icon(Icons.menu_book_rounded, size: 16),
+          label: Text(tr('speakerId.typeSource')),
+          icon: const Icon(Icons.menu_book_rounded, size: 16),
         ),
       ],
       selected: {_newIsSource},
@@ -566,7 +569,7 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
       widgets.add(Padding(
         padding: const EdgeInsets.only(top: 8),
         child: _actionButton(
-          label: '기존 정체성에서 고르기',
+          label: tr('speakerId.pickExisting'),
           onPressed: () => setState(() => _mode = _Mode.pickOther),
         ),
       ));
@@ -575,7 +578,7 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
         padding: const EdgeInsets.only(top: 8),
         child: OutlinedButton(
           onPressed: _submitting ? null : () => setState(() => _mode = _Mode.pickOther),
-          child: const Text('더 많은 정체성 보기'),
+          child: Text(tr('speakerId.seeMoreIdentities')),
         ),
       ));
     }

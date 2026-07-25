@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 
 /// Renders the server-served privacy policy. Uses a lightweight line-based
@@ -41,7 +42,7 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = '처리방침을 불러오지 못했어요.';
+        _error = tr('privacyPolicy.loadFailed');
         _loading = false;
       });
     }
@@ -53,14 +54,14 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
     return Scaffold(
       backgroundColor: shell.graphBackground,
       appBar: AppBar(
-        title: const Text('개인정보 처리방침'),
+        title: Text(tr('privacyPolicy.pageTitle')),
         bottom: _version.isEmpty
             ? null
             : PreferredSize(
                 preferredSize: const Size.fromHeight(20),
                 child: Padding(
                   padding: const EdgeInsets.only(bottom: 6),
-                  child: Text('버전 $_version',
+                  child: Text(tr('privacyPolicy.versionLabel', {'version': _version}),
                       style: TextStyle(color: shell.mutedText, fontSize: 12)),
                 ),
               ),

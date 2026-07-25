@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 
 /// One existing Concept node the backend suggested this surface form might be.
@@ -52,7 +53,7 @@ Future<ConceptLinkResult?> showConceptLinkSheet({
   return showGeneralDialog<ConceptLinkResult>(
     context: context,
     barrierDismissible: true,
-    barrierLabel: '개념 연결 닫기',
+    barrierLabel: tr('conceptLink.closeSheetLabel'),
     barrierColor: Colors.black.withValues(alpha: 0.38),
     transitionDuration: const Duration(milliseconds: 260),
     pageBuilder: (ctx, _, __) {
@@ -158,8 +159,7 @@ class _ConceptLinkCard extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      '「$conceptName」와(과) 같은 개념이 이미 있어요. '
-                      '연결하면 하나의 노드로 합쳐집니다.',
+                      tr('conceptLink.existingConceptBody', {'name': conceptName}),
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                             color: AppColors.textMuted,
                             height: 1.35,
@@ -179,7 +179,7 @@ class _ConceptLinkCard extends StatelessWidget {
                     if (rest.isNotEmpty) ...[
                       const SizedBox(height: AppSpacing.md),
                       Text(
-                        '다른 후보',
+                        tr('conceptLink.otherCandidates'),
                         style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                       ),
                       const SizedBox(height: AppSpacing.sm),
@@ -201,7 +201,7 @@ class _ConceptLinkCard extends StatelessWidget {
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 )
-                              : const Text('지식 그래프에 있는 개념'),
+                              : Text(tr('conceptLink.conceptInGraph')),
                           trailing: selected
                               ? const Icon(Icons.check,
                                   color: AppColors.accent, size: 18)
@@ -274,7 +274,7 @@ class _Header extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '개념 연결',
+                  tr('conceptLink.headerTitle'),
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: AppColors.textMuted,
                         fontWeight: FontWeight.w600,
@@ -295,7 +295,7 @@ class _Header extends StatelessWidget {
             ),
           ),
           IconButton(
-            tooltip: '닫기',
+            tooltip: tr('conceptLink.closeTooltip'),
             onPressed: onClose,
             icon: Icon(Icons.close_rounded, color: scheme.onSurfaceVariant),
           ),
@@ -337,7 +337,7 @@ class _LinkHero extends StatelessWidget {
                   color: AppColors.accent, size: 20),
               const SizedBox(width: AppSpacing.sm),
               Text(
-                '추천 개념',
+                tr('conceptLink.suggestedConcept'),
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(
                       color: AppColors.accent,
                       fontWeight: FontWeight.w700,
@@ -347,7 +347,7 @@ class _LinkHero extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.md),
           Text(
-            '기존 개념 「${candidate.name}」와(과) 같은 개념 같아요.',
+            tr('conceptLink.suggestionSameConcept', {'name': candidate.name}),
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(height: 1.35),
           ),
           if (candidate.description.isNotEmpty) ...[
@@ -365,7 +365,7 @@ class _LinkHero extends StatelessWidget {
           FilledButton.icon(
             onPressed: onConfirm,
             icon: const Icon(Icons.link_rounded, size: 20),
-            label: Text('「${candidate.name}」에 연결'),
+            label: Text(tr('conceptLink.linkToConcept', {'name': candidate.name})),
             style: FilledButton.styleFrom(
               backgroundColor: AppColors.accent,
               foregroundColor: Colors.white,
@@ -402,7 +402,7 @@ class _KeepTile extends StatelessWidget {
               const SizedBox(width: AppSpacing.md),
               Expanded(
                 child: Text(
-                  '새 개념으로 유지',
+                  tr('conceptLink.keepAsNew'),
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: 14,

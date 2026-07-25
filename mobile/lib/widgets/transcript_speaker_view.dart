@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_strings.dart';
 import 'speaker_identity_sheet.dart';
 
 /// STT segments with tappable speaker chips — opens identity confirmation sheet.
@@ -71,14 +72,14 @@ class TranscriptSpeakerView extends StatelessWidget {
                 children: [
                   Icon(Icons.record_voice_over, color: theme.colorScheme.primary),
                   const SizedBox(width: 8),
-                  Text('화자별 스크립트', style: theme.textTheme.titleSmall),
+                  Text(tr('transcriptSpeaker.title'), style: theme.textTheme.titleSmall),
                 ],
               ),
               const SizedBox(height: 4),
               Text(
                 readOnly
-                    ? '화자별 STT 결과 (읽기 전용 — 일기 쓰기에서 화자를 지정하세요)'
-                    : '목소리가 비슷하면 이름이 추천됩니다. 탭해서 확인하거나 수정하세요.',
+                    ? tr('transcriptSpeaker.readOnlySubtitle')
+                    : tr('transcriptSpeaker.editableSubtitle'),
                 style: TextStyle(fontSize: 12, color: Colors.grey[600]),
               ),
               const SizedBox(height: 12),
@@ -121,7 +122,7 @@ class TranscriptSpeakerView extends StatelessWidget {
                                     : Colors.orange[800],
                           ),
                           label: Text(
-                            hasSuggestion ? '${displayName ?? label} (추천)' : (displayName ?? label),
+                            hasSuggestion ? tr('transcriptSpeaker.suggestedSuffix', {'name': displayName ?? label}) : (displayName ?? label),
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,

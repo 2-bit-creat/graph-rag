@@ -1,15 +1,33 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/speaker_merge_sheet.dart';
 import '../widgets/transcript_speaker_view.dart';
 import '../widgets/vocabulary_picker_sheet.dart';
 
-// 저널 유형 칩 목록. '자료' = AI·여러 출처를 정리한 참고 지식(외부 출처 기본값).
+// 저널 유형 칩 목록 (canonical Korean values matching backend taxonomy).
+// '자료' = AI·여러 출처를 정리한 참고 지식(외부 출처 기본값).
 const List<String> _kJournalTypes = [
   '일기', '대화', '회의록', '책', '뉴스', '강연', '논문', '자료',
 ];
+
+// Display labels for the canonical taxonomy above (matches kg_timeline_screen).
+Map<String, String> get _kJournalTypeLabels => {
+      '일기': tr('timeline.typePersonalDiary'),
+      '개인일기': tr('timeline.typePersonalDiary'),
+      '회의록': tr('timeline.typeMeetingNotes'),
+      '책': tr('timeline.typeBook'),
+      '뉴스': tr('timeline.typeNews'),
+      '강연': tr('timeline.typeLecture'),
+      '논문': tr('timeline.typePaper'),
+      '대화': tr('timeline.typeConversation'),
+      '잡지': tr('timeline.typeMagazine'),
+      '자료': tr('timeline.typeMaterial'),
+      '미분류': tr('inspector.uncategorized'),
+    };
+String _journalTypeLabelFor(String type) => _kJournalTypeLabels[type] ?? type;
 
 class TranslationEntryPanel extends StatelessWidget {
   const TranslationEntryPanel({
@@ -39,7 +57,9 @@ class TranslationEntryPanel extends StatelessWidget {
     final hasSuggestion = suggested != null && suggested.isNotEmpty;
     final hasCurrent = current != null && current.isNotEmpty;
     if (!hasSuggestion && !hasCurrent) return const SizedBox.shrink();
-    final label = hasCurrent ? current : '$suggested (추천)';
+    final label = hasCurrent
+        ? _journalTypeLabelFor(current)
+        : tr('transEntry.suggestedSuffix', {'type': _journalTypeLabelFor(suggested!)});
     final theme = Theme.of(context);
     // A metadata line, not a chip: one small label + an inline change action,
     // so the entry type stops looking like a tappable pill it never was.
@@ -48,7 +68,7 @@ class TranslationEntryPanel extends StatelessWidget {
       child: Row(
         children: [
           Text(
-            '유형 · $label',
+            tr('transEntry.typeLabel', {'label': label}),
             style: theme.textTheme.bodySmall?.copyWith(color: AppColors.textMuted),
           ),
           if (!locked) ...[
@@ -61,7 +81,7 @@ class TranslationEntryPanel extends StatelessWidget {
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 visualDensity: VisualDensity.compact,
               ),
-              child: const Text('변경'),
+              child: Text(tr('transEntry.changeAction')),
             ),
           ],
         ],
@@ -82,7 +102,7 @@ class TranslationEntryPanel extends StatelessWidget {
                       ? Icons.radio_button_checked
                       : Icons.radio_button_off,
                 ),
-                title: Text(t),
+                title: Text(_journalTypeLabelFor(t)),
                 onTap: () => Navigator.pop(ctx, t),
               ),
           ],
@@ -105,7 +125,7 @@ class TranslationEntryPanel extends StatelessWidget {
       await onRefresh(silent: true);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('화자 그룹을 적용했어요. 각 화자를 지정해 주세요.')),
+          SnackBar(content: Text(tr('transEntry.speakerGroupAppliedSnackbar'))),
         );
       }
     }
@@ -116,10 +136,10 @@ class TranslationEntryPanel extends StatelessWidget {
     try {
       await apiClient.remapSpeakers(entryId, reset: true);
       await onRefresh(silent: true);
-      messenger.showSnackBar(const SnackBar(content: Text('원래 화자 분리로 되돌렸습니다')));
+      messenger.showSnackBar(SnackBar(content: Text(tr('transEntry.resetSuccessSnackbar'))));
     } catch (e) {
       messenger.showSnackBar(
-        SnackBar(content: Text('실패: ${e.toString().replaceFirst('Exception: ', '')}')),
+        SnackBar(content: Text(tr('transEntry.resetFailedSnackbar', {'error': e.toString().replaceFirst('Exception: ', '')}))),
       );
     }
   }
@@ -154,14 +174,14 @@ class TranslationEntryPanel extends StatelessWidget {
             OutlinedButton.icon(
               onPressed: () => _openMergeSheet(context),
               icon: const Icon(Icons.merge_type_rounded, size: 16),
-              label: const Text('화자 합치기 / 분리'),
+              label: Text(tr('transEntry.mergeSpeakersButton')),
               style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
             ),
           if (canReset)
             TextButton.icon(
               onPressed: () => _reset(context),
               icon: const Icon(Icons.restore_rounded, size: 16),
-              label: const Text('원래대로'),
+              label: Text(tr('transEntry.resetButton')),
               style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
             ),
         ],
@@ -201,8 +221,8 @@ class TranslationEntryPanel extends StatelessWidget {
       speakerSection.add(
         _CollapsibleSection(
           icon: Icons.record_voice_over_rounded,
-          title: isPrecisionText ? '작성자 · 화자' : '화자별 스크립트',
-          subtitle: speakersPending ? '탭해서 누가 쓴/말한 글인지 지정하세요' : null,
+          title: isPrecisionText ? tr('transEntry.writerSpeakerTitle') : tr('transEntry.speakerScriptTitle'),
+          subtitle: speakersPending ? tr('transEntry.speakerScriptSubtitle') : null,
           accent: speakersPending ? Colors.orange.shade800 : null,
           initiallyExpanded: speakersPending,
           child: Column(
@@ -235,7 +255,7 @@ class TranslationEntryPanel extends StatelessWidget {
         // ── 1차 콘텐츠: 정제된 일기(한국어), 항상 펼침·강조 ──────────────────
         if (primaryClean.trim().isNotEmpty)
           _VocabTextSection(
-            title: '정제된 일기',
+            title: tr('transEntry.cleanedEntryTitle'),
             content: primaryClean,
             pinned: true,
             // 번역 카드가 사라져 단어장 추가 진입점을 여기로 — 단어를 드래그해 추가.
@@ -250,7 +270,7 @@ class TranslationEntryPanel extends StatelessWidget {
         if (showRaw)
           _CollapsibleSection(
             icon: Icons.notes_rounded,
-            title: '원문 일기 (한국어)',
+            title: tr('transEntry.rawEntryTitle'),
             initiallyExpanded: false,
             child: _LabeledBlock(label: '', content: rawKo),
           ),
@@ -279,7 +299,7 @@ class _LockedNote extends StatelessWidget {
           const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Text(
-              '지식그래프 생성 후 유형·화자는 잠깁니다. 수정하려면 그래프를 삭제 후 다시 생성하세요.',
+              tr('transEntry.lockedNote'),
               style: Theme.of(context).textTheme.bodySmall?.copyWith(color: muted),
             ),
           ),
@@ -488,7 +508,9 @@ class _VocabTextSectionState extends State<_VocabTextSection> {
         onPressed: _addToVocabulary,
         style: TextButton.styleFrom(padding: EdgeInsets.zero),
         child: Text(
-          _selected.isNotEmpty ? '「$_selected」 단어장에 추가' : '단어장에 추가',
+          _selected.isNotEmpty
+              ? tr('transEntry.addSelectedToVocab', {'word': _selected})
+              : tr('transEntry.addToVocab'),
         ),
       ),
     );
@@ -543,7 +565,7 @@ class _VocabTextSectionState extends State<_VocabTextSection> {
             onExpansionChanged: (v) => setState(() => _expanded = v),
             title: Text(widget.title, style: theme.textTheme.titleSmall),
             subtitle: empty
-                ? Text('(없음)', style: theme.textTheme.bodySmall)
+                ? Text(tr('transEntry.emptyPlaceholder'), style: theme.textTheme.bodySmall)
                 : _expanded
                     ? null
                     : Text(
@@ -595,7 +617,7 @@ class _TextSection extends StatelessWidget {
             initiallyExpanded: initiallyExpanded && !empty,
             title: Text(title, style: Theme.of(context).textTheme.titleSmall),
             subtitle: empty
-                ? Text('(없음)', style: Theme.of(context).textTheme.bodySmall)
+                ? Text(tr('transEntry.emptyPlaceholder'), style: Theme.of(context).textTheme.bodySmall)
                 : Text(
                     content.split('\n').first,
                     maxLines: 1,
@@ -613,7 +635,7 @@ class _TextSection extends StatelessWidget {
                   borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
                 ),
                 child: SelectableText(
-                  empty ? '(없음)' : content,
+                  empty ? tr('transEntry.emptyPlaceholder') : content,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(height: 1.5),
                 ),
               ),

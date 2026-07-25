@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 
 /// Result of resolving a mentioned entity during graph draft review.
@@ -52,7 +53,7 @@ Future<EntityIdentityResult?> showEntityIdentitySheet({
   return showGeneralDialog<EntityIdentityResult>(
     context: context,
     barrierDismissible: true,
-    barrierLabel: '정체성 선택 닫기',
+    barrierLabel: tr('entityId.closeIdentityPicker'),
     barrierColor: Colors.black.withValues(alpha: 0.38),
     transitionDuration: const Duration(milliseconds: 260),
     pageBuilder: (ctx, _, __) {
@@ -211,7 +212,7 @@ class _EntityPiPHeader extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '정체성 확인',
+                  tr('entityId.identityConfirmTitle'),
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: AppColors.textMuted,
                         fontWeight: FontWeight.w600,
@@ -232,7 +233,7 @@ class _EntityPiPHeader extends StatelessWidget {
             ),
           ),
           IconButton(
-            tooltip: '닫기',
+            tooltip: tr('entityId.closeTooltip'),
             onPressed: onClose,
             icon: Icon(Icons.close_rounded, color: scheme.onSurfaceVariant),
           ),
@@ -313,7 +314,7 @@ class _EntityIdentityPanelState extends State<_EntityIdentityPanel> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          '「${widget.entityName}」은(는) 어떻게 저장할까요?',
+          tr('entityId.howToSaveEntity', {'name': widget.entityName}),
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: AppColors.textMuted,
                 height: 1.35,
@@ -336,14 +337,14 @@ class _EntityIdentityPanelState extends State<_EntityIdentityPanel> {
         _ActionTile(
           icon: Icons.person_add_alt_1_rounded,
           iconColor: scheme.primary,
-          label: '새 정체성으로 추가',
+          label: tr('entityId.addAsNewIdentity'),
           filled: !hasSuggestion,
           onTap: () => _pop(const EntityIdentityResult(action: 'new_person')),
         ),
         const SizedBox(height: AppSpacing.sm),
         _ActionTile(
           icon: Icons.lightbulb_outline_rounded,
-          label: '개체가 아니라 개념으로',
+          label: tr('entityId.notAnEntityConcept'),
           onTap: () => _pop(const EntityIdentityResult(action: 'concept')),
         ),
         if (widget.candidates.isNotEmpty) ...[
@@ -351,15 +352,15 @@ class _EntityIdentityPanelState extends State<_EntityIdentityPanel> {
           const _OrDivider(),
           const SizedBox(height: AppSpacing.md),
           Text(
-            '기존 정체성',
+            tr('entityId.existingIdentities'),
             style: TextStyle(fontSize: 12, color: Colors.grey[600]),
           ),
           const SizedBox(height: AppSpacing.sm),
           TextField(
-            decoration: const InputDecoration(
-              labelText: '이름 검색',
-              hintText: '예: 나, 장덕환',
-              prefixIcon: Icon(Icons.search),
+            decoration: InputDecoration(
+              labelText: tr('entityId.nameSearchLabel'),
+              hintText: tr('entityId.nameSearchHint'),
+              prefixIcon: const Icon(Icons.search),
               isDense: true,
               border: OutlineInputBorder(),
             ),
@@ -385,8 +386,8 @@ class _EntityIdentityPanelState extends State<_EntityIdentityPanel> {
                       p.isSelf ? Icons.account_circle : Icons.person_outline,
                       size: 20,
                     ),
-                    title: Text(p.isSelf ? '${p.name} (본인)' : p.name),
-                    subtitle: const Text('지식 그래프에 있는 정체성'),
+                    title: Text(p.isSelf ? tr('entityId.selfSuffix', {'name': p.name}) : p.name),
+                    subtitle: Text(tr('entityId.identityInGraph')),
                     trailing: selected
                         ? const Icon(Icons.check, color: AppColors.accent, size: 18)
                         : null,
@@ -406,7 +407,7 @@ class _EntityIdentityPanelState extends State<_EntityIdentityPanel> {
               padding: const EdgeInsets.only(top: AppSpacing.sm),
               child: OutlinedButton(
                 onPressed: () => setState(() => _mode = _EntityMode.pickExisting),
-                child: const Text('전체 목록에서 검색'),
+                child: Text(tr('entityId.searchFullList')),
               ),
             ),
         ],
@@ -420,16 +421,16 @@ class _EntityIdentityPanelState extends State<_EntityIdentityPanel> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          '기존 정체성을 고르세요.',
+          tr('entityId.pickExistingIdentity'),
           style: TextStyle(fontSize: 13, color: Colors.grey[700]),
         ),
         const SizedBox(height: AppSpacing.md),
         TextField(
           autofocus: true,
-          decoration: const InputDecoration(
-            labelText: '이름 검색',
-            hintText: '예: 나, 장덕환',
-            prefixIcon: Icon(Icons.search),
+          decoration: InputDecoration(
+            labelText: tr('entityId.nameSearchLabel'),
+            hintText: tr('entityId.nameSearchHint'),
+            prefixIcon: const Icon(Icons.search),
             isDense: true,
             border: OutlineInputBorder(),
           ),
@@ -448,7 +449,7 @@ class _EntityIdentityPanelState extends State<_EntityIdentityPanel> {
                     p.isSelf ? Icons.account_circle : Icons.person_outline,
                     size: 20,
                   ),
-                  title: Text(p.isSelf ? '${p.name} (본인)' : p.name),
+                  title: Text(p.isSelf ? tr('entityId.selfSuffix', {'name': p.name}) : p.name),
                   onTap: () => _pop(EntityIdentityResult(
                     action: 'link',
                     nodeId: p.id,
@@ -462,7 +463,7 @@ class _EntityIdentityPanelState extends State<_EntityIdentityPanel> {
         ] else ...[
           const SizedBox(height: AppSpacing.md),
           Text(
-            '검색 결과가 없습니다.',
+            tr('entityId.noSearchResults'),
             style: TextStyle(fontSize: 12, color: Colors.grey[600]),
           ),
         ],
@@ -507,7 +508,7 @@ class _SuggestionHero extends StatelessWidget {
               Icon(Icons.auto_awesome_rounded, color: AppColors.accent, size: 20),
               const SizedBox(width: AppSpacing.sm),
               Text(
-                '추천 정체성',
+                tr('entityId.suggestedIdentity'),
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(
                       color: AppColors.accent,
                       fontWeight: FontWeight.w700,
@@ -517,14 +518,14 @@ class _SuggestionHero extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.md),
           Text(
-            '「$name」와(과) 같은 대상 같아요.',
+            tr('entityId.suggestionSameEntity', {'name': name}),
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(height: 1.35),
           ),
           const SizedBox(height: AppSpacing.lg),
           FilledButton.icon(
             onPressed: onConfirm,
             icon: const Icon(Icons.check_rounded, size: 20),
-            label: Text('$name 맞아요'),
+            label: Text(tr('entityId.correctName', {'name': name})),
             style: FilledButton.styleFrom(
               backgroundColor: AppColors.accent,
               foregroundColor: Colors.white,
@@ -601,7 +602,7 @@ class _OrDivider extends StatelessWidget {
         Expanded(child: Divider(color: Colors.grey.withValues(alpha: 0.35))),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-          child: Text('또는', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+          child: Text(tr('entityId.orDivider'), style: TextStyle(fontSize: 12, color: Colors.grey[600])),
         ),
         Expanded(child: Divider(color: Colors.grey.withValues(alpha: 0.35))),
       ],
@@ -626,7 +627,7 @@ class _BackRow extends StatelessWidget {
           children: [
             Icon(Icons.arrow_back_rounded, size: 20, color: Colors.grey[700]),
             const SizedBox(width: 4),
-            Text('뒤로', style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey[700])),
+            Text(tr('entityId.backButton'), style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey[700])),
           ],
         ),
       ),

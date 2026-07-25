@@ -1,9 +1,98 @@
 import 'package:dio/dio.dart';
 
+import '../l10n/app_strings.dart';
 import 'config.dart';
 import 'json_compat.dart';
 
 export 'config.dart' show apiBaseUrl, resolveMediaUrl, resolvedApiBaseUrl;
+
+/// English translations for the Korean action labels passed to
+/// [ApiClient._friendlyError] at each call site — kept in one table here so
+/// ~90 call sites don't each need their own tr() key.
+const Map<String, String> _kActionLabelsEn = {
+  'GraphRAG': 'GraphRAG',
+  'KG 디버그': 'KG debug',
+  'KG 저장': 'KG save',
+  'KG 추출': 'KG extraction',
+  'KG 통계': 'KG stats',
+  'Statement 단어장': 'Statement vocabulary',
+  '계정 삭제': 'Account deletion',
+  '그래프 대화': 'Graph chat',
+  '기록 목록': 'Entry list',
+  '기록 상세': 'Entry detail',
+  '노드 복구': 'Node restore',
+  '노드 상세': 'Node detail',
+  '노드 수정': 'Node edit',
+  '노드 연쇄 삭제': 'Node cascade delete',
+  '노드 재분류': 'Node reclassify',
+  '노드 추가': 'Node add',
+  '노드 탐색 이력': 'Node exploration history',
+  '단어 뜻 수정': 'Word meaning edit',
+  '단어 삭제': 'Word delete',
+  '단어 추가': 'Word add',
+  '단어장 목록': 'Vocabulary list',
+  '단어장 삭제': 'Vocabulary delete',
+  '단어장 상세': 'Vocabulary detail',
+  '단어장 생성': 'Vocabulary create',
+  '단어장 수정': 'Vocabulary edit',
+  '답안 제출': 'Answer submit',
+  '대화 기록': 'Chat history',
+  '대화 기록 저장': 'Chat history save',
+  '대화 정리': 'Chat distill',
+  '데이터 내보내기': 'Data export',
+  '동의 저장': 'Consent save',
+  '드릴 기록': 'Drill record',
+  '레벨 저장': 'Level save',
+  '모국어 저장': 'Native language save',
+  '목소리 임베딩 해제': 'Voice embedding unlink',
+  '문제 생성': 'Question generation',
+  '별칭 임베딩 생성': 'Alias embedding generation',
+  '삭제 영향 조회': 'Delete impact lookup',
+  '언어 설정 저장': 'Language settings save',
+  '연습 언어 저장': 'Target language save',
+  '영구 삭제': 'Permanent delete',
+  '온톨로지': 'Ontology',
+  '유형 변경': 'Type change',
+  '음성 변환': 'Speech transcription',
+  '인물 마이그레이션 제안': 'Person migration suggestion',
+  '일기 노드': 'Journal node',
+  '일기 삭제': 'Journal delete',
+  '입장': 'Sign in',
+  '작문 드릴 큐 조회': 'Writing drill queue lookup',
+  '전체 삭제': 'Delete all',
+  '지식 그래프': 'Knowledge graph',
+  '지식 그래프 삭제': 'Knowledge graph delete',
+  '지식 그래프 확정': 'Knowledge graph commit',
+  '채팅방 목록': 'Chat room list',
+  '채팅방 삭제': 'Chat room delete',
+  '채팅방 생성': 'Chat room create',
+  '채팅방 이름 변경': 'Chat room rename',
+  '초안 상태 저장': 'Draft state save',
+  '초안 수정': 'Draft edit',
+  '추출 실행': 'Extraction run',
+  '추출 정보': 'Extraction info',
+  '캘린더 데이터': 'Calendar data',
+  '퀴즈 삭제': 'Quiz delete',
+  '퀴즈 생성': 'Quiz generation',
+  '퀴즈 세션': 'Quiz session',
+  '퀴즈 큐': 'Quiz queue',
+  '퀴즈 큐 전체 초기화': 'Quiz queue reset',
+  '타임라인': 'Timeline',
+  '텍스트 기록 저장': 'Text entry save',
+  '튜터 단어장': 'Tutor vocabulary',
+  '튜터 대화': 'Tutor chat',
+  '표현 불러오기': 'Expression load',
+  '표현 삭제': 'Expression delete',
+  '표현 재추출': 'Expression re-extraction',
+  '표현 저장': 'Expression save',
+  '프로필': 'Profile',
+  '학습 설정': 'Learning settings',
+  '학습 프로필': 'Learning profile',
+  '화자 정리': 'Speaker cleanup',
+  '화자 추천': 'Speaker suggestion',
+  '화자 확정': 'Speaker confirm',
+  '휴지통 목록': 'Trash list',
+};
 
 /// Bearer token for the active ID-entry account. Set by the account controller;
 /// read by the Dio interceptor. A module-level var (not an import of the account
@@ -134,7 +223,15 @@ class ApiClient {
     final detail = e.response?.data?.toString();
     if (e.type == DioExceptionType.connectionError ||
         e.type == DioExceptionType.unknown) {
-      return Exception('서버에 연결할 수 없어요. 잠시 후 다시 시도해 주세요.');
+      return Exception(tr('client.connectionFailed'));
+    }
+    if (appLocaleController.isEnglish) {
+      final label = _kActionLabelsEn[action] ?? action;
+      if (status != null) {
+        return Exception(
+            'Failed: $label (HTTP $status)${detail != null ? ' — $detail' : ''}');
+      }
+      return Exception('Failed: $label — ${e.message}');
     }
     if (status != null) {
       return Exception(
@@ -545,7 +642,9 @@ class ApiClient {
           final pending = detail['pending_labels'];
           if (pending is List && pending.isNotEmpty) {
             throw Exception(
-              '화자 확인이 필요합니다: ${pending.map((e) => e.toString()).join(', ')}',
+              tr('client.speakersPendingError', {
+                'names': pending.map((e) => e.toString()).join(', '),
+              }),
             );
           }
           final msg = detail['message']?.toString();

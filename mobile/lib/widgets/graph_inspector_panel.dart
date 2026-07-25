@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart';
 
@@ -135,10 +136,10 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     if (desc.startsWith('{')) {
       try {
         final map = (jsonDecode(desc) as Map).cast<String, dynamic>();
-        return (map['context_type'] as String? ?? '미분류').trim();
+        return (map['context_type'] as String? ?? tr('inspector.uncategorized')).trim();
       } catch (_) {}
     }
-    return desc.split('\n').first.trim().isEmpty ? '미분류' : desc.split('\n').first.trim();
+    return desc.split('\n').first.trim().isEmpty ? tr('inspector.uncategorized') : desc.split('\n').first.trim();
   }
 
   String _buildStmtDescription(String contextType, String content) =>
@@ -153,13 +154,13 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     if (raw.isNotEmpty) {
       return Padding(
         padding: const EdgeInsets.only(top: 6),
-        child: _SourceTranscriptSection(raw: raw, label: '원문 (정제 전 원본)'),
+        child: _SourceTranscriptSection(raw: raw, label: tr('inspector.sourceRawLabel')),
       );
     }
     if (clean.isNotEmpty) {
       return Padding(
         padding: const EdgeInsets.only(top: 6),
-        child: _SourceTranscriptSection(raw: clean, label: '원문 (일기 전체)'),
+        child: _SourceTranscriptSection(raw: clean, label: tr('inspector.sourceFullLabel')),
       );
     }
     return const SizedBox.shrink();
@@ -218,13 +219,13 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       widget.onUpdated?.call();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('노드 저장됨')),
+          SnackBar(content: Text(tr('inspector.nodeSaved'))),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('저장 실패: $e')),
+          SnackBar(content: Text(tr('inspector.saveFailed', {'error': e}))),
         );
       }
     } finally {
@@ -252,11 +253,11 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       builder: (ctx) {
         if (!isStatement) {
           return AlertDialog(
-            title: const Text('노드 삭제'),
-            content: Text('「${node['name']}」 노드와 연결된 관계도 삭제됩니다.'),
+            title: Text(tr('inspector.deleteNodeTitle')),
+            content: Text(tr('inspector.deleteNodeSimpleBody', {'name': node['name']})),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
-              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('삭제')),
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('common.cancel'))),
+              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr('common.delete'))),
             ],
           );
         }
@@ -265,32 +266,32 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         final quizCount = impact['quiz_count'] as int? ?? 0;
         final exprCount = impact['expression_count'] as int? ?? 0;
         return AlertDialog(
-          title: const Text('노드 삭제'),
+          title: Text(tr('inspector.deleteNodeTitle')),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('「${node['name']}」 Statement 노드를 삭제합니다.'),
+              Text(tr('inspector.deleteStatementBody', {'name': node['name']})),
               const SizedBox(height: 12),
-              const Text('함께 삭제되는 항목:', style: TextStyle(fontWeight: FontWeight.w600)),
+              Text(tr('inspector.alsoDeletedLabel'), style: const TextStyle(fontWeight: FontWeight.w600)),
               const SizedBox(height: 4),
-              _ImpactRow(icon: Icons.share_outlined, label: '연결된 관계(엣지)', count: edgeCount),
-              _ImpactRow(icon: Icons.bubble_chart_outlined, label: '고아 개념/화자 노드', count: orphanCount),
-              _ImpactRow(icon: Icons.quiz_outlined, label: '생성된 퀴즈', count: quizCount),
-              _ImpactRow(icon: Icons.translate_outlined, label: '추출된 언어 표현', count: exprCount),
+              _ImpactRow(icon: Icons.share_outlined, label: tr('inspector.relatedEdges'), count: edgeCount),
+              _ImpactRow(icon: Icons.bubble_chart_outlined, label: tr('inspector.orphanNodes'), count: orphanCount),
+              _ImpactRow(icon: Icons.quiz_outlined, label: tr('inspector.generatedQuizzes'), count: quizCount),
+              _ImpactRow(icon: Icons.translate_outlined, label: tr('inspector.extractedExpressions'), count: exprCount),
               const SizedBox(height: 12),
               Text(
-                '삭제된 항목은 휴지통에서 복구할 수 있습니다.',
+                tr('inspector.restoreFromTrashNote'),
                 style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
               ),
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('common.cancel'))),
             FilledButton(
               style: FilledButton.styleFrom(backgroundColor: Colors.red),
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('삭제'),
+              child: Text(tr('common.delete')),
             ),
           ],
         );
@@ -307,7 +308,11 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                '삭제 완료 — 고아 노드 $orphans개, 퀴즈 $quizzes개, 표현 $exprs개 함께 삭제됨',
+                tr('inspector.deleteCompleteSnackbar', {
+                  'orphans': orphans,
+                  'quizzes': quizzes,
+                  'exprs': exprs,
+                }),
               ),
             ),
           );
@@ -320,7 +325,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('삭제 실패: $e')),
+          SnackBar(content: Text(tr('inspector.deleteFailed', {'error': e}))),
         );
       }
     }
@@ -337,7 +342,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('저장 실패: $e')),
+          SnackBar(content: Text(tr('inspector.saveFailed', {'error': e}))),
         );
       }
     } finally {
@@ -351,14 +356,11 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('목소리 임베딩 해제'),
-        content: const Text(
-          '이 노드에서 목소리 임베딩 연결을 제거합니다.\n'
-          '잘못 매칭된 경우 일기에서 화자를 다시 확인할 수 있습니다.',
-        ),
+        title: Text(tr('inspector.unlinkVoiceTitle')),
+        content: Text(tr('inspector.unlinkVoiceBody')),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('해제')),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('common.cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr('inspector.unlinkAction'))),
         ],
       ),
     );
@@ -369,13 +371,13 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       widget.onUpdated?.call();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('목소리 임베딩 연결이 해제되었습니다')),
+          SnackBar(content: Text(tr('inspector.voiceUnlinkedSnackbar'))),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('해제 실패: $e')),
+          SnackBar(content: Text(tr('inspector.unlinkFailed', {'error': e}))),
         );
       }
     } finally {
@@ -393,7 +395,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('삭제 실패: $e')),
+          SnackBar(content: Text(tr('inspector.deleteFailed', {'error': e}))),
         );
       }
     }
@@ -467,7 +469,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
               node != null
                   ? nodeDisplayLabel(node)
                   : edge != null
-                      ? '관계 상세'
+                      ? tr('inspector.relationDetailTitle')
                       : 'Inspector',
               style: theme.textTheme.titleMedium,
               maxLines: 2,
@@ -477,7 +479,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
           IconButton(
             icon: const Icon(Icons.close),
             onPressed: widget.onClose,
-            tooltip: '닫기',
+            tooltip: tr('common.close'),
           ),
         ],
       ),
@@ -512,10 +514,10 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     final next = _neighborChunkPreview(node, forward: true);
 
     return [
-      Text('Chunk 발화', style: theme.textTheme.labelLarge?.copyWith(color: Colors.grey)),
+      Text(tr('inspector.chunkUtterance'), style: theme.textTheme.labelLarge?.copyWith(color: Colors.grey)),
       const SizedBox(height: 8),
       if (created.isNotEmpty)
-        Text('생성: ${created.split('T').first}', style: theme.textTheme.bodySmall),
+        Text(tr('inspector.createdLabel', {'date': created.split('T').first}), style: theme.textTheme.bodySmall),
       const SizedBox(height: 6),
       Chip(
         avatar: const Icon(Icons.person, size: 16),
@@ -531,13 +533,13 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
           borderRadius: BorderRadius.circular(8),
         ),
         child: SelectableText(
-          text.isNotEmpty ? '[$speaker] $text' : '(내용 없음)',
+          text.isNotEmpty ? '[$speaker] $text' : tr('inspector.noContent'),
           style: theme.textTheme.bodyMedium?.copyWith(height: 1.45),
         ),
       ),
       if (prev != null || next != null) ...[
         const SizedBox(height: 12),
-        Text('대화 흐름 (NEXT_TURN)', style: theme.textTheme.labelMedium),
+        Text(tr('inspector.conversationFlow'), style: theme.textTheme.labelMedium),
         if (prev != null) Text('← $prev', style: theme.textTheme.bodySmall),
         if (next != null) Text('→ $next', style: theme.textTheme.bodySmall),
       ],
@@ -573,7 +575,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
             const SizedBox(width: 4),
             Expanded(
               child: Text(
-                '학습된 별칭 없음 — 검토에서 다른 이름을 이 정체성에 연결하면 여기 쌓입니다.',
+                tr('inspector.noLearnedAliases'),
                 style: TextStyle(fontSize: 11, color: AppColors.textMuted),
               ),
             ),
@@ -587,7 +589,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         children: [
           Icon(Icons.badge_outlined, size: 13, color: AppColors.textMuted),
           const SizedBox(width: 4),
-          Text('별칭 (${aliases.length})',
+          Text(tr('inspector.aliasesCount', {'count': aliases.length}),
               style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
           const Spacer(),
           Icon(
@@ -597,7 +599,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
           ),
           const SizedBox(width: 3),
           Text(
-            embCount > 0 ? '임베딩 $embCount개 학습됨' : '임베딩 대기',
+            embCount > 0 ? tr('inspector.embeddingsLearnedCount', {'count': embCount}) : tr('inspector.embeddingPending'),
             style: TextStyle(
               fontSize: 11,
               color: embCount > 0 ? const Color(0xFFB07BFF) : AppColors.textMuted,
@@ -626,7 +628,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
           child: TextButton.icon(
             onPressed: _saving ? null : _reindexAliases,
             icon: const Icon(Icons.auto_awesome, size: 15),
-            label: const Text('별칭 임베딩 생성', style: TextStyle(fontSize: 12)),
+            label: Text(tr('inspector.generateAliasEmbedding'), style: const TextStyle(fontSize: 12)),
             style: TextButton.styleFrom(
               visualDensity: VisualDensity.compact,
               padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -645,7 +647,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       final n = await apiClient.reindexAliasEmbeddings();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('별칭 임베딩 $n개 생성됨')),
+          SnackBar(content: Text(tr('inspector.aliasEmbeddingsGenerated', {'count': n}))),
         );
       }
       widget.onUpdated?.call();
@@ -719,24 +721,23 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                       child: Text(
                           isConcept
-                              ? "'$name' 병합·정체성 전환"
-                              : "'$name' 을(를) 다른 정체성에 병합",
+                              ? tr('inspector.mergeConvertTitle', {'name': name})
+                              : tr('inspector.mergeIntoOtherTitle', {'name': name}),
                           style: Theme.of(ctx).textTheme.titleSmall),
                     ),
                     if (isConcept)
                       ListTile(
                         leading: const Icon(Icons.person_add_alt_1),
-                        title: const Text('새 개체로 전환'),
-                        subtitle: const Text(
-                            '이 노드를 그대로 정체성(Identity) 타입으로 바꿉니다.'),
+                        title: Text(tr('inspector.convertToNewEntity')),
+                        subtitle: Text(tr('inspector.convertToNewEntitySubtitle')),
                         onTap: () => Navigator.pop(ctx, {'mergeInto': null}),
                       ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
                       child: TextField(
                         autofocus: false,
-                        decoration: const InputDecoration(
-                          hintText: '병합 대상 검색',
+                        decoration: InputDecoration(
+                          hintText: tr('inspector.mergeSearchHint'),
                           prefixIcon: Icon(Icons.search, size: 18),
                           isDense: true,
                           border: OutlineInputBorder(),
@@ -747,7 +748,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
                     if (idents.isNotEmpty) ...[
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
-                        child: Text('정체성에 병합 (관계·일기 연결·별칭 승계)',
+                        child: Text(tr('inspector.mergeIntoIdentity'),
                             style: Theme.of(ctx).textTheme.bodySmall),
                       ),
                       for (final p in idents)
@@ -757,7 +758,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
                               ? Icons.account_circle
                               : Icons.person_outline),
                           title: Text(p['is_self'] == true
-                              ? '${p['name']} (본인)'
+                              ? tr('graphReview.selfSuffix', {'name': p['name']})
                               : (p['name'] ?? '').toString()),
                           subtitle: Text((p['type'] ?? '').toString(),
                               style: const TextStyle(fontSize: 11)),
@@ -769,7 +770,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
                       const Divider(height: 16),
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-                        child: Text('다른 개념에 병합 (중복 개념 정리)',
+                        child: Text(tr('inspector.mergeIntoConcept'),
                             style: Theme.of(ctx).textTheme.bodySmall),
                       ),
                       for (final p in concepts)
@@ -800,8 +801,8 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(mergeInto == null
-                ? "'$name' 을(를) 정체성 노드로 전환했습니다."
-                : "'$name' 을(를) 병합했습니다 — 관계·일기 연결이 승계되었습니다."),
+                ? tr('inspector.convertedToIdentitySnackbar', {'name': name})
+                : tr('inspector.mergedSnackbar', {'name': name})),
           ),
         );
       }
@@ -837,7 +838,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
             decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
           const SizedBox(width: 8),
-          Text('노드', style: theme.textTheme.labelLarge?.copyWith(color: Colors.grey)),
+          Text(tr('inspector.nodeLabel'), style: theme.textTheme.labelLarge?.copyWith(color: Colors.grey)),
         ],
       ),
       if (locked) ...[
@@ -847,12 +848,12 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       const SizedBox(height: 12),
       TextField(
         controller: _nameCtrl,
-        decoration: const InputDecoration(labelText: '이름', border: OutlineInputBorder(), isDense: true),
+        decoration: InputDecoration(labelText: tr('sidebar.nameLabel'), border: const OutlineInputBorder(), isDense: true),
       ),
       const SizedBox(height: 10),
       DropdownButtonFormField<String>(
         value: _selectedTypeValue(),
-        decoration: const InputDecoration(labelText: '타입', border: OutlineInputBorder(), isDense: true),
+        decoration: InputDecoration(labelText: tr('inspector.typeLabel'), border: const OutlineInputBorder(), isDense: true),
         items: _typeDropdownItems(),
         onChanged: (v) => setState(() => _type = v),
       ),
@@ -863,7 +864,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
           children: [
             Icon(Icons.category_outlined, size: 13, color: AppColors.textMuted),
             const SizedBox(width: 4),
-            Text('소스 유형: ', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+            Text(tr('inspector.sourceTypeLabel'), style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
             Chip(
               label: Text(
                 _stmtCtxType(node),
@@ -881,7 +882,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         controller: _descCtrl,
         maxLines: 3,
         decoration: InputDecoration(
-          labelText: _isStatementNode(node) ? '본문 내용 (정제)' : '설명',
+          labelText: _isStatementNode(node) ? tr('inspector.statementContentLabel') : tr('inspector.descriptionLabel'),
           border: const OutlineInputBorder(),
           isDense: true,
         ),
@@ -911,8 +912,8 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
           label: Text(
             canonicalEntityType(node['type']?.toString() ?? '').toLowerCase() ==
                     'concept'
-                ? '병합·정체성 전환'
-                : '다른 정체성에 병합',
+                ? tr('inspector.mergeConvertButton')
+                : tr('inspector.mergeIntoOtherButton'),
           ),
         ),
       ],
@@ -924,19 +925,19 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
               onPressed: _saving ? null : _saveNode,
               child: _saving
                   ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('저장'),
+                  : Text(tr('common.save')),
             ),
           ),
           const SizedBox(width: 8),
           IconButton.outlined(
             onPressed: _deleteNode,
             icon: const Icon(Icons.delete_outline, color: Colors.red),
-            tooltip: '삭제',
+            tooltip: tr('common.delete'),
           ),
         ],
       ),
       const SizedBox(height: 20),
-      Text('관계 (${outgoing.length + incoming.length})', style: theme.textTheme.titleSmall),
+      Text(tr('inspector.relationsCount', {'count': outgoing.length + incoming.length}), style: theme.textTheme.titleSmall),
       const SizedBox(height: 8),
       ...outgoing.map((e) => _RelationTile(
             label: '${e['relation']} → ${widget.nodeById[e['target_id'].toString()]?['name'] ?? '?'}',
@@ -955,7 +956,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         if (recorded == null || recorded.isEmpty) return const SizedBox.shrink();
         return Padding(
           padding: const EdgeInsets.only(bottom: 4),
-          child: Text('기록일: $recorded',
+          child: Text(tr('inspector.recordedDate', {'date': recorded}),
               style: TextStyle(fontSize: 11, color: context.mutedText)),
         );
       }),
@@ -965,7 +966,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       ),
       const SizedBox(height: 8),
       Text(
-        '저장: PostgreSQL nodes 테이블\nGraphRAG 배치 시 upsert',
+        tr('inspector.storedNodesNote'),
         style: TextStyle(fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
       ),
     ];
@@ -979,7 +980,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     final suggestions = _relationSuggestions(_relationCtrl.text);
 
     return [
-      Text('관계 (Edge)', style: theme.textTheme.labelLarge?.copyWith(color: Colors.grey)),
+      Text(tr('inspector.edgeRelationTitle'), style: theme.textTheme.labelLarge?.copyWith(color: Colors.grey)),
       if (locked) ...[
         const SizedBox(height: 10),
         _LockedNotice(),
@@ -988,14 +989,14 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       ListTile(
         contentPadding: EdgeInsets.zero,
         title: Text(src?['name']?.toString() ?? '?'),
-        subtitle: const Text('source'),
+        subtitle: Text(tr('inspector.sourceWord')),
         trailing: const Icon(Icons.arrow_forward),
         onTap: src != null ? () => widget.onSelectNode?.call(src) : null,
       ),
       ListTile(
         contentPadding: EdgeInsets.zero,
         title: Text(tgt?['name']?.toString() ?? '?'),
-        subtitle: const Text('target'),
+        subtitle: Text(tr('inspector.targetWord')),
         onTap: tgt != null ? () => widget.onSelectNode?.call(tgt) : null,
       ),
       const SizedBox(height: 8),
@@ -1024,7 +1025,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       Row(
         children: [
           Expanded(
-            child: FilledButton(onPressed: _saving ? null : _saveEdge, child: const Text('저장')),
+            child: FilledButton(onPressed: _saving ? null : _saveEdge, child: Text(tr('common.save'))),
           ),
           const SizedBox(width: 8),
           IconButton.outlined(
@@ -1035,7 +1036,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       ),
       const SizedBox(height: 16),
       Text(
-        '저장: PostgreSQL edges 테이블',
+        tr('inspector.storedEdgesNote'),
         style: TextStyle(fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
       ),
     ];
@@ -1057,7 +1058,7 @@ class _LockedNotice extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '일기에서 생성된 그래프입니다. 여기서 수정하면 바로 반영되고, 일기 연결(원문 추적)은 유지됩니다.',
+              tr('inspector.lockedNotice'),
               style: TextStyle(fontSize: 12, color: AppColors.textMuted),
             ),
           ),
@@ -1096,7 +1097,7 @@ class _ImportanceCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '누적 중요도',
+                  tr('inspector.cumulativeImportance'),
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: 12,
@@ -1114,7 +1115,7 @@ class _ImportanceCard extends StatelessWidget {
                       ),
                     const SizedBox(width: 6),
                     Text(
-                      '언급마다 1~5점 누적',
+                      tr('inspector.perMentionNote'),
                       style: TextStyle(fontSize: 11, color: Colors.grey[700]),
                     ),
                   ],
@@ -1131,7 +1132,7 @@ class _ImportanceCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 2),
-          Text('점', style: TextStyle(fontSize: 12, color: Colors.deepOrange.shade600)),
+          Text(tr('inspector.pointsSuffix'), style: TextStyle(fontSize: 12, color: Colors.deepOrange.shade600)),
         ],
       ),
     );
@@ -1169,7 +1170,7 @@ class _EmbeddingStatusCard extends StatelessWidget {
                 Icon(Icons.memory, size: 18, color: Colors.blueGrey[700]),
                 const SizedBox(width: 8),
                 Text(
-                  '임베딩 · 음성 메모리',
+                  tr('inspector.embeddingVoiceMemoryTitle'),
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: 13,
@@ -1181,29 +1182,33 @@ class _EmbeddingStatusCard extends StatelessWidget {
             const SizedBox(height: 10),
             _StatusRow(
               icon: Icons.mic,
-              label: '목소리 임베딩',
+              label: tr('inspector.voiceEmbeddingLabel'),
               ok: voiceOk,
               detail: voiceOk
-                  ? '${label ?? '프로필'} · 샘플 $samples회 · ${duration.toStringAsFixed(1)}초'
+                  ? tr('inspector.voiceRegisteredDetail', {
+                      'label': label ?? tr('inspector.profileDefault'),
+                      'samples': samples,
+                      'duration': duration.toStringAsFixed(1),
+                    })
                   : isSpeakerLike
-                      ? '미등록 — 일기 녹음 후 화자 확인 시 등록됩니다'
-                      : 'Speaker 노드가 아니거나 아직 음성 샘플 없음',
+                      ? tr('inspector.voiceUnregisteredSpeaker')
+                      : tr('inspector.voiceNotSpeakerType'),
             ),
             const SizedBox(height: 8),
             _StatusRow(
               icon: Icons.auto_awesome,
-              label: '별칭 임베딩 (유사 매칭)',
+              label: tr('inspector.aliasEmbeddingLabel'),
               ok: aliasEmbCount > 0,
               detail: aliasEmbCount > 0
-                  ? '$aliasEmbCount개 학습됨 — 이름이 달라도 유사하면 자동 제안'
-                  : '아직 없음 — 이 정체성에 다른 이름을 연결하면 학습됩니다',
+                  ? tr('inspector.aliasEmbeddingDetail', {'count': aliasEmbCount})
+                  : tr('inspector.aliasEmbeddingNone'),
             ),
             if (voiceOk && onUnlinkVoice != null) ...[
               const SizedBox(height: 12),
               OutlinedButton.icon(
                 onPressed: onUnlinkVoice,
                 icon: const Icon(Icons.link_off, size: 18),
-                label: const Text('목소리 임베딩 해제'),
+                label: Text(tr('inspector.unlinkVoiceTitle')),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.red.shade700,
                 ),
@@ -1272,7 +1277,7 @@ class _SourceTranscriptSectionState extends State<_SourceTranscriptSection> {
 
   @override
   Widget build(BuildContext context) {
-    final label = widget.label ?? '원문 (음성/텍스트 원본)';
+    final label = widget.label ?? tr('inspector.sourceOriginalLabel');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1353,7 +1358,7 @@ class _NodeExpressionButtonState extends State<_NodeExpressionButton> {
     );
     if (byLang.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('아직 추출된 표현이 없습니다. 추출 작업이 완료된 후 다시 확인해 주세요.')),
+        SnackBar(content: Text(tr('inspector.noExpressionsYetLong'))),
       );
       return;
     }
@@ -1376,22 +1381,22 @@ class _NodeExpressionButtonState extends State<_NodeExpressionButton> {
       icon: _loading
           ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
           : const Icon(Icons.translate, size: 18),
-      label: const Text('학습 표현 보기'),
+      label: Text(tr('inspector.viewLearnedExpressions')),
     );
   }
 }
 
-const _kLangLabelMap = {
-  'english':    '영어',
-  'japanese':   '일본어',
-  'chinese':    '중국어',
-  'spanish':    '스페인어',
-  'french':     '프랑스어',
-  'german':     '독일어',
-  'portuguese': '포르투갈어',
-  'italian':    '이탈리아어',
-  'arabic':     '아랍어',
-  'russian':    '러시아어',
+Map<String, String> get _kLangLabelMap => {
+  'english':    tr('kg.langEnglish'),
+  'japanese':   tr('lang.japanese'),
+  'chinese':    tr('lang.chinese'),
+  'spanish':    tr('lang.spanish'),
+  'french':     tr('lang.french'),
+  'german':     tr('kg.langGerman'),
+  'portuguese': tr('lang.portuguese'),
+  'italian':    tr('lang.italian'),
+  'arabic':     tr('lang.arabic'),
+  'russian':    tr('lang.russian'),
 };
 
 class _ExpressionsBottomSheet extends StatefulWidget {
@@ -1492,7 +1497,7 @@ class _ExpressionList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) {
-      return const Center(child: Text('아직 추출된 표현이 없습니다'));
+      return Center(child: Text(tr('inspector.noExpressionsYetShort')));
     }
     return ListView.separated(
       padding: const EdgeInsets.all(12),
@@ -1582,7 +1587,7 @@ class _ImpactRow extends StatelessWidget {
           const SizedBox(width: 6),
           Expanded(child: Text('• $label', style: const TextStyle(fontSize: 13))),
           Text(
-            '$count개',
+            tr('inspector.countSuffix', {'count': count}),
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,

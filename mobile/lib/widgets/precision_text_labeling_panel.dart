@@ -5,6 +5,7 @@ import 'package:flutter/services.dart'
     show KeyDownEvent, LogicalKeyboardKey, MaxLengthEnforcement;
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart' show isSpeakerLikeType, isStatementHeadType;
 import '../widgets/app_ui.dart';
@@ -561,16 +562,14 @@ class _PrecisionTextLabelingPanelState
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('입력이 너무 깁니다'),
+        title: Text(tr('precisionText.tooLongTitle')),
         content: Text(
-          '현재 $length자 / 최대 $kMaxJournalTextChars자입니다.\n'
-          '너무 긴 텍스트는 추출 품질이 떨어질 수 있어요. '
-          '내용을 나눠서 여러 번 입력해 주세요.',
+          tr('precisionText.tooLongBody', {'length': length, 'max': kMaxJournalTextChars}),
         ),
         actions: [
           FilledButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('확인'),
+            child: Text(tr('audioCompose.confirmAction')),
           ),
         ],
       ),
@@ -582,7 +581,7 @@ class _PrecisionTextLabelingPanelState
     final text = raw.trim();
     if (text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('텍스트를 입력해 주세요')),
+        SnackBar(content: Text(tr('precisionText.emptyTextSnackbar'))),
       );
       return;
     }
@@ -753,10 +752,12 @@ class _PrecisionTextLabelingPanelState
                                       _badges.contains(_popupOptions[i].name)
                                           ? _colorFor(_popupOptions[i].name)
                                           : theme.colorScheme.primary,
-                                  label: _popupOptions[i].name,
+                                  label: _popupOptions[i].name == '나'
+                                      ? selfSpeakerLabel
+                                      : _popupOptions[i].name,
                                   trailing:
                                       !_badges.contains(_popupOptions[i].name)
-                                          ? '그래프'
+                                          ? tr('mention.fromGraphTrailing')
                                           : null,
                                   selected: i == _optionCursor,
                                   onTap: () =>
@@ -768,7 +769,7 @@ class _PrecisionTextLabelingPanelState
                                 _popupRow(
                                   icon: Icons.add_circle_outline_rounded,
                                   iconColor: theme.colorScheme.primary,
-                                  label: "'${ctx.partial}' 새 화자 만들기",
+                                  label: tr('mention.createNewSpeaker', {'partial': ctx.partial}),
                                   trailing: 'Enter',
                                   selected:
                                       _optionCursor == _popupOptions.length,
@@ -820,9 +821,7 @@ class _PrecisionTextLabelingPanelState
                     maxLength: kMaxJournalTextChars,
                     maxLengthEnforcement: MaxLengthEnforcement.none,
                     decoration: InputDecoration(
-                      hintText: '그냥 쓰면 나의 일기가 돼요.\n'
-                          '@를 입력해 화자·출처를 지정할 수 있어요. '
-                          '예: @나 내일 회의 몇 시야?  @엄마 10시.',
+                      hintText: tr('precisionText.hintText'),
                       border: const OutlineInputBorder(),
                       contentPadding: _composeContentPadding,
                     ),
@@ -864,7 +863,7 @@ class _PrecisionTextLabelingPanelState
         runSpacing: 4,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          Text('분리 미리보기', style: theme.textTheme.labelMedium),
+          Text(tr('precisionText.splitPreviewLabel'), style: theme.textTheme.labelMedium),
           for (final entry in counts.entries)
             Chip(
               avatar: Icon(
@@ -875,7 +874,7 @@ class _PrecisionTextLabelingPanelState
                 color: _colorFor(entry.key),
               ),
               label: Text(
-                '${entry.key} · ${entry.value}',
+                '${entry.key == '나' ? selfSpeakerLabel : entry.key} · ${entry.value}',
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
@@ -913,8 +912,7 @@ class _PrecisionTextLabelingPanelState
               const SizedBox(width: 5),
               Expanded(
                 child: Text(
-                  '@ 없이 쓰면 전체가 나의 글로 저장돼요 · @화자를 지정하면 '
-                  '다음 @화자 전까지가 그 화자의 발화가 돼요',
+                  tr('precisionText.infoHint'),
                   style: Theme.of(context)
                       .textTheme
                       .bodySmall
@@ -936,7 +934,7 @@ class _PrecisionTextLabelingPanelState
                     ),
                   )
                 : const Icon(Icons.save_alt_outlined),
-            label: Text(widget.busy ? '저장 중…' : '일기 저장'),
+            label: Text(widget.busy ? tr('precisionText.saving') : tr('precisionText.saveButton')),
           ),
         ],
       ),

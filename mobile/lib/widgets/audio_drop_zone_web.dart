@@ -2,6 +2,7 @@ import 'dart:html' as html;
 
 import 'package:flutter/material.dart';
 
+import '../l10n/app_strings.dart';
 import '../utils/audio_file_import.dart';
 import 'audio_drop_zone_platform.dart';
 
@@ -83,7 +84,7 @@ void _ensureHooks() {
 
     final files = _collectDroppedFiles(event);
     if (files.isEmpty) {
-      _session.onError?.call('드롭한 파일을 읽을 수 없습니다.');
+      _session.onError?.call(tr('audioDropZone.cannotReadDroppedFile'));
       return;
     }
 
@@ -91,13 +92,13 @@ void _ensureHooks() {
       final picked = await pickFirstSupportedHtmlFile(files);
       if (picked == null) {
         _session.onError?.call(
-          '지원하지 않는 파일입니다. (${audioFileExtensions.join(' · ')})',
+          tr('audioDropZone.unsupportedFileWithExt', {'exts': audioFileExtensions.join(' · ')}),
         );
         return;
       }
       await _session.onFilePicked?.call(picked);
     } catch (e) {
-      _session.onError?.call('파일 불러오기 실패: $e');
+      _session.onError?.call(tr('audioCompose.fileLoadFailedSnackbar', {'error': e}));
     }
   });
 }

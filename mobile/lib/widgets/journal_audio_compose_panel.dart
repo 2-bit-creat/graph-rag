@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 
 import '../compose/compose_session_controller.dart';
+import '../l10n/app_strings.dart';
 import '../screens/record_file_io.dart'
     if (dart.library.html) '../screens/record_file_stub.dart';
 import '../theme/app_theme.dart';
@@ -74,7 +75,7 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('녹음 중지 실패: $e')),
+            SnackBar(content: Text(tr('audioCompose.stopFailedSnackbar', {'error': e}))),
           );
         }
         composeSession.setRecording(false);
@@ -87,8 +88,8 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
       if (!ok) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('마이크 권한이 필요합니다. 브라우저 주소창 옆 자물쇠 아이콘에서 허용해 주세요.'),
+            SnackBar(
+              content: Text(tr('audioCompose.micPermissionNeeded')),
             ),
           );
         }
@@ -106,7 +107,7 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('녹음 시작 실패: $e')),
+          SnackBar(content: Text(tr('audioCompose.startFailedSnackbar', {'error': e}))),
         );
       }
     }
@@ -134,10 +135,10 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
             ? formatDuration((wavMs / 1000).round())
             : null;
         return dur != null
-            ? '파일 $_pickedFilename · $dur · ${kb}KB'
-            : '파일 $_pickedFilename · ${kb}KB';
+            ? tr('audioCompose.fileInfoWithDuration', {'filename': _pickedFilename, 'duration': dur, 'kb': kb})
+            : tr('audioCompose.fileInfoNoDuration', {'filename': _pickedFilename, 'kb': kb});
       }
-      return '파일 $_pickedFilename';
+      return tr('audioCompose.fileInfoNameOnly', {'filename': _pickedFilename});
     }
     if (kIsWeb && _webBytes != null) {
       final kb = (_webBytes!.length / 1024).toStringAsFixed(1);
@@ -145,9 +146,9 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
       final dur = wavMs != null
           ? formatDuration((wavMs / 1000).round())
           : formatDuration(_elapsedSec);
-      return '녹음 $dur · ${kb}KB';
+      return tr('audioCompose.recordingInfoWithKb', {'duration': dur, 'kb': kb});
     }
-    if (_elapsedSec > 0) return '녹음 ${formatDuration(_elapsedSec)}';
+    if (_elapsedSec > 0) return tr('audioCompose.recordingInfoDurationOnly', {'duration': formatDuration(_elapsedSec)});
     return '';
   }
 
@@ -155,7 +156,7 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
     if (kIsWeb) {
       final bytes = picked.bytes;
       if (bytes == null || bytes.isEmpty) {
-        throw Exception('파일 데이터를 읽을 수 없습니다.');
+        throw Exception(tr('audioCompose.cannotReadFileData'));
       }
       setState(() {
         _webBytes = bytes;
@@ -169,7 +170,7 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
 
     final path = picked.path;
     if (path == null || !fileExists(path)) {
-      throw Exception('파일 경로를 확인할 수 없습니다.');
+      throw Exception(tr('audioCompose.cannotResolveFilePath'));
     }
     setState(() {
       _filePath = path;
@@ -192,15 +193,17 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('음성이 너무 깁니다'),
+        title: Text(tr('audioCompose.tooLongTitle')),
         content: Text(
-          '${picked.name}은(는) ${formatDuration((ms / 1000).round())}로, '
-          '최대 ${formatDuration(kMaxRecordingSeconds)}를 넘습니다.\n'
-          '분량을 나눠서 업로드해 주세요.',
+          tr('audioCompose.tooLongBody', {
+            'name': picked.name,
+            'duration': formatDuration((ms / 1000).round()),
+            'max': formatDuration(kMaxRecordingSeconds),
+          }),
         ),
         actions: [
           FilledButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('확인')),
+              onPressed: () => Navigator.pop(ctx), child: Text(tr('audioCompose.confirmAction'))),
         ],
       ),
     );
@@ -212,13 +215,13 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
     if (kIsWeb) {
       final bytes = picked.bytes;
       if (bytes == null || bytes.isEmpty) {
-        throw Exception('파일 데이터를 읽을 수 없습니다.');
+        throw Exception(tr('audioCompose.cannotReadFileData'));
       }
     } else {
       final path = picked.path;
       if ((path == null || !fileExists(path)) &&
           (picked.bytes == null || picked.bytes!.isEmpty)) {
-        throw Exception('파일을 확인할 수 없습니다.');
+        throw Exception(tr('audioCompose.cannotVerifyFile'));
       }
     }
     if (await _rejectIfTooLong(picked)) return;
@@ -228,7 +231,7 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
 
   Future<void> _pickAudioFile() async {
     if (_recording) {
-      _showSnack('녹음을 먼저 중지한 뒤 파일을 선택해 주세요.');
+      _showSnack(tr('audioCompose.stopBeforePicking'));
       return;
     }
 
@@ -236,25 +239,25 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
       final picked = await pickAudioFile();
       await _importPickedAudio(picked);
       if (!mounted || picked == null || !_hasRecording) return;
-      _showSnack('${picked.name} 불러옴 — 분석을 시작합니다');
+      _showSnack(tr('audioCompose.fileLoadedAnalyzing', {'name': picked.name}));
       await _upload();
     } catch (e) {
-      _showSnack('파일 선택 실패: $e');
+      _showSnack(tr('audioCompose.filePickFailedSnackbar', {'error': e}));
     }
   }
 
   Future<void> _onFilePicked(PickedAudioFile picked) async {
     if (_recording) {
-      _showSnack('녹음을 먼저 중지한 뒤 파일을 놓아 주세요.');
+      _showSnack(tr('audioCompose.stopBeforeDropping'));
       return;
     }
     try {
       await _importPickedAudio(picked);
       if (!mounted || !_hasRecording) return;
-      _showSnack('${picked.name} 불러옴 — 분석을 시작합니다');
+      _showSnack(tr('audioCompose.fileLoadedAnalyzing', {'name': picked.name}));
       await _upload();
     } catch (e) {
-      _showSnack('파일 불러오기 실패: $e');
+      _showSnack(tr('audioCompose.fileLoadFailedSnackbar', {'error': e}));
     }
   }
 
@@ -298,7 +301,7 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('업로드 실패: $e')),
+          SnackBar(content: Text(tr('audioCompose.uploadFailedSnackbar', {'error': e}))),
         );
       }
     } finally {
@@ -317,9 +320,9 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
         composeSession.setRecording(false);
         _notifyDirty();
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('최대 10분까지 녹음됩니다 — 녹음이 자동으로 중지되었어요.'),
-            duration: Duration(seconds: 5),
+          SnackBar(
+            content: Text(tr('audioCompose.maxDurationReached')),
+            duration: const Duration(seconds: 5),
           ),
         );
       }
@@ -349,8 +352,8 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
     final colorScheme = Theme.of(context).colorScheme;
     final enabled = !_uploading && !_recording;
     final dragHint = AudioDropZone.supportsDrag
-        ? '드래그하거나 탭하여 음성 파일 선택'
-        : '탭하여 음성 파일 선택';
+        ? tr('audioCompose.dragHintWithDrag')
+        : tr('audioCompose.dragHintTapOnly');
 
     return AudioDropZone(
       enabled: enabled,
@@ -385,7 +388,7 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
             ),
             const SizedBox(height: 8),
             Text(
-              _dragging ? '여기에 놓으세요' : dragHint,
+              _dragging ? tr('audioCompose.dropHere') : dragHint,
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.titleSmall,
             ),
@@ -458,16 +461,16 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
         ],
         Text(
           _recording
-              ? '녹음 중… 탭하여 중지'
+              ? tr('audioCompose.recordingTapToStop')
               : _hasRecording
-                  ? '탭하면 처음부터 다시 녹음해요'
-                  : '탭하여 녹음 시작',
+                  ? tr('audioCompose.tapToRerecord')
+                  : tr('audioCompose.tapToStartRecording'),
         ),
         if (!_recording && !_hasRecording)
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: Text(
-              '한 번에 최대 10분까지 기록할 수 있어요',
+              tr('audioCompose.maxDurationHint'),
               style: TextStyle(fontSize: 12, color: Colors.grey[600]),
             ),
           ),
@@ -475,7 +478,7 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Text(
-              '녹음 중에는 탭을 활성 상태로 유지해 주세요.',
+              tr('audioCompose.keepTabActiveHint'),
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.orange[800], fontSize: 12),
             ),
@@ -495,7 +498,7 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.cloud_upload),
-            label: Text(_uploading ? '처리 중…' : '업로드 & 분석'),
+            label: Text(_uploading ? tr('audioCompose.processingLabel') : tr('audioCompose.uploadAndAnalyzeButton')),
           ),
         ],
       ],
@@ -524,12 +527,12 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
             if (picked != null) break;
           }
           if (picked == null) {
-            _showSnack('지원하지 않는 파일입니다.');
+            _showSnack(tr('audioCompose.unsupportedFile'));
             return;
           }
           await _onFilePicked(picked);
         } catch (e) {
-          _showSnack('파일 불러오기 실패: $e');
+          _showSnack(tr('audioCompose.fileLoadFailedSnackbar', {'error': e}));
         }
       },
       child: Center(
@@ -551,7 +554,7 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 12),
                             child: Text(
-                              '또는 음성 파일 업로드',
+                              tr('audioCompose.orUploadFile'),
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                           ),
@@ -581,10 +584,10 @@ class _UploadStagesCard extends StatefulWidget {
 }
 
 class _UploadStagesCardState extends State<_UploadStagesCard> {
-  static const _stages = [
-    (Icons.cloud_upload_outlined, '음성 업로드'),
-    (Icons.hearing_outlined, '받아쓰기 (STT)'),
-    (Icons.auto_fix_high_outlined, '문장 다듬기'),
+  static List<(IconData, String)> get _stages => [
+    (Icons.cloud_upload_outlined, tr('audioCompose.stageUpload')),
+    (Icons.hearing_outlined, tr('audioCompose.stageStt')),
+    (Icons.auto_fix_high_outlined, tr('audioCompose.stagePolish')),
   ];
 
   int _highlight = 0;
@@ -618,11 +621,11 @@ class _UploadStagesCardState extends State<_UploadStagesCard> {
           child: CircularProgressIndicator(strokeWidth: 3),
         ),
         const SizedBox(height: 24),
-        Text('일기를 만드는 중이에요',
+        Text(tr('audioCompose.creatingEntry'),
             style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 6),
         Text(
-          '음성 길이에 따라 최대 1분 정도 걸릴 수 있어요.',
+          tr('audioCompose.creatingEntrySubtitle'),
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 24),

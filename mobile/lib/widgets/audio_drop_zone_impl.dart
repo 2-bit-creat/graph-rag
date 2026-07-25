@@ -1,6 +1,7 @@
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 
+import '../l10n/app_strings.dart';
 import '../utils/audio_file_import.dart';
 import '../utils/picked_audio_file.dart';
 import 'audio_drop_zone_platform.dart';
@@ -34,12 +35,12 @@ class _AudioDropZoneImpl implements AudioDropZonePlatform {
             if (picked != null) break;
           }
           if (picked == null) {
-            onError('지원하지 않는 파일입니다. (${audioFileExtensions.join(' · ')})');
+            onError(tr('audioDropZone.unsupportedFileWithExt', {'exts': audioFileExtensions.join(' · ')}));
             return;
           }
           await onFilePicked(picked);
         } catch (e) {
-          onError('파일 불러오기 실패: $e');
+          onError(tr('audioCompose.fileLoadFailedSnackbar', {'error': e}));
         }
       },
       child: Material(

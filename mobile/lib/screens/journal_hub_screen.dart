@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api/client.dart';
 import '../app_route_observer.dart';
 import '../chat/chat_session_controller.dart' show openChatJournalCompose;
+import '../l10n/app_strings.dart';
 import '../widgets/app_ui.dart';
 import '../widgets/entry_hub_layout.dart';
 import '../widgets/journal_user_detail_panel.dart';
@@ -36,10 +37,10 @@ class JournalHubScreen extends StatelessWidget {
       return JournalEntryDetailScreen(entryId: initialEntryId!);
     }
     return EntryHubNavigator(
-      title: '내 일기',
+      title: tr('journalHub.pageTitle'),
       initialEntryId: initialEntryId,
-      emptyHint: '아직 일기가 없습니다',
-      emptySubtitle: '일기 쓰기에서 첫 기록을 남겨 보세요',
+      emptyHint: tr('journalHub.emptyHint'),
+      emptySubtitle: tr('journalHub.emptySubtitle'),
       onNewEntry: () => openCompose(context),
       entryDeletable: true,
       allDeletable: true,
@@ -113,12 +114,12 @@ class _JournalEntryDetailScreenState extends State<JournalEntryDetailScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('내 일기'),
+        title: Text(tr('journalHub.pageTitle')),
         actions: [
           if (_entry != null)
             IconButton(
               icon: const Icon(Icons.delete_outline_rounded),
-              tooltip: '일기 삭제',
+              tooltip: tr('journalHub.deleteTooltip'),
               onPressed: () async {
                 final deleted =
                     await confirmAndDeleteEntry(context, widget.entryId);
@@ -130,9 +131,9 @@ class _JournalEntryDetailScreenState extends State<JournalEntryDetailScreen>
       body: _loading
           ? const AppLoadingScreen()
           : _entry == null
-              ? const AppEmptyState(
+              ? AppEmptyState(
                   icon: Icons.error_outline_rounded,
-                  title: '불러오기 실패',
+                  title: tr('journalHub.loadFailed'),
                 )
               : JournalUserDetailPanel(
                   entryId: widget.entryId,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/client.dart';
 import '../compose/compose_session_controller.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 
@@ -203,7 +204,7 @@ class _GraphReviewScreenState extends State<GraphReviewScreen> {
         .toList();
     if (claims.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('확정할 내용이 없습니다. 최소 한 개의 Statement가 필요합니다.')),
+        SnackBar(content: Text(tr('graphReview.notEnoughContentSnackbar'))),
       );
       return;
     }
@@ -215,20 +216,18 @@ class _GraphReviewScreenState extends State<GraphReviewScreen> {
       final proceed = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('개념 없는 항목이 있습니다'),
+          title: Text(tr('graphReview.emptyConceptsTitle')),
           content: Text(
-            '$emptyCount개 항목에 개념(Concept)이 없습니다.\n'
-            '이대로 확정하면 해당 Statement는 다른 지식과 연결되지 않는 '
-            '고립 노드가 되고, 확정 후에는 수정할 수 없습니다.',
+            tr('graphReview.emptyConceptsBody', {'count': emptyCount}),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('돌아가서 추가'),
+              child: Text(tr('graphReview.goBackAndAdd')),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('그래도 확정'),
+              child: Text(tr('graphReview.confirmAnyway')),
             ),
           ],
         ),
@@ -271,7 +270,7 @@ class _GraphReviewScreenState extends State<GraphReviewScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('그래프 검토')),
+      appBar: AppBar(title: Text(tr('graphReview.pageTitle'))),
       body: Column(
         children: [
           Expanded(
@@ -296,7 +295,7 @@ class _GraphReviewScreenState extends State<GraphReviewScreen> {
                       const SizedBox(width: AppSpacing.sm),
                       Expanded(
                         child: Text(
-                          '생성된 내용을 검토하고 수정하세요. 확정 후에는 수정할 수 없고 삭제·복구만 가능합니다.',
+                          tr('graphReview.reviewBanner'),
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ),
@@ -318,7 +317,7 @@ class _GraphReviewScreenState extends State<GraphReviewScreen> {
                   Padding(
                     padding: const EdgeInsets.all(AppSpacing.lg),
                     child: Text(
-                      '검토할 항목이 없습니다.',
+                      tr('graphReview.nothingToReview'),
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
@@ -344,7 +343,7 @@ class _GraphReviewScreenState extends State<GraphReviewScreen> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.check_circle_outline),
-                label: Text(_submitting ? '확정 중…' : '확정하고 지식그래프에 추가'),
+                label: Text(_submitting ? tr('graphReview.confirming') : tr('graphReview.confirmButton')),
               ),
             ),
           ),
@@ -385,7 +384,7 @@ class _ClaimCard extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(
                     AppSpacing.md, AppSpacing.xs, AppSpacing.md, AppSpacing.sm),
                 child: Text(
-                  "'${c.name}' 은(는) 누구/무엇인가요?",
+                  tr('graphReview.whoOrWhat', {'name': c.name}),
                   style: Theme.of(ctx).textTheme.titleSmall,
                 ),
               ),
@@ -403,8 +402,8 @@ class _ClaimCard extends StatelessWidget {
                   child: ListTile(
                     leading: const Icon(Icons.auto_awesome,
                         color: Color(0xFFFFB020)),
-                    title: Text('추천: ${c.resName ?? ''} 맞아요'),
-                    subtitle: const Text('이름은 다르지만 같은 대상 같아요 — 확인하면 학습합니다.'),
+                    title: Text(tr('graphReview.suggestConfirm', {'name': c.resName ?? ''})),
+                    subtitle: Text(tr('graphReview.suggestSubtitle')),
                     onTap: () {
                       c.resAction = 'link'; // 확인 → 정확 링크로 승격(커밋 시 학습)
                       Navigator.pop(ctx);
@@ -415,8 +414,8 @@ class _ClaimCard extends StatelessWidget {
               ],
               ListTile(
                 leading: const Icon(Icons.person_add_alt_1),
-                title: const Text('새 정체성으로 추가'),
-                subtitle: const Text('사람·반려동물·단체 등 개체 노드를 새로 만듭니다.'),
+                title: Text(tr('graphReview.addAsNewIdentity')),
+                subtitle: Text(tr('graphReview.addAsNewIdentitySubtitle')),
                 selected: c.resAction == null || c.resAction == 'new_person',
                 onTap: () {
                   c.resAction = 'new_person';
@@ -429,8 +428,8 @@ class _ClaimCard extends StatelessWidget {
               ),
               ListTile(
                 leading: const Icon(Icons.lightbulb_outline),
-                title: const Text('개체가 아니라 개념으로'),
-                subtitle: const Text('정체성이 아니라 일반 개념(Concept)으로 저장합니다.'),
+                title: Text(tr('graphReview.demoteToConcept')),
+                subtitle: Text(tr('graphReview.demoteToConceptSubtitle')),
                 selected: c.resAction == 'concept',
                 onTap: () {
                   c.kind = 'concept';
@@ -449,14 +448,14 @@ class _ClaimCard extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
                       AppSpacing.md, 0, AppSpacing.md, AppSpacing.xs),
-                  child: Text('기존 정체성에 연결',
+                  child: Text(tr('graphReview.linkToExisting'),
                       style: Theme.of(ctx).textTheme.bodySmall),
                 ),
                 for (final p in personCandidates)
                   ListTile(
                     leading: Icon(
                         p.isSelf ? Icons.account_circle : Icons.person_outline),
-                    title: Text(p.isSelf ? '${p.name} (본인)' : p.name),
+                    title: Text(p.isSelf ? tr('graphReview.selfSuffix', {'name': p.name}) : p.name),
                     selected: c.resAction == 'link' && c.resNodeId == p.id,
                     trailing: (c.resAction == 'link' && c.resNodeId == p.id)
                         ? const Icon(Icons.check, color: AppColors.accent)
@@ -483,18 +482,18 @@ class _ClaimCard extends StatelessWidget {
     final value = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('개념 추가'),
+        title: Text(tr('graphReview.addConceptTitle')),
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(hintText: '개념(Concept) 이름'),
+          decoration: InputDecoration(hintText: tr('graphReview.addConceptHint')),
           onSubmitted: (v) => Navigator.pop(ctx, v),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr('common.cancel'))),
           TextButton(
             onPressed: () => Navigator.pop(ctx, controller.text),
-            child: const Text('추가'),
+            child: Text(tr('common.add')),
           ),
         ],
       ),
@@ -517,10 +516,12 @@ class _ClaimCard extends StatelessWidget {
             ? const Color(0xFFB07BFF)
             : const Color(0xFFFFB020);
     final String suffix = linked
-        ? '→ ${c.resIsSelf ? '${c.resName ?? c.name}(본인)' : (c.resName ?? c.name)}'
+        ? (c.resIsSelf
+            ? tr('graphReview.linkedSelfSuffix', {'name': c.resName ?? c.name})
+            : tr('graphReview.linkedSuffix', {'name': c.resName ?? c.name}))
         : suggested
-            ? '≈ ${c.resName ?? ''}?'
-            : '· 새 개체';
+            ? tr('graphReview.suggestedSuffix', {'name': c.resName ?? ''})
+            : tr('graphReview.newEntitySuffix');
     return InputChip(
       avatar: CircleAvatar(
         backgroundColor: tone.withValues(alpha: 0.22),
@@ -553,14 +554,14 @@ class _ClaimCard extends StatelessWidget {
                 child: TextField(
                   controller: claim.speaker,
                   style: Theme.of(context).textTheme.titleSmall,
-                  decoration: const InputDecoration(
-                    labelText: '화자',
+                  decoration: InputDecoration(
+                    labelText: tr('graphReview.speakerLabel'),
                     isDense: true,
                   ),
                 ),
               ),
               IconButton(
-                tooltip: '이 항목 삭제',
+                tooltip: tr('graphReview.deleteItemTooltip'),
                 onPressed: onDelete,
                 icon: const Icon(Icons.delete_outline, color: AppColors.accentWarm),
               ),
@@ -571,8 +572,8 @@ class _ClaimCard extends StatelessWidget {
             controller: claim.statement,
             minLines: 1,
             maxLines: 4,
-            decoration: const InputDecoration(
-              labelText: 'Statement (내용)',
+            decoration: InputDecoration(
+              labelText: tr('graphReview.statementLabel'),
               isDense: true,
             ),
           ),
@@ -580,7 +581,7 @@ class _ClaimCard extends StatelessWidget {
           Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              '개념·정체성 — 개념: 탭=중요도, 길게=정체성 전환 · 정체성: 탭=연결 대상 지정',
+              tr('graphReview.conceptHelpText'),
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),
@@ -603,7 +604,7 @@ class _ClaimCard extends StatelessWidget {
                   const SizedBox(width: AppSpacing.xs),
                   Expanded(
                     child: Text(
-                      '개념이 없습니다 — 이대로 확정하면 이 Statement는 그래프에서 고립됩니다. 최소 1개를 추가하세요.',
+                      tr('graphReview.noConceptsWarning'),
                       style: Theme.of(context)
                           .textTheme
                           .bodySmall
@@ -654,7 +655,7 @@ class _ClaimCard extends StatelessWidget {
                   ),
               ActionChip(
                 avatar: const Icon(Icons.add, size: 16),
-                label: const Text('추가'),
+                label: Text(tr('common.add')),
                 onPressed: () => _addConcept(context),
               ),
             ],

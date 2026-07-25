@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../utils/graph_layout.dart';
 
 class OntologySettingsSheet extends StatefulWidget {
@@ -50,7 +51,7 @@ class _OntologySettingsSheetState extends State<OntologySettingsSheet> {
       if (mounted) {
         setState(() => _loading = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('온톨로지 로드 실패: $e')),
+          SnackBar(content: Text(tr('ontology.loadFailedSnackbar', {'error': e}))),
         );
       }
     }
@@ -80,20 +81,20 @@ class _OntologySettingsSheetState extends State<OntologySettingsSheet> {
           controller: scrollController,
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
           children: [
-            Text('온톨로지 설정', style: Theme.of(context).textTheme.titleLarge),
+            Text(tr('ontology.title'), style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 4),
             Text(
-              'GraphRAG 추출 시 사용하는 엔티티·관계 타입입니다.\n노드 색상은 아래 타입 정의를 따릅니다.',
+              tr('ontology.description'),
               style: TextStyle(fontSize: 13, color: Colors.grey[600]),
             ),
             const SizedBox(height: 16),
             ListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('현재 온톨로지'),
-              subtitle: Text(_ontology?['name']?.toString() ?? '(기본)'),
+              title: Text(tr('ontology.currentOntology')),
+              subtitle: Text(_ontology?['name']?.toString() ?? tr('ontology.defaultLabel')),
             ),
             const SizedBox(height: 8),
-            Text('엔티티 타입', style: Theme.of(context).textTheme.titleSmall),
+            Text(tr('ontology.entityTypesHeader'), style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
             ...(() {
               // Parents first, each immediately followed by its children
@@ -149,7 +150,7 @@ class _OntologySettingsSheetState extends State<OntologySettingsSheet> {
                             style: const TextStyle(fontWeight: FontWeight.w600)),
                         if (isChild) ...[
                           const SizedBox(width: 6),
-                          Text('· $parent 하위',
+                          Text(tr('ontology.childOfSuffix', {'parent': parent}),
                               style: TextStyle(
                                   fontSize: 11, color: Colors.grey[500])),
                         ],
@@ -161,7 +162,7 @@ class _OntologySettingsSheetState extends State<OntologySettingsSheet> {
               );
             }),
             const SizedBox(height: 12),
-            Text('관계 타입', style: Theme.of(context).textTheme.titleSmall),
+            Text(tr('ontology.relationTypesHeader'), style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
             Wrap(
               spacing: 6,

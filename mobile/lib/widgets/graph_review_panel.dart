@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api/client.dart';
 import '../chat/journal_task_controller.dart';
 import '../compose/compose_session_controller.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import 'app_ui.dart';
 import 'concept_link_sheet.dart';
@@ -243,15 +244,15 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
         ? claim.title.text.trim()
         : claim.statement.text.trim();
     final label = snippet.isEmpty
-        ? '항목'
+        ? tr('reviewPanel.itemLabelFallback')
         : (snippet.length > 18 ? '${snippet.substring(0, 18)}…' : snippet);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(
-        content: Text('「$label」 삭제됨'),
+        content: Text(tr('reviewPanel.deletedSnackbar', {'label': label})),
         duration: const Duration(seconds: 5),
         action: SnackBarAction(
-          label: '되돌리기',
+          label: tr('reviewPanel.undoAction'),
           onPressed: () {
             if (!mounted || !_removed.remove(claim)) return;
             claim.dismissKey = UniqueKey(); // reinsertion-safe
@@ -281,7 +282,7 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
         .toList();
     if (claims.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('확정할 내용이 없습니다. 최소 한 개의 Statement가 필요합니다.')),
+        SnackBar(content: Text(tr('graphReview.notEnoughContentSnackbar'))),
       );
       return;
     }
@@ -291,20 +292,18 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
       final proceed = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('개념 없는 항목이 있습니다'),
+          title: Text(tr('graphReview.emptyConceptsTitle')),
           content: Text(
-            '$emptyCount개 항목에 개념(Concept)이 없습니다.\n'
-            '이대로 확정하면 해당 Statement는 다른 지식과 연결되지 않는 '
-            '고립 노드가 되고, 확정 후에는 수정할 수 없습니다.',
+            tr('graphReview.emptyConceptsBody', {'count': emptyCount}),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('돌아가서 추가'),
+              child: Text(tr('graphReview.goBackAndAdd')),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('그래도 확정'),
+              child: Text(tr('graphReview.confirmAnyway')),
             ),
           ],
         ),
@@ -360,19 +359,18 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
     final proceed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('화자 설정으로 돌아갈까요?'),
-        content: const Text(
-          '화자는 그래프의 핵심 입력이라 여기서는 바꿀 수 없습니다.\n'
-          '화자 설정으로 돌아가 수정한 뒤, 그래프 초안을 다시 만들어야 합니다.',
+        title: Text(tr('reviewPanel.reopenSpeakersDialogTitle')),
+        content: Text(
+          tr('reviewPanel.reopenSpeakersDialogBody'),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('취소'),
+            child: Text(tr('common.cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('화자 다시 설정'),
+            child: Text(tr('reviewPanel.reopenSpeakersButton')),
           ),
         ],
       ),
@@ -406,7 +404,7 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
                 const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Text(
-                    '생성된 내용을 검토하고 수정하세요. 확정 후에는 수정할 수 없고 삭제·복구만 가능합니다.',
+                    tr('graphReview.reviewBanner'),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
@@ -422,7 +420,7 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
             Padding(
               padding: const EdgeInsets.all(AppSpacing.lg),
               child: Text(
-                '검토할 항목이 없습니다.',
+                tr('graphReview.nothingToReview'),
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
@@ -465,7 +463,7 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
                       size: 13, color: AppColors.hubGraph.withValues(alpha: 0.9)),
                   const SizedBox(width: 4),
                   Text(
-                    '${_claims.length}개 발언',
+                    tr('reviewPanel.statementCountBadge', {'count': _claims.length}),
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
@@ -482,7 +480,7 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
-                '$_conceptCount개 개념',
+                tr('reviewPanel.conceptCountBadge', {'count': _conceptCount}),
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
@@ -498,7 +496,7 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
-                  '$_approvedCount/${_claims.length} 승인',
+                  tr('reviewPanel.approvedCountBadge', {'approved': _approvedCount, 'total': _claims.length}),
                   style: const TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
@@ -507,7 +505,7 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
                 ),
               ),
             Text(
-              '확정 후 수정 불가',
+              tr('reviewPanel.lockedAfterConfirm'),
               style: TextStyle(
                 fontSize: 10,
                 color: context.shell.mutedText,
@@ -534,7 +532,7 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 16),
             child: Text(
-              '검토할 항목이 없습니다.',
+              tr('graphReview.nothingToReview'),
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 12,
@@ -544,7 +542,7 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
           ),
         const SizedBox(height: 8),
         Text(
-          '← 밀어서 삭제 · → 밀어서 승인 · 개념 탭=중요도 · 길게=정체성',
+          tr('reviewPanel.swipeHint'),
           style: TextStyle(
             fontSize: 10,
             color: context.shell.mutedText,
@@ -621,7 +619,7 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
               color: color, size: 20),
           const SizedBox(width: 6),
           Text(
-            approve ? '승인' : '삭제',
+            approve ? tr('reviewPanel.approveSwipeLabel') : tr('reviewPanel.deleteSwipeLabel'),
             style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 12),
           ),
         ],
@@ -640,7 +638,7 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
               onPressed: _approveAll,
               icon: const Icon(Icons.done_all_rounded, size: 18),
               label: Text(
-                '전체 승인 ($_approvedCount/${_claims.length})',
+                tr('reviewPanel.approveAllButton', {'approved': _approvedCount, 'total': _claims.length}),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -703,7 +701,7 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
                       : Icons.lock_outline_rounded,
                   size: 18),
           label: Text(
-            _submitting ? '확정 중…' : _confirmLabel,
+            _submitting ? tr('graphReview.confirming') : _confirmLabel,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -722,7 +720,7 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
                 ? Icons.check_circle_outline
                 : Icons.lock_outline_rounded),
         label: Text(
-          _submitting ? '확정 중…' : _confirmLabel,
+          _submitting ? tr('graphReview.confirming') : _confirmLabel,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
@@ -739,9 +737,9 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
   String get _confirmLabel {
     final total = _claims.length;
     final approved = _approvedCount;
-    if (total == 0) return '지식그래프에 확정';
-    if (approved == total) return '전체 승인 — 지식그래프에 확정';
-    return '모두 승인해야 확정 ($approved/$total)';
+    if (total == 0) return tr('reviewPanel.confirmNone');
+    if (approved == total) return tr('reviewPanel.confirmAllApproved');
+    return tr('reviewPanel.confirmNeedsApproval', {'approved': approved, 'total': total});
   }
 }
 
@@ -853,7 +851,7 @@ class _ClaimCard extends StatelessWidget {
           const SizedBox(width: 4),
           Flexible(
             child: Text(
-              name.isEmpty ? '화자' : name,
+              name.isEmpty ? tr('graphReview.speakerLabel') : name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -874,7 +872,7 @@ class _ClaimCard extends StatelessWidget {
     );
     if (onReopenSpeakers == null) return badge;
     return Tooltip(
-      message: '화자는 여기서 수정할 수 없습니다',
+      message: tr('reviewPanel.speakerLockedTooltip'),
       child: InkWell(
         onTap: onReopenSpeakers,
         borderRadius: BorderRadius.circular(chatStyle ? 6 : 8),
@@ -888,18 +886,18 @@ class _ClaimCard extends StatelessWidget {
     final value = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('개념 추가'),
+        title: Text(tr('graphReview.addConceptTitle')),
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(hintText: '개념(Concept) 이름'),
+          decoration: InputDecoration(hintText: tr('graphReview.addConceptHint')),
           onSubmitted: (v) => Navigator.pop(ctx, v),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr('common.cancel'))),
           TextButton(
             onPressed: () => Navigator.pop(ctx, controller.text),
-            child: const Text('추가'),
+            child: Text(tr('common.add')),
           ),
         ],
       ),
@@ -920,10 +918,12 @@ class _ClaimCard extends StatelessWidget {
             ? const Color(0xFFB07BFF)
             : const Color(0xFFFFB020);
     final String suffix = linked
-        ? '→ ${c.resIsSelf ? '${c.resName ?? c.name}(본인)' : (c.resName ?? c.name)}'
+        ? (c.resIsSelf
+            ? tr('graphReview.linkedSelfSuffix', {'name': c.resName ?? c.name})
+            : tr('graphReview.linkedSuffix', {'name': c.resName ?? c.name}))
         : suggested
-            ? '≈ ${c.resName ?? ''}?'
-            : '· 새 개체';
+            ? tr('graphReview.suggestedSuffix', {'name': c.resName ?? ''})
+            : tr('graphReview.newEntitySuffix');
     return InputChip(
       avatar: CircleAvatar(
         backgroundColor: tone.withValues(alpha: 0.22),
@@ -966,9 +966,9 @@ class _ClaimCard extends StatelessWidget {
             ),
           );
     final String label = suggested
-        ? '${c.name} ≈ ${c.resName ?? ''}?'
+        ? '${c.name} ${tr('graphReview.suggestedSuffix', {'name': c.resName ?? ''})}'
         : linked
-            ? '${c.name} → ${c.resName ?? ''}'
+            ? '${c.name} ${tr('graphReview.linkedSuffix', {'name': c.resName ?? ''})}'
             : '${c.name} · ${c.importance}';
     return GestureDetector(
       onLongPress: () {
@@ -1046,7 +1046,7 @@ class _ClaimCard extends StatelessWidget {
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                  tooltip: approved ? '승인 해제' : '승인',
+                  tooltip: approved ? tr('reviewPanel.unapproveTooltip') : tr('reviewPanel.approveTooltip'),
                   onPressed: onToggleApproved,
                   icon: Icon(
                     approved
@@ -1062,7 +1062,7 @@ class _ClaimCard extends StatelessWidget {
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                tooltip: '삭제',
+                tooltip: tr('common.delete'),
                 onPressed: onDelete,
                 icon: Icon(Icons.close_rounded,
                     size: 16, color: context.shell.mutedText),
@@ -1102,7 +1102,7 @@ class _ClaimCard extends StatelessWidget {
           if (claim.concepts.isEmpty) ...[
             const SizedBox(height: 6),
             Text(
-              '개념 없음 — 고립 노드가 될 수 있어요',
+              tr('reviewPanel.noConceptsChatHint'),
               style: TextStyle(
                 fontSize: 10,
                 color: AppColors.accentWarm.withValues(alpha: 0.85),
@@ -1191,9 +1191,9 @@ class _ClaimCard extends StatelessWidget {
                 const SizedBox(width: 4),
                 Text(
                   suggested
-                      ? '${c.name} ≈ ${c.resName ?? ''}?'
+                      ? '${c.name} ${tr('graphReview.suggestedSuffix', {'name': c.resName ?? ''})}'
                       : linked
-                          ? '${c.name} → ${c.resName ?? ''}'
+                          ? '${c.name} ${tr('graphReview.linkedSuffix', {'name': c.resName ?? ''})}'
                           : c.name,
                   style: TextStyle(
                     fontSize: 11,
@@ -1229,10 +1229,12 @@ class _ClaimCard extends StatelessWidget {
             ? const Color(0xFFB07BFF)
             : AppColors.accentWarm;
     final suffix = linked
-        ? '→ ${c.resIsSelf ? '${c.resName ?? c.name}(본인)' : (c.resName ?? c.name)}'
+        ? (c.resIsSelf
+            ? tr('graphReview.linkedSelfSuffix', {'name': c.resName ?? c.name})
+            : tr('graphReview.linkedSuffix', {'name': c.resName ?? c.name}))
         : suggested
-            ? '≈ ${c.resName ?? ''}?'
-            : '· 새 개체';
+            ? tr('graphReview.suggestedSuffix', {'name': c.resName ?? ''})
+            : tr('graphReview.newEntitySuffix');
     return Material(
       color: color.withValues(alpha: 0.14),
       borderRadius: BorderRadius.circular(7),
@@ -1291,7 +1293,7 @@ class _ClaimCard extends StatelessWidget {
               Icon(Icons.add, size: 13, color: onSurface),
               const SizedBox(width: 2),
               Text(
-                '추가',
+                tr('common.add'),
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
@@ -1315,7 +1317,7 @@ class _ClaimCard extends StatelessWidget {
               Expanded(child: _speakerBadge(context, claim.speaker.text, chatStyle: false)),
               if (onToggleApproved != null)
                 IconButton(
-                  tooltip: approved ? '승인 해제' : '승인',
+                  tooltip: approved ? tr('reviewPanel.unapproveTooltip') : tr('reviewPanel.approveTooltip'),
                   onPressed: onToggleApproved,
                   icon: Icon(
                     approved
@@ -1327,7 +1329,7 @@ class _ClaimCard extends StatelessWidget {
                   ),
                 ),
               IconButton(
-                tooltip: '이 항목 삭제',
+                tooltip: tr('graphReview.deleteItemTooltip'),
                 onPressed: onDelete,
                 icon: const Icon(Icons.delete_outline, color: AppColors.accentWarm),
               ),
@@ -1338,8 +1340,8 @@ class _ClaimCard extends StatelessWidget {
             controller: claim.statement,
             minLines: 1,
             maxLines: 4,
-            decoration: const InputDecoration(
-              labelText: 'Statement (내용)',
+            decoration: InputDecoration(
+              labelText: tr('graphReview.statementLabel'),
               isDense: true,
             ),
           ),
@@ -1347,7 +1349,7 @@ class _ClaimCard extends StatelessWidget {
           Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              '개념·정체성 — 개념: 탭=중요도, 길게=정체성 전환 · 정체성: 탭=연결 대상 지정',
+              tr('graphReview.conceptHelpText'),
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),
@@ -1370,7 +1372,7 @@ class _ClaimCard extends StatelessWidget {
                   const SizedBox(width: AppSpacing.xs),
                   Expanded(
                     child: Text(
-                      '개념이 없습니다 — 이대로 확정하면 이 Statement는 그래프에서 고립됩니다. 최소 1개를 추가하세요.',
+                      tr('graphReview.noConceptsWarning'),
                       style: Theme.of(context)
                           .textTheme
                           .bodySmall
@@ -1393,7 +1395,7 @@ class _ClaimCard extends StatelessWidget {
                   _fullConceptChip(context, c),
               ActionChip(
                 avatar: const Icon(Icons.add, size: 16),
-                label: const Text('추가'),
+                label: Text(tr('common.add')),
                 onPressed: () => _addConcept(context),
               ),
             ],
@@ -1442,7 +1444,7 @@ class _ApprovedRow extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  snippet.isEmpty ? '(내용 없음)' : snippet,
+                  snippet.isEmpty ? tr('reviewPanel.noContentPlaceholder') : snippet,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -1453,7 +1455,7 @@ class _ApprovedRow extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               Text(
-                '승인됨',
+                tr('reviewPanel.approvedLabel'),
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w700,
@@ -1492,7 +1494,7 @@ class _SpeakerLockBanner extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '화자는 여기서 수정할 수 없습니다. 잘못 지정했다면 화자 설정으로 돌아가세요.',
+              tr('reviewPanel.speakerLockedBanner'),
               style: TextStyle(
                 fontSize: 10.5,
                 height: 1.35,
@@ -1506,7 +1508,7 @@ class _SpeakerLockBanner extends StatelessWidget {
               visualDensity: VisualDensity.compact,
               padding: const EdgeInsets.symmetric(horizontal: 8),
             ),
-            child: const Text('화자 다시 설정', style: TextStyle(fontSize: 11)),
+            child: Text(tr('reviewPanel.reopenSpeakersButton'), style: const TextStyle(fontSize: 11)),
           ),
         ],
       ),

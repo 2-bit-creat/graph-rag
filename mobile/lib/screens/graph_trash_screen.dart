@@ -3,8 +3,24 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
+
+// Same canonical taxonomy as kg_timeline_screen's _kTypeLabels.
+Map<String, String> get _kSourceLabels => {
+      '개인일기': tr('timeline.typePersonalDiary'),
+      '회의록': tr('timeline.typeMeetingNotes'),
+      '책': tr('timeline.typeBook'),
+      '뉴스': tr('timeline.typeNews'),
+      '강연': tr('timeline.typeLecture'),
+      '논문': tr('timeline.typePaper'),
+      '대화': tr('timeline.typeConversation'),
+      '잡지': tr('timeline.typeMagazine'),
+      '자료': tr('timeline.typeMaterial'),
+      '미분류': tr('inspector.uncategorized'),
+    };
+String _sourceLabelFor(String type) => _kSourceLabels[type] ?? type;
 
 class GraphTrashScreen extends StatefulWidget {
   const GraphTrashScreen({super.key});
@@ -47,11 +63,11 @@ class _GraphTrashScreenState extends State<GraphTrashScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('노드 복구'),
-        content: Text('「${node['name']}」 노드와 연결됐던 고아 노드들을 함께 복구합니다.'),
+        title: Text(tr('trash.restoreDialogTitle')),
+        content: Text(tr('trash.restoreDialogBody', {'name': node['name']})),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('복구')),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('common.cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr('trash.restoreAction'))),
         ],
       ),
     );
@@ -60,14 +76,14 @@ class _GraphTrashScreenState extends State<GraphTrashScreen> {
       await apiClient.restoreFromTrash(node['id'].toString());
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('복구 완료')),
+          SnackBar(content: Text(tr('trash.restoredSnackbar'))),
         );
         _load();
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('복구 실패: $e')),
+          SnackBar(content: Text(tr('trash.restoreFailedSnackbar', {'error': e}))),
         );
       }
     }
@@ -77,14 +93,14 @@ class _GraphTrashScreenState extends State<GraphTrashScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('영구 삭제'),
-        content: Text('「${node['name']}」 노드를 영구 삭제합니다. 이 작업은 되돌릴 수 없습니다.'),
+        title: Text(tr('trash.purgeDialogTitle')),
+        content: Text(tr('trash.purgeDialogBody', {'name': node['name']})),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('common.cancel'))),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('영구 삭제'),
+            child: Text(tr('trash.purgeAction')),
           ),
         ],
       ),
@@ -94,14 +110,14 @@ class _GraphTrashScreenState extends State<GraphTrashScreen> {
       await apiClient.purgeFromTrash(node['id'].toString());
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('영구 삭제 완료')),
+          SnackBar(content: Text(tr('trash.purgedSnackbar'))),
         );
         _load();
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('영구 삭제 실패: $e')),
+          SnackBar(content: Text(tr('trash.purgeFailedSnackbar', {'error': e}))),
         );
       }
     }
@@ -140,27 +156,27 @@ class _GraphTrashScreenState extends State<GraphTrashScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('휴지통'),
+        title: Text(tr('trash.pageTitle')),
         actions: [
           IconButton(
-            tooltip: '새로고침',
+            tooltip: tr('common.refresh'),
             icon: const Icon(Icons.refresh),
             onPressed: _load,
           ),
         ],
       ),
       body: _loading
-          ? const AppLoadingScreen(message: '휴지통 불러오는 중…')
+          ? AppLoadingScreen(message: tr('trash.loadingMessage'))
           : _error != null
               ? Center(child: Text(_error!, style: const TextStyle(color: Colors.red)))
               : _nodes.isEmpty
-                  ? const Center(
+                  ? Center(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.delete_outline, size: 56, color: Colors.grey),
-                          SizedBox(height: 12),
-                          Text('휴지통이 비어 있습니다', style: TextStyle(color: Colors.grey)),
+                          const Icon(Icons.delete_outline, size: 56, color: Colors.grey),
+                          const SizedBox(height: 12),
+                          Text(tr('trash.emptyMessage'), style: const TextStyle(color: Colors.grey)),
                         ],
                       ),
                     )
@@ -193,7 +209,7 @@ class _GraphTrashScreenState extends State<GraphTrashScreen> {
                                           borderRadius: BorderRadius.circular(6),
                                         ),
                                         child: Text(
-                                          ctxType,
+                                          _sourceLabelFor(ctxType),
                                           style: const TextStyle(
                                             fontSize: 11,
                                             fontWeight: FontWeight.w700,
@@ -234,7 +250,7 @@ class _GraphTrashScreenState extends State<GraphTrashScreen> {
                                     if (orphanCount > 0 || quizCount > 0) ...[
                                       const SizedBox(width: 10),
                                       Text(
-                                        '노드 +$orphanCount · 퀴즈 $quizCount',
+                                        tr('trash.impactSuffix', {'orphans': orphanCount, 'quizzes': quizCount}),
                                         style: TextStyle(fontSize: 11, color: Colors.grey[500]),
                                       ),
                                     ],
@@ -242,14 +258,14 @@ class _GraphTrashScreenState extends State<GraphTrashScreen> {
                                     TextButton.icon(
                                       onPressed: () => _restore(node),
                                       icon: const Icon(Icons.restore, size: 16),
-                                      label: const Text('복구', style: TextStyle(fontSize: 13)),
+                                      label: Text(tr('trash.restoreAction'), style: const TextStyle(fontSize: 13)),
                                     ),
                                     const SizedBox(width: 4),
                                     TextButton.icon(
                                       onPressed: () => _purge(node),
                                       style: TextButton.styleFrom(foregroundColor: Colors.red),
                                       icon: const Icon(Icons.delete_forever, size: 16),
-                                      label: const Text('영구 삭제', style: TextStyle(fontSize: 13)),
+                                      label: Text(tr('trash.purgeAction'), style: const TextStyle(fontSize: 13)),
                                     ),
                                   ],
                                 ),

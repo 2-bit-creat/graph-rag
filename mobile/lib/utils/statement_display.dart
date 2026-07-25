@@ -2,7 +2,23 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
+
+// Canonical Korean taxonomy (matches kg_timeline_screen's _kTypeLabels) → display label.
+Map<String, String> get _kContextTypeLabels => {
+      '개인일기': tr('timeline.typePersonalDiary'),
+      '회의록': tr('timeline.typeMeetingNotes'),
+      '책': tr('timeline.typeBook'),
+      '뉴스': tr('timeline.typeNews'),
+      '강연': tr('timeline.typeLecture'),
+      '논문': tr('timeline.typePaper'),
+      '대화': tr('timeline.typeConversation'),
+      '잡지': tr('timeline.typeMagazine'),
+      '자료': tr('timeline.typeMaterial'),
+      '미분류': tr('inspector.uncategorized'),
+    };
+String contextTypeLabel(String? type) => _kContextTypeLabels[type] ?? (type ?? '');
 
 /// Parsed Statement node payload — never show raw JSON to the user.
 class ParsedStatement {
@@ -68,16 +84,17 @@ Color contextTypeColor(String? type) {
   };
 }
 
-/// Small pill for context_type (대화, 회의록, …).
+/// Small pill for context_type (대화, 회의록, …). [type] is the raw canonical
+/// (Korean) value from the backend; the displayed label is localized.
 class StatementContextBadge extends StatelessWidget {
-  const StatementContextBadge({super.key, required this.label, this.compact = false});
+  const StatementContextBadge({super.key, required this.type, this.compact = false});
 
-  final String label;
+  final String type;
   final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    final color = contextTypeColor(label);
+    final color = contextTypeColor(type);
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 7 : 9,
@@ -89,7 +106,7 @@ class StatementContextBadge extends StatelessWidget {
         border: Border.all(color: color.withValues(alpha: 0.28)),
       ),
       child: Text(
-        label,
+        contextTypeLabel(type),
         style: TextStyle(
           fontSize: compact ? 10 : 11,
           fontWeight: FontWeight.w700,

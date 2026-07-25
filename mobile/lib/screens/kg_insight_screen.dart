@@ -5,10 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 
 // ─── Statement description parser ────────────────────────────────────────────
+// context_type is a canonical Korean value from the backend taxonomy — kept
+// as-is here; display translation happens via _kSourceLabels below.
 
 String _stmtCtxType(Map<String, dynamic> node) {
   final f = node['context_type']?.toString();
@@ -19,6 +22,21 @@ String _stmtCtxType(Map<String, dynamic> node) {
   }
   return desc.split('\n').first.trim().isEmpty ? '미분류' : desc.split('\n').first.trim();
 }
+
+// Same canonical taxonomy as kg_timeline_screen's _kTypeLabels.
+Map<String, String> get _kSourceLabels => {
+      '개인일기': tr('timeline.typePersonalDiary'),
+      '회의록': tr('timeline.typeMeetingNotes'),
+      '책': tr('timeline.typeBook'),
+      '뉴스': tr('timeline.typeNews'),
+      '강연': tr('timeline.typeLecture'),
+      '논문': tr('timeline.typePaper'),
+      '대화': tr('timeline.typeConversation'),
+      '잡지': tr('timeline.typeMagazine'),
+      '자료': tr('timeline.typeMaterial'),
+      '미분류': tr('inspector.uncategorized'),
+    };
+String _sourceLabelFor(String type) => _kSourceLabels[type] ?? type;
 
 String _stmtContent(Map<String, dynamic> node) {
   final f = node['content']?.toString();
@@ -95,9 +113,10 @@ class _KgInsightScreenState extends State<KgInsightScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const AppLoadingScreen(message: '지식 통계를 불러오는 중…');
+    if (_loading) return AppLoadingScreen(message: tr('insight.loadingMessage'));
     if (_error != null) {
-      final isOffline = _error!.contains('연결할 수 없습니다') || _error!.contains('connectionError');
+      final isOffline = _error!.contains(tr('client.connectionFailed')) ||
+          _error!.contains('connectionError');
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(AppSpacing.xxl),
@@ -111,7 +130,7 @@ class _KgInsightScreenState extends State<KgInsightScreen> {
               ),
               const SizedBox(height: AppSpacing.lg),
               Text(
-                isOffline ? '서버에 연결할 수 없습니다' : '데이터를 불러오지 못했습니다',
+                isOffline ? tr('insight.offlineTitle') : tr('insight.errorTitle'),
                 style: Theme.of(context).textTheme.titleMedium,
                 textAlign: TextAlign.center,
               ),
@@ -142,7 +161,7 @@ class _KgInsightScreenState extends State<KgInsightScreen> {
               FilledButton.icon(
                 onPressed: _load,
                 icon: const Icon(Icons.refresh_rounded),
-                label: const Text('다시 시도'),
+                label: Text(tr('common.retry')),
               ),
             ],
           ),
@@ -167,7 +186,7 @@ class _KgInsightScreenState extends State<KgInsightScreen> {
             const SizedBox(height: AppSpacing.xxl),
 
             // ── Heatmap ──────────────────────────────────────────────────
-            AppSectionHeader(title: '활동 히트맵', subtitle: '최근 3개월'),
+            AppSectionHeader(title: tr('insight.heatmapTitle'), subtitle: tr('insight.heatmapSubtitle')),
             const SizedBox(height: AppSpacing.md),
             _HeatmapGrid(
               dailyActivity: (stats['daily_activity'] as List<dynamic>? ?? [])
@@ -195,7 +214,7 @@ class _KgInsightScreenState extends State<KgInsightScreen> {
             const SizedBox(height: AppSpacing.xxl),
 
             // ── Donut chart ──────────────────────────────────────────────
-            AppSectionHeader(title: '소스 출처 비율', subtitle: '어디서 지식을 쌓았나요?'),
+            AppSectionHeader(title: tr('insight.donutTitle'), subtitle: tr('insight.donutSubtitle')),
             const SizedBox(height: AppSpacing.md),
             _SourceDonut(
               distribution: (stats['source_distribution'] as List<dynamic>? ?? [])
@@ -219,22 +238,22 @@ class _StatsGrid extends StatelessWidget {
     return Row(
       children: [
         Expanded(child: _StatCard(
-          label: '총 기록',
+          label: tr('insight.statTotalRecords'),
           value: '${stats['total_statements'] ?? 0}',
           icon: Icons.format_quote_rounded,
           color: AppColors.primary,
         )),
         const SizedBox(width: AppSpacing.md),
         Expanded(child: _StatCard(
-          label: '누적 개념',
+          label: tr('insight.statTotalConcepts'),
           value: '${stats['total_concepts'] ?? 0}',
           icon: Icons.label_outline,
           color: AppColors.accent,
         )),
         const SizedBox(width: AppSpacing.md),
         Expanded(child: _StatCard(
-          label: '연속 작성',
-          value: '${stats['streak_days'] ?? 0}일',
+          label: tr('insight.statStreak'),
+          value: tr('insight.streakDaysSuffix', {'count': stats['streak_days'] ?? 0}),
           icon: Icons.local_fire_department_rounded,
           color: AppColors.accentWarm,
         )),
@@ -336,7 +355,7 @@ class _HeatmapGrid extends StatelessWidget {
               ...List.generate(_weeks, (w) {
                 final date = startDay.add(Duration(days: w * 7));
                 // Show month label on first day of month in that column
-                final label = (date.day <= 7) ? DateFormat('M월').format(date) : '';
+                final label = (date.day <= 7) ? DateFormat(tr('insight.monthFormat')).format(date) : '';
                 return Expanded(
                   child: Text(label, style: const TextStyle(fontSize: 8), textAlign: TextAlign.center),
                 );
@@ -351,7 +370,15 @@ class _HeatmapGrid extends StatelessWidget {
                 // Day labels (Mon/Wed/Fri)
                 Column(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: ['일', '월', '화', '수', '목', '금', '토']
+                  children: [
+                        tr('insight.weekdaySunShort'),
+                        tr('insight.weekdayMonShort'),
+                        tr('insight.weekdayTueShort'),
+                        tr('insight.weekdayWedShort'),
+                        tr('insight.weekdayThuShort'),
+                        tr('insight.weekdayFriShort'),
+                        tr('insight.weekdaySatShort'),
+                      ]
                       .map((d) => SizedBox(
                             width: 12,
                             child: Text(d, style: const TextStyle(fontSize: 7),
@@ -406,7 +433,7 @@ class _HeatmapGrid extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              Text('적음', style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              Text(tr('insight.less'), style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: AppColors.textMuted, fontSize: 10,
               )),
               const SizedBox(width: 4),
@@ -419,7 +446,7 @@ class _HeatmapGrid extends StatelessWidget {
                 ),
               )),
               const SizedBox(width: 4),
-              Text('많음', style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              Text(tr('insight.more'), style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: AppColors.textMuted, fontSize: 10,
               )),
             ],
@@ -443,12 +470,12 @@ class _DayFeed extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         AppSectionHeader(
-          title: DateFormat('M월 d일').format(DateTime.parse(date)),
-          subtitle: '${statements.length}개 기록',
+          title: DateFormat(tr('insight.monthDayFormat')).format(DateTime.parse(date)),
+          subtitle: tr('insight.recordCountSuffix', {'count': statements.length}),
         ),
         const SizedBox(height: AppSpacing.sm),
         if (statements.isEmpty)
-          Text('이 날 기록된 명제가 없습니다.',
+          Text(tr('insight.noStatementsThisDay'),
               style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.textMuted))
         else
           for (final s in statements) ...[
@@ -468,7 +495,7 @@ class _DayFeed extends StatelessWidget {
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
-                          _stmtCtxType(s),
+                          _sourceLabelFor(_stmtCtxType(s)),
                           style: TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.w600,
@@ -511,8 +538,8 @@ class _SourceDonutState extends State<_SourceDonut> {
     if (widget.distribution.isEmpty) {
       return AppEmptyState(
         icon: Icons.pie_chart_outline,
-        title: '아직 데이터가 없습니다',
-        subtitle: '기록 탭에서 첫 지식을 추가해보세요.',
+        title: tr('insight.noDataTitle'),
+        subtitle: tr('insight.noDataSubtitle'),
       );
     }
 
@@ -579,7 +606,7 @@ class _SourceDonutState extends State<_SourceDonut> {
                     decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
                   const SizedBox(width: 5),
                   Text(
-                    '${e['source']} $pct%',
+                    '${_sourceLabelFor(e['source']?.toString() ?? '')} $pct%',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],

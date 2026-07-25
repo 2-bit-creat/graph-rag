@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/client.dart';
 import '../compose/compose_session_controller.dart';
+import '../l10n/app_strings.dart';
 import '../screens/graph_review_screen.dart';
 import '../screens/knowledge_graph_screen.dart';
 import '../theme/app_theme.dart';
@@ -108,7 +109,7 @@ class _JournalUserDetailPanelState extends State<JournalUserDetailPanel> {
     if (staging is! Map) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('검토할 그래프 드래프트를 찾을 수 없습니다.')),
+        SnackBar(content: Text(tr('journalDetail.reviewDraftNotFound'))),
       );
       return;
     }
@@ -125,7 +126,7 @@ class _JournalUserDetailPanelState extends State<JournalUserDetailPanel> {
     await widget.onRefresh();
     if (committed == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('지식그래프 확정 완료')),
+        SnackBar(content: Text(tr('journalDetail.graphConfirmedSnackbar'))),
       );
     }
   }
@@ -137,49 +138,49 @@ class _JournalUserDetailPanelState extends State<JournalUserDetailPanel> {
     final graphStatus = widget.entry['graph_status']?.toString() ?? '';
 
     if (status == 'processing') {
-      return const _EntryJourneyCard(
+      return _EntryJourneyCard(
         currentStep: 0,
         inProgress: true,
-        message: 'AI가 받아쓰기와 문장 정리를 진행하고 있어요. 잠시 후 아래로 당겨 새로고침해 보세요.',
+        message: tr('journalDetail.msgProcessing'),
       );
     }
     if (status == 'failed') {
-      return const _EntryJourneyCard(
+      return _EntryJourneyCard(
         currentStep: 0,
         error: true,
-        message: '처리에 실패했어요. 이 기록을 삭제한 뒤 다시 시도해 주세요.',
+        message: tr('journalDetail.msgFailed'),
       );
     }
     if (status == 'graph_processing' || graphStatus == 'graph_processing') {
-      return const _EntryJourneyCard(
+      return _EntryJourneyCard(
         currentStep: 2,
         inProgress: true,
-        message: '기록에서 핵심 내용을 뽑아 지식그래프 초안을 만드는 중이에요…',
+        message: tr('journalDetail.msgGraphProcessing'),
       );
     }
     if (_isStagingReady) {
       return _EntryJourneyCard(
         currentStep: 3,
-        message: 'AI가 만든 그래프 초안이 준비됐어요. 내용을 확인하고 확정하면 지식그래프에 저장됩니다.',
-        ctaLabel: '검토하고 확정하기',
+        message: tr('journalDetail.msgStagingReady'),
+        ctaLabel: tr('journalDetail.ctaReview'),
         ctaIcon: Icons.rate_review_outlined,
         onCta: _openReview,
       );
     }
     if (_speakersPending) {
-      return const _EntryJourneyCard(
+      return _EntryJourneyCard(
         currentStep: 1,
         // ctaIcon만 지정하고 ctaLabel은 비워, 버튼 없이 리딩 아이콘만 '화자'로.
         ctaIcon: Icons.record_voice_over_outlined,
-        message: '아래 화자 칩에서 누가 말했는지 지정해 주세요. 화자를 확정해야 그래프를 만들 수 있어요.',
+        message: tr('journalDetail.msgSpeakersPending'),
       );
     }
     if (status == 'graph_failed' || graphStatus == 'graph_failed') {
       return _EntryJourneyCard(
         currentStep: 2,
         error: true,
-        message: '그래프 생성에 실패했어요. 다시 시도해 주세요.',
-        ctaLabel: '다시 시도',
+        message: tr('journalDetail.msgGraphFailed'),
+        ctaLabel: tr('journalDetail.ctaRetry'),
         ctaIcon: Icons.refresh,
         onCta: _openManualGraphAdd,
       );
@@ -187,16 +188,16 @@ class _JournalUserDetailPanelState extends State<JournalUserDetailPanel> {
     if (_canManualGraphAdd) {
       return _EntryJourneyCard(
         currentStep: 2,
-        message: '기록이 준비됐어요! 이제 핵심 내용을 지식그래프로 정리할 수 있어요. 확정 전에 검토할 수 있으니 부담 없이 만들어 보세요.',
-        ctaLabel: '지식그래프 만들기',
+        message: tr('journalDetail.msgReadyToBuild'),
+        ctaLabel: tr('journalDetail.ctaBuildGraph'),
         ctaIcon: Icons.account_tree_outlined,
         onCta: _openManualGraphAdd,
       );
     }
     // 정제 텍스트/세그먼트가 아직 없는 등 그래프 생성 조건 미충족 — 여정만 표시.
-    return const _EntryJourneyCard(
+    return _EntryJourneyCard(
       currentStep: 1,
-      message: '기록이 저장됐어요. 처리가 끝나면 그래프를 만들 수 있어요.',
+      message: tr('journalDetail.msgWaitingForProcessing'),
     );
   }
 
@@ -218,7 +219,7 @@ class _JournalUserDetailPanelState extends State<JournalUserDetailPanel> {
             Padding(
               padding: const EdgeInsets.only(bottom: AppSpacing.md),
               child: Text(
-                '직접 입력',
+                tr('journalDetail.manualEntryBadge'),
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
                       color: AppColors.textMuted,
                       letterSpacing: 0.8,
@@ -261,7 +262,12 @@ class _EntryJourneyCard extends StatelessWidget {
     this.onCta,
   });
 
-  static const _steps = ['기록', '화자 확인', '그래프 생성', '검토·확정'];
+  static List<String> get _steps => [
+        tr('journalDetail.stepRecord'),
+        tr('journalDetail.stepSpeakerConfirm'),
+        tr('journalDetail.stepGraphBuild'),
+        tr('journalDetail.stepReviewConfirm'),
+      ];
 
   /// 0-based index into [_steps]; 이전 단계는 완료로 표시.
   final int currentStep;
@@ -298,10 +304,10 @@ class _EntryJourneyCard extends StatelessWidget {
 
     // 진행 단계 문맥 — 눈에 안 띄는 eyebrow 한 줄로만.
     final eyebrow = error
-        ? '문제가 생겼어요'
+        ? tr('journalDetail.eyebrowError')
         : inProgress
-            ? '진행 중 · ${_steps[currentStep]}'
-            : '지금 할 일 · ${_steps[currentStep]}';
+            ? tr('journalDetail.eyebrowInProgress', {'step': _steps[currentStep]})
+            : tr('journalDetail.eyebrowTodo', {'step': _steps[currentStep]});
 
     return AppSurfaceCard(
       tint: error ? colorScheme.error : AppColors.accent,
@@ -379,7 +385,7 @@ class _GraphViewBanner extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                '지식그래프에서 보기',
+                tr('journalDetail.viewInGraph'),
                 style: theme.textTheme.bodyMedium?.copyWith(
                   fontWeight: FontWeight.w500,
                 ),

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart'
     show KeyDownEvent, LogicalKeyboardKey, MaxLengthEnforcement;
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart' show isSpeakerLikeType, isStatementHeadType;
 
@@ -746,9 +747,11 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
                         iconColor: _badges.contains(_popupOptions[i].name)
                             ? colorFor(_popupOptions[i].name)
                             : theme.colorScheme.primary,
-                        label: _popupOptions[i].name,
+                        label: _popupOptions[i].name == '나'
+                            ? selfSpeakerLabel
+                            : _popupOptions[i].name,
                         trailing: !_badges.contains(_popupOptions[i].name)
-                            ? '그래프'
+                            ? tr('mention.fromGraphTrailing')
                             : null,
                         selected: i == _optionCursor,
                         onTap: () => _applyMention(_popupOptions[i].name),
@@ -758,7 +761,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
                       _popupRow(
                         icon: Icons.add_circle_outline_rounded,
                         iconColor: theme.colorScheme.primary,
-                        label: "'${ctx?.partial ?? ''}' 새 화자 만들기",
+                        label: tr('mention.createNewSpeaker', {'partial': ctx?.partial ?? ''}),
                         trailing: 'Enter',
                         selected: _optionCursor == _popupOptions.length,
                         onTap: () => _applyMention(ctx?.partial ?? ''),

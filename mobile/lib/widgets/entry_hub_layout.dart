@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../api/client.dart';
 import '../app_route_observer.dart';
 import '../compose/compose_session_controller.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 
@@ -19,19 +20,19 @@ Future<bool> confirmAndDeleteEntry(BuildContext context, String entryId) async {
   final ok = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
-      title: const Text('일기 삭제'),
-      content: const Text(
-        '이 일기와 관련된 화자 음성 데이터까지 삭제됩니다. 되돌릴 수 없습니다. 삭제할까요?',
+      title: Text(tr('entryHub.deleteDialogTitle')),
+      content: Text(
+        tr('entryHub.deleteDialogBody'),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(false),
-          child: const Text('취소'),
+          child: Text(tr('common.cancel')),
         ),
         FilledButton(
           style: FilledButton.styleFrom(backgroundColor: Colors.red[700]),
           onPressed: () => Navigator.of(ctx).pop(true),
-          child: const Text('삭제'),
+          child: Text(tr('common.delete')),
         ),
       ],
     ),
@@ -55,20 +56,19 @@ Future<bool> confirmAndDeleteAllEntries(BuildContext context) async {
   final ok = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
-      title: const Text('전체 삭제'),
-      content: const Text(
-        '모든 일기 기록과 관련된 화자 음성 데이터까지 삭제됩니다. '
-        '되돌릴 수 없습니다. 전체 삭제할까요?',
+      title: Text(tr('entryHub.deleteAllDialogTitle')),
+      content: Text(
+        tr('entryHub.deleteAllDialogBody'),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(false),
-          child: const Text('취소'),
+          child: Text(tr('common.cancel')),
         ),
         FilledButton(
           style: FilledButton.styleFrom(backgroundColor: Colors.red[700]),
           onPressed: () => Navigator.of(ctx).pop(true),
-          child: const Text('전체 삭제'),
+          child: Text(tr('entryHub.deleteAllDialogTitle')),
         ),
       ],
     ),
@@ -78,7 +78,7 @@ Future<bool> confirmAndDeleteAllEntries(BuildContext context) async {
     final deleted = await apiClient.deleteAllEntries();
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$deleted개의 기록을 삭제했습니다')),
+        SnackBar(content: Text(tr('entryHub.deleteAllSnackbar', {'count': deleted}))),
       );
     }
     return true;
@@ -99,8 +99,8 @@ class EntryHubLayout extends StatefulWidget {
     required this.title,
     required this.detailBuilder,
     this.initialEntryId,
-    this.emptyHint = '기록이 없습니다',
-    this.emptySubtitle = '새 기록을 추가해 보세요',
+    this.emptyHint,
+    this.emptySubtitle,
     this.onNewEntry,
     this.showEntrySourceBadge = false,
     this.entryDeletable = false,
@@ -110,8 +110,8 @@ class EntryHubLayout extends StatefulWidget {
   final String title;
   final EntryDetailBuilder detailBuilder;
   final String? initialEntryId;
-  final String emptyHint;
-  final String emptySubtitle;
+  final String? emptyHint;
+  final String? emptySubtitle;
   final VoidCallback? onNewEntry;
   final bool showEntrySourceBadge;
   final bool entryDeletable;
@@ -242,26 +242,26 @@ class EntryHubLayoutState extends State<EntryHubLayout> with RouteAware {
       if (widget.allDeletable && _entries.isNotEmpty)
         IconButton(
           icon: const Icon(Icons.delete_sweep_outlined),
-          tooltip: '전체 삭제',
+          tooltip: tr('entryHub.deleteAllTooltip'),
           onPressed: _deleteAll,
         ),
       if (widget.entryDeletable && _selected != null)
         IconButton(
           icon: const Icon(Icons.delete_outline_rounded),
-          tooltip: '일기 삭제',
+          tooltip: tr('entryHub.deleteEntryTooltip'),
           onPressed: _deleteSelected,
         ),
       if (widget.onNewEntry != null)
         IconButton(
           icon: const Icon(Icons.add_rounded),
-          tooltip: '새 기록',
+          tooltip: tr('entryHub.newEntryTooltip'),
           onPressed: widget.onNewEntry,
         ),
     ];
     return Scaffold(
       appBar: AppHubAppBar(
         title: widget.title,
-        subtitle: _loading ? null : '${_entries.length}개 기록',
+        subtitle: _loading ? null : tr('entryHub.recordCountSuffix', {'count': _entries.length}),
         actions: actions.isEmpty ? null : actions,
       ),
       floatingActionButton: widget.onNewEntry == null
@@ -274,7 +274,7 @@ class EntryHubLayoutState extends State<EntryHubLayout> with RouteAware {
                   : FloatingActionButton.extended(
                       onPressed: widget.onNewEntry,
                       icon: const Icon(Icons.edit_note_rounded),
-                      label: const Text('새 기록'),
+                      label: Text(tr('entryHub.newEntryButton')),
                     ),
             ),
       body: _loading
@@ -282,14 +282,14 @@ class EntryHubLayoutState extends State<EntryHubLayout> with RouteAware {
           : _entries.isEmpty
               ? AppEmptyState(
                   icon: Icons.auto_stories_outlined,
-                  title: widget.emptyHint,
-                  subtitle: widget.emptySubtitle,
+                  title: widget.emptyHint ?? tr('entryHub.emptyHint'),
+                  subtitle: widget.emptySubtitle ?? tr('entryHub.emptySubtitle'),
                   action: widget.onNewEntry == null
                       ? null
                       : FilledButton.icon(
                           onPressed: widget.onNewEntry,
                           icon: const Icon(Icons.add_rounded),
-                          label: const Text('일상 기록하기'),
+                          label: Text(tr('entryHub.startRecordingButton')),
                         ),
                 )
               : Row(
@@ -323,9 +323,9 @@ class EntryHubLayoutState extends State<EntryHubLayout> with RouteAware {
                       child: _detailLoading && _selected == null
                           ? const AppLoadingScreen()
                           : _selected == null
-                              ? const AppEmptyState(
+                              ? AppEmptyState(
                                   icon: Icons.article_outlined,
-                                  title: '기록을 선택하세요',
+                                  title: tr('entryHub.selectEntryHint'),
                                 )
                               : widget.detailBuilder(
                                   context,
@@ -363,7 +363,7 @@ class _EntryListTile extends StatelessWidget {
     final processing = status == 'processing' || status == 'graph_processing';
     final preview = entry['translation_en']?.toString().split('.').first ??
         entry['transcript_ko']?.toString().split('.').first ??
-        '(처리 중)';
+        tr('entryHub.processingLabel');
     final isText = entry['entry_source']?.toString() == 'precision_text';
     final entryIcon = isText ? Icons.edit_note_rounded : Icons.mic_rounded;
 
@@ -415,7 +415,7 @@ class _EntryListTile extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
-                                isText ? '텍스트' : '음성',
+                                isText ? tr('entryHub.badgeText') : tr('entryHub.badgeVoice'),
                                 style: TextStyle(
                                   fontSize: 10,
                                   color: colorScheme.onSurfaceVariant,
@@ -467,8 +467,8 @@ class EntryHubNavigator extends StatefulWidget {
     required this.title,
     required this.detailBuilder,
     this.initialEntryId,
-    this.emptyHint = '기록이 없습니다',
-    this.emptySubtitle = '새 기록을 추가해 보세요',
+    this.emptyHint,
+    this.emptySubtitle,
     this.onNewEntry,
     this.showEntrySourceBadge = false,
     this.entryDeletable = false,
@@ -478,8 +478,8 @@ class EntryHubNavigator extends StatefulWidget {
   final String title;
   final EntryDetailBuilder detailBuilder;
   final String? initialEntryId;
-  final String emptyHint;
-  final String emptySubtitle;
+  final String? emptyHint;
+  final String? emptySubtitle;
   final VoidCallback? onNewEntry;
   final bool showEntrySourceBadge;
   final bool entryDeletable;
@@ -579,20 +579,20 @@ class _EntryHubNavigatorState extends State<EntryHubNavigator> with RouteAware {
       if (widget.allDeletable && _entries.isNotEmpty)
         IconButton(
           icon: const Icon(Icons.delete_sweep_outlined),
-          tooltip: '전체 삭제',
+          tooltip: tr('entryHub.deleteAllTooltip'),
           onPressed: _deleteAll,
         ),
       if (widget.onNewEntry != null)
         IconButton(
           icon: const Icon(Icons.add_rounded),
-          tooltip: '새 기록',
+          tooltip: tr('entryHub.newEntryTooltip'),
           onPressed: widget.onNewEntry,
         ),
     ];
     return Scaffold(
       appBar: AppHubAppBar(
         title: widget.title,
-        subtitle: _loading ? null : '${_entries.length}개 기록',
+        subtitle: _loading ? null : tr('entryHub.recordCountSuffix', {'count': _entries.length}),
         actions: actions.isEmpty ? null : actions,
       ),
       floatingActionButton: widget.onNewEntry == null
@@ -605,7 +605,7 @@ class _EntryHubNavigatorState extends State<EntryHubNavigator> with RouteAware {
                   : FloatingActionButton.extended(
                       onPressed: widget.onNewEntry,
                       icon: const Icon(Icons.edit_note_rounded),
-                      label: const Text('새 기록'),
+                      label: Text(tr('entryHub.newEntryButton')),
                     ),
             ),
       body: _loading
@@ -617,14 +617,14 @@ class _EntryHubNavigatorState extends State<EntryHubNavigator> with RouteAware {
                       children: [
                         AppEmptyState(
                           icon: Icons.auto_stories_outlined,
-                          title: widget.emptyHint,
-                          subtitle: widget.emptySubtitle,
+                          title: widget.emptyHint ?? tr('entryHub.emptyHint'),
+                          subtitle: widget.emptySubtitle ?? tr('entryHub.emptySubtitle'),
                           action: widget.onNewEntry == null
                               ? null
                               : FilledButton.icon(
                                   onPressed: widget.onNewEntry,
                                   icon: const Icon(Icons.add_rounded),
-                                  label: const Text('일기 쓰기'),
+                                  label: Text(tr('entryHub.writeJournalButton')),
                                 ),
                         ),
                       ],
@@ -717,7 +717,7 @@ class _EntryDetailPageState extends State<_EntryDetailPage> with RouteAware {
           if (widget.entryDeletable && _entry != null)
             IconButton(
               icon: const Icon(Icons.delete_outline_rounded),
-              tooltip: '일기 삭제',
+              tooltip: tr('entryHub.deleteEntryTooltip'),
               onPressed: () async {
                 final deleted =
                     await confirmAndDeleteEntry(context, widget.entryId);
@@ -729,9 +729,9 @@ class _EntryDetailPageState extends State<_EntryDetailPage> with RouteAware {
       body: _loading
           ? const AppLoadingScreen()
           : _entry == null
-              ? const AppEmptyState(
+              ? AppEmptyState(
                   icon: Icons.error_outline_rounded,
-                  title: '불러오기 실패',
+                  title: tr('entryHub.loadFailed'),
                 )
               : widget.detailBuilder(context, _entry!, widget.entryId, _load),
     );

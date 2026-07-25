@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
+import '../l10n/app_strings.dart';
 import '../screens/record_file_io.dart'
     if (dart.library.html) '../screens/record_file_stub.dart';
 import '../utils/wav_builder.dart';
@@ -82,7 +83,7 @@ class AudioRecordController extends ChangeNotifier {
     _stateSub ??= _recorder.onStateChanged().listen((state) {
       if (state == RecordState.stop && _recording) {
         onBrowserInterrupted?.call(
-          '브라우저가 녹음을 중단했습니다. 탭을 활성 상태로 유지하고 다시 시도해 주세요.',
+          tr('audioRecord.browserInterrupted'),
         );
       }
     });
