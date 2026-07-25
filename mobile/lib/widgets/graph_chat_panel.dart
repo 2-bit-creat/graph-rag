@@ -716,7 +716,7 @@ class _InputBarState extends State<_InputBar> {
                     showCounter: false,
                     // Docked at the bottom of the screen — open upward so the
                     // popup never renders off-screen below the viewport.
-                    openUpward: true,
+                    openUpward: false,
                     enabled: canType && !recording,
                     decoration: InputDecoration(
                       hintText: widget.hint,
@@ -1596,32 +1596,56 @@ class _JournalModeBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final cleanText = text.replaceAll(
+        RegExp(r'[\u{1F300}-\u{1FAFF}]', unicode: true), '').trim();
+    final lines = cleanText.split('\n');
+    final title = lines.isEmpty ? '' : lines.first.trim();
+    final body = lines.skip(1).join('\n').trim();
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.sm),
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.fromLTRB(14, 13, 14, 14),
         decoration: BoxDecoration(
-          color: AppColors.hubVoice.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: AppColors.hubVoice.withValues(alpha: 0.35)),
+          color: scheme.secondaryContainer.withValues(alpha: 0.48),
+          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+          border: Border.all(color: scheme.secondary.withValues(alpha: 0.3)),
         ),
-        child: Row(
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(Icons.auto_stories_rounded,
-                size: 16, color: AppColors.hubVoice),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                text,
+            Row(
+              children: [
+                Icon(Icons.auto_stories_rounded,
+                    size: 18, color: scheme.secondary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      color: context.shell.primaryText,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (body.isNotEmpty) ...[
+              const SizedBox(height: 7),
+              Padding(
+                padding: const EdgeInsets.only(left: 26),
+                child: Text(
+                  body,
                 style: TextStyle(
                   color: context.shell.primaryText,
-                  fontSize: 12,
-                  height: 1.45,
+                  fontSize: 12.5,
+                  height: 1.5,
                 ),
               ),
-            ),
+              ),
+            ],
           ],
         ),
       ),
@@ -1635,15 +1659,16 @@ class _JournalSubmitBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.sm, left: 16),
       child: Align(
         alignment: Alignment.centerRight,
         child: Container(
           constraints: const BoxConstraints(maxWidth: 340),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.fromLTRB(13, 10, 13, 11),
           decoration: BoxDecoration(
-            color: AppColors.hubVoice.withValues(alpha: 0.22),
+            color: scheme.primaryContainer.withValues(alpha: 0.72),
             borderRadius: const BorderRadius.only(
               topLeft: Radius.circular(AppSpacing.radiusMd),
               topRight: Radius.circular(AppSpacing.radiusMd),
@@ -1651,7 +1676,7 @@ class _JournalSubmitBubble extends StatelessWidget {
               bottomRight: Radius.circular(4),
             ),
             border: Border.all(
-              color: AppColors.hubVoice.withValues(alpha: 0.35),
+              color: scheme.primary.withValues(alpha: 0.22),
             ),
           ),
           child: Column(
@@ -1662,14 +1687,14 @@ class _JournalSubmitBubble extends StatelessWidget {
                 children: [
                   Icon(Icons.edit_note_rounded,
                       size: 14,
-                      color: AppColors.hubVoice.withValues(alpha: 0.95)),
+                      color: scheme.primary),
                   const SizedBox(width: 4),
                   Text(
                     tr('chat.journalSavedLabel'),
                     style: TextStyle(
                       fontSize: 10.5,
                       fontWeight: FontWeight.w700,
-                      color: AppColors.hubVoice.withValues(alpha: 0.95),
+                      color: scheme.primary,
                     ),
                   ),
                 ],

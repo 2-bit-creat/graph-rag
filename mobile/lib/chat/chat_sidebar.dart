@@ -188,12 +188,12 @@ class _ChatSidebarState extends State<ChatSidebar> {
       children: [
         // ── Brand + new chat ─────────────────────────────────────────────
         Padding(
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
+          padding: const EdgeInsets.fromLTRB(18, 18, 14, 14),
           child: Row(
             children: [
               Container(
-                width: 26,
-                height: 26,
+                width: 38,
+                height: 38,
                 decoration: const BoxDecoration(
                   gradient: LinearGradient(
                     colors: [AppColors.hubGraph, AppColors.hubQuiz],
@@ -203,19 +203,19 @@ class _ChatSidebarState extends State<ChatSidebar> {
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(Icons.auto_awesome_rounded,
-                    size: 14, color: Colors.white),
+                    size: 20, color: Colors.white),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 11),
               const Expanded(
                 child: Text('MyLife English',
                     style:
-                        TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                        TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
               ),
               if (widget.onCollapse != null || widget.onNavigate != null)
                 IconButton(
                   tooltip: tr('sidebar.collapseTooltip'),
                   visualDensity: VisualDensity.compact,
-                  iconSize: 20,
+                  iconSize: 24,
                   onPressed: widget.onCollapse ?? widget.onNavigate,
                   icon: Icon(
                     widget.onCollapse != null
@@ -233,18 +233,18 @@ class _ChatSidebarState extends State<ChatSidebar> {
             icon: const Icon(Icons.add_rounded, size: 18),
             label: Text(tr('sidebar.newChat')),
             style: FilledButton.styleFrom(
-              foregroundColor: shell.primaryText,
-              backgroundColor: shell.subtleSurface,
+              foregroundColor: Theme.of(context).colorScheme.onPrimaryContainer,
+              backgroundColor: Theme.of(context).colorScheme.primaryContainer,
               alignment: Alignment.centerLeft,
-              minimumSize: const Size.fromHeight(44),
+              minimumSize: const Size.fromHeight(52),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(13),
+                borderRadius: BorderRadius.circular(16),
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             ),
           ),
         ),
-        const SizedBox(height: 2),
+        const SizedBox(height: 6),
 
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -263,6 +263,8 @@ class _ChatSidebarState extends State<ChatSidebar> {
                     ),
                     isDense: true,
                     filled: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                        vertical: 14, horizontal: 4),
                     fillColor: shell.subtleSurface,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(13),
@@ -297,7 +299,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
             icon: Icons.playlist_add_check_rounded,
             label: tr('sidebar.quizQueue'),
             onTap: _pushQuizQueue),
-        const SizedBox(height: 4),
+        const SizedBox(height: 8),
         Divider(height: 1, color: shell.panelBorder),
 
         // ── Recent rooms — fills ALL remaining space and scrolls internally
@@ -306,14 +308,19 @@ class _ChatSidebarState extends State<ChatSidebar> {
         // with plenty of room. Expanded claims exactly what's left, so the
         // profile row stays pinned and the list never overflows. ───────────
         Padding(
-          padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
-          child: Text(tr('sidebar.recentChats'),
+          padding: const EdgeInsets.fromLTRB(18, 14, 18, 8),
+          child: Row(
+            children: [
+              Expanded(child: Text(tr('sidebar.recentChats'),
               style: TextStyle(
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.3,
                 color: shell.mutedText,
-              )),
+              ))),
+              Icon(Icons.history_rounded, size: 17, color: shell.mutedText),
+            ],
+          ),
         ),
         Expanded(
           child: ListenableBuilder(
@@ -340,7 +347,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
                 );
               }
               return ListView.builder(
-                padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                 itemCount: sessions.length,
                 itemBuilder: (context, i) {
                   final s = sessions[i];
@@ -451,20 +458,33 @@ class _RoomTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final shell = context.shell;
     return Material(
-      color: active ? cs.primary.withValues(alpha: 0.16) : Colors.transparent,
-      borderRadius: BorderRadius.circular(12),
+      color: active ? cs.primaryContainer : cs.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(16),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
           child: Row(
             children: [
-              Icon(active ? Icons.chat_bubble_rounded : Icons.chat_bubble_outline_rounded,
-                  size: 16,
-                  color: active ? cs.primary : AppColors.textMuted),
-              const SizedBox(width: 8),
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: active ? cs.primary.withValues(alpha: 0.14) : cs.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  active
+                      ? Icons.chat_bubble_rounded
+                      : Icons.chat_bubble_outline_rounded,
+                  size: 17,
+                  color: active ? cs.primary : cs.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -473,7 +493,7 @@ class _RoomTile extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            fontSize: 13,
+                            fontSize: 13.5,
                             fontWeight:
                                 active ? FontWeight.w700 : FontWeight.w500)),
                     if (subtitle != null && subtitle!.isNotEmpty)
@@ -481,15 +501,16 @@ class _RoomTile extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                              fontSize: 11,
-                              color: context.shell.mutedText)),
+                              fontSize: 11.5,
+                              color: shell.mutedText)),
                   ],
                 ),
               ),
               PopupMenuButton<String>(
                 tooltip: tr('sidebar.optionsTooltip'),
                 icon: const Icon(Icons.more_horiz_rounded, size: 18),
-                padding: EdgeInsets.zero,
+                padding: const EdgeInsets.all(8),
+                constraints: const BoxConstraints(minWidth: 38, minHeight: 38),
                 onSelected: (v) {
                   if (v == 'rename') onRename();
                   if (v == 'delete') onDelete();
@@ -528,18 +549,27 @@ class _CompactNavTile extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(9),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
           child: Row(
             children: [
-              Icon(icon, size: 18, color: shell.primaryText.withValues(alpha: 0.8)),
-              const SizedBox(width: 12),
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerLow,
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Icon(icon,
+                    size: 19, color: Theme.of(context).colorScheme.onSurfaceVariant),
+              ),
+              const SizedBox(width: 13),
               Expanded(
                 child: Text(
                   label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 13,
+                    fontSize: 14,
                     fontWeight: FontWeight.w500,
                     color: shell.primaryText,
                   ),
@@ -571,7 +601,7 @@ class _ProfileFooterRow extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
+          padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
           child: Row(
             children: [
               CircleAvatar(

@@ -17,16 +17,16 @@ import 'quiz_queue_screen.dart';
 // Learnable target languages (the quiz engine is tuned for these three).
 // A learner can't "learn" their own native language, so [forNative] excludes
 // it — mirrors the backend's languages.valid_target_for_native().
-List<({String key, String label, String flag})> _kLanguages({String? forNative}) => [
-      (key: 'english', label: tr('kg.langEnglish'), flag: '🇺🇸'),
-      (key: 'german', label: tr('kg.langGerman'), flag: '🇩🇪'),
-      (key: 'korean', label: tr('kg.langKorean'), flag: '🇰🇷'),
+List<({String key, String label})> _kLanguages({String? forNative}) => [
+      (key: 'english', label: tr('kg.langEnglish')),
+      (key: 'german', label: tr('kg.langGerman')),
+      (key: 'korean', label: tr('kg.langKorean')),
     ].where((l) => l.key != forNative).toList();
 
 // Native languages (UI + graph + explanations are generated in this language).
 List<({String key, String label})> get _kNativeLanguages => [
-      (key: 'korean', label: '${tr('kg.langKorean')} 🇰🇷'),
-      (key: 'english', label: '${tr('kg.langEnglish')} 🇺🇸'),
+      (key: 'korean', label: tr('kg.langKorean')),
+      (key: 'english', label: tr('kg.langEnglish')),
     ];
 
 String _cefrLabel(int level) {
@@ -209,16 +209,14 @@ final rawLangs = profile['target_languages'];
       final langs = _targetLanguages.toList();
       final levelsInt = _langLevels.map((k, v) => MapEntry(k, v.round()));
 
-      await Future.wait([
-        apiClient.updateTargetLanguages(langs),
-        apiClient.updateNativeLanguage(_nativeLanguage),
-        apiClient.updateLanguageLevels(levelsInt),
-        apiClient.updateQuizProfileSettings(
-          dailyClozeTarget: _dailyClozeTarget.round(),
-          dailyCompositionTarget: _dailyCompositionTarget.round(),
-          quizReviewRatio: _quizReviewRatio,
-        ),
-      ]);
+      await apiClient.updateProfileSettings(
+        nativeLanguage: _nativeLanguage,
+        targetLanguages: langs,
+        languageLevels: levelsInt,
+        dailyClozeTarget: _dailyClozeTarget.round(),
+        dailyCompositionTarget: _dailyCompositionTarget.round(),
+        quizReviewRatio: _quizReviewRatio,
+      );
 
       // Switch the app UI language immediately on save.
       await appLocaleController.setFromNativeLanguage(_nativeLanguage);
@@ -353,7 +351,8 @@ final rawLangs = profile['target_languages'];
                         children: _kLanguages(forNative: _nativeLanguage).map((lang) {
                           final selected = _targetLanguages.contains(lang.key);
                           return FilterChip(
-                            label: Text('${lang.flag} ${lang.label}'),
+                            avatar: const Icon(Icons.language_rounded, size: 16),
+                            label: Text(lang.label),
                             selected: selected,
                             onSelected: _saving
                                 ? null
@@ -372,12 +371,11 @@ final rawLangs = profile['target_languages'];
                       ..._targetLanguages.map((lang) {
                         final langInfo = _kLanguages(forNative: _nativeLanguage).firstWhere(
                           (l) => l.key == lang,
-                          orElse: () => (key: lang, label: lang, flag: '🌐'),
+                          orElse: () => (key: lang, label: lang),
                         );
                         final level = _langLevels[lang] ?? 10;
                         final cefr = _cefrLabel(level.round());
                         return _LangLevelSlider(
-                          flag: langInfo.flag,
                           label: langInfo.label,
                           level: level,
                           cefr: cefr,
@@ -430,21 +428,24 @@ final rawLangs = profile['target_languages'];
                             ? null
                             : (v) => setState(() => _quizReviewRatio = v),
                       ),
-                      Wrap(
-                        spacing: 8,
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           for (final preset in [
                             (0.25, tr('settings.reviewPreset25')),
                             (0.5, tr('settings.reviewPresetBalanced')),
                             (0.75, tr('settings.reviewPreset75')),
-                          ])
-                            ChoiceChip(
-                              label: Text(preset.$2),
+                          ]) ...[
+                            _ReviewRatioChoice(
+                              label: preset.$2,
                               selected: (_quizReviewRatio - preset.$1).abs() < 0.01,
-                              onSelected: _saving
+                              onTap: _saving
                                   ? null
-                                  : (_) => setState(() => _quizReviewRatio = preset.$1),
+                                  : () => setState(
+                                      () => _quizReviewRatio = preset.$1),
                             ),
+                            if (preset.$1 != 0.75) const SizedBox(height: 8),
+                          ],
                         ],
                       ),
                     ],
@@ -453,24 +454,30 @@ final rawLangs = profile['target_languages'];
 
                 const SizedBox(height: AppSpacing.lg),
 
-                FilledButton(
-                  onPressed: _saving ? null : _save,
-                  child: _saving
-                      ? const SizedBox(
-                          height: 20, width: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Text(tr('settings.saveProfileButton')),
+                SizedBox(
+                  height: 52,
+                  child: FilledButton(
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const SizedBox(
+                            height: 20, width: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(tr('settings.saveProfileButton')),
+                  ),
                 ),
                 const SizedBox(height: AppSpacing.md),
 
-                FilledButton.tonalIcon(
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const QuizQueueScreen()),
+                SizedBox(
+                  height: 52,
+                  child: FilledButton.tonalIcon(
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const QuizQueueScreen()),
+                    ),
+                    icon: const Icon(Icons.inventory_2_outlined),
+                    label: Text(tr('settings.goToQuizQueue')),
                   ),
-                  icon: const Icon(Icons.inventory_2_outlined),
-                  label: Text(tr('settings.goToQuizQueue')),
                 ),
                 const SizedBox(height: AppSpacing.lg),
 
@@ -557,6 +564,56 @@ class _QuotaSlider extends StatelessWidget {
   }
 }
 
+class _ReviewRatioChoice extends StatelessWidget {
+  const _ReviewRatioChoice({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: selected ? scheme.primaryContainer : scheme.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          child: Row(
+            children: [
+              Icon(
+                selected
+                    ? Icons.check_circle_rounded
+                    : Icons.circle_outlined,
+                size: 18,
+                color: selected ? scheme.primary : scheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    color: selected ? scheme.onPrimaryContainer : scheme.onSurface,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _SectionCard extends StatelessWidget {
   const _SectionCard({
     required this.title,
@@ -601,7 +658,6 @@ class _SectionCard extends StatelessWidget {
 
 class _LangLevelSlider extends StatelessWidget {
   const _LangLevelSlider({
-    required this.flag,
     required this.label,
     required this.level,
     required this.cefr,
@@ -610,7 +666,6 @@ class _LangLevelSlider extends StatelessWidget {
     this.disabled = false,
   });
 
-  final String flag;
   final String label;
   final double level;
   final String cefr;
@@ -627,8 +682,9 @@ class _LangLevelSlider extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text(flag, style: const TextStyle(fontSize: 18)),
-              const SizedBox(width: 6),
+              Icon(Icons.translate_rounded,
+                  size: 18, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 8),
               Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
               const Spacer(),
               Container(

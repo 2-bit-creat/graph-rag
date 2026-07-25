@@ -132,7 +132,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
 
   // ── 바텀시트 (지도 앱 스타일: 40% 기본 / 90% 포커스 / 최소화-입력줄만) ────
   final _chatScrollController = ScrollController();
-  bool _chatVisible = true;
   double _chatAreaHeight = 1;
   double _chatSheetSize = _sheetDefaultSize;
   double _chatRestoredSize = _sheetDefaultSize;
@@ -209,7 +208,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   void _onChatFocusChanged() {
     final focused = _chatInputFocusNode.hasFocus;
     if (focused) {
-      if (!_chatVisible) setState(() => _chatVisible = true);
       setState(() {
         _chatFocused = true;
         _chatExpandedForInput = true;
@@ -227,7 +225,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   void _animateChatSheet(double target, {bool remember = true}) {
     final min = _sheetMinChildSize(context, _chatAreaHeight);
     final next = target.clamp(min, _sheetFocusSize).toDouble();
-    if (remember && _chatVisible && next > min + 0.01) {
+    if (next > min + 0.01) {
       _chatRestoredSize = next;
     }
     setState(() {
@@ -235,30 +233,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     });
   }
 
-  void _toggleChatVisibility() {
-    final nextVisible = !_chatVisible;
-    _chatInputFocusNode.unfocus();
-    final min = _sheetMinChildSize(context, _chatAreaHeight);
-    if (!nextVisible) {
-      _chatExpandedForInput = false;
-      _chatRestoredSize = _chatSheetSize > min + 0.01
-          ? _chatSheetSize
-          : _chatRestoredSize;
-    }
-    setState(() => _chatVisible = nextVisible);
-    _animateChatSheet(
-      nextVisible ? _chatRestoredSize : min,
-      remember: false,
-    );
-  }
-
   /// 핀 성공 등으로 채팅을 눈에 띄게 해야 할 때 — 이미 40% 이상이면 그대로 둔다.
   void _ensureChatVisible() {
-    if (!_chatVisible) {
-      _chatExpandedForInput = false;
-      setState(() => _chatVisible = true);
-      _animateChatSheet(_chatRestoredSize, remember: false);
-    }
+    // The chat remains available; its height is controlled by dragging.
   }
 
   Widget _buildGraphChatPanel({
@@ -282,11 +259,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       listFooter: _chatListFooter(),
       quizMode: _isQuizMode,
       listBottomInset: _inputBarHeight,
-      onPanelTap: _chatVisible ? null : () {
-        _chatInputFocusNode.unfocus();
-        setState(() => _chatVisible = true);
-        _animateChatSheet(_chatRestoredSize, remember: false);
-      },
       onHandleDragUpdate: (delta) {
         if (graphAreaHeight <= 0) return;
         _chatExpandedForInput = false;
@@ -295,7 +267,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
             .toDouble();
         setState(() {
           _chatSheetSize = next;
-          if (_chatVisible) _chatRestoredSize = next;
+          _chatRestoredSize = next;
         });
       },
     );
@@ -371,13 +343,11 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       // the IME — on web that only holds because KeyboardInsetScope injects the
       // measured keyboard height into MediaQuery (see utils/keyboard_inset.dart);
       // without it the browser reports no inset and the keyboard covers the feed.
-      height: !_chatVisible
-          ? 0
-          : (_isQuizMode || _isJournalMode || _chatExpandedForInput
-              ? graphAreaHeight
-              : _chatSheetSize * graphAreaHeight),
+      height: (_isQuizMode || _chatExpandedForInput)
+          ? graphAreaHeight
+          : _chatSheetSize * graphAreaHeight,
       child: IgnorePointer(
-        ignoring: !_chatVisible,
+        ignoring: false,
         child: _buildGraphChatPanel(
           scrollController: _chatScrollController,
           graphAreaHeight: graphAreaHeight,
@@ -425,6 +395,28 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
             ),
             _buildChatSheet(graphAreaHeight,
                 typeColors: typeColors, nodeById: nodeById),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: _inputBarHeight + 24,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        context.shell.panelBackground.withValues(alpha: 0),
+                        context.shell.panelBackground.withValues(alpha: 0.88),
+                        context.shell.panelBackground,
+                      ],
+                      stops: const [0, 0.62, 1],
+                    ),
+                  ),
+                ),
+              ),
+            ),
             _buildPersistentInputBar(),
           ],
         );
@@ -1552,7 +1544,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         // 화면을 덮고 있는 기본 상태에서는 시트 자체의 빈 상태가 온보딩
         // 메시지 역할을 이미 하므로, 반투명 패널 뒤로 비쳐 겹쳐 보이지
         // 않도록 채팅을 숨겼을 때만 노출한다 (이중 빈 상태 방지).
-        if (nodes.isEmpty && !_chatVisible)
+        if (nodes.isEmpty)
           const Positioned.fill(
             child: IgnorePointer(child: _EmptyGraphHint()),
           ),
@@ -1594,8 +1586,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
               ).then((_) => _load()),
               onClearGraph: _clearGraph,
               onAddNode: _addNode,
-              onToggleChat: _toggleChatVisibility,
-              chatVisible: _chatVisible,
               onToggleGraphTools: () =>
                   setState(() => _graphToolsVisible = !_graphToolsVisible),
               graphToolsVisible: _graphToolsVisible,
@@ -1731,8 +1721,6 @@ class _FloatingSearchBar extends StatelessWidget {
     required this.onTrash,
     required this.onClearGraph,
     required this.onAddNode,
-    required this.onToggleChat,
-    required this.chatVisible,
     required this.onToggleGraphTools,
     required this.graphToolsVisible,
     this.onOpenMenu,
@@ -1747,8 +1735,6 @@ class _FloatingSearchBar extends StatelessWidget {
   final VoidCallback onTrash;
   final VoidCallback onClearGraph;
   final VoidCallback onAddNode;
-  final VoidCallback onToggleChat;
-  final bool chatVisible;
   final VoidCallback onToggleGraphTools;
   final bool graphToolsVisible;
   final VoidCallback? onOpenMenu;
@@ -1815,14 +1801,9 @@ class _FloatingSearchBar extends StatelessWidget {
               ),
             ),
             IconButton(
-              tooltip: chatVisible ? tr('kg.collapseChatTooltip') : tr('kg.showChatTooltip'),
-              onPressed: onToggleChat,
-              icon: Icon(
-                chatVisible
-                    ? Icons.keyboard_arrow_down_rounded
-                    : Icons.keyboard_arrow_up_rounded,
-                color: shell.primaryText,
-              ),
+              tooltip: tr('kg.refreshTooltip'),
+              onPressed: onRefresh,
+              icon: Icon(Icons.refresh_rounded, color: shell.primaryText),
             ),
             // Destructive / rarely-used actions live behind the overflow menu
             // so they can't be fat-fingered while exploring.
@@ -1877,18 +1858,6 @@ class _FloatingSearchBar extends StatelessWidget {
                     leading: const Icon(Icons.category_outlined,
                         color: AppColors.textMuted),
                     title: Text(tr('kg.ontology'),
-                        style:
-                            TextStyle(color: shell.primaryText, fontSize: 13)),
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'refresh',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading:
-                        const Icon(Icons.refresh, color: AppColors.textMuted),
-                    title: Text(tr('kg.refreshTooltip'),
                         style:
                             TextStyle(color: shell.primaryText, fontSize: 13)),
                   ),

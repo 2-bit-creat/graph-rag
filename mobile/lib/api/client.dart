@@ -1248,6 +1248,31 @@ class ApiClient {
     }
   }
 
+  /// Save every profile preference together. Language validation depends on
+  /// the final native/target-language pair, so these values must not be sent
+  /// as separate concurrent PATCH requests.
+  Future<void> updateProfileSettings({
+    required String nativeLanguage,
+    required List<String> targetLanguages,
+    required Map<String, int> languageLevels,
+    required int dailyClozeTarget,
+    required int dailyCompositionTarget,
+    required double quizReviewRatio,
+  }) async {
+    try {
+      await _dio.patch('/quiz/profile/settings', data: {
+        'native_language': nativeLanguage,
+        'target_languages': targetLanguages,
+        'language_levels': languageLevels,
+        'daily_cloze_target': dailyClozeTarget,
+        'daily_composition_target': dailyCompositionTarget,
+        'quiz_review_ratio': quizReviewRatio,
+      });
+    } on DioException catch (e) {
+      throw _friendlyError(e, '프로필 설정 저장');
+    }
+  }
+
   /// Update per-language levels map {english: 50, german: 10}.
   Future<void> updateLanguageLevels(Map<String, int> levels) async {
     try {
