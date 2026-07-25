@@ -246,10 +246,10 @@ class _ChatSidebarState extends State<ChatSidebar> {
         ),
         const SizedBox(height: 6),
 
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          child: _searching
-              ? TextField(
+        _searching
+            ? Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: TextField(
                   controller: _searchController,
                   focusNode: _searchFocusNode,
                   autofocus: true,
@@ -265,19 +265,19 @@ class _ChatSidebarState extends State<ChatSidebar> {
                     filled: true,
                     contentPadding: const EdgeInsets.symmetric(
                         vertical: 14, horizontal: 4),
-                    fillColor: shell.subtleSurface,
+                    fillColor: Theme.of(context).colorScheme.surfaceContainerLow,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(13),
                       borderSide: BorderSide.none,
                     ),
                   ),
-                )
-              : _CompactNavTile(
-                  icon: Icons.search_rounded,
-                  label: tr('sidebar.searchChats'),
-                  onTap: _toggleSearch,
                 ),
-        ),
+              )
+            : _CompactNavTile(
+                icon: Icons.search_rounded,
+                label: tr('sidebar.searchChats'),
+                onTap: _toggleSearch,
+              ),
 
         // ── Gemini-style compact nav block (fixed, small) ────────────────
         // Each item opens its destination directly — no intermediate menu
@@ -461,26 +461,26 @@ class _RoomTile extends StatelessWidget {
     final shell = context.shell;
     return Material(
       color: active ? cs.primaryContainer : cs.surfaceContainerLow,
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+          padding: const EdgeInsets.fromLTRB(12, 7, 8, 7),
           child: Row(
             children: [
               Container(
-                width: 32,
-                height: 32,
+                width: 28,
+                height: 28,
                 decoration: BoxDecoration(
                   color: active ? cs.primary.withValues(alpha: 0.14) : cs.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(9),
                 ),
                 child: Icon(
                   active
                       ? Icons.chat_bubble_rounded
                       : Icons.chat_bubble_outline_rounded,
-                  size: 17,
+                  size: 16,
                   color: active ? cs.primary : cs.onSurfaceVariant,
                 ),
               ),
@@ -510,7 +510,7 @@ class _RoomTile extends StatelessWidget {
                 tooltip: tr('sidebar.optionsTooltip'),
                 icon: const Icon(Icons.more_horiz_rounded, size: 18),
                 padding: const EdgeInsets.all(8),
-                constraints: const BoxConstraints(minWidth: 38, minHeight: 38),
+                constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
                 onSelected: (v) {
                   if (v == 'rename') onRename();
                   if (v == 'delete') onDelete();

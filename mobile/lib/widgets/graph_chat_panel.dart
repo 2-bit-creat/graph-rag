@@ -101,6 +101,7 @@ class GraphChatPanel extends StatelessWidget {
             Expanded(
               child: quizMode && listFooter != null
                   ? SingleChildScrollView(
+                      controller: scrollController,
                       padding: EdgeInsets.fromLTRB(
                           AppSpacing.md,
                           AppSpacing.sm + safeTop,

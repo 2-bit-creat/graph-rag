@@ -11,6 +11,7 @@ from .. import crud
 from ..db import get_session
 from ..deps import request_user_dep
 from ..models import User
+from ..config import get_settings
 from ..schemas import (
     VocabWordOut,
     VocabularyAddWordRequest,
@@ -327,7 +328,8 @@ async def list_all_vocabularies(
     summaries = [_summary_out(i) for i in items]
 
     # Append one statement-bank entry per target language
-    for lang in get_effective_target_languages(user):
+    for lang in (get_effective_target_languages(user)
+                 if get_settings().expression_extraction_enabled else []):
         exprs = await get_statement_bank_for_language(user.id, lang)
         label = _LANG_DISPLAY.get(lang, lang.title())
         summaries.append(VocabularySummaryOut(

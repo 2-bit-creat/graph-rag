@@ -203,7 +203,6 @@ async def list_vocabularies(user_id: uuid.UUID) -> list[dict[str, Any]]:
     result = [*custom]
     # Surface the tutor vocabulary once it has collected anything — one entry
     # per language so learners never see mixed-language word lists.
-    result.extend(_tutor_vocab_summaries(store))
     return result
 
 
