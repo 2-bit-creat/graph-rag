@@ -5,6 +5,7 @@ import '../theme/app_theme.dart';
 import '../widgets/quiz/cloze_quiz_card.dart';
 import '../widgets/quiz/mcq_quiz_card.dart';
 import '../widgets/quiz/quiz_audio_button.dart';
+import '../widgets/quiz/quiz_viewport_scope.dart';
 import '../widgets/quiz/scramble_quiz_card.dart';
 
 /// Light "sheet" wrapper so the light-themed quiz/draft cards stay legible
@@ -18,10 +19,15 @@ class _CardShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final availableHeight = QuizViewportScope.maybeHeightOf(context);
+    final heightCompact = availableHeight != null && availableHeight < 280;
     final compact = MediaQuery.sizeOf(context).width < 600;
     return Container(
-      margin: EdgeInsets.fromLTRB(8, compact ? 2 : 4, 8, 8),
-      padding: EdgeInsets.all(compact ? 10 : 14),
+      margin: EdgeInsets.fromLTRB(
+          0, compact ? 2 : 4, 0, heightCompact ? 2 : (keyboardOpen ? 4 : 8)),
+      padding: EdgeInsets.all(
+          heightCompact ? 6 : (keyboardOpen ? 8 : (compact ? 10 : 14))),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(14),
@@ -50,7 +56,11 @@ class _CardShell extends StatelessWidget {
                   ),
               ],
             ),
-          if (title != null) SizedBox(height: compact ? 6 : 10),
+          if (title != null)
+            SizedBox(
+                height: heightCompact
+                    ? 2
+                    : (keyboardOpen ? 4 : (compact ? 6 : 10))),
           child,
         ],
       ),

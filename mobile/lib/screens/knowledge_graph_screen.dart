@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../api/client.dart';
 import '../chat/chat_mode_cards.dart';
@@ -137,6 +138,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   double _chatRestoredSize = _sheetDefaultSize;
   bool _graphToolsVisible = true;
   bool _chatExpandedForInput = false;
+  bool _chatManuallySized = false;
   bool get _isQuizMode =>
       chatSession.mode == ChatMode.quizWord ||
       chatSession.mode == ChatMode.quizComposition;
@@ -211,6 +213,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       setState(() {
         _chatFocused = true;
         _chatExpandedForInput = true;
+        _chatManuallySized = false;
       });
       _animateChatSheet(_sheetFocusSize);
       _pinChatToBottom();
@@ -238,6 +241,32 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     // The chat remains available; its height is controlled by dragging.
   }
 
+  void _activateInputMode() {
+    if (mounted) {
+      setState(() {
+        _chatExpandedForInput = true;
+        _chatManuallySized = false;
+        _chatSheetSize = _sheetFocusSize;
+      });
+    }
+    // The first request stays inside the user's menu-tap gesture, which is
+    // required for iOS Safari to open its software keyboard.
+    _chatInputFocusNode.requestFocus();
+    unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.show'));
+    for (final delay in const [
+      Duration(milliseconds: 80),
+      Duration(milliseconds: 280),
+      Duration(milliseconds: 600),
+    ]) {
+      Future<void>.delayed(delay, () {
+        if (!mounted) return;
+        _chatInputFocusNode.requestFocus();
+        unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.show'));
+        _pinChatToBottom(window: const Duration(milliseconds: 180));
+      });
+    }
+  }
+
   Widget _buildGraphChatPanel({
     required ScrollController scrollController,
     required double graphAreaHeight,
@@ -262,6 +291,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       onHandleDragUpdate: (delta) {
         if (graphAreaHeight <= 0) return;
         _chatExpandedForInput = false;
+        _chatManuallySized = true;
         final next = (_chatSheetSize - delta / graphAreaHeight)
             .clamp(_sheetMinChildSize(context, graphAreaHeight), _sheetFocusSize)
             .toDouble();
@@ -343,7 +373,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       // the IME — on web that only holds because KeyboardInsetScope injects the
       // measured keyboard height into MediaQuery (see utils/keyboard_inset.dart);
       // without it the browser reports no inset and the keyboard covers the feed.
-      height: (_isQuizMode || _chatExpandedForInput)
+      height: (_chatExpandedForInput && !_chatManuallySized)
           ? graphAreaHeight
           : _chatSheetSize * graphAreaHeight,
       child: IgnorePointer(
@@ -505,6 +535,14 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
             quizId != _lastActiveQuizId;
     if (enteredFooterMode || distillReady || quizCardChanged) {
       _scrollChatToBottom();
+    }
+    if (enteredFooterMode &&
+        (mode == ChatMode.journal ||
+            mode == ChatMode.quizComposition ||
+            mode == ChatMode.quizWord)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _chatInputFocusNode.requestFocus();
+      });
     }
     // Defensive re-focus for word quizzes generally (covers entering the
     // mode and any card change, not just the explicit "다음 문제" tap).
@@ -764,6 +802,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     // Opening the mode menu must never resize the chat sheet. If the chat was
     // hidden, restore its previous height before entering a mode.
     _ensureChatVisible();
+    _activateInputMode();
     switch (action) {
       case 'journal':
         // One journal at a time: block only a NEW journal while one is busy.
@@ -858,6 +897,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       ),
     );
     if (chosen != null) {
+      _activateInputMode();
       chatSession.startQuiz(quizType, language: chosen);
     }
   }

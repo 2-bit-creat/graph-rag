@@ -461,30 +461,30 @@ class _RoomTile extends StatelessWidget {
     final shell = context.shell;
     return Material(
       color: active ? cs.primaryContainer : cs.surfaceContainerLow,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 7, 8, 7),
+          padding: const EdgeInsets.fromLTRB(11, 5, 6, 5),
           child: Row(
             children: [
               Container(
-                width: 28,
-                height: 28,
+                width: 24,
+                height: 24,
                 decoration: BoxDecoration(
                   color: active ? cs.primary.withValues(alpha: 0.14) : cs.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(9),
+                  borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(
                   active
                       ? Icons.chat_bubble_rounded
                       : Icons.chat_bubble_outline_rounded,
-                  size: 16,
+                  size: 14,
                   color: active ? cs.primary : cs.onSurfaceVariant,
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -493,7 +493,7 @@ class _RoomTile extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            fontSize: 13.5,
+                            fontSize: 13,
                             fontWeight:
                                 active ? FontWeight.w700 : FontWeight.w500)),
                     if (subtitle != null && subtitle!.isNotEmpty)
@@ -501,7 +501,7 @@ class _RoomTile extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                              fontSize: 11.5,
+                              fontSize: 10.5,
                               color: shell.mutedText)),
                   ],
                 ),
@@ -509,8 +509,8 @@ class _RoomTile extends StatelessWidget {
               PopupMenuButton<String>(
                 tooltip: tr('sidebar.optionsTooltip'),
                 icon: const Icon(Icons.more_horiz_rounded, size: 18),
-                padding: const EdgeInsets.all(8),
-                constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                padding: const EdgeInsets.all(6),
+                constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
                 onSelected: (v) {
                   if (v == 'rename') onRename();
                   if (v == 'delete') onDelete();

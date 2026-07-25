@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_strings.dart';
 import 'quiz_audio_button.dart';
+import 'quiz_viewport_scope.dart';
 
 class ClozeQuizCard extends StatefulWidget {
   const ClozeQuizCard({
@@ -116,19 +117,23 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
     required bool active,
     required ColorScheme scheme,
     String? hintText,
+    bool dense = false,
   }) {
     final sizingLength =
         active && display.length > targetWord.length ? display.length : targetWord.length;
-    final width = (sizingLength * 11.0 + 20.0).clamp(36.0, 200.0);
+    final width = (sizingLength * (dense ? 9.0 : 11.0) + (dense ? 16.0 : 20.0))
+        .clamp(dense ? 32.0 : 36.0, 200.0);
     final showHint = active && display.isEmpty && hintText != null;
     return InkWell(
       onTap: widget.externalInput ? null : () => _focusNode.requestFocus(),
       borderRadius: BorderRadius.circular(10),
       child: Container(
         width: width,
-        height: 32,
+        height: dense ? 28 : 32,
         margin: const EdgeInsets.symmetric(horizontal: 1, vertical: 2),
-        padding: active ? const EdgeInsets.only(left: 8) : EdgeInsets.zero,
+        padding: active
+            ? EdgeInsets.only(left: dense ? 6 : 8)
+            : EdgeInsets.zero,
         // The active (currently-typed) box aligns its content — cursor,
         // hint letter, typed text — to the left like a real text caret,
         // not centered; completed/upcoming boxes keep a centered look.
@@ -153,7 +158,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
                             ? const Color(0xFF22C55E)
                             : scheme.primary,
                         fontWeight: FontWeight.w700,
-                        fontSize: 17,
+                        fontSize: dense ? 15 : 17,
                       ),
                     )
                   else if (showHint)
@@ -162,12 +167,13 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
                       style: TextStyle(
                         color: scheme.primary.withValues(alpha: 0.45),
                         fontWeight: FontWeight.w700,
-                        fontSize: 17,
+                        fontSize: dense ? 15 : 17,
                       ),
                     ),
                   if (active) ...[
                     if (display.isNotEmpty || showHint) const SizedBox(width: 2),
-                    _BlinkingCursor(color: scheme.primary, height: 18),
+                    _BlinkingCursor(
+                        color: scheme.primary, height: dense ? 16 : 18),
                   ],
                 ],
               ),
@@ -175,19 +181,24 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
     );
   }
 
-  Widget _buildClozeSentence(String prompt, String blank, {bool compact = false}) {
+  Widget _buildClozeSentence(
+    String prompt,
+    String blank, {
+    bool compact = false,
+    bool dense = false,
+  }) {
     final match = RegExp(r'_{3,}').firstMatch(prompt);
     if (match == null) {
       return Text(prompt,
           style: Theme.of(context).textTheme.titleLarge?.copyWith(
               height: compact ? 1.08 : 1.42,
-              fontSize: compact ? 18 : null));
+              fontSize: dense ? 16 : (compact ? 18 : null)));
     }
     final scheme = Theme.of(context).colorScheme;
     final visible = _effectiveAnswerRevealed;
     final baseStyle = Theme.of(context).textTheme.titleLarge?.copyWith(
           height: compact ? 1.08 : 1.42,
-          fontSize: compact ? 18 : null,
+          fontSize: dense ? 16 : (compact ? 18 : null),
           color: scheme.onSurface,
           fontWeight: FontWeight.w700,
         );
@@ -206,6 +217,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
               completed: true,
               active: false,
               scheme: scheme,
+              dense: dense,
             ),
           ),
         ],
@@ -234,6 +246,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
                       ? words[i][0]
                       : (_hintLevel >= 2 ? words[i] : null))
                   : null,
+              dense: dense,
             ),
           ),
         ],
@@ -252,6 +265,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
               completed: false,
               active: false,
               scheme: scheme,
+              dense: dense,
             ),
           ),
         ],
@@ -354,7 +368,9 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
     }
   }
 
-  Widget _buildContextKo(String raw) {
+  Widget _buildContextKo(String raw, {bool dense = false}) {
+    final fontSize = dense ? 12.5 : 14.0;
+    final lineHeight = dense ? 1.3 : 1.45;
     final mutedColor = Theme.of(context).colorScheme.onSurfaceVariant;
     final spanRe = RegExp(
       "<span\\s+color=['\"]#FFA500['\"][^>]*>(.*?)</span>",
@@ -364,7 +380,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
     final match = spanRe.firstMatch(raw);
     if (match == null) {
       return Text(raw,
-          style: TextStyle(fontSize: 14, height: 1.45, color: mutedColor));
+          style: TextStyle(fontSize: fontSize, height: lineHeight, color: mutedColor));
     }
     // Older cards used a full-sentence orange span when target alignment was
     // missing. Never present that fallback as if the whole translation were
@@ -376,12 +392,12 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
       final targetKo = (widget.quizData['target_ko']?.toString() ?? '').trim();
       if (targetKo.isEmpty || !sentenceKo.contains(targetKo)) {
         return Text(sentenceKo,
-            style: TextStyle(fontSize: 14, height: 1.45, color: mutedColor));
+            style: TextStyle(fontSize: fontSize, height: lineHeight, color: mutedColor));
       }
       final start = sentenceKo.indexOf(targetKo);
       return RichText(
         text: TextSpan(
-          style: TextStyle(fontSize: 14, height: 1.45, color: mutedColor),
+          style: TextStyle(fontSize: fontSize, height: lineHeight, color: mutedColor),
           children: [
             TextSpan(text: sentenceKo.substring(0, start)),
             TextSpan(
@@ -398,7 +414,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
     }
     return RichText(
       text: TextSpan(
-        style: TextStyle(fontSize: 14, height: 1.45, color: mutedColor),
+        style: TextStyle(fontSize: fontSize, height: lineHeight, color: mutedColor),
         children: [
           TextSpan(text: raw.substring(0, match.start)),
           TextSpan(
@@ -418,22 +434,28 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
     required IconData icon,
     required String label,
     required VoidCallback? onPressed,
+    bool dense = false,
   }) {
     final scheme = Theme.of(context).colorScheme;
     return OutlinedButton.icon(
       onPressed: onPressed,
-      icon: Icon(icon, size: 17),
-      label: Text(label),
+      icon: Icon(icon, size: dense ? 15 : 17),
+      label: Text(label, style: TextStyle(fontSize: dense ? 12 : null)),
       style: OutlinedButton.styleFrom(
         foregroundColor: scheme.primary,
-        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
+        padding: EdgeInsets.symmetric(
+            horizontal: dense ? 9 : 11, vertical: dense ? 6 : 9),
         visualDensity: VisualDensity.compact,
         side: BorderSide(color: scheme.primary.withValues(alpha: 0.45)),
       ),
     );
   }
 
-  Widget _answerPanel({required String blank, required bool wrongFirstTry}) {
+  Widget _answerPanel({
+    required String blank,
+    required bool wrongFirstTry,
+    bool dense = false,
+  }) {
     final scheme = Theme.of(context).colorScheme;
     final isCorrect = _effectiveGrade == true;
     final color = isCorrect
@@ -443,7 +465,8 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
         ? tr('clozeCard.answerLabelCorrect')
         : (wrongFirstTry ? tr('clozeCard.answerLabelConfirm') : tr('clozeCard.showAnswer'));
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: EdgeInsets.symmetric(
+          horizontal: dense ? 10 : 12, vertical: dense ? 7 : 10),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.11),
         borderRadius: BorderRadius.circular(12),
@@ -458,14 +481,14 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
                   isCorrect
                       ? Icons.check_circle_rounded
                       : Icons.lightbulb_outline_rounded,
-                  size: 18,
+                  size: dense ? 16 : 18,
                   color: color),
               const SizedBox(width: 8),
               Text(label,
                   style: TextStyle(color: color, fontWeight: FontWeight.w700)),
             ],
           ),
-          const SizedBox(height: 8),
+              SizedBox(height: dense ? 5 : 8),
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
@@ -476,7 +499,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         color: color,
                         fontWeight: FontWeight.w800,
-                        height: 1.35,
+                        height: dense ? 1.2 : 1.35,
                       ),
                 ),
               ),
@@ -504,12 +527,22 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
     final blank = _blank;
     final wrongFirstTry = _effectiveGrade == false && !_effectiveSolved;
     final compact = MediaQuery.sizeOf(context).width < 600;
-    final sectionGap = compact ? 8.0 : 14.0;
+    // The quiz shares the reduced visual viewport with the iOS keyboard.
+    // Compress its own content instead of allowing the fixed composer to
+    // obscure the lower actions/translation.
+    final availableHeight = QuizViewportScope.maybeHeightOf(context);
+    final ultraDense = widget.externalInput &&
+        availableHeight != null &&
+        availableHeight < 280;
+    final dense = ultraDense ||
+        (widget.externalInput &&
+            MediaQuery.viewInsetsOf(context).bottom > 0);
+    final sectionGap = ultraDense ? 3.0 : (dense ? 5.0 : (compact ? 8.0 : 14.0));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _buildClozeSentence(prompt, blank, compact: compact),
+        _buildClozeSentence(prompt, blank, compact: compact, dense: dense),
         if (contextKo.isNotEmpty && !_isAnswerOnlyContext(contextKo)) ...[
           SizedBox(height: sectionGap),
           Text(
@@ -519,12 +552,13 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
                   fontWeight: FontWeight.w800,
                 ),
           ),
-          const SizedBox(height: 4),
-          _buildContextKo(contextKo),
+          SizedBox(height: dense ? 2 : 4),
+          _buildContextKo(contextKo, dense: dense),
         ],
         if (_effectiveAnswerRevealed && blank.isNotEmpty) ...[
           SizedBox(height: sectionGap),
-          _answerPanel(blank: blank, wrongFirstTry: wrongFirstTry),
+          _answerPanel(
+              blank: blank, wrongFirstTry: wrongFirstTry, dense: dense),
         ],
         if (wrongFirstTry) ...[
           const SizedBox(height: 7),
@@ -540,9 +574,10 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
           ),
         ],
         if (hintKo.isNotEmpty && !_effectiveAnswerRevealed) ...[
-          const SizedBox(height: 8),
+          SizedBox(height: dense ? 4 : 8),
           Text(hintKo,
-              style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
+              style: TextStyle(
+                  fontSize: dense ? 11.5 : 13, color: scheme.onSurfaceVariant)),
         ],
         if (!_effectiveAnswerRevealed) ...[
           SizedBox(height: sectionGap),
@@ -556,6 +591,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
                     ? tr('clozeCard.letterHint')
                     : (_hintLevel == 1 ? tr('clozeCard.showWord') : tr('clozeCard.hintConfirmed')),
                 onPressed: _hintLevel >= 2 ? null : _revealHint,
+                dense: dense,
               ),
               _actionButton(
                 icon: Icons.visibility_outlined,
@@ -563,6 +599,7 @@ class _ClozeQuizCardState extends State<ClozeQuizCard> {
                 onPressed: _effectiveAnswerRevealed
                     ? null
                     : () => _revealAnswer(fillField: true),
+                dense: dense,
               ),
               if (_showAudio)
                 QuizAudioButton(

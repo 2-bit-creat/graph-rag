@@ -547,6 +547,10 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
         out.add(SpeakerOption(name));
       }
     }
+    // A bare "@" is the quick picker for already registered speakers only.
+    // Graph-derived candidates can be numerous; reveal them once the learner
+    // types a search prefix instead of creating a tall mostly off-screen menu.
+    if (q.isEmpty) return out;
     for (final opt in _graphSpeakers) {
       if (opt.name.toLowerCase().startsWith(q) && seen.add(opt.name)) {
         out.add(opt);
@@ -715,8 +719,13 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
             : 8.0;
         final left = geometry.dx.clamp(8.0, maxLeft).toDouble();
 
+        final popupItemCount = _popupOptions.length + (_popupCanCreate ? 1 : 0);
+        final popupHeight = popupItemCount == 0
+            ? 0.0
+            : (popupItemCount * 40.0).clamp(40.0, 220.0).toDouble();
         final popupContent = SizedBox(
           width: _popupWidth,
+          height: popupHeight,
           child: Material(
             elevation: 10,
             borderRadius: BorderRadius.circular(14),
@@ -731,11 +740,12 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
                       .withValues(alpha: 0.8),
                 ),
               ),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 220),
-                child: ListView(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
+              child: ListView(
+                  padding: EdgeInsets.zero,
                   shrinkWrap: true,
+                  physics: popupItemCount > 4
+                      ? const ClampingScrollPhysics()
+                      : const NeverScrollableScrollPhysics(),
                   children: [
                     for (var i = 0; i < _popupOptions.length; i++)
                       _popupRow(
@@ -771,7 +781,6 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
                       ),
                   ],
                 ),
-              ),
             ),
           ),
         );

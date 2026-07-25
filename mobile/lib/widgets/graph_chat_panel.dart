@@ -14,6 +14,7 @@ import 'chat_rich_text.dart';
 import 'chat_suggestion_rail.dart';
 import 'journal_progress_card.dart';
 import 'mention_editor_core.dart';
+import 'quiz/quiz_viewport_scope.dart';
 import 'thinking_orbs.dart';
 
 /// 지식그래프 화면 위에 떠 있는 바텀시트 형태의 대화 패널 (헤더 + 메시지 피드만).
@@ -71,7 +72,6 @@ class GraphChatPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final shell = context.shell;
-    final safeTop = MediaQuery.paddingOf(context).top;
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
@@ -100,14 +100,25 @@ class GraphChatPanel extends StatelessWidget {
             ),
             Expanded(
               child: quizMode && listFooter != null
-                  ? SingleChildScrollView(
-                      controller: scrollController,
+                  ? Padding(
                       padding: EdgeInsets.fromLTRB(
-                          AppSpacing.md,
-                          AppSpacing.sm + safeTop,
-                          AppSpacing.md,
-                          listBottomInset + 12),
-                      child: listFooter,
+                        AppSpacing.md,
+                        AppSpacing.xs,
+                        AppSpacing.md,
+                        listBottomInset + 12,
+                      ),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) => Align(
+                          alignment: Alignment.topCenter,
+                          child: SizedBox(
+                            width: double.infinity,
+                            child: QuizViewportScope(
+                              availableHeight: constraints.maxHeight,
+                              child: listFooter!,
+                            ),
+                          ),
+                        ),
+                      ),
                     )
                   : Stack(
                       children: [
@@ -717,7 +728,7 @@ class _InputBarState extends State<_InputBar> {
                     showCounter: false,
                     // Docked at the bottom of the screen — open upward so the
                     // popup never renders off-screen below the viewport.
-                    openUpward: false,
+                    openUpward: true,
                     enabled: canType && !recording,
                     decoration: InputDecoration(
                       hintText: widget.hint,
