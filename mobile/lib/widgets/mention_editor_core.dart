@@ -412,6 +412,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
   ({int at, String partial})? _mentionCtx;
   List<SpeakerOption> _popupOptions = const [];
   bool _popupCanCreate = false;
+  static const _maxVisibleMentionRows = 5;
 
   /// 팝업에서 ↑↓로 고른 위치 (options 다음 한 칸은 "새 화자 만들기").
   int _optionCursor = 0;
@@ -459,8 +460,8 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
         : _computeMentionOptions(_mentionCtx!.partial);
     _popupCanCreate = _mentionCtx != null &&
         _mentionCtx!.partial.isNotEmpty &&
-        !_popupOptions.any(
-          (o) => o.name.toLowerCase() == _mentionCtx!.partial.toLowerCase(),
+        ![..._badges, ..._graphSpeakers.map((option) => option.name)].any(
+          (name) => name.toLowerCase() == _mentionCtx!.partial.toLowerCase(),
         );
     final showPopup =
         _mentionCtx != null && (_popupOptions.isNotEmpty || _popupCanCreate);
@@ -537,26 +538,40 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     return (at: at, partial: partial);
   }
 
-  /// 팝업 후보: '나' → 세션 배지 → 그래프 화자·출처, partial로 필터.
+  /// 팝업 후보: 기존 화자를 먼저 보여 주고, 입력하면 접두 일치 → 포함
+  /// 일치 순으로 정렬한다. 화면에는 최대 다섯 줄만 렌더링한다.
   List<SpeakerOption> _computeMentionOptions(String partial) {
     final q = partial.toLowerCase();
     final seen = <String>{};
-    final out = <SpeakerOption>[];
+    final candidates = <SpeakerOption>[];
     for (final name in _badges) {
-      if (name.toLowerCase().startsWith(q) && seen.add(name)) {
-        out.add(SpeakerOption(name));
-      }
+      if (seen.add(name)) candidates.add(SpeakerOption(name));
     }
-    // A bare "@" is the quick picker for already registered speakers only.
-    // Graph-derived candidates can be numerous; reveal them once the learner
-    // types a search prefix instead of creating a tall mostly off-screen menu.
-    if (q.isEmpty) return out;
     for (final opt in _graphSpeakers) {
-      if (opt.name.toLowerCase().startsWith(q) && seen.add(opt.name)) {
-        out.add(opt);
-      }
+      if (seen.add(opt.name)) candidates.add(opt);
     }
-    return out;
+
+    final matches = candidates
+        .where((option) => q.isEmpty || option.name.toLowerCase().contains(q))
+        .toList();
+    matches.sort((a, b) {
+      int rank(SpeakerOption option) {
+        if (q.isEmpty) return _badges.contains(option.name) ? 0 : 1;
+        return option.name.toLowerCase().startsWith(q) ? 0 : 1;
+      }
+
+      final rankComparison = rank(a).compareTo(rank(b));
+      if (rankComparison != 0) return rankComparison;
+      final badgeComparison = (_badges.contains(b.name) ? 1 : 0)
+          .compareTo(_badges.contains(a.name) ? 1 : 0);
+      if (badgeComparison != 0) return badgeComparison;
+      return a.name.compareTo(b.name);
+    });
+
+    // A typed, new name needs one row for its create action.
+    final limit =
+        q.isEmpty ? _maxVisibleMentionRows : _maxVisibleMentionRows - 1;
+    return matches.take(limit).toList();
   }
 
   /// 생성과 동시에 적용: 배지 등록 + 본문 삽입 한 번에.
@@ -642,36 +657,39 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     required VoidCallback onHover,
   }) {
     final theme = Theme.of(context);
-    return MouseRegion(
-      onEnter: (_) => onHover(),
-      child: Material(
-        color: selected
-            ? theme.colorScheme.primaryContainer.withValues(alpha: 0.55)
-            : Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            child: Row(
-              children: [
-                Icon(icon, size: 18, color: iconColor),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyMedium
-                        ?.copyWith(fontWeight: FontWeight.w600),
+    return SizedBox(
+      height: 48,
+      child: MouseRegion(
+        onEnter: (_) => onHover(),
+        child: Material(
+          color: selected
+              ? theme.colorScheme.primaryContainer.withValues(alpha: 0.55)
+              : Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
+                children: [
+                  Icon(icon, size: 18, color: iconColor),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyMedium
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                    ),
                   ),
-                ),
-                if (trailing != null)
-                  Text(
-                    trailing,
-                    style: theme.textTheme.labelSmall
-                        ?.copyWith(color: AppColors.textMuted),
-                  ),
-              ],
+                  if (trailing != null)
+                    Text(
+                      trailing,
+                      style: theme.textTheme.labelSmall
+                          ?.copyWith(color: AppColors.textMuted),
+                    ),
+                ],
+              ),
             ),
           ),
         ),
@@ -710,19 +728,50 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
         final geometry = _caretMenuGeometry(
           fieldWidth: constraints.maxWidth,
           textStyle: textStyle,
-          contentPadding: contentPadding is EdgeInsets
-              ? contentPadding
-              : _contentPadding,
+          contentPadding:
+              contentPadding is EdgeInsets ? contentPadding : _contentPadding,
         );
         final maxLeft = constraints.maxWidth > _popupWidth + 16
             ? constraints.maxWidth - _popupWidth - 8
             : 8.0;
         final left = geometry.dx.clamp(8.0, maxLeft).toDouble();
 
-        final popupItemCount = _popupOptions.length + (_popupCanCreate ? 1 : 0);
-        final popupHeight = popupItemCount == 0
-            ? 0.0
-            : (popupItemCount * 40.0).clamp(40.0, 220.0).toDouble();
+        final popupRows = <Widget>[
+          for (var i = 0; i < _popupOptions.length; i++)
+            _popupRow(
+              icon: _popupOptions[i].name == '나'
+                  ? Icons.person_rounded
+                  : _popupOptions[i].isSource
+                      ? Icons.menu_book_rounded
+                      : Icons.person_outline_rounded,
+              iconColor: _badges.contains(_popupOptions[i].name)
+                  ? colorFor(_popupOptions[i].name)
+                  : theme.colorScheme.primary,
+              label: _popupOptions[i].name == '나'
+                  ? selfSpeakerLabel
+                  : _popupOptions[i].name,
+              trailing: !_badges.contains(_popupOptions[i].name)
+                  ? tr('mention.fromGraphTrailing')
+                  : null,
+              selected: i == _optionCursor,
+              onTap: () => _applyMention(_popupOptions[i].name),
+              onHover: () => setState(() => _optionCursor = i),
+            ),
+          if (_popupCanCreate)
+            _popupRow(
+              icon: Icons.add_circle_outline_rounded,
+              iconColor: theme.colorScheme.primary,
+              label: tr(
+                  'mention.createNewSpeaker', {'partial': ctx?.partial ?? ''}),
+              trailing: 'Enter',
+              selected: _optionCursor == _popupOptions.length,
+              onTap: () => _applyMention(ctx?.partial ?? ''),
+              onHover: () => setState(
+                () => _optionCursor = _popupOptions.length,
+              ),
+            ),
+        ];
+        final popupHeight = popupRows.length * 48.0;
         final popupContent = SizedBox(
           width: _popupWidth,
           height: popupHeight,
@@ -736,51 +785,15 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: theme.colorScheme.outlineVariant
-                      .withValues(alpha: 0.8),
+                  color:
+                      theme.colorScheme.outlineVariant.withValues(alpha: 0.8),
                 ),
               ),
-              child: ListView(
-                  padding: EdgeInsets.zero,
-                  shrinkWrap: true,
-                  physics: popupItemCount > 4
-                      ? const ClampingScrollPhysics()
-                      : const NeverScrollableScrollPhysics(),
-                  children: [
-                    for (var i = 0; i < _popupOptions.length; i++)
-                      _popupRow(
-                        icon: _popupOptions[i].name == '나'
-                            ? Icons.person_rounded
-                            : _popupOptions[i].isSource
-                                ? Icons.menu_book_rounded
-                                : Icons.person_outline_rounded,
-                        iconColor: _badges.contains(_popupOptions[i].name)
-                            ? colorFor(_popupOptions[i].name)
-                            : theme.colorScheme.primary,
-                        label: _popupOptions[i].name == '나'
-                            ? selfSpeakerLabel
-                            : _popupOptions[i].name,
-                        trailing: !_badges.contains(_popupOptions[i].name)
-                            ? tr('mention.fromGraphTrailing')
-                            : null,
-                        selected: i == _optionCursor,
-                        onTap: () => _applyMention(_popupOptions[i].name),
-                        onHover: () => setState(() => _optionCursor = i),
-                      ),
-                    if (_popupCanCreate)
-                      _popupRow(
-                        icon: Icons.add_circle_outline_rounded,
-                        iconColor: theme.colorScheme.primary,
-                        label: tr('mention.createNewSpeaker', {'partial': ctx?.partial ?? ''}),
-                        trailing: 'Enter',
-                        selected: _optionCursor == _popupOptions.length,
-                        onTap: () => _applyMention(ctx?.partial ?? ''),
-                        onHover: () => setState(
-                          () => _optionCursor = _popupOptions.length,
-                        ),
-                      ),
-                  ],
-                ),
+              // Never give the overlay a fixed scroll viewport. A fixed height
+              // combined with an upward anchor was what produced the large
+              // empty panel when the diary had accumulated many speakers.
+              child:
+                  Column(mainAxisSize: MainAxisSize.min, children: popupRows),
             ),
           ),
         );
@@ -798,13 +811,22 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
                 link: _popupLink,
                 showWhenUnlinked: false,
                 targetAnchor: Alignment.topLeft,
-                followerAnchor:
-                    widget.openUpward ? Alignment.bottomLeft : Alignment.topLeft,
+                followerAnchor: widget.openUpward
+                    ? Alignment.bottomLeft
+                    : Alignment.topLeft,
                 offset: Offset(
                   left,
                   widget.openUpward ? geometry.aboveY : geometry.belowY,
                 ),
-                child: popupContent,
+                // OverlayPortal gives its child the whole overlay's loose
+                // bounds. Align with size factors prevents that height from
+                // becoming the popup's own height before it is anchored up.
+                child: Align(
+                  alignment: Alignment.bottomLeft,
+                  widthFactor: 1,
+                  heightFactor: 1,
+                  child: popupContent,
+                ),
               );
             },
             child: Stack(

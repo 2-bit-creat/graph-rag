@@ -185,8 +185,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   /// `maxScrollExtent` keeps moving after any one-shot `animateTo` finishes —
   /// which is exactly why the newest message stayed parked under the keyboard
   /// and had to be dragged up by hand.
-  void _pinChatToBottom(
-      {Duration window = const Duration(milliseconds: 700)}) {
+  void _pinChatToBottom({Duration window = const Duration(milliseconds: 700)}) {
     void stick() {
       final c = _activeChatScrollController;
       if (c == null || !c.hasClients) return;
@@ -261,10 +260,24 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       Future<void>.delayed(delay, () {
         if (!mounted) return;
         _chatInputFocusNode.requestFocus();
-        unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.show'));
+        unawaited(
+            SystemChannels.textInput.invokeMethod<void>('TextInput.show'));
         _pinChatToBottom(window: const Duration(milliseconds: 180));
       });
     }
+  }
+
+  /// Recreate the platform text-input connection after an async mode switch.
+  /// On iOS Safari a request made while the old quiz is still busy can leave
+  /// the Flutter field focused but with no keyboard to bring back on tap.
+  void _restoreComposerFocusAfterBuild() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_inputEnabled) return;
+      _chatInputFocusNode.unfocus();
+      FocusScope.of(context).requestFocus(_chatInputFocusNode);
+      unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.show'));
+      _pinChatToBottom(window: const Duration(milliseconds: 180));
+    });
   }
 
   Widget _buildGraphChatPanel({
@@ -293,7 +306,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         _chatExpandedForInput = false;
         _chatManuallySized = true;
         final next = (_chatSheetSize - delta / graphAreaHeight)
-            .clamp(_sheetMinChildSize(context, graphAreaHeight), _sheetFocusSize)
+            .clamp(
+                _sheetMinChildSize(context, graphAreaHeight), _sheetFocusSize)
             .toDouble();
         setState(() {
           _chatSheetSize = next;
@@ -454,7 +468,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     );
   }
 
-
   @override
   void initState() {
     super.initState();
@@ -500,7 +513,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   /// blank instead of waiting for the learner to hit send.
   void _onChatInputChanged() {
     if (chatSession.mode != ChatMode.quizWord) return;
-    unawaited(chatSession.updateClozeDraft(_chatInputController.text).then((clear) {
+    unawaited(
+        chatSession.updateClozeDraft(_chatInputController.text).then((clear) {
       if (clear && mounted) _chatInputController.clear();
     }));
   }
@@ -540,9 +554,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         (mode == ChatMode.journal ||
             mode == ChatMode.quizComposition ||
             mode == ChatMode.quizWord)) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _chatInputFocusNode.requestFocus();
-      });
+      _restoreComposerFocusAfterBuild();
     }
     // Defensive re-focus for word quizzes generally (covers entering the
     // mode and any card change, not just the explicit "다음 문제" tap).
@@ -555,9 +567,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     // keystrokes. Requesting it after the next frame targets the rebuilt,
     // enabled field instead.
     if (mode == ChatMode.quizWord && quizCardChanged) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _chatInputFocusNode.requestFocus();
-      });
+      _restoreComposerFocusAfterBuild();
     }
     // A reply landing can leave the composer looking enabled but no longer
     // holding real editing focus (the field re-enables after busy, but
@@ -798,11 +808,21 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
 
   // ── + 버튼 모드 시스템 ───────────────────────────────────────────────────
 
-  void _onModeSelected(String action) {
+  void _onModeSelected(String action) async {
     // Opening the mode menu must never resize the chat sheet. If the chat was
     // hidden, restore its previous height before entering a mode.
     _ensureChatVisible();
-    _activateInputMode();
+    final opensLanguagePicker = action == 'composition' || action == 'word';
+    if (opensLanguagePicker) {
+      // Do not layer a language picker over a previous mode or an already-open
+      // iOS keyboard. Starting another quiz is equivalent to closing the old
+      // one first, then opening the new chooser.
+      if (chatSession.mode != ChatMode.normal) chatSession.exitMode();
+      _chatInputFocusNode.unfocus();
+      await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+      if (!mounted) return;
+    }
     switch (action) {
       case 'journal':
         // One journal at a time: block only a NEW journal while one is busy.
@@ -815,9 +835,11 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           );
           return;
         }
+        _activateInputMode();
         chatSession.enterJournalMode();
         break;
       case 'distill':
+        _activateInputMode();
         chatSession.startDistill();
         break;
       case 'composition':
@@ -856,8 +878,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     }
 
     if (langs.length <= 1) {
-      chatSession.startQuiz(quizType,
+      _activateInputMode();
+      await chatSession.startQuiz(quizType,
           language: langs.isNotEmpty ? langs.first : null);
+      _restoreComposerFocusAfterBuild();
       return;
     }
     if (!mounted) return;
@@ -898,7 +922,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     );
     if (chosen != null) {
       _activateInputMode();
-      chatSession.startQuiz(quizType, language: chosen);
+      await chatSession.startQuiz(quizType, language: chosen);
+      _restoreComposerFocusAfterBuild();
     }
   }
 
@@ -1186,7 +1211,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       if (!mounted) return;
       setState(() {
         node['is_pinned'] = result['is_pinned'] ?? nextPinned;
-        if (_selectedNode != null && _selectedNode!['id'].toString() == nodeId) {
+        if (_selectedNode != null &&
+            _selectedNode!['id'].toString() == nodeId) {
           _selectedNode = {..._selectedNode!, 'is_pinned': node['is_pinned']};
         }
       });
@@ -1454,7 +1480,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           Positioned(
             top: compactMode ? 26 : overlayTopInset,
             right: 12,
-            child: _HideHeadsToggle(active: _hideHeads, onTap: _toggleHideHeads),
+            child:
+                _HideHeadsToggle(active: _hideHeads, onTap: _toggleHideHeads),
           ),
         // 화자 색상 범례: head가 안 보이는 동안 색을 해독할 유일한 단서.
         if (_hideHeads && compactMode)
@@ -1601,36 +1628,35 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
             ),
           ),
         Positioned(
-            top: pillTop,
-            left: 12,
-            right: 12,
-            child: _FloatingSearchBar(
-              matchCount: _queryMatchCount(nodes),
-              nodeCount: nodes.length,
-              edgeCount: edges.length,
-              onQueryChanged: (v) => setState(() => _query = v),
-              onOpenMenu: widget.onOpenMenu,
-              onRefresh: () {
-                _load();
-                chatSession.loadSessions();
-              },
-              onOntology: () => OntologySettingsSheet.show(
-                context,
-                onApplied: _load,
-                onFilterByType: (type) => setState(() => _typeFilter = type),
-              ),
-              onTrash: () => Navigator.push(
-                context,
-                MaterialPageRoute<void>(
-                    builder: (_) => const GraphTrashScreen()),
-              ).then((_) => _load()),
-              onClearGraph: _clearGraph,
-              onAddNode: _addNode,
-              onToggleGraphTools: () =>
-                  setState(() => _graphToolsVisible = !_graphToolsVisible),
-              graphToolsVisible: _graphToolsVisible,
+          top: pillTop,
+          left: 12,
+          right: 12,
+          child: _FloatingSearchBar(
+            matchCount: _queryMatchCount(nodes),
+            nodeCount: nodes.length,
+            edgeCount: edges.length,
+            onQueryChanged: (v) => setState(() => _query = v),
+            onOpenMenu: widget.onOpenMenu,
+            onRefresh: () {
+              _load();
+              chatSession.loadSessions();
+            },
+            onOntology: () => OntologySettingsSheet.show(
+              context,
+              onApplied: _load,
+              onFilterByType: (type) => setState(() => _typeFilter = type),
             ),
+            onTrash: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(builder: (_) => const GraphTrashScreen()),
+            ).then((_) => _load()),
+            onClearGraph: _clearGraph,
+            onAddNode: _addNode,
+            onToggleGraphTools: () =>
+                setState(() => _graphToolsVisible = !_graphToolsVisible),
+            graphToolsVisible: _graphToolsVisible,
           ),
+        ),
       ],
     );
   }
@@ -1834,8 +1860,8 @@ class _FloatingSearchBar extends StatelessWidget {
                   filled: true,
                   fillColor: Colors.transparent,
                   border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 6, vertical: 11),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 11),
                 ),
                 onChanged: onQueryChanged,
               ),
@@ -1887,8 +1913,7 @@ class _FloatingSearchBar extends StatelessWidget {
                         'nodes': nodeCount,
                         'edges': edgeCount,
                       }),
-                      style:
-                          TextStyle(color: shell.mutedText, fontSize: 12)),
+                      style: TextStyle(color: shell.mutedText, fontSize: 12)),
                 ),
                 PopupMenuItem(
                   value: 'ontology',
@@ -1931,8 +1956,8 @@ class _FloatingSearchBar extends StatelessWidget {
                   child: ListTile(
                     dense: true,
                     contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.delete_sweep,
-                        color: Colors.redAccent),
+                    leading:
+                        const Icon(Icons.delete_sweep, color: Colors.redAccent),
                     title: Text(tr('kg.clearGraphMenu'),
                         style: const TextStyle(
                             color: Colors.redAccent, fontSize: 13)),
@@ -2111,7 +2136,8 @@ class _SelectionInfoCard extends StatelessWidget {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Text(
-                      tr('kg.connectionsCount', {'type': type, 'degree': degree}),
+                      tr('kg.connectionsCount',
+                          {'type': type, 'degree': degree}),
                       style: TextStyle(
                           fontSize: 11, color: color.withValues(alpha: 0.9)),
                     ),
@@ -2255,47 +2281,48 @@ class _SelectionInfoCard extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-            if (n != null && isStatement)
-              IconButton(
-                tooltip: n['is_pinned'] == true
-                    ? tr('kg.unpinTooltip')
-                    : tr('kg.pinTooltip'),
-                visualDensity: VisualDensity.compact,
-                onPressed: pinning ? null : () => onPin(n),
-                icon: pinning
-                    ? SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: shell.mutedText,
-                        ),
-                      )
-                    : Icon(
-                        n['is_pinned'] == true
-                            ? Icons.push_pin
-                            : Icons.push_pin_outlined,
-                        size: 18,
-                        color: n['is_pinned'] == true
-                            ? AppColors.accent
-                            : shell.mutedText,
-                      ),
-              ),
-            TextButton(
-              onPressed: onDetail,
-              style: TextButton.styleFrom(
-                foregroundColor: AppColors.accent,
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-              ),
-              child: Text(tr('kg.detail'), style: const TextStyle(fontSize: 12.5)),
-            ),
-            IconButton(
-              tooltip: tr('common.close'),
-              visualDensity: VisualDensity.compact,
-              onPressed: onClose,
-              icon: Icon(Icons.close, size: 18, color: shell.mutedText),
-            ),
+                if (n != null && isStatement)
+                  IconButton(
+                    tooltip: n['is_pinned'] == true
+                        ? tr('kg.unpinTooltip')
+                        : tr('kg.pinTooltip'),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: pinning ? null : () => onPin(n),
+                    icon: pinning
+                        ? SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: shell.mutedText,
+                            ),
+                          )
+                        : Icon(
+                            n['is_pinned'] == true
+                                ? Icons.push_pin
+                                : Icons.push_pin_outlined,
+                            size: 18,
+                            color: n['is_pinned'] == true
+                                ? AppColors.accent
+                                : shell.mutedText,
+                          ),
+                  ),
+                TextButton(
+                  onPressed: onDetail,
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.accent,
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                  ),
+                  child: Text(tr('kg.detail'),
+                      style: const TextStyle(fontSize: 12.5)),
+                ),
+                IconButton(
+                  tooltip: tr('common.close'),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onClose,
+                  icon: Icon(Icons.close, size: 18, color: shell.mutedText),
+                ),
               ],
             ),
           ],
@@ -2325,7 +2352,8 @@ class _EmptyGraphHint extends StatelessWidget {
             children: [
               // Brand orbs — same "voice" as the assistant avatar / thinking
               // indicator, replacing the dated hub outline glyph.
-              ThinkingOrbs(size: compact ? 44 : 58, period: const Duration(seconds: 5)),
+              ThinkingOrbs(
+                  size: compact ? 44 : 58, period: const Duration(seconds: 5)),
               const SizedBox(height: 20),
               Text(
                 tr('graph.emptyTitle'),
