@@ -18,6 +18,7 @@ import '../widgets/graph_inspector_panel.dart';
 import '../widgets/knowledge_graph_canvas.dart';
 import '../widgets/measure_size.dart';
 import '../widgets/ontology_settings_sheet.dart';
+import '../widgets/quiz/cloze_quiz_card.dart';
 import '../widgets/thinking_orbs.dart';
 import 'graph_trash_screen.dart';
 
@@ -112,6 +113,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   // ── 그래프 대화 (전역 chatSession 컨트롤러 구독) ─────────────────────────
   final _chatInputController = TextEditingController();
   final _chatInputFocusNode = FocusNode();
+  final _clozeHintFocusNode = FocusNode(canRequestFocus: false);
+  final _clozeCardKey = GlobalKey<ClozeQuizCardState>();
 
   /// Measured height of the docked composer, so the feed can pad its tail by
   /// exactly that much. 0 in journal mode, where the composer moves inline.
@@ -127,12 +130,14 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   ChatMode _lastChatMode = ChatMode.normal;
   bool _lastChatBusy = false;
   bool _lastDistillLoading = false;
+  bool _lastWordQuizSolved = false;
   String? _lastActiveQuizId;
   ComposePhase? _prevJournalPhase;
   ComposePhase? _prevComposePhase;
   String? _prevJournalGraphStatus;
   bool _wasGraphReviewPending = false;
   bool _graphReloadScheduled = false;
+  bool _quizStarting = false;
 
   // ── 바텀시트 (지도 앱 스타일: 40% 기본 / 90% 포커스 / 최소화-입력줄만) ────
   final _chatScrollController = ScrollController();
@@ -148,6 +153,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   bool get _isJournalMode => chatSession.mode == ChatMode.journal;
   static const double _sheetDefaultSize = 0.40; // 상태 A
   static const double _sheetFocusSize = 0.90; // 상태 B
+  static const double _wordQuizMinSheetSize = 0.80;
   bool _chatFocused = false; // 스크림 표시 여부 — 포커스에서만 파생, 수동 드래그와 무관
 
   /// 시트의 `builder`가 매 build마다 새로 넘겨주는 컨트롤러 — 프로그램적 스크롤은
@@ -312,9 +318,11 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         if (graphAreaHeight <= 0) return;
         _chatExpandedForInput = false;
         _chatManuallySized = true;
+        final minSheetSize = chatSession.mode == ChatMode.quizWord
+            ? _wordQuizMinSheetSize
+            : _sheetMinChildSize(context, graphAreaHeight);
         final next = (_chatSheetSize - delta / graphAreaHeight)
-            .clamp(
-                _sheetMinChildSize(context, graphAreaHeight), _sheetFocusSize)
+            .clamp(minSheetSize, _sheetFocusSize)
             .toDouble();
         setState(() {
           _chatSheetSize = next;
@@ -356,17 +364,20 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           onSend: _sendChat,
           modeLabel: _modeLabel(),
           onExitMode: chatSession.exitMode,
+          modeActions: _wordQuizComposerActions(),
           onModeSelected: _onModeSelected,
           inputEnabled: _inputEnabled,
           inputHint: _inputHint,
           journalMode: _isJournalMode,
           inputFocusNode: _chatInputFocusNode,
-          suggestions: chatSuggestionsFor(
-            mode: chatSession.mode,
-            messages: chatSession.messages,
-            busy: chatSession.busy,
-            journalBusy: journalTask.isBusy,
-          ),
+          suggestions: _quizStarting
+              ? const []
+              : chatSuggestionsFor(
+                  mode: chatSession.mode,
+                  messages: chatSession.messages,
+                  busy: chatSession.busy,
+                  journalBusy: journalTask.isBusy,
+                ),
           onSuggestionPrompt: _sendSuggestion,
         ),
       ),
@@ -521,6 +532,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     _chatInputFocusNode.removeListener(_onChatFocusChanged);
     _chatInputController.dispose();
     _chatInputFocusNode.dispose();
+    _clozeHintFocusNode.dispose();
     _chatScrollController.dispose();
     super.dispose();
   }
@@ -564,12 +576,25 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     final quizCardChanged =
         (mode == ChatMode.quizComposition || mode == ChatMode.quizWord) &&
             quizId != _lastActiveQuizId;
+    final wordQuizJustSolved =
+        mode == ChatMode.quizWord &&
+            chatSession.wordQuizSolved &&
+            !_lastWordQuizSolved;
     if (enteredFooterMode || distillReady || quizCardChanged) {
       _scrollChatToBottom();
     }
     if (enteredFooterMode &&
         (mode == ChatMode.journal || mode == ChatMode.quizComposition)) {
       _restoreComposerFocusAfterBuild();
+    }
+    if (wordQuizJustSolved) {
+      // The next action is explicitly "Next question", so retaining the
+      // composer focus only steals vertical space from the answer state.
+      // Hide the platform IME as well as releasing Flutter focus; the latter
+      // alone does not reliably dismiss iOS Safari's keyboard.
+      _chatInputFocusNode.unfocus();
+      FocusManager.instance.primaryFocus?.unfocus();
+      unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.hide'));
     }
     // A reply landing can leave the composer looking enabled but no longer
     // holding real editing focus (the field re-enables after busy, but
@@ -583,6 +608,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     _lastChatMode = mode;
     _lastChatBusy = chatSession.busy;
     _lastDistillLoading = chatSession.distillLoading;
+    _lastWordQuizSolved =
+        mode == ChatMode.quizWord && chatSession.wordQuizSolved;
     _lastActiveQuizId = quizId;
     if (mounted) setState(() {});
   }
@@ -882,6 +909,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   /// profile, ask which one this quiz session should draw from before
   /// starting it. With zero or one configured, skip the prompt entirely.
   Future<void> _startQuizWithLanguagePrompt(String quizType) async {
+    if (mounted) setState(() => _quizStarting = true);
+    try {
     List<String> langs = const ['english'];
     try {
       final profile = await apiClient.getUserProfile();
@@ -900,10 +929,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       if (quizType == 'composition') {
         _activateInputMode();
       } else {
-        // iOS Safari only opens its keyboard from a real user gesture.  Do
-        // not pre-focus the cloze composer after this async quiz load: it
-        // leaves a visible caret with no platform keyboard connection.
-        _expandChatForInput();
+        // Request the editor connection while this menu tap is still a real
+        // user gesture. Waiting for the async quiz load leaves iOS Safari
+        // with a visible field that cannot open its keyboard until a drag.
+        _activateInputMode();
       }
       await chatSession.startQuiz(quizType,
           language: langs.isNotEmpty ? langs.first : null);
@@ -950,10 +979,13 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       if (quizType == 'composition') {
         _activateInputMode();
       } else {
-        _expandChatForInput();
+        _activateInputMode();
       }
       await chatSession.startQuiz(quizType, language: chosen);
       if (quizType == 'composition') _restoreComposerFocusAfterBuild();
+    }
+    } finally {
+      if (mounted) setState(() => _quizStarting = false);
     }
   }
 
@@ -980,10 +1012,14 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   // enforced in chat_session_controller.dart (updateClozeDraft/answerWordQuiz
   // both no-op once wordQuizSolved is true), so gating the widget too was
   // pure UX polish, not a correctness requirement — not worth the fragility.
+  // A confirmed answer has no valid text input. Disabling the field prevents
+  // a tap from reopening the IME and shrinking the completed card.
   bool get _inputEnabled =>
-      chatSession.mode != ChatMode.quizWord || chatSession.wordQuizUsesComposer;
+      chatSession.mode != ChatMode.quizWord ||
+      (chatSession.wordQuizUsesComposer && !chatSession.wordQuizSolved);
 
   String get _inputHint {
+    if (_quizStarting && _modeLabel() == null) return tr('chat.hint.word');
     switch (chatSession.mode) {
       case ChatMode.distill:
         return tr('chat.hint.distill');
@@ -996,6 +1032,36 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       case ChatMode.normal:
         return tr('chat.inputHint');
     }
+  }
+
+  Widget? _wordQuizComposerActions() {
+    if (chatSession.mode != ChatMode.quizWord ||
+        !chatSession.wordQuizUsesComposer ||
+        chatSession.wordQuizSolved) {
+      return null;
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        Focus(
+          canRequestFocus: false,
+          descendantsAreFocusable: false,
+          child: OutlinedButton(
+            focusNode: _clozeHintFocusNode,
+            onPressed: () {
+              _clozeCardKey.currentState?.requestHint();
+            },
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 32),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(tr('clozeCard.letterHint')),
+          ),
+        ),
+      ],
+    );
   }
 
   /// Feature cards that live INSIDE the chat scroll so they grow with content and
@@ -1041,10 +1107,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           clozeSolved: chatSession.wordQuizSolved,
           clozeCompletedWords: chatSession.clozeCompletedWords,
           clozeLiveDraft: chatSession.clozeLiveDraft,
-          onClozeHintRequested: () {
-            _chatInputController.clear();
-            _chatInputFocusNode.unfocus();
-          },
+          clozeCardKey: _clozeCardKey,
         );
       case ChatMode.journal:
         // Composing now happens directly in the docked input pill (see

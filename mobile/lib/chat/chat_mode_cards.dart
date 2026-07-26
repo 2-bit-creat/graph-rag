@@ -11,11 +11,17 @@ import '../widgets/quiz/scramble_quiz_card.dart';
 /// Light "sheet" wrapper so the light-themed quiz/draft cards stay legible
 /// inside the dark chat panel.
 class _CardShell extends StatelessWidget {
-  const _CardShell({required this.child, this.title, this.onClose});
+  const _CardShell({
+    required this.child,
+    this.title,
+    this.onClose,
+    this.fillKeyboardViewport = false,
+  });
 
   final Widget child;
   final String? title;
   final VoidCallback? onClose;
+  final bool fillKeyboardViewport;
 
   @override
   Widget build(BuildContext context) {
@@ -23,11 +29,28 @@ class _CardShell extends StatelessWidget {
     final availableHeight = QuizViewportScope.maybeHeightOf(context);
     final heightCompact = availableHeight != null && availableHeight < 280;
     final compact = MediaQuery.sizeOf(context).width < 600;
+    final fillKeyboardArea = fillKeyboardViewport && keyboardOpen;
+    final useKeyboardCompactStyle = keyboardOpen && !fillKeyboardViewport;
+    final topMargin = compact ? 2.0 : 4.0;
+    final bottomMargin = fillKeyboardArea
+        ? 0.0
+        : (heightCompact ? 2.0 : (keyboardOpen ? 4.0 : 8.0));
+    // The surrounding quiz panel has already removed its header, padding, and
+    // docked composer from this height. Filling it therefore uses the blank
+    // area above the keyboard without asking the card to exceed the viewport.
+    final viewportMinHeight = fillKeyboardArea && availableHeight != null
+        ? (availableHeight - topMargin - bottomMargin)
+            .clamp(0.0, double.infinity)
+        : null;
     return Container(
-      margin: EdgeInsets.fromLTRB(
-          0, compact ? 2 : 4, 0, heightCompact ? 2 : (keyboardOpen ? 4 : 8)),
+      constraints: viewportMinHeight == null
+          ? null
+          : BoxConstraints(minHeight: viewportMinHeight),
+      margin: EdgeInsets.fromLTRB(0, topMargin, 0, bottomMargin),
       padding: EdgeInsets.all(
-          heightCompact ? 6 : (keyboardOpen ? 8 : (compact ? 10 : 14))),
+          heightCompact
+              ? 6
+              : (useKeyboardCompactStyle ? 8 : (compact ? 10 : 14))),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(14),
@@ -60,7 +83,7 @@ class _CardShell extends StatelessWidget {
             SizedBox(
                 height: heightCompact
                     ? 2
-                    : (keyboardOpen ? 4 : (compact ? 6 : 10))),
+                    : (useKeyboardCompactStyle ? 4 : (compact ? 6 : 10))),
           child,
         ],
       ),
@@ -432,6 +455,7 @@ class WordQuizCard extends StatefulWidget {
     this.clozeCompletedWords = const [],
     this.clozeLiveDraft = '',
     this.onClozeHintRequested,
+    this.clozeCardKey,
   });
 
   final Map<String, dynamic> quiz;
@@ -458,6 +482,7 @@ class WordQuizCard extends StatefulWidget {
   /// focus to it (those buttons otherwise steal focus with nowhere for it to
   /// go back to, breaking further typing).
   final VoidCallback? onClozeHintRequested;
+  final GlobalKey<ClozeQuizCardState>? clozeCardKey;
 
   @override
   State<WordQuizCard> createState() => _WordQuizCardState();
@@ -524,6 +549,7 @@ class _WordQuizCardState extends State<WordQuizCard> {
       case 'cloze':
       default:
         card = ClozeQuizCard(
+          key: widget.clozeCardKey,
           quizData: qd,
           audioUrl: audioUrl,
           audioButtonKey: _audioKey,
@@ -549,6 +575,7 @@ class _WordQuizCardState extends State<WordQuizCard> {
     return _CardShell(
       title: tr('chat.wordQuizTitle'),
       onClose: widget.onExit,
+      fillKeyboardViewport: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,

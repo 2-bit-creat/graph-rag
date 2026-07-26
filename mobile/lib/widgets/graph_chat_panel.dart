@@ -107,11 +107,13 @@ class GraphChatPanel extends StatelessWidget {
                         AppSpacing.md,
                         AppSpacing.xs,
                         AppSpacing.md,
-                        listBottomInset + 12,
+                        listBottomInset,
                       ),
                       child: LayoutBuilder(
                         builder: (context, constraints) => Align(
-                          alignment: Alignment.topCenter,
+                          alignment: MediaQuery.viewInsetsOf(context).bottom > 0
+                              ? Alignment.bottomCenter
+                              : Alignment.topCenter,
                           child: SizedBox(
                             width: double.infinity,
                             child: QuizViewportScope(
@@ -342,6 +344,7 @@ class ChatInputBar extends StatelessWidget {
     required this.onSend,
     this.modeLabel,
     this.onExitMode,
+    this.modeActions,
     this.onModeSelected,
     this.inputEnabled = true,
     this.inputHint = 'Say anything…', // always overridden by callers via tr()
@@ -364,6 +367,9 @@ class ChatInputBar extends StatelessWidget {
   /// When non-null, a mode chip is shown with an X that calls [onExitMode].
   final String? modeLabel;
   final VoidCallback? onExitMode;
+
+  /// Quiz controls rendered beside the mode chip, above the input pill.
+  final Widget? modeActions;
 
   /// "+" menu action: 'journal' | 'composition' | 'word' | 'distill'.
   final ValueChanged<String>? onModeSelected;
@@ -394,7 +400,21 @@ class ChatInputBar extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (modeLabel != null)
-              _ModeChip(label: modeLabel!, onExit: onExitMode),
+              Padding(
+                // _ModeChip carries its own lower gap, but the adjacent quiz
+                // action does not. Match that chip-to-composer breathing room
+                // for the whole row when an action is present.
+                padding: EdgeInsets.only(bottom: modeActions != null ? 6 : 0),
+                child: Row(
+                  children: [
+                    _ModeChip(label: modeLabel!, onExit: onExitMode),
+                    if (modeActions != null) ...[
+                      const SizedBox(width: 8),
+                      Expanded(child: modeActions!),
+                    ],
+                  ],
+                ),
+              ),
             // Keypad area — the likely next turns, one tap away. Rendered
             // above the pill and inside the same measured block so the feed's
             // bottom inset already accounts for it. Not relevant while writing

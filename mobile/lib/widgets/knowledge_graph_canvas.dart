@@ -170,8 +170,11 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     _ticker = createTicker(_onTick);
     _focusAnim = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 200),
-      reverseDuration: const Duration(milliseconds: 160),
+      // The focus layer affects the entire graph. A short linear fade feels
+      // like a flash when a cited/evidence node is selected, especially on a
+      // dense graph, so let it settle into place instead.
+      duration: const Duration(milliseconds: 420),
+      reverseDuration: const Duration(milliseconds: 320),
     );
     _cameraAnim = AnimationController(
       vsync: this,
@@ -441,7 +444,10 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
       // Effective edges: 숨김 모드에서는 head 경유 2-hop이 자연히 1-hop으로
       // 강등된다 (far tier가 데이터에 없으므로).
       _focusIds = tierFocusIds(target, _typeById, _effectiveEdges);
-      _focusAnim.forward(from: _focusAnim.value > 0.6 ? 0.35 : _focusAnim.value);
+      // Restart from the undimmed graph when moving the focus. Retaining a
+      // partially completed value swaps the dimmed set in one frame, which
+      // makes the transparency appear to jump rather than transition.
+      _focusAnim.forward(from: 0);
       return;
     }
     // No selection/hover: an active search query drives the same dim path,
@@ -452,7 +458,7 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
       if (queryKey == _focusTarget) return;
       _focusTarget = queryKey;
       _focusIds = queryMatches;
-      _focusAnim.forward(from: _focusAnim.value > 0.6 ? 0.35 : _focusAnim.value);
+      _focusAnim.forward(from: 0);
       return;
     }
     if (_focusTarget == null && _focusAnim.isDismissed) return;
@@ -880,7 +886,9 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     canvas.transform(matrix.storage);
     canvas.translate(_worldTranslate.dx, _worldTranslate.dy);
 
-    final focusProgress = widget.focusMode ? _focusAnim.value : 0.0;
+    final focusProgress = widget.focusMode
+        ? Curves.easeInOutCubic.transform(_focusAnim.value)
+        : 0.0;
     final focusSet = focusProgress > 0.004 ? _focusIds : null;
 
     if (focusSet == null) {
