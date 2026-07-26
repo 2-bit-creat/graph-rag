@@ -29,7 +29,7 @@ def main() -> int:
     check("GET /health", r.status_code == 200 and r.json().get("status") == "ok", r.text)
 
     print("\n=== 2. Auth ===")
-    r = client.post("/auth/register", json={"email": TEST_EMAIL, "password": TEST_PASSWORD})
+    r = client.post("/auth/register", json={"email": TEST_EMAIL, "password": TEST_PASSWORD, "native_language": "korean"})
     check("POST /auth/register", r.status_code == 201, r.text)
     token = r.json().get("access_token") if r.status_code == 201 else None
     headers = {"Authorization": f"Bearer {token}"} if token else {}

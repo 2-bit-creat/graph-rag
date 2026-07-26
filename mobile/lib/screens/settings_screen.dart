@@ -220,7 +220,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final levelsInt = _langLevels.map((k, v) => MapEntry(k, v.round()));
 
       await apiClient.updateProfileSettings(
-        nativeLanguage: _nativeLanguage,
         targetLanguages: langs,
         languageLevels: levelsInt,
         dailyClozeTarget: _dailyClozeTarget.round(),
@@ -329,7 +328,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 // ── Native language ─────────────────────────────────────────
                 _SectionCard(
                   title: tr('settings.nativeLanguageTitle'),
-                  subtitle: tr('settings.nativeLanguageSubtitle'),
+                  subtitle: '그래프·번역·설명의 기준 언어로, 계정 생성 후 변경할 수 없습니다.',
+                  child: Row(
+                    children: [
+                      const Icon(Icons.lock_outline_rounded),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: Text(
+                          _kNativeLanguages
+                              .firstWhere(
+                                (lang) => lang.key == _nativeLanguage,
+                                orElse: () => _kNativeLanguages.first,
+                              )
+                              .label,
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                      ),
+                      Text(
+                        '계정 생성 시 고정',
+                        style: Theme.of(context).textTheme.labelMedium,
+                      ),
+                    ],
+                  ),
+                ),
+                /*
                   child: Wrap(
                     spacing: AppSpacing.sm,
                     runSpacing: AppSpacing.xs,
@@ -357,6 +379,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         .toList(),
                   ),
                 ),
+                  */
                 const SizedBox(height: AppSpacing.md),
 
                 // ── Learning languages + level ──────────────────────────────

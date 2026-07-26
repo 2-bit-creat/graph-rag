@@ -132,9 +132,12 @@ class ApiClient {
   late final Dio _dio;
 
   /// Enter (or create) an ID-entry account space; returns its bearer token.
-  Future<String> simpleLogin(String handle) async {
+  Future<String> simpleLogin(String handle, {String? nativeLanguage}) async {
     try {
-      final resp = await _dio.post('/auth/simple', data: {'handle': handle});
+      final resp = await _dio.post('/auth/simple', data: {
+        'handle': handle,
+        if (nativeLanguage != null) 'native_language': nativeLanguage,
+      });
       return (resp.data as Map)['access_token'] as String;
     } on DioException catch (e) {
       throw _friendlyError(e, '입장');
@@ -1348,7 +1351,6 @@ class ApiClient {
   /// the final native/target-language pair, so these values must not be sent
   /// as separate concurrent PATCH requests.
   Future<void> updateProfileSettings({
-    required String nativeLanguage,
     required List<String> targetLanguages,
     required Map<String, int> languageLevels,
     required int dailyClozeTarget,
@@ -1357,7 +1359,6 @@ class ApiClient {
   }) async {
     try {
       await _dio.patch('/quiz/profile/settings', data: {
-        'native_language': nativeLanguage,
         'target_languages': targetLanguages,
         'language_levels': languageLevels,
         'daily_cloze_target': dailyClozeTarget,

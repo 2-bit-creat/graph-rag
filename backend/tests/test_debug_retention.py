@@ -106,7 +106,7 @@ async def test_debug_runs_endpoint_404_when_off(client, monkeypatch):
     _reload_settings(monkeypatch, ENVIRONMENT="production", DEBUG_FEATURES_ENABLED="false")
     try:
         handle = "dbg" + uuid.uuid4().hex[:8]
-        token = (await client.post("/auth/simple", json={"handle": handle})).json()["access_token"]
+        token = (await client.post("/auth/simple", json={"handle": handle, "native_language": "korean"})).json()["access_token"]
         resp = await client.get("/kg/debug/runs", headers={"Authorization": f"Bearer {token}"})
         assert resp.status_code == 404
 
@@ -145,7 +145,7 @@ async def test_account_deletion_purges_files(client, tmp_path, monkeypatch):
     )
     try:
         handle = "del" + uuid.uuid4().hex[:8]
-        token = (await client.post("/auth/simple", json={"handle": handle})).json()["access_token"]
+        token = (await client.post("/auth/simple", json={"handle": handle, "native_language": "korean"})).json()["access_token"]
 
         async with async_session_factory() as s:
             user = await crud.get_user_by_email(s, f"simple:{handle}@local")

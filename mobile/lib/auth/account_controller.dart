@@ -65,9 +65,10 @@ class AccountController extends ChangeNotifier {
   }
 
   /// Enter (or create) a space by handle and make it current.
-  Future<void> enter(String handle) async {
+  Future<void> enter(String handle, {String? nativeLanguage}) async {
     final h = handle.trim().toLowerCase();
-    final token = await apiClient.simpleLogin(h);
+    final token =
+        await apiClient.simpleLogin(h, nativeLanguage: nativeLanguage);
     _tokens[h] = token;
     _current = h;
     _resetConsent();
@@ -189,7 +190,9 @@ class _TokenStore {
 
   static bool get _isSecureContext {
     final u = Uri.base;
-    return u.scheme == 'https' || u.host == 'localhost' || u.host == '127.0.0.1';
+    return u.scheme == 'https' ||
+        u.host == 'localhost' ||
+        u.host == '127.0.0.1';
   }
 
   static const FlutterSecureStorage _secure = FlutterSecureStorage();

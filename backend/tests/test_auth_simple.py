@@ -27,16 +27,22 @@ async def test_simple_login_main_opens_dev_space(db_session):
 @pytest.mark.asyncio
 async def test_simple_login_new_handle_creates_space(db_session):
     handle = f"iso{uuid.uuid4().hex[:8]}"
-    resp = await simple_login(SimpleLoginRequest(handle=handle), db_session)
+    resp = await simple_login(
+        SimpleLoginRequest(handle=handle, native_language="english"), db_session
+    )
     payload = decode_access_token(resp.access_token)
     uid = uuid.UUID(payload["sub"])
     assert uid != DEV_USER_ID
     user = await db_session.get(User, uid)
     assert user is not None
     assert user.email == f"simple:{handle}@local"
+    assert user.native_language == "english"
     # Re-entering the same handle returns the SAME space.
-    resp2 = await simple_login(SimpleLoginRequest(handle=handle), db_session)
+    resp2 = await simple_login(
+        SimpleLoginRequest(handle=handle, native_language="korean"), db_session
+    )
     assert uuid.UUID(decode_access_token(resp2.access_token)["sub"]) == uid
+    assert user.native_language == "english"
     # Cleanup.
     async with async_session_factory() as s:
         await s.execute(sa_delete(User).where(User.id == uid))
@@ -50,6 +56,14 @@ async def test_simple_login_bad_handle_400(db_session):
         with pytest.raises(HTTPException) as exc:
             await simple_login(SimpleLoginRequest(handle=bad), db_session)
         assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_simple_login_new_handle_requires_native_language(db_session):
+    handle = f"iso{uuid.uuid4().hex[:8]}"
+    with pytest.raises(HTTPException) as exc:
+        await simple_login(SimpleLoginRequest(handle=handle), db_session)
+    assert exc.value.status_code == 400
 
 
 @pytest.mark.asyncio

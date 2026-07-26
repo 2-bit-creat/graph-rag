@@ -290,6 +290,7 @@ class AgentRunResponse(BaseModel):
 class RegisterRequest(BaseModel):
     email: str
     password: str
+    native_language: str
 
 
 class LoginRequest(BaseModel):
@@ -299,6 +300,9 @@ class LoginRequest(BaseModel):
 
 class SimpleLoginRequest(BaseModel):
     handle: str
+    # Required only when the handle creates a new account. Existing accounts
+    # retain their immutable native language and ignore this value.
+    native_language: str | None = None
 
 
 class TokenResponse(BaseModel):

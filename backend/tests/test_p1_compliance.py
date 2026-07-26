@@ -30,7 +30,7 @@ def _prod(monkeypatch) -> None:
 
 async def _new_handle_user(client) -> tuple[str, str]:
     handle = "p1" + uuid.uuid4().hex[:8]
-    token = (await client.post("/auth/simple", json={"handle": handle})).json()["access_token"]
+    token = (await client.post("/auth/simple", json={"handle": handle, "native_language": "korean"})).json()["access_token"]
     return handle, token
 
 

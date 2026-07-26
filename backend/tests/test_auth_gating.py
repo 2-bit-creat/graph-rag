@@ -56,8 +56,8 @@ async def test_graph_is_isolated_per_handle(client, monkeypatch):
     try:
         handle_a = "iso" + uuid.uuid4().hex[:8]
         handle_b = "iso" + uuid.uuid4().hex[:8]
-        token_a = (await client.post("/auth/simple", json={"handle": handle_a})).json()["access_token"]
-        token_b = (await client.post("/auth/simple", json={"handle": handle_b})).json()["access_token"]
+        token_a = (await client.post("/auth/simple", json={"handle": handle_a, "native_language": "korean"})).json()["access_token"]
+        token_b = (await client.post("/auth/simple", json={"handle": handle_b, "native_language": "korean"})).json()["access_token"]
 
         # Seed a node into handle A's graph directly (bypasses HTTP but uses A's user id).
         # Use a Statement node: bare Person/Concept orphans are GC'd by

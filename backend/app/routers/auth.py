@@ -12,6 +12,7 @@ from ..auth_utils import create_access_token, hash_password, verify_password
 from ..db import get_session
 from ..deps import get_current_user, request_user_dep
 from ..dev_user import DEV_EMAIL, DEV_USER_ID, get_dev_user
+from ..languages import SUPPORTED_NATIVE
 from ..models import ChatSession, JournalEntry, Node, User
 from ..storage import purge_user_storage
 from ..schemas import (
@@ -51,7 +52,21 @@ async def simple_login(
         email = f"simple:{handle}@local"
         user = await crud.get_user_by_email(session, email)
         if user is None:
-            user = await crud.create_user(session, email, password_hash="")
+            native_language = (payload.native_language or "").strip().lower()
+            if native_language not in SUPPORTED_NATIVE:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "code": "native_language_required",
+                        "message": "Choose a supported native language when creating an account",
+                    },
+                )
+            user = await crud.create_user(
+                session,
+                email,
+                password_hash="",
+                native_language=native_language,
+            )
     return TokenResponse(access_token=create_access_token(str(user.id)))
 
 
@@ -141,11 +156,17 @@ async def register(
 ) -> TokenResponse:
     if len(payload.password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    native_language = payload.native_language.strip().lower()
+    if native_language not in SUPPORTED_NATIVE:
+        raise HTTPException(status_code=400, detail="Unsupported native language")
     existing = await crud.get_user_by_email(session, payload.email)
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
     user = await crud.create_user(
-        session, payload.email, hash_password(payload.password)
+        session,
+        payload.email,
+        hash_password(payload.password),
+        native_language=native_language,
     )
     token = create_access_token(str(user.id))
     return TokenResponse(access_token=token)

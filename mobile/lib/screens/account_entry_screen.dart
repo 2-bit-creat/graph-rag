@@ -19,6 +19,7 @@ class _AccountEntryScreenState extends State<AccountEntryScreen> {
   final _controller = TextEditingController();
   bool _busy = false;
   String? _error;
+  String? _nativeLanguage;
 
   @override
   void dispose() {
@@ -26,15 +27,22 @@ class _AccountEntryScreenState extends State<AccountEntryScreen> {
     super.dispose();
   }
 
-  Future<void> _enter(String handle) async {
+  Future<void> _enter(String handle, {bool requireNativeChoice = false}) async {
     final h = handle.trim().toLowerCase();
     if (h.isEmpty) return;
+    if (requireNativeChoice && _nativeLanguage == null) {
+      setState(() => _error = '새 계정을 만들려면 모국어를 먼저 선택해 주세요.');
+      return;
+    }
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      await accountController.enter(h);
+      await accountController.enter(
+        h,
+        nativeLanguage: requireNativeChoice ? _nativeLanguage : null,
+      );
       if (mounted) widget.onEntered?.call();
     } catch (e) {
       if (mounted) {
@@ -96,12 +104,13 @@ class _AccountEntryScreenState extends State<AccountEntryScreen> {
                       margin: const EdgeInsets.only(bottom: 8),
                       child: ListTile(
                         leading: CircleAvatar(
-                          backgroundColor: AppColors.hubGraph.withValues(alpha: 0.15),
+                          backgroundColor:
+                              AppColors.hubGraph.withValues(alpha: 0.15),
                           child: Text(h.isNotEmpty ? h[0].toUpperCase() : '?',
                               style: TextStyle(color: AppColors.hubGraph)),
                         ),
-                        title: Text(h,
-                            style: TextStyle(color: shell.primaryText)),
+                        title:
+                            Text(h, style: TextStyle(color: shell.primaryText)),
                         trailing: IconButton(
                           icon: Icon(Icons.close_rounded,
                               size: 18, color: shell.mutedText),
@@ -118,7 +127,9 @@ class _AccountEntryScreenState extends State<AccountEntryScreen> {
                   enabled: !_busy,
                   autocorrect: false,
                   textInputAction: TextInputAction.go,
-                  onSubmitted: _busy ? null : _enter,
+                  onSubmitted: _busy
+                      ? null
+                      : (handle) => _enter(handle, requireNativeChoice: true),
                   decoration: InputDecoration(
                     labelText: tr('account.newId'),
                     helperText: tr('account.hint'),
@@ -131,11 +142,51 @@ class _AccountEntryScreenState extends State<AccountEntryScreen> {
                 if (_error != null) ...[
                   const SizedBox(height: 8),
                   Text(_error!,
-                      style: TextStyle(color: Colors.red.shade300, fontSize: 12.5)),
+                      style: TextStyle(
+                          color: Colors.red.shade300, fontSize: 12.5)),
                 ],
+                const SizedBox(height: 20),
+                Text(
+                  '새 계정의 모국어',
+                  style: TextStyle(
+                    color: shell.primaryText,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '그래프·번역·설명의 기준 언어이며, 만든 뒤에는 변경할 수 없습니다.',
+                  style: TextStyle(color: shell.mutedText, fontSize: 12),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: AppSpacing.sm,
+                  children: [
+                    ('korean', '한국어'),
+                    ('english', 'English'),
+                  ]
+                      .map(
+                        (language) => ChoiceChip(
+                          label: Text(language.$2),
+                          selected: _nativeLanguage == language.$1,
+                          onSelected: _busy
+                              ? null
+                              : (_) => setState(() {
+                                    _nativeLanguage = language.$1;
+                                    _error = null;
+                                  }),
+                        ),
+                      )
+                      .toList(),
+                ),
                 const SizedBox(height: 12),
                 FilledButton(
-                  onPressed: _busy ? null : () => _enter(_controller.text),
+                  onPressed: _busy
+                      ? null
+                      : () => _enter(
+                            _controller.text,
+                            requireNativeChoice: true,
+                          ),
                   child: _busy
                       ? const SizedBox(
                           width: 18,

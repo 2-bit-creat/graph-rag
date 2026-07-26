@@ -802,8 +802,18 @@ async def get_user_by_email(session: AsyncSession, email: str) -> User | None:
     return result.scalar_one_or_none()
 
 
-async def create_user(session: AsyncSession, email: str, password_hash: str) -> User:
-    user = User(email=email.lower(), password_hash=password_hash)
+async def create_user(
+    session: AsyncSession,
+    email: str,
+    password_hash: str,
+    *,
+    native_language: str,
+) -> User:
+    user = User(
+        email=email.lower(),
+        password_hash=password_hash,
+        native_language=native_language.strip().lower(),
+    )
     session.add(user)
     await session.commit()
     await session.refresh(user)
@@ -3707,8 +3717,11 @@ async def update_user_profile_settings(
             raise ValueError("target_languages must be a non-empty list")
         user.target_languages = langs
         user.target_language = langs[0]
-    if native_language is not None:
-        user.native_language = native_language.strip().lower()
+    if (
+        native_language is not None
+        and native_language.strip().lower() != user.native_language
+    ):
+        raise ValueError("native_language is immutable after account creation")
     if language_levels is not None:
         merged = dict(user.language_levels or {})
         for lang, lv in language_levels.items():

@@ -765,6 +765,17 @@ async def update_profile_settings(
             status_code=400,
             detail={"code": "unsupported_native", "language": payload.native_language},
         )
+    if (
+        payload.native_language is not None
+        and native != (getattr(user, "native_language", None) or DEFAULT_NATIVE).lower()
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "native_language_locked",
+                "message": "Native language is fixed when the account is created",
+            },
+        )
     # A learner can't "learn" their own native language.
     allowed_targets = valid_target_for_native(native)
     if payload.target_languages is not None:
