@@ -38,6 +38,10 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
   StreamSubscription<void>? _completeSub;
 
   static const _loadTimeout = Duration(seconds: 15);
+  // Safari can leave an autoplay request pending when a correct answer came
+  // from a text-input callback rather than a direct audio-button gesture.
+  // Bound that call so the speaker never remains stuck buffering forever.
+  static const _webPlayStartTimeout = Duration(seconds: 8);
 
   @override
   void initState() {
@@ -79,7 +83,9 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
       setState(() => _playing = true);
       if (kIsWeb) {
         // On web, dart:io File/getTemporaryDirectory is unavailable — play from URL directly.
-        await _player.play(UrlSource(resolved));
+        await _player
+            .play(UrlSource(resolved))
+            .timeout(_webPlayStartTimeout);
       } else {
         if (_loadedUrl != resolved || _cachedFilePath == null) {
           _cachedFilePath = await _downloadToCache(resolved);

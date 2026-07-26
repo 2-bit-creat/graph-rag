@@ -77,7 +77,7 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
     if (widget.externalInput &&
         !oldWidget.externalSolved &&
         widget.externalSolved) {
-      widget.audioButtonKey?.currentState?.play(showError: false);
+      _playAnswerAudioAfterBuild();
     }
     if (widget.externalInput &&
         oldWidget.externalCompletedWords.length !=
@@ -102,6 +102,16 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
   bool get _effectiveAnswerRevealed => _answerRevealed || _effectiveSolved;
 
   bool get _showAudio => _effectiveGrade != null || _effectiveAnswerRevealed;
+
+  void _playAnswerAudioAfterBuild() {
+    // The audio control lives in the answer panel, which is inserted only
+    // after a correct answer. Waiting for the next frame guarantees its state
+    // exists before asking it to play.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.audioButtonKey?.currentState?.play(showError: false);
+    });
+  }
 
   String get _blank => (widget.quizData['blank']?.toString() ??
           (widget.quizData['accepted_answers'] as List?)?.first?.toString() ??
@@ -350,7 +360,7 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
       _answerRevealed = true;
       if (fillField && blank.isNotEmpty) _controller.text = blank;
     });
-    widget.audioButtonKey?.currentState?.play(showError: false);
+    _playAnswerAudioAfterBuild();
     // Same focus-stealing issue as the hint button — hand focus back to the
     // composer so the learner can retype the revealed answer immediately.
     if (widget.externalInput) {
@@ -387,7 +397,7 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
           _controller.clear();
         }
       });
-      widget.audioButtonKey?.currentState?.play(showError: false);
+      if (correct) _playAnswerAudioAfterBuild();
       if (correct) widget.onSolved();
       return;
     }

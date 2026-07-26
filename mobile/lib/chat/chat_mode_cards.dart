@@ -7,6 +7,7 @@ import '../widgets/quiz/mcq_quiz_card.dart';
 import '../widgets/quiz/quiz_audio_button.dart';
 import '../widgets/quiz/quiz_viewport_scope.dart';
 import '../widgets/quiz/scramble_quiz_card.dart';
+import '../widgets/measure_size.dart';
 
 /// Light "sheet" wrapper so the light-themed quiz/draft cards stay legible
 /// inside the dark chat panel.
@@ -16,12 +17,14 @@ class _CardShell extends StatelessWidget {
     this.title,
     this.onClose,
     this.fillKeyboardViewport = false,
+    this.onContentHeightChanged,
   });
 
   final Widget child;
   final String? title;
   final VoidCallback? onClose;
   final bool fillKeyboardViewport;
+  final ValueChanged<double>? onContentHeightChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -42,6 +45,12 @@ class _CardShell extends StatelessWidget {
         ? (availableHeight - topMargin - bottomMargin)
             .clamp(0.0, double.infinity)
         : null;
+    final measuredChild = onContentHeightChanged == null
+        ? child
+        : MeasureSize(
+            onChange: (size) => onContentHeightChanged!(size.height),
+            child: child,
+          );
     return Container(
       constraints: viewportMinHeight == null
           ? null
@@ -84,7 +93,7 @@ class _CardShell extends StatelessWidget {
                 height: heightCompact
                     ? 2
                     : (useKeyboardCompactStyle ? 4 : (compact ? 6 : 10))),
-          child,
+          measuredChild,
         ],
       ),
     );
@@ -456,6 +465,7 @@ class WordQuizCard extends StatefulWidget {
     this.clozeLiveDraft = '',
     this.onClozeHintRequested,
     this.clozeCardKey,
+    this.onContentHeightChanged,
   });
 
   final Map<String, dynamic> quiz;
@@ -483,6 +493,7 @@ class WordQuizCard extends StatefulWidget {
   /// go back to, breaking further typing).
   final VoidCallback? onClozeHintRequested;
   final GlobalKey<ClozeQuizCardState>? clozeCardKey;
+  final ValueChanged<double>? onContentHeightChanged;
 
   @override
   State<WordQuizCard> createState() => _WordQuizCardState();
@@ -576,6 +587,7 @@ class _WordQuizCardState extends State<WordQuizCard> {
       title: tr('chat.wordQuizTitle'),
       onClose: widget.onExit,
       fillKeyboardViewport: true,
+      onContentHeightChanged: widget.onContentHeightChanged,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,

@@ -162,6 +162,9 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
   Map<String, dynamic>? _downEdge;
   Offset _downPos = Offset.zero;
   bool _surfaceMoved = false;
+  int? _backgroundPointer;
+  Offset _backgroundDownPos = Offset.zero;
+  bool _backgroundTapCandidate = false;
   final _dragSamples = <({Duration t, Offset p})>[];
 
   @override
@@ -240,6 +243,12 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     if (oldWidget.typeFilter != widget.typeFilter ||
         oldWidget.highlightQuery != widget.highlightQuery) {
       _layoutEpoch++; // adaptive scale depends on the visible node set
+      // The graph scene is drawn by a CustomPainter whose repaint stream is
+      // independent from the widget build.  Updating the filter changes the
+      // derived visible-node lists in build, so explicitly invalidate that
+      // painter as well; otherwise the legend chip changes selection while
+      // the already-painted full graph remains on screen.
+      _frameNotifier.value++;
     }
     if (oldWidget.selectedNodeId != widget.selectedNodeId ||
         oldWidget.focusMode != widget.focusMode ||
@@ -464,6 +473,49 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     if (_focusTarget == null && _focusAnim.isDismissed) return;
     _focusTarget = null;
     _focusAnim.reverse();
+  }
+
+  /// Clears the canvas-owned interaction state immediately. This is separate
+  /// from the screen's selected-node state so an empty-map tap cannot leave a
+  /// lingering hover/focus animation after the inspector has been closed.
+  void clearInteractionFocus() {
+    _hoveredNodeId = null;
+    _focusTarget = null;
+    _focusIds = null;
+    _focusAnim.stop();
+    _focusAnim.value = 0;
+    _frameNotifier.value++;
+  }
+
+  void _onCanvasPointerDown(PointerDownEvent event) {
+    _backgroundTapCandidate = !_hitPredicate(event.localPosition);
+    _backgroundPointer = _backgroundTapCandidate ? event.pointer : null;
+    _backgroundDownPos = event.localPosition;
+  }
+
+  void _onCanvasPointerMove(PointerMoveEvent event) {
+    if (_backgroundPointer == event.pointer &&
+        (event.localPosition - _backgroundDownPos).distance > 6) {
+      _backgroundTapCandidate = false;
+    }
+  }
+
+  void _onCanvasPointerUp(PointerUpEvent event) {
+    final shouldClear =
+        _backgroundTapCandidate &&
+        _backgroundPointer == event.pointer &&
+        !_hitPredicate(event.localPosition) &&
+        (event.localPosition - _backgroundDownPos).distance <= 6;
+    _backgroundTapCandidate = false;
+    _backgroundPointer = null;
+    if (shouldClear) widget.onBackgroundTap?.call();
+  }
+
+  void _onCanvasPointerCancel(PointerCancelEvent event) {
+    if (_backgroundPointer == event.pointer) {
+      _backgroundTapCandidate = false;
+      _backgroundPointer = null;
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -762,7 +814,15 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     final id = _downNodeId;
     if (id == null) {
       final edge = _downEdge;
-      if (!_surfaceMoved && edge != null) widget.onEdgeTap?.call(edge);
+      if (!_surfaceMoved) {
+        if (edge != null) {
+          widget.onEdgeTap?.call(edge);
+        } else {
+          // The opaque hit surface sits above the background GestureDetector,
+          // so it must forward a genuine empty-map tap itself.
+          widget.onBackgroundTap?.call();
+        }
+      }
     } else if (!_surfaceMoved) {
       final node = _nodeById(id);
       if (node != null) widget.onNodeTap?.call(node);
@@ -1429,9 +1489,18 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
           });
         }
 
-        return Stack(
-          fit: StackFit.expand,
-          children: [
+        return Listener(
+          behavior: HitTestBehavior.translucent,
+          // Raw pointer events are delivered even when InteractiveViewer wins
+          // the gesture arena. That makes an empty-map tap reliable without
+          // interfering with the viewer's pan and pinch gestures.
+          onPointerDown: _onCanvasPointerDown,
+          onPointerMove: _onCanvasPointerMove,
+          onPointerUp: _onCanvasPointerUp,
+          onPointerCancel: _onCanvasPointerCancel,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
             ColoredBox(color: _canvasBackground),
             Listener(
               onPointerSignal: _onPointerSignal,
@@ -1547,7 +1616,8 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
                   ),
                 ),
               ),
-          ],
+            ],
+          ),
         );
       },
     );

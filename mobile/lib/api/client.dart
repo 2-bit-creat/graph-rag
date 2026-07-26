@@ -602,11 +602,14 @@ class ApiClient {
     return resp.data as Map<String, dynamic>;
   }
 
-  Future<Map<String, dynamic>> setNodePinned(String nodeId, bool pinned) async {
-    final resp = await _dio.patch('/graph/nodes/$nodeId/pin', queryParameters: {
-      'pinned': pinned,
-    });
-    return resp.data as Map<String, dynamic>;
+  /// Existing word/composition quizzes sourced from one Statement node.
+  Future<Map<String, dynamic>> nodeStudyQuizzes(String nodeId) async {
+    try {
+      final resp = await _dio.get('/graph/nodes/$nodeId/study-quizzes');
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '학습 문제 조회');
+    }
   }
 
   Future<Map<String, dynamic>> submitQuizAnswer({

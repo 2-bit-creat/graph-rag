@@ -22,6 +22,7 @@ class GraphInspectorPanel extends StatefulWidget {
     this.onUpdated,
     this.onSelectNode,
     this.onSelectEdge,
+    this.onStudyQuizzes,
     this.scrollController,
   });
 
@@ -36,6 +37,8 @@ class GraphInspectorPanel extends StatefulWidget {
   final VoidCallback? onUpdated;
   final void Function(Map<String, dynamic> node)? onSelectNode;
   final void Function(Map<String, dynamic> edge)? onSelectEdge;
+  final Future<void> Function(String quizType, List<String> quizIds)?
+      onStudyQuizzes;
   final ScrollController? scrollController;
 
   /// Bottom sheet vs fixed side panel layout.
@@ -51,6 +54,9 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
   final _relationCtrl = TextEditingController();
   String? _type;
   bool _saving = false;
+  String? _studyNodeId;
+  Map<String, dynamic>? _studyQuizzes;
+  bool _studyLoading = false;
 
   @override
   void didUpdateWidget(covariant GraphInspectorPanel oldWidget) {
@@ -179,11 +185,75 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         _descCtrl.text = node['description']?.toString() ?? '';
       }
       _type = _resolveEntityType(node['type']?.toString());
+      _loadStudyQuizzes(node);
     }
     final edge = widget.selectedEdge;
     if (edge != null) {
       _relationCtrl.text = edge['relation']?.toString() ?? '';
     }
+  }
+
+  void _loadStudyQuizzes(Map<String, dynamic> node) {
+    if (!_isStatementNode(node)) return;
+    final id = node['id']?.toString();
+    if (id == null || id == _studyNodeId) return;
+    _studyNodeId = id;
+    _studyQuizzes = null;
+    _studyLoading = true;
+    apiClient.nodeStudyQuizzes(id).then((data) {
+      if (!mounted || _studyNodeId != id) return;
+      setState(() {
+        _studyQuizzes = data;
+        _studyLoading = false;
+      });
+    }).catchError((_) {
+      if (!mounted || _studyNodeId != id) return;
+      setState(() => _studyLoading = false);
+    });
+  }
+
+  Widget _studyQuizSection(Map<String, dynamic> node) {
+    if (!_isStatementNode(node)) return const SizedBox.shrink();
+    if (_studyLoading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 10),
+        child: Center(child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))),
+      );
+    }
+    final word = (_studyQuizzes?['word'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final composition =
+        (_studyQuizzes?['composition'] as Map?)?.cast<String, dynamic>() ?? const {};
+    Widget button(String type, Map<String, dynamic> group, String label) {
+      final ids = (group['quiz_ids'] as List? ?? const [])
+          .map((id) => id.toString())
+          .toList();
+      final count = (group['count'] as num?)?.toInt() ?? ids.length;
+      return OutlinedButton(
+        onPressed: ids.isEmpty || widget.onStudyQuizzes == null
+            ? null
+            : () => widget.onStudyQuizzes!(type, ids),
+        child: Text('$label $count'),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('이 진술에서 만든 문제', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              button('cloze', word, tr('chat.mode.word')),
+              button('composition', composition, tr('chat.mode.composition')),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -888,6 +958,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         ),
       ),
       _sourceTranscriptWidget(node),
+      _studyQuizSection(node),
       if (((node['importance_score'] as num?)?.toInt() ?? 0) > 0) ...[
         const SizedBox(height: 12),
         _ImportanceCard(score: (node['importance_score'] as num).toInt()),

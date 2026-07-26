@@ -801,8 +801,12 @@ String canonicalEntityType(String raw) {
 bool entityTypeMatches(String? nodeType, String filter) {
   if (filter == '전체') return true;
   if (nodeType == null) return false;
-  return canonicalEntityType(nodeType).toLowerCase() ==
-      canonicalEntityType(filter).toLowerCase();
+  final node = canonicalEntityType(nodeType).toLowerCase();
+  final selected = canonicalEntityType(filter).toLowerCase();
+  // Person is a concrete identity subtype in the graph UI. Keep its storage
+  // type intact, but expose one Identity filter that includes both forms.
+  if (selected == 'identity') return node == 'identity' || node == 'person';
+  return node == selected;
 }
 
 Color colorForType(String type, Map<String, Color> typeColors) {

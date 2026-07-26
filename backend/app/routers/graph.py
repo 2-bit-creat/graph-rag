@@ -398,6 +398,49 @@ async def read_node(
     return node
 
 
+@router.get("/nodes/{node_id}/study-quizzes")
+async def read_node_study_quizzes(
+    node_id: uuid.UUID,
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Return already-generated, studyable quizzes sourced from one Statement.
+
+    This intentionally never triggers generation: the graph is an explorer for
+    the learner's existing quiz bank, not a second way to create new cards.
+    """
+    from sqlalchemy import select
+    from ..models import Quiz
+
+    node = await session.get(Node, node_id)
+    if node is None or node.user_id != user.id:
+        raise HTTPException(status_code=404, detail="node not found")
+    if node.type.lower() != "statement":
+        raise HTTPException(status_code=400, detail="only Statement nodes have study quizzes")
+
+    rows = await session.execute(
+        select(Quiz.id, Quiz.quiz_type)
+        .where(
+            Quiz.user_id == user.id,
+            Quiz.source_nodes.contains([node_id]),
+            Quiz.quiz_type.in_(("cloze", "composition")),
+            Quiz.queue_kind != "archived",
+        )
+        .order_by(Quiz.created_at.desc())
+    )
+    grouped = {"cloze": [], "composition": []}
+    for quiz_id, quiz_type in rows.all():
+        grouped[str(quiz_type)].append(str(quiz_id))
+    return {
+        "node_id": str(node_id),
+        "word": {"count": len(grouped["cloze"]), "quiz_ids": grouped["cloze"]},
+        "composition": {
+            "count": len(grouped["composition"]),
+            "quiz_ids": grouped["composition"],
+        },
+    }
+
+
 @router.delete("", status_code=status.HTTP_200_OK)
 async def clear_graph(
     user: User = Depends(request_user_dep),

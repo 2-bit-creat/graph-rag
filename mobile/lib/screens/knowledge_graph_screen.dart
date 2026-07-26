@@ -113,7 +113,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   // ── 그래프 대화 (전역 chatSession 컨트롤러 구독) ─────────────────────────
   final _chatInputController = TextEditingController();
   final _chatInputFocusNode = FocusNode();
-  final _clozeHintFocusNode = FocusNode(canRequestFocus: false);
   final _clozeCardKey = GlobalKey<ClozeQuizCardState>();
 
   /// Measured height of the docked composer, so the feed can pad its tail by
@@ -153,7 +152,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   bool get _isJournalMode => chatSession.mode == ChatMode.journal;
   static const double _sheetDefaultSize = 0.40; // 상태 A
   static const double _sheetFocusSize = 0.90; // 상태 B
-  static const double _wordQuizMinSheetSize = 0.80;
+  double _wordQuizContentHeight = 0;
   bool _chatFocused = false; // 스크림 표시 여부 — 포커스에서만 파생, 수동 드래그와 무관
 
   /// 시트의 `builder`가 매 build마다 새로 넘겨주는 컨트롤러 — 프로그램적 스크롤은
@@ -318,9 +317,24 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         if (graphAreaHeight <= 0) return;
         _chatExpandedForInput = false;
         _chatManuallySized = true;
+        final standardMin = _sheetMinChildSize(context, graphAreaHeight);
+        // Reserve exactly the measured quiz content plus the panel handle,
+        // shell/header chrome, and docked composer. This replaces the old
+        // fixed percentage so a long question cannot be dragged into overflow
+        // while a short question still has useful travel.
+        const quizOverflowSafetyReserve = 50.0;
+        final wordQuizMin = _wordQuizContentHeight <= 0
+            ? _sheetDefaultSize
+            : ((_wordQuizContentHeight +
+                        _inputBarHeight +
+                        62 +
+                        quizOverflowSafetyReserve) /
+                    graphAreaHeight)
+                .clamp(standardMin, _sheetFocusSize)
+                .toDouble();
         final minSheetSize = chatSession.mode == ChatMode.quizWord
-            ? _wordQuizMinSheetSize
-            : _sheetMinChildSize(context, graphAreaHeight);
+            ? wordQuizMin
+            : standardMin;
         final next = (_chatSheetSize - delta / graphAreaHeight)
             .clamp(minSheetSize, _sheetFocusSize)
             .toDouble();
@@ -532,7 +546,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     _chatInputFocusNode.removeListener(_onChatFocusChanged);
     _chatInputController.dispose();
     _chatInputFocusNode.dispose();
-    _clozeHintFocusNode.dispose();
     _chatScrollController.dispose();
     super.dispose();
   }
@@ -688,77 +701,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
 
   /// 사후 교정: 검토에서 놓친 개념/정체성을 그래프에 직접 추가한다.
   /// (이름+타입 dedupe — 같은 이름·타입이 있으면 그 노드를 재사용)
-  Future<void> _addNode() async {
-    final nameCtrl = TextEditingController();
-    var type = 'Concept';
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDlgState) => AlertDialog(
-          title: Text(tr('kg.addNodeTitle')),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameCtrl,
-                autofocus: true,
-                decoration: InputDecoration(
-                    labelText: tr('kg.addNodeNameLabel'),
-                    isDense: true,
-                    border: const OutlineInputBorder()),
-                onSubmitted: (_) => Navigator.pop(ctx, true),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: type,
-                decoration: InputDecoration(
-                    labelText: tr('kg.addNodeTypeLabel'),
-                    isDense: true,
-                    border: const OutlineInputBorder()),
-                items: [
-                  DropdownMenuItem(
-                      value: 'Concept', child: Text(tr('kg.typeConcept'))),
-                  DropdownMenuItem(
-                      value: 'Identity', child: Text(tr('kg.typeIdentity'))),
-                  DropdownMenuItem(
-                      value: 'Person', child: Text(tr('kg.typePerson'))),
-                  DropdownMenuItem(
-                      value: 'Source', child: Text(tr('kg.typeSource'))),
-                ],
-                onChanged: (v) => setDlgState(() => type = v ?? 'Concept'),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: Text(tr('common.cancel'))),
-            FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: Text(tr('common.add'))),
-          ],
-        ),
-      ),
-    );
-    final name = nameCtrl.text.trim();
-    nameCtrl.dispose();
-    if (ok != true || name.isEmpty || !mounted) return;
-    try {
-      await apiClient.createNode(name: name, type: type);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr('kg.nodeAdded', {'name': name}))),
-        );
-      }
-      await _load();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
-      );
-    }
-  }
-
   Future<void> _load({bool silent = false}) async {
     if (!silent) {
       setState(() {
@@ -936,6 +878,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       }
       await chatSession.startQuiz(quizType,
           language: langs.isNotEmpty ? langs.first : null);
+      // For a cloze quiz, retain the native connection made during the menu
+      // tap. Recreating it after this async transition leaves iOS Safari with
+      // a focused Flutter field that cannot open its keyboard when tapped.
       if (quizType == 'composition') _restoreComposerFocusAfterBuild();
       return;
     }
@@ -1044,24 +989,43 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       mainAxisSize: MainAxisSize.min,
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
-        Focus(
-          canRequestFocus: false,
-          descendantsAreFocusable: false,
-          child: OutlinedButton(
-            focusNode: _clozeHintFocusNode,
-            onPressed: () {
-              _clozeCardKey.currentState?.requestHint();
-            },
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(0, 32),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        Semantics(
+          button: true,
+          label: tr('clozeCard.letterHint'),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _requestWordQuizHint,
+            child: Container(
+              height: 32,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.5),
+                ),
+              ),
+              child: Text(
+                tr('clozeCard.letterHint'),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.primary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ),
-            child: Text(tr('clozeCard.letterHint')),
           ),
         ),
       ],
     );
+  }
+
+  void _requestWordQuizHint() {
+    if (!chatSession.wordQuizUsesComposer || chatSession.wordQuizSolved) return;
+    // Clearing the shared composer synchronously drives updateClozeDraft('')
+    // through its listener, so only the active blank loses its live draft.
+    // GestureDetector never requests keyboard focus, unlike OutlinedButton.
+    _chatInputController.clear();
+    _clozeCardKey.currentState?.requestHint();
   }
 
   /// Feature cards that live INSIDE the chat scroll so they grow with content and
@@ -1108,6 +1072,12 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           clozeCompletedWords: chatSession.clozeCompletedWords,
           clozeLiveDraft: chatSession.clozeLiveDraft,
           clozeCardKey: _clozeCardKey,
+          onContentHeightChanged: (height) {
+            if (!mounted || (height - _wordQuizContentHeight).abs() < 1) {
+              return;
+            }
+            setState(() => _wordQuizContentHeight = height);
+          },
         );
       case ChatMode.journal:
         // Composing now happens directly in the docked input pill (see
@@ -1283,6 +1253,12 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
             Navigator.pop(ctx);
             _selectEdge(e, showSheet: true);
           },
+          onStudyQuizzes: (quizType, quizIds) async {
+            Navigator.pop(ctx);
+            _activateInputMode();
+            _ensureChatVisible();
+            await chatSession.startQuiz(quizType, quizIds: quizIds);
+          },
         ),
       ),
     );
@@ -1295,6 +1271,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   /// back non-empty this jumps straight into the same inline quiz mode the
   /// "단어 퀴즈" chat button uses, seeded with exactly those generated items
   /// instead of the learner having to go find them in the queue.
+  /* Legacy pin-to-generate path is intentionally disabled. Study now starts
+     only from the existing quiz counts in a Statement's detail panel.
   Future<void> _togglePin(Map<String, dynamic> node) async {
     if (_pinning) return;
     final nodeId = node['id'].toString();
@@ -1343,13 +1321,38 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
 
   /// 숨김 모드에서는 head 타입 칩(Person/Speaker/Source)이 필터해도 빈
   /// 화면만 나오므로 범례 바에서 제외한다.
+  */
   List<Map<String, dynamic>> _legendEntityTypes(
     List<Map<String, dynamic>> entityTypes,
   ) {
-    if (!_hideHeads) return entityTypes;
-    return entityTypes
-        .where((et) => !isStatementHeadType(et['name']?.toString()))
-        .toList();
+    final visible = _hideHeads
+        ? entityTypes
+            .where((et) => !isStatementHeadType(et['name']?.toString()))
+            .toList()
+        : entityTypes;
+
+    // Person is a subtype of Identity in the graph filter UI. Merge its count
+    // into one Identity chip, creating that chip for Person-only graphs too.
+    var personCount = 0;
+    Map<String, dynamic>? identity;
+    final result = <Map<String, dynamic>>[];
+    for (final type in visible) {
+      final name = canonicalEntityType(type['name']?.toString() ?? '');
+      if (name == 'Person') {
+        personCount += (type['count'] as num?)?.toInt() ?? 0;
+      } else if (name == 'Identity') {
+        identity = Map<String, dynamic>.from(type);
+      } else {
+        result.add(type);
+      }
+    }
+    if (identity != null || personCount > 0) {
+      result.add({
+        'name': 'Identity',
+        'count': ((identity?['count'] as num?)?.toInt() ?? 0) + personCount,
+      });
+    }
+    return result;
   }
 
   void _toggleHideHeads() {
@@ -1403,7 +1406,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       _selectedNodeId = null;
       _selectedEdge = null;
       _selectedEdgeId = null;
+      _glowIds = const {};
+      _glowSeq++;
     });
+    _canvasKey.currentState?.clearInteractionFocus();
     // No refit: keep the camera where the user was exploring.
   }
 
@@ -1614,8 +1620,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
                     typeColors: typeColors,
                     onDetail: _showInspectorSheet,
                     onClose: _clearSelection,
-                    onPin: _togglePin,
-                    pinning: _pinning,
                   ),
           ),
         ),
@@ -1745,7 +1749,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
               MaterialPageRoute<void>(builder: (_) => const GraphTrashScreen()),
             ).then((_) => _load()),
             onClearGraph: _clearGraph,
-            onAddNode: _addNode,
             onToggleGraphTools: () =>
                 setState(() => _graphToolsVisible = !_graphToolsVisible),
             graphToolsVisible: _graphToolsVisible,
@@ -1880,7 +1883,6 @@ class _FloatingSearchBar extends StatelessWidget {
     required this.onOntology,
     required this.onTrash,
     required this.onClearGraph,
-    required this.onAddNode,
     required this.onToggleGraphTools,
     required this.graphToolsVisible,
     this.onOpenMenu,
@@ -1894,7 +1896,6 @@ class _FloatingSearchBar extends StatelessWidget {
   final VoidCallback onOntology;
   final VoidCallback onTrash;
   final VoidCallback onClearGraph;
-  final VoidCallback onAddNode;
   final VoidCallback onToggleGraphTools;
   final bool graphToolsVisible;
   final VoidCallback? onOpenMenu;
@@ -1974,7 +1975,6 @@ class _FloatingSearchBar extends StatelessWidget {
               onSelected: (v) {
                 if (v == 'ontology') onOntology();
                 if (v == 'refresh') onRefresh();
-                if (v == 'addNode') onAddNode();
                 if (v == 'trash') onTrash();
                 if (v == 'clear') onClearGraph();
                 if (v == 'toggleGraphTools') onToggleGraphTools();
@@ -2017,18 +2017,6 @@ class _FloatingSearchBar extends StatelessWidget {
                     leading: const Icon(Icons.category_outlined,
                         color: AppColors.textMuted),
                     title: Text(tr('kg.ontology'),
-                        style:
-                            TextStyle(color: shell.primaryText, fontSize: 13)),
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'addNode',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.add_circle_outline,
-                        color: AppColors.textMuted),
-                    title: Text(tr('kg.addNodeTitle'),
                         style:
                             TextStyle(color: shell.primaryText, fontSize: 13)),
                   ),
@@ -2134,8 +2122,6 @@ class _SelectionInfoCard extends StatelessWidget {
     required this.typeColors,
     required this.onDetail,
     required this.onClose,
-    required this.onPin,
-    required this.pinning,
   });
 
   final Map<String, dynamic>? node;
@@ -2145,8 +2131,6 @@ class _SelectionInfoCard extends StatelessWidget {
   final Map<String, Color> typeColors;
   final VoidCallback onDetail;
   final VoidCallback onClose;
-  final ValueChanged<Map<String, dynamic>> onPin;
-  final bool pinning;
 
   /// "기록일" — when this happened, falling back to when it was written down.
   static String? _recordedDateLabel(Map<String, dynamic> n) {
@@ -2375,32 +2359,6 @@ class _SelectionInfoCard extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                if (n != null && isStatement)
-                  IconButton(
-                    tooltip: n['is_pinned'] == true
-                        ? tr('kg.unpinTooltip')
-                        : tr('kg.pinTooltip'),
-                    visualDensity: VisualDensity.compact,
-                    onPressed: pinning ? null : () => onPin(n),
-                    icon: pinning
-                        ? SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: shell.mutedText,
-                            ),
-                          )
-                        : Icon(
-                            n['is_pinned'] == true
-                                ? Icons.push_pin
-                                : Icons.push_pin_outlined,
-                            size: 18,
-                            color: n['is_pinned'] == true
-                                ? AppColors.accent
-                                : shell.mutedText,
-                          ),
-                  ),
                 TextButton(
                   onPressed: onDetail,
                   style: TextButton.styleFrom(
