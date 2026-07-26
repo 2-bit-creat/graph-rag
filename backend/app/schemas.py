@@ -639,6 +639,10 @@ class QuizSubmitRequest(BaseModel):
     order: list[int] | None = None
     selected_index: int | None = None
     entry_id: uuid.UUID | None = None
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=200)
+    hint_level: int = Field(default=0, ge=0, le=2)
+    revealed_tokens: list[str] = Field(default_factory=list)
+    answer_revealed: bool = False
 
 
 class QuizSubmitResponse(BaseModel):
@@ -647,6 +651,8 @@ class QuizSubmitResponse(BaseModel):
     quiz: QuizItemOut
     explanation: str | None = None
     tutor_feedback: dict | None = None
+    attempt_id: uuid.UUID | None = None
+    xp_awarded: int = 0
 
 
 class QueueCounts(BaseModel):
@@ -673,6 +679,7 @@ class LearningProfileOut(BaseModel):
     daily_cloze_target: int = 20
     daily_composition_target: int = 5
     quiz_review_ratio: float = 0.5
+    auto_generate_quizzes: bool = False
     daily_progress_by_language: dict[str, DailyLanguageProgressOut] = {}
 
 
@@ -693,6 +700,7 @@ class QuizQueueItemOut(BaseModel):
     times_correct: int = 0
     times_wrong: int = 0
     last_quality: int | None = None
+    first_answered_at: datetime | None = None
     last_answered_at: datetime | None = None
     review_priority: int | None = None
     review_reason: str | None = None
@@ -746,6 +754,57 @@ class QuizQueueListOut(BaseModel):
     quiz_type: str | None = None
 
 
+class QuizAttemptOut(BaseModel):
+    id: uuid.UUID
+    quiz_id: uuid.UUID
+    quiz_type: str
+    language: str
+    queue_kind: str
+    answer_payload: dict | None = None
+    correct: bool
+    quality: int
+    tutor_feedback: dict | None = None
+    hint_level: int = 0
+    revealed_tokens: list[str] = Field(default_factory=list)
+    answer_revealed: bool = False
+    xp_awarded: int = 0
+    source: str = "live"
+    answered_at: datetime
+
+
+class QuizAdminListOut(BaseModel):
+    items: list[QuizQueueItemOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class QuizAdminDetailOut(BaseModel):
+    item: QuizQueueItemOut
+    attempts: list[QuizAttemptOut] = Field(default_factory=list)
+    generation_key: str | None = None
+    pipeline_trace: dict | None = None
+    debug_run_dir: str | None = None
+    source_node_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class QuizProgressDashboardOut(BaseModel):
+    timezone: str
+    current_streak: int
+    longest_streak: int
+    streak_at_risk: bool
+    total_xp: int
+    today_xp: int
+    growth_level: int
+    level_start_xp: int
+    next_level_xp: int
+    today: dict
+    week: list[dict]
+    week_completed: int
+    accuracy: float
+    achievements: list[dict]
+
+
 class QuizDeleteOut(BaseModel):
     id: uuid.UUID
     status: Literal["archived", "deleted"]
@@ -765,6 +824,46 @@ class QuizGenerationTraceOut(BaseModel):
     debug_dir: str | None = None
 
 
+class QuizGenerationRunCreateRequest(BaseModel):
+    node_ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
+    languages: list[str] = Field(min_length=1, max_length=20)
+    idempotency_key: str = Field(min_length=8, max_length=200)
+
+
+class QuizGenerationRunRetryRequest(BaseModel):
+    idempotency_key: str = Field(min_length=8, max_length=200)
+
+
+class QuizGenerationRunItemOut(BaseModel):
+    node_id: uuid.UUID
+    node_name: str
+    language: str
+    status: Literal["queued", "running", "completed", "failed"]
+    generated_counts: dict[str, int] = Field(default_factory=dict)
+    quiz_ids: list[uuid.UUID] = Field(default_factory=list)
+    error: str | None = None
+
+
+class QuizGenerationRunOut(BaseModel):
+    id: uuid.UUID
+    source: str
+    status: Literal["queued", "running", "completed", "partial", "failed"]
+    node_ids: list[uuid.UUID]
+    languages: list[str]
+    items: list[QuizGenerationRunItemOut]
+    total_count: int
+    completed_count: int
+    failed_count: int
+    created_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None = None
+
+
+class QuizGenerationRunListOut(BaseModel):
+    items: list[QuizGenerationRunOut] = Field(default_factory=list)
+    total: int = 0
+
+
 class LevelUpdateRequest(BaseModel):
     level: int = Field(ge=1, le=100)
 
@@ -779,6 +878,7 @@ class ProfileSettingsUpdateRequest(BaseModel):
     daily_cloze_target: int | None = Field(default=None, ge=0, le=100)
     daily_composition_target: int | None = Field(default=None, ge=0, le=100)
     quiz_review_ratio: float | None = Field(default=None, ge=0, le=1)
+    auto_generate_quizzes: bool | None = None
 
     @model_validator(mode="after")
     def at_least_one_field(self) -> "ProfileSettingsUpdateRequest":
@@ -787,7 +887,8 @@ class ProfileSettingsUpdateRequest(BaseModel):
             for v in [self.level, self.is_freedom_on, self.target_language,
                        self.target_languages, self.native_language,
                        self.language_levels, self.daily_cloze_target,
-                       self.daily_composition_target, self.quiz_review_ratio]
+                       self.daily_composition_target, self.quiz_review_ratio,
+                       self.auto_generate_quizzes]
         ):
             raise ValueError("At least one field must be provided")
         return self

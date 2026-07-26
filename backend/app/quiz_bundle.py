@@ -919,6 +919,8 @@ async def generate_quiz_bundle(
     language: str,
     exclude_node_ids: set[str] | None = None,
     seed_node_ids: set[str] | None = None,
+    generation_version: str | None = None,
+    allow_existing_expressions: bool = False,
 ) -> tuple[list[Quiz], dict]:
     """Generate composition units and expression clozes from one Statement.
 
@@ -1256,16 +1258,23 @@ async def generate_quiz_bundle(
         # the same answer from multiple nodes becomes one learning target. A
         # composition identity remains source-segment specific.
         identity_scope = "vocabulary" if spec["quiz_type"] == "cloze" else str(seed_node_id)
-        if spec["quiz_type"] == "cloze" and identity in active_expression_keys:
+        if (
+            spec["quiz_type"] == "cloze"
+            and not allow_existing_expressions
+            and identity in active_expression_keys
+        ):
             logger.info(
                 "Skipping existing vocabulary target: language=%s expression=%s",
                 language,
                 identity,
             )
             continue
-        generation_key = hashlib.sha256(
-            f"{user.id}|{language}|{identity_scope}|{spec['quiz_type']}|{identity}".encode()
-        ).hexdigest()
+        generation_identity = (
+            f"{user.id}|{language}|{identity_scope}|{spec['quiz_type']}|{identity}"
+        )
+        if generation_version:
+            generation_identity = f"{generation_identity}|{generation_version}"
+        generation_key = hashlib.sha256(generation_identity.encode()).hexdigest()
         existing = await session.scalar(
             select(Quiz).where(Quiz.user_id == user.id, Quiz.generation_key == generation_key)
         )

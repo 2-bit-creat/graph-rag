@@ -3,10 +3,9 @@ import 'package:flutter/material.dart';
 import '../auth/account_controller.dart';
 import '../compose/compose_session_controller.dart';
 import '../l10n/app_strings.dart';
-import '../screens/kg_insight_screen.dart';
 import '../screens/kg_timeline_screen.dart';
+import '../screens/learning_progress_screen.dart';
 import '../screens/menu_screen.dart';
-import '../screens/quiz_queue_screen.dart';
 import '../theme/app_theme.dart';
 import 'chat_session_controller.dart';
 import 'journal_task_controller.dart';
@@ -81,7 +80,8 @@ class _ChatSidebarState extends State<ChatSidebar> {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx), child: Text(tr('common.cancel'))),
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(tr('common.cancel'))),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, ctrl.text),
               child: Text(tr('common.save'))),
@@ -131,14 +131,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
     Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
   }
 
-  void _pushInsight() => _push(
-        Scaffold(
-          appBar: AppBar(title: Text(tr('sidebar.reviewTitle'))),
-          body: const KgInsightScreen(),
-        ),
-      );
-
-  void _pushQuizQueue() => _push(const QuizQueueScreen());
+  void _pushLearningProgress() => _push(const LearningProgressScreen());
 
   /// Single destination for the bottom profile row — a "계정 · 설정" hub
   /// (theme, account switch/delete, dev tools) with the profile/level editor
@@ -155,8 +148,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
     final looksLikeJournalProgress =
         p.contains('일기 처리') || p.contains('Processing journal');
     if (!active || !looksLikeJournalProgress) return p;
-    if (journalTask.phase == ComposePhase.done &&
-        journalTask.entryId != null) {
+    if (journalTask.phase == ComposePhase.done && journalTask.entryId != null) {
       return tr('chat.graphCompleteMsg');
     }
     if (journalTask.phase == ComposePhase.error) {
@@ -260,9 +252,10 @@ class _ChatSidebarState extends State<ChatSidebar> {
                     ),
                     isDense: true,
                     filled: true,
-                    contentPadding: const EdgeInsets.symmetric(
-                        vertical: 14, horizontal: 4),
-                    fillColor: Theme.of(context).colorScheme.surfaceContainerLow,
+                    contentPadding:
+                        const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
+                    fillColor:
+                        Theme.of(context).colorScheme.surfaceContainerLow,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(13),
                       borderSide: BorderSide.none,
@@ -286,12 +279,8 @@ class _ChatSidebarState extends State<ChatSidebar> {
             onTap: _pushTimeline),
         _CompactNavTile(
             icon: Icons.bar_chart_rounded,
-            label: tr('sidebar.reviewTitle'),
-            onTap: _pushInsight),
-        _CompactNavTile(
-            icon: Icons.playlist_add_check_rounded,
-            label: tr('sidebar.quizQueue'),
-            onTap: _pushQuizQueue),
+            label: tr('sidebar.learningProgress'),
+            onTap: _pushLearningProgress),
         const SizedBox(height: 8),
         Divider(height: 1, color: shell.panelBorder),
 
@@ -304,13 +293,14 @@ class _ChatSidebarState extends State<ChatSidebar> {
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 8),
           child: Row(
             children: [
-              Expanded(child: Text(tr('sidebar.recentChats'),
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.3,
-                color: shell.mutedText,
-              ))),
+              Expanded(
+                  child: Text(tr('sidebar.recentChats'),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.3,
+                        color: shell.mutedText,
+                      ))),
               Icon(Icons.history_rounded, size: 17, color: shell.mutedText),
             ],
           ),
@@ -466,7 +456,9 @@ class _RoomTile extends StatelessWidget {
                 width: 24,
                 height: 24,
                 decoration: BoxDecoration(
-                  color: active ? cs.primary.withValues(alpha: 0.14) : cs.surfaceContainerHighest,
+                  color: active
+                      ? cs.primary.withValues(alpha: 0.14)
+                      : cs.surfaceContainerHighest,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(
@@ -494,8 +486,7 @@ class _RoomTile extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                              fontSize: 10.5,
-                              color: shell.mutedText)),
+                              fontSize: 10.5, color: shell.mutedText)),
                   ],
                 ),
               ),
@@ -509,8 +500,10 @@ class _RoomTile extends StatelessWidget {
                   if (v == 'delete') onDelete();
                 },
                 itemBuilder: (_) => [
-                  PopupMenuItem(value: 'rename', child: Text(tr('sidebar.rename'))),
-                  PopupMenuItem(value: 'delete', child: Text(tr('common.delete'))),
+                  PopupMenuItem(
+                      value: 'rename', child: Text(tr('sidebar.rename'))),
+                  PopupMenuItem(
+                      value: 'delete', child: Text(tr('common.delete'))),
                 ],
               ),
             ],
@@ -553,7 +546,8 @@ class _CompactNavTile extends StatelessWidget {
                   borderRadius: BorderRadius.circular(11),
                 ),
                 child: Icon(icon,
-                    size: 19, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    size: 19,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
               const SizedBox(width: 13),
               Expanded(
@@ -600,7 +594,8 @@ class _ProfileFooterRow extends StatelessWidget {
               CircleAvatar(
                 radius: 16,
                 backgroundColor: cs.primary,
-                child: Icon(Icons.person_rounded, size: 18, color: cs.onPrimary),
+                child:
+                    Icon(Icons.person_rounded, size: 18, color: cs.onPrimary),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -618,7 +613,8 @@ class _ProfileFooterRow extends StatelessWidget {
                       Text(current,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 11, color: shell.mutedText)),
+                          style:
+                              TextStyle(fontSize: 11, color: shell.mutedText)),
                   ],
                 ),
               ),

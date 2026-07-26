@@ -179,7 +179,7 @@ def grade_answer(quiz: Quiz, payload: dict) -> tuple[bool, int]:
     """Return (correct, quality 0-5)."""
     quiz_type = quiz.quiz_type
     data = quiz.quiz_data or {}
-    language = quiz.language or data.get("language") or "english"
+    language = getattr(quiz, "language", None) or data.get("language") or "english"
 
     if quiz_type == "cloze":
         answer = _normalize_answer(payload.get("answer") or "", language)
@@ -205,6 +205,7 @@ async def record_quiz_result(
     *,
     correct: bool,
     quality: int,
+    commit: bool = True,
 ) -> Quiz:
     """SM-2 update on quiz row."""
     if correct:
@@ -240,8 +241,11 @@ async def record_quiz_result(
     if quiz.queue_kind == "new" and quiz.repetitions > 0:
         quiz.queue_kind = "review"
 
-    await session.commit()
-    await session.refresh(quiz)
+    if commit:
+        await session.commit()
+        await session.refresh(quiz)
+    else:
+        await session.flush()
     return quiz
 
 

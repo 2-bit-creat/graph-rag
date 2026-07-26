@@ -10,6 +10,7 @@ import '../widgets/quiz/cloze_quiz_card.dart';
 import '../widgets/quiz/composition_quiz_card.dart';
 import '../widgets/quiz/mcq_quiz_card.dart';
 import '../widgets/quiz/quiz_audio_button.dart';
+import '../utils/idempotency_key.dart';
 import '../widgets/quiz/scramble_quiz_card.dart';
 
 class QuizSessionScreen extends StatefulWidget {
@@ -42,6 +43,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
   int? _lastQuality;
 
   final _audioKey = GlobalKey<QuizAudioButtonState>();
+  final _clozeKey = GlobalKey<ClozeQuizCardState>();
 
   static Map<String, String> get _typeLabels => {
         'cloze': tr('quizSession.typeCloze'),
@@ -158,10 +160,15 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
 
   Future<bool> _submitCloze(String answer) async {
     final item = _current!;
+    final telemetry = _clozeKey.currentState;
     final result = await apiClient.submitQuizAnswer(
       quizId: item['id'].toString(),
       answer: answer,
       entryId: widget.entryId,
+      idempotencyKey: newIdempotencyKey('attempt'),
+      hintLevel: telemetry?.telemetryHintLevel ?? 0,
+      revealedTokens: telemetry?.telemetryRevealedTokens ?? const [],
+      answerRevealed: telemetry?.telemetryAnswerRevealed ?? false,
     );
     await _handleResult(result);
     return result['correct'] == true;
@@ -173,6 +180,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
       quizId: item['id'].toString(),
       order: order,
       entryId: widget.entryId,
+      idempotencyKey: newIdempotencyKey('attempt'),
     );
     await _handleResult(result);
   }
@@ -183,6 +191,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
       quizId: item['id'].toString(),
       selectedIndex: index,
       entryId: widget.entryId,
+      idempotencyKey: newIdempotencyKey('attempt'),
     );
     await _handleResult(result);
   }
@@ -414,6 +423,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
     switch (widget.quizType) {
       case 'cloze':
         return ClozeQuizCard(
+          key: _clozeKey,
           quizData: quizData,
           audioUrl: audioUrl,
           audioButtonKey: _audioKey,

@@ -109,6 +109,7 @@ def quiz_queue_item_dict(
         "times_correct": quiz.times_correct,
         "times_wrong": quiz.times_wrong,
         "last_quality": quiz.last_quality,
+        "first_answered_at": quiz.first_answered_at,
         "last_answered_at": quiz.last_answered_at,
         "review_priority": priority,
         "review_reason": reason,

@@ -500,6 +500,44 @@ class ApiClient {
     }
   }
 
+  Future<Map<String, dynamic>> listAdminQuizItems({
+    Set<String> queueKinds = const {},
+    Set<String> quizTypes = const {},
+    Set<String> languages = const {},
+    Set<String> tracks = const {},
+    bool includeArchived = false,
+    String sort = 'created_desc',
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final resp = await _dio.get('/quiz/admin/items', queryParameters: {
+      if (queueKinds.isNotEmpty) 'queue_kinds': queueKinds.toList(),
+      if (quizTypes.isNotEmpty) 'quiz_types': quizTypes.toList(),
+      if (languages.isNotEmpty) 'languages': languages.toList(),
+      if (tracks.isNotEmpty) 'tracks': tracks.toList(),
+      'include_archived': includeArchived,
+      'sort': sort,
+      'limit': limit,
+      'offset': offset,
+    });
+    return Map<String, dynamic>.from(resp.data as Map);
+  }
+
+  Future<Map<String, dynamic>> getAdminQuizItem(String quizId) async {
+    final resp = await _dio.get('/quiz/admin/items/$quizId');
+    return Map<String, dynamic>.from(resp.data as Map);
+  }
+
+  Future<Map<String, dynamic>> getQuizProgressDashboard({
+    String timezone = 'Asia/Seoul',
+  }) async {
+    final resp = await _dio.get(
+      '/quiz/progress/dashboard',
+      queryParameters: {'timezone': timezone},
+    );
+    return Map<String, dynamic>.from(resp.data as Map);
+  }
+
   /// Graph Statement nodes visited (or still waiting) by quiz generation.
   Future<Map<String, dynamic>> listQuizExplorations({String? language}) async {
     try {
@@ -537,6 +575,7 @@ class ApiClient {
     int? dailyClozeTarget,
     int? dailyCompositionTarget,
     double? quizReviewRatio,
+    bool? autoGenerateQuizzes,
   }) async {
     try {
       final resp = await _dio.patch('/quiz/profile/settings', data: {
@@ -546,6 +585,8 @@ class ApiClient {
         if (dailyCompositionTarget != null)
           'daily_composition_target': dailyCompositionTarget,
         if (quizReviewRatio != null) 'quiz_review_ratio': quizReviewRatio,
+        if (autoGenerateQuizzes != null)
+          'auto_generate_quizzes': autoGenerateQuizzes,
       });
       return resp.data as Map<String, dynamic>;
     } on DioException catch (e) {
@@ -612,12 +653,57 @@ class ApiClient {
     }
   }
 
+  Future<Map<String, dynamic>> createQuizGenerationRun({
+    required List<String> nodeIds,
+    required List<String> languages,
+    required String idempotencyKey,
+  }) async {
+    try {
+      final resp = await _dio.post('/quiz/generation-runs', data: {
+        'node_ids': nodeIds,
+        'languages': languages,
+        'idempotency_key': idempotencyKey,
+      });
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '선택 문제 생성');
+    }
+  }
+
+  Future<Map<String, dynamic>> listQuizGenerationRuns() async {
+    try {
+      final resp = await _dio.get('/quiz/generation-runs');
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '생성 실행 이력');
+    }
+  }
+
+  Future<Map<String, dynamic>> retryQuizGenerationRun(
+    String runId, {
+    required String idempotencyKey,
+  }) async {
+    try {
+      final resp = await _dio.post(
+        '/quiz/generation-runs/$runId/retry',
+        data: {'idempotency_key': idempotencyKey},
+      );
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '실패 항목 재시도');
+    }
+  }
+
   Future<Map<String, dynamic>> submitQuizAnswer({
     required String quizId,
     String? answer,
     List<int>? order,
     int? selectedIndex,
     String? entryId,
+    String? idempotencyKey,
+    int hintLevel = 0,
+    List<String> revealedTokens = const [],
+    bool answerRevealed = false,
   }) async {
     try {
       final resp = await _dio.post('/quiz/$quizId/submit', data: {
@@ -625,6 +711,10 @@ class ApiClient {
         if (order != null) 'order': order,
         if (selectedIndex != null) 'selected_index': selectedIndex,
         if (entryId != null) 'entry_id': entryId,
+        if (idempotencyKey != null) 'idempotency_key': idempotencyKey,
+        'hint_level': hintLevel,
+        if (revealedTokens.isNotEmpty) 'revealed_tokens': revealedTokens,
+        'answer_revealed': answerRevealed,
       });
       return resp.data as Map<String, dynamic>;
     } on DioException catch (e) {

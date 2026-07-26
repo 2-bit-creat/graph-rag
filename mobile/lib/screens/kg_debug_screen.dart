@@ -31,7 +31,12 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
     setState(() => _loading = true);
     try {
       final runs = await apiClient.getKgDebugRuns();
-      if (mounted) setState(() { _runs = runs; _loading = false; });
+      if (mounted) {
+        setState(() {
+          _runs = runs;
+          _loading = false;
+        });
+      }
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
@@ -48,10 +53,12 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, AppSpacing.sm),
+                padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, AppSpacing.sm),
                 child: Row(
                   children: [
-                    Text('최근 실행', style: Theme.of(context).textTheme.titleSmall),
+                    Text('최근 실행',
+                        style: Theme.of(context).textTheme.titleSmall),
                     const Spacer(),
                     IconButton(
                       icon: const Icon(Icons.refresh, size: 18),
@@ -65,32 +72,46 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
               const Divider(height: 1),
               Expanded(
                 child: _loading
-                    ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                    ? const Center(
+                        child: CircularProgressIndicator(strokeWidth: 2))
                     : _runs.isEmpty
                         ? Center(
                             child: Text('실행 기록 없음',
-                                style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                                style: TextStyle(
+                                    color: AppColors.textMuted, fontSize: 13)),
                           )
                         : ListView.separated(
                             itemCount: _runs.length,
-                            separatorBuilder: (_, __) => const Divider(height: 1),
+                            separatorBuilder: (_, __) =>
+                                const Divider(height: 1),
                             itemBuilder: (context, i) {
                               final r = _runs[i] as Map<String, dynamic>;
-                              final ok = r['status'] == 'ok';
+                              final ok = r['status'] == 'ok' ||
+                                  r['status'] == 'completed';
                               final ts = _formatTs(r['timestamp']?.toString());
                               final latency = r['latency_ms'];
-                              final mode = r['mode'] == 'diary' ? '일기' : '외부';
+                              final mode = r['kind'] == 'journal_pipeline'
+                                  ? '저장된 KG 파이프라인'
+                                  : r['mode'] == 'diary'
+                                      ? '일기 추출'
+                                      : '외부 텍스트 추출';
                               return ListTile(
                                 dense: true,
                                 selected: _selectedIndex == i,
-                                selectedTileColor: AppColors.primary.withValues(alpha: 0.07),
+                                selectedTileColor:
+                                    AppColors.primary.withValues(alpha: 0.07),
                                 leading: Icon(
-                                  ok ? Icons.check_circle_outline : Icons.error_outline,
+                                  ok
+                                      ? Icons.check_circle_outline
+                                      : Icons.error_outline,
                                   size: 16,
-                                  color: ok ? AppColors.accent : Colors.redAccent,
+                                  color:
+                                      ok ? AppColors.accent : Colors.redAccent,
                                 ),
                                 title: Text('$mode 모드',
-                                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                                    style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600)),
                                 subtitle: Text('$ts · ${latency ?? '?'}ms',
                                     style: const TextStyle(fontSize: 11)),
                                 onTap: () => setState(() => _selectedIndex = i),
@@ -105,17 +126,20 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text('DB 샌드박스', style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      color: AppColors.textMuted,
-                    )),
+                    Text('DB 샌드박스',
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                              color: AppColors.textMuted,
+                            )),
                     const SizedBox(height: AppSpacing.sm),
                     OutlinedButton.icon(
                       onPressed: _confirmReset,
                       icon: const Icon(Icons.refresh, size: 16),
-                      label: const Text('그래프 초기화', style: TextStyle(fontSize: 13)),
+                      label:
+                          const Text('그래프 초기화', style: TextStyle(fontSize: 13)),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.redAccent,
-                        side: const BorderSide(color: Colors.redAccent, width: 0.8),
+                        side: const BorderSide(
+                            color: Colors.redAccent, width: 0.8),
                         visualDensity: VisualDensity.compact,
                       ),
                     ),
@@ -133,7 +157,7 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
                   child: AppEmptyState(
                     icon: Icons.terminal_rounded,
                     title: '실행 기록 없음',
-                    subtitle: '기록 탭에서 텍스트를 추출하면 여기에 나타납니다.',
+                    subtitle: '일기를 저장하거나 그래프를 생성하면 단계별 기록이 여기에 남습니다.',
                   ),
                 )
               : _RunDetail(run: _runs[_selectedIndex] as Map<String, dynamic>),
@@ -147,7 +171,9 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
     try {
       final dt = DateTime.parse(iso).toLocal();
       return DateFormat('HH:mm:ss').format(dt);
-    } catch (_) { return iso.substring(0, 19); }
+    } catch (_) {
+      return iso.substring(0, 19);
+    }
   }
 
   Future<void> _confirmReset() async {
@@ -157,7 +183,9 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
         title: const Text('그래프 초기화'),
         content: const Text('모든 노드와 엣지가 삭제됩니다. 계속하시겠습니까?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('취소')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('취소')),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
@@ -192,6 +220,10 @@ class _RunDetail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final trace = run['trace'];
+    if (trace is Map) {
+      return _PipelineRunDetail(trace: Map<String, dynamic>.from(trace));
+    }
     final ok = run['status'] == 'ok';
     final tokenIn = run['token_in'];
     final tokenOut = run['token_out'];
@@ -292,14 +324,68 @@ class _RunDetail extends StatelessWidget {
                 ? _JsonTree(data: parsedResponse)
                 : SelectableText(
                     rawResponse,
-                    style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                    style:
+                        const TextStyle(fontSize: 12, fontFamily: 'monospace'),
                   ),
           ),
         ],
       ),
     );
   }
+}
 
+/// Persisted journal/KG trace.  Unlike the legacy extract log, this survives
+/// app/server restarts and shows the actual pipeline the learner used.
+class _PipelineRunDetail extends StatelessWidget {
+  const _PipelineRunDetail({required this.trace});
+  final Map<String, dynamic> trace;
+
+  @override
+  Widget build(BuildContext context) {
+    final steps = (trace['steps'] as List<dynamic>? ?? [])
+        .whereType<Map>()
+        .map((step) => Map<String, dynamic>.from(step))
+        .toList();
+    final completed = trace['status'] == 'completed';
+    return ListView(
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      children: [
+        _MetaChip(
+          icon: completed ? Icons.check_circle_outline : Icons.pending_outlined,
+          label: completed ? '완료' : trace['status']?.toString() ?? '진행 중',
+          color: completed ? AppColors.accent : AppColors.textMuted,
+        ),
+        const SizedBox(height: AppSpacing.lg),
+        Text('실행 단계 (${steps.length})',
+            style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: AppSpacing.sm),
+        for (final step in steps)
+          Card(
+            child: ExpansionTile(
+              leading: Icon(
+                step['status'] == 'completed'
+                    ? Icons.check_circle_outline
+                    : step['status'] == 'error'
+                        ? Icons.error_outline
+                        : Icons.pending_outlined,
+                color: step['status'] == 'error' ? Colors.redAccent : null,
+              ),
+              title: Text(step['name']?.toString() ?? '단계'),
+              subtitle: Text(
+                '${step['phase'] ?? ''} · ${step['latency_ms'] ?? '?'}ms',
+              ),
+              childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              children: [
+                if ((step['error']?.toString() ?? '').isNotEmpty)
+                  SelectableText('오류: ${step['error']}'),
+                if (step['input'] is Map) _JsonTree(data: step['input']),
+                if (step['output'] is Map) _JsonTree(data: step['output']),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
 }
 
 // ─── JSON tree viewer ─────────────────────────────────────────────────────────
@@ -344,7 +430,8 @@ class _JsonTree extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('[${e.key}] ', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                Text('[${e.key}] ',
+                    style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
                 Expanded(child: _JsonTree(data: e.value, indent: 0)),
               ],
             ),
@@ -364,7 +451,8 @@ class _JsonTree extends StatelessWidget {
 }
 
 class _MetaChip extends StatelessWidget {
-  const _MetaChip({required this.icon, required this.label, required this.color});
+  const _MetaChip(
+      {required this.icon, required this.label, required this.color});
   final IconData icon;
   final String label;
   final Color color;
@@ -383,7 +471,9 @@ class _MetaChip extends StatelessWidget {
         children: [
           Icon(icon, size: 13, color: color),
           const SizedBox(width: 4),
-          Text(label, style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w500)),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 12, color: color, fontWeight: FontWeight.w500)),
         ],
       ),
     );

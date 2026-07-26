@@ -148,6 +148,7 @@ _MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_cloze_target INTEGER NOT NULL DEFAULT 20",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_composition_target INTEGER NOT NULL DEFAULT 5",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS quiz_review_ratio DOUBLE PRECISION NOT NULL DEFAULT 0.5",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_generate_quizzes BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS level_stats JSONB",
     # Existing installations predate these columns even though new installs
     # receive them through CREATE TABLE above.
@@ -198,6 +199,26 @@ _MIGRATIONS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS quiz_generation_runs (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        idempotency_key TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'manual',
+        status TEXT NOT NULL DEFAULT 'queued',
+        node_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+        languages JSONB NOT NULL DEFAULT '[]'::jsonb,
+        items JSONB NOT NULL DEFAULT '[]'::jsonb,
+        total_count INTEGER NOT NULL DEFAULT 0,
+        completed_count INTEGER NOT NULL DEFAULT 0,
+        failed_count INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        finished_at TIMESTAMPTZ,
+        UNIQUE (user_id, idempotency_key)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_quiz_generation_runs_user_created ON quiz_generation_runs (user_id, created_at DESC)",
+    """
     CREATE TABLE IF NOT EXISTS quiz_batches (
         id UUID PRIMARY KEY,
         user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -222,6 +243,58 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_quizzes_user_type_review ON quizzes (user_id, quiz_type, next_review_at)",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS pipeline_trace JSONB",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS debug_run_dir TEXT",
+    "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS language TEXT",
+    """
+    CREATE TABLE IF NOT EXISTS quiz_attempts (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        quiz_id UUID NOT NULL REFERENCES quizzes(id) ON DELETE CASCADE,
+        idempotency_key TEXT NOT NULL,
+        quiz_type TEXT NOT NULL,
+        language TEXT NOT NULL DEFAULT 'english',
+        queue_kind TEXT NOT NULL,
+        answer_payload JSONB,
+        correct BOOLEAN NOT NULL,
+        quality INTEGER NOT NULL,
+        tutor_feedback JSONB,
+        hint_level INTEGER NOT NULL DEFAULT 0,
+        revealed_tokens JSONB,
+        answer_revealed BOOLEAN NOT NULL DEFAULT FALSE,
+        xp_awarded INTEGER NOT NULL DEFAULT 0,
+        xp_policy_version INTEGER NOT NULL DEFAULT 1,
+        source TEXT NOT NULL DEFAULT 'live',
+        answered_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (user_id, idempotency_key)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_quiz_attempts_user_answered ON quiz_attempts (user_id, answered_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_quiz_attempts_quiz_answered ON quiz_attempts (quiz_id, answered_at DESC)",
+    """
+    INSERT INTO quiz_attempts (
+        id, user_id, quiz_id, idempotency_key, quiz_type, language, queue_kind,
+        answer_payload, correct, quality, hint_level, answer_revealed,
+        xp_awarded, xp_policy_version, source, answered_at
+    )
+    SELECT
+        (
+          substr(md5('legacy-' || q.id::text), 1, 8) || '-' ||
+          substr(md5('legacy-' || q.id::text), 9, 4) || '-' ||
+          substr(md5('legacy-' || q.id::text), 13, 4) || '-' ||
+          substr(md5('legacy-' || q.id::text), 17, 4) || '-' ||
+          substr(md5('legacy-' || q.id::text), 21, 12)
+        )::uuid,
+        q.user_id, q.id, 'legacy-' || q.id::text,
+        q.quiz_type, COALESCE(q.language, q.quiz_data->>'language', 'english'),
+        q.queue_kind, NULL, COALESCE(q.last_quality, 0) >= 3,
+        COALESCE(q.last_quality, CASE WHEN q.times_correct > 0 THEN 4 ELSE 1 END),
+        0, FALSE, 0, 1, 'legacy', q.last_answered_at
+    FROM quizzes q
+    WHERE q.last_answered_at IS NOT NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM quiz_attempts a
+          WHERE a.user_id = q.user_id AND a.idempotency_key = 'legacy-' || q.id::text
+      )
+    """,
     # Node updated_at tracking
     "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()",
     # User profile: target language + learning goal

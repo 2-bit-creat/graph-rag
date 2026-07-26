@@ -191,7 +191,8 @@ const Map<String, String> _ko = {
   'chat.emptySubtitle': '떠오르는 생각, 오늘 있었던 일, 궁금한 것 —\n무엇이든 편하게 적어보세요.',
   'chat.recordingLimitSnackbar': '최대 10분까지 녹음됩니다 — 녹음이 자동으로 중지되었어요.',
   'chat.textTooLongTitle': '입력이 너무 깁니다',
-  'chat.textTooLongBody': '현재 {current}자 / 최대 {max}자입니다.\n내용을 나눠서 여러 번 입력해 주세요.',
+  'chat.textTooLongBody':
+      '현재 {current}자 / 최대 {max}자입니다.\n내용을 나눠서 여러 번 입력해 주세요.',
   'chat.noRecordingSnackbar': '녹음된 내용이 없어요',
   'chat.micPermissionSnackbar': '마이크 권한이 필요합니다. 브라우저 주소창 옆 자물쇠 아이콘에서 허용해 주세요.',
   'chat.recordingStartFailed': '녹음 시작 실패: {error}',
@@ -252,6 +253,7 @@ const Map<String, String> _ko = {
   'sidebar.deleteRoomTitle': '채팅방 삭제',
   'sidebar.deleteRoomBody': '이 채팅방을 삭제할까요? 지식그래프는 유지돼요.',
   'sidebar.reviewTitle': '돌아보기',
+  'sidebar.learningProgress': '내 학습률',
   'sidebar.collapseTooltip': '사이드바 접기',
   'sidebar.expandTooltip': '사이드바 펼치기',
   'sidebar.newChat': '새 채팅',
@@ -321,8 +323,7 @@ const Map<String, String> _ko = {
   'settings.nativeLanguageTitle': '모국어',
   'settings.nativeLanguageSubtitle': '힌트·설명이 이 언어로 생성됩니다',
   'settings.learningLanguagesTitle': '학습 언어 및 레벨',
-  'settings.learningLanguagesSubtitle':
-      '연습할 언어를 등록하고 레벨을 설정하세요 · 세션별 전환은 튜터에서',
+  'settings.learningLanguagesSubtitle': '연습할 언어를 등록하고 레벨을 설정하세요 · 세션별 전환은 튜터에서',
   'settings.dailyQuizGoalTitle': '하루 퀴즈 목표',
   'settings.dailyQuizGoalSubtitle': '오늘의 세트에 자동으로 채울 문제 수입니다.',
   'settings.clozeLabel': '단어 빈칸',
@@ -337,8 +338,7 @@ const Map<String, String> _ko = {
   'settings.privacyPolicyTitle': '개인정보 처리방침',
   'settings.privacyPolicySubtitle': '수집 항목·국외 이전·보유기간·권리 안내',
   'settings.speakerConsentTitle': '음성 화자 식별 동의',
-  'settings.speakerConsentSubtitle':
-      '대화 속 화자를 구분(성문·생체정보). 끄면 이후 생성을 중단합니다.',
+  'settings.speakerConsentSubtitle': '대화 속 화자를 구분(성문·생체정보). 끄면 이후 생성을 중단합니다.',
   'settings.exportDataTitle': '내 데이터 내보내기',
   'settings.exportDataSubtitle': '보관 중인 전체 데이터를 JSON으로 저장',
   'settings.devModeTitle': 'Dev Mode',
@@ -416,7 +416,8 @@ const Map<String, String> _ko = {
   'quizQueue.noLanguageStats': '언어별 탐색 정보가 없습니다',
   'quizQueue.extractedExpressions': '추출 표현 {count}개',
   'quizQueue.questionCountSuffix': '{count}문제',
-  'quizQueue.legacyChipLine': '{label} · 작문 {composition} · 추출 표현 {expressions} · 단어 퀴즈 {words}',
+  'quizQueue.legacyChipLine':
+      '{label} · 작문 {composition} · 추출 표현 {expressions} · 단어 퀴즈 {words}',
   'quizQueue.generationTimeUnknown': '생성 시각 알 수 없음',
   'quizQueue.generatedAt': '{datetime} 생성',
   'quizQueue.batchLabel': '배치 #{sequence} · ',
@@ -436,13 +437,15 @@ const Map<String, String> _ko = {
   'quizQueue.deleteSelectedButton': '선택 삭제',
   'quizQueue.resetQueueButton': '큐 전체 초기화',
   'quizQueue.todayProgressLabel': '오늘의 세트 진행률',
-  'quizQueue.progressSummary': '{percent}% · 단어 {clozeDone}/{clozeTarget} · 작문 {compDone}/{compTarget}',
-  'quizQueue.progressExplain': '오늘 실제로 푼 신규 문제 기준입니다. 문제 채우기를 누르면 부족한 유형만 생성합니다.',
+  'quizQueue.progressSummary':
+      '{percent}% · 단어 {clozeDone}/{clozeTarget} · 작문 {compDone}/{compTarget}',
+  'quizQueue.progressExplain':
+      '오늘 실제로 푼 신규 문제 기준입니다. 파이프라인에서 Statement와 Target 언어를 선택해 문제를 생성합니다.',
   'quizQueue.pinnedExplain': '핀 문제는 오늘의 세트와 별도로 즉시 생성됩니다.',
   'quizQueue.allLanguages': '전체 언어',
   'quizQueue.itemCount': '{count}개',
   'quizQueue.loadFailed': '불러오기 실패: {error}',
-  'quizQueue.emptyQueue': '큐가 비어 있습니다 — 저널에서 퀴즈를 생성해 보세요',
+  'quizQueue.emptyQueue': '큐가 비어 있습니다 — 파이프라인에서 Statement를 선택하세요',
   'quizQueue.noTarget': '(대상 없음)',
   'quizQueue.streakCount': '스트릭 {count}회',
   // Quiz session screen
@@ -454,7 +457,8 @@ const Map<String, String> _ko = {
   'quizSession.quizTitle': '{label} 퀴즈',
   'quizSession.loadingQuestions': '문제 불러오는 중…',
   'quizSession.emptyQueueTitle': '큐에 문제가 없습니다',
-  'quizSession.emptyQueueSubtitle': '개발자 도구 → 문제 생성에서 새 문제를 만든 뒤 다시 시도하세요.',
+  'quizSession.emptyQueueSubtitle':
+      '개발자 도구 → 퀴즈 큐 → 파이프라인에서 Statement를 선택해 문제를 생성하세요.',
   'quizSession.progressTitle': '{label} {current}/{total}',
   'quizSession.noAudioNote': '이 문제에는 음성이 없습니다. 새로 생성한 문제만 재생됩니다.',
   'quizSession.compositionScore': '작문 점수 {score}/5',
@@ -581,8 +585,7 @@ const Map<String, String> _ko = {
       '새로 추출된 표현에는 CEFR 난이도가 포함됩니다.',
   'statementBank.failed': '실패: {error}',
   'statementBank.deleteExprTitle': '표현 삭제',
-  'statementBank.deleteExprMultiBody':
-      '「{expr}」을(를) 단어장에서 삭제할까요?\n\n'
+  'statementBank.deleteExprMultiBody': '「{expr}」을(를) 단어장에서 삭제할까요?\n\n'
       '이 표현이 나온 {count}개 노드 모두에서 제거됩니다. '
       '개별 노드만 빼려면 지식그래프에서 해당 노드를 삭제하세요.',
   'statementBank.deleteExprSingleBody':
@@ -608,7 +611,8 @@ const Map<String, String> _ko = {
   'client.connectionFailed': '서버에 연결할 수 없어요. 잠시 후 다시 시도해 주세요.',
   'client.speakersPendingError': '화자 확인이 필요합니다: {names}',
   // Graph review screen
-  'graphReview.notEnoughContentSnackbar': '확정할 내용이 없습니다. 최소 한 개의 Statement가 필요합니다.',
+  'graphReview.notEnoughContentSnackbar':
+      '확정할 내용이 없습니다. 최소 한 개의 Statement가 필요합니다.',
   'graphReview.emptyConceptsTitle': '개념 없는 항목이 있습니다',
   'graphReview.emptyConceptsBody': '{count}개 항목에 개념(Concept)이 없습니다.\n'
       '이대로 확정하면 해당 Statement는 다른 지식과 연결되지 않는 '
@@ -616,7 +620,8 @@ const Map<String, String> _ko = {
   'graphReview.goBackAndAdd': '돌아가서 추가',
   'graphReview.confirmAnyway': '그래도 확정',
   'graphReview.pageTitle': '그래프 검토',
-  'graphReview.reviewBanner': '생성된 내용을 검토하고 수정하세요. 확정 후에는 수정할 수 없고 삭제·복구만 가능합니다.',
+  'graphReview.reviewBanner':
+      '생성된 내용을 검토하고 수정하세요. 확정 후에는 수정할 수 없고 삭제·복구만 가능합니다.',
   'graphReview.nothingToReview': '검토할 항목이 없습니다.',
   'graphReview.confirming': '확정 중…',
   'graphReview.confirmButton': '확정하고 지식그래프에 추가',
@@ -634,8 +639,10 @@ const Map<String, String> _ko = {
   'graphReview.speakerLabel': '화자',
   'graphReview.deleteItemTooltip': '이 항목 삭제',
   'graphReview.statementLabel': 'Statement (내용)',
-  'graphReview.conceptHelpText': '개념·정체성 — 개념: 탭=중요도, 길게=정체성 전환 · 정체성: 탭=연결 대상 지정',
-  'graphReview.noConceptsWarning': '개념이 없습니다 — 이대로 확정하면 이 Statement는 그래프에서 고립됩니다. 최소 1개를 추가하세요.',
+  'graphReview.conceptHelpText':
+      '개념·정체성 — 개념: 탭=중요도, 길게=정체성 전환 · 정체성: 탭=연결 대상 지정',
+  'graphReview.noConceptsWarning':
+      '개념이 없습니다 — 이대로 확정하면 이 Statement는 그래프에서 고립됩니다. 최소 1개를 추가하세요.',
   'graphReview.linkedSuffix': '→ {name}',
   'graphReview.linkedSelfSuffix': '→ {name}(본인)',
   'graphReview.suggestedSuffix': '≈ {name}?',
@@ -698,7 +705,8 @@ const Map<String, String> _ko = {
   'inspector.edgeRelationTitle': '관계 (Edge)',
   'inspector.sourceWord': 'source',
   'inspector.targetWord': 'target',
-  'inspector.lockedNotice': '일기에서 생성된 그래프입니다. 여기서 수정하면 바로 반영되고, 일기 연결(원문 추적)은 유지됩니다.',
+  'inspector.lockedNotice':
+      '일기에서 생성된 그래프입니다. 여기서 수정하면 바로 반영되고, 일기 연결(원문 추적)은 유지됩니다.',
   'inspector.cumulativeImportance': '누적 중요도',
   'inspector.perMentionNote': '언급마다 1~5점 누적',
   'inspector.pointsSuffix': '점',
@@ -819,9 +827,11 @@ const Map<String, String> _ko = {
   'journalHub.deleteTooltip': '일기 삭제',
   'journalHub.loadFailed': '불러오기 실패',
   'entryHub.deleteDialogTitle': '일기 삭제',
-  'entryHub.deleteDialogBody': '이 일기와 관련된 화자 음성 데이터까지 삭제됩니다. 되돌릴 수 없습니다. 삭제할까요?',
+  'entryHub.deleteDialogBody':
+      '이 일기와 관련된 화자 음성 데이터까지 삭제됩니다. 되돌릴 수 없습니다. 삭제할까요?',
   'entryHub.deleteAllDialogTitle': '전체 삭제',
-  'entryHub.deleteAllDialogBody': '모든 일기 기록과 관련된 화자 음성 데이터까지 삭제됩니다. 되돌릴 수 없습니다. 전체 삭제할까요?',
+  'entryHub.deleteAllDialogBody':
+      '모든 일기 기록과 관련된 화자 음성 데이터까지 삭제됩니다. 되돌릴 수 없습니다. 전체 삭제할까요?',
   'entryHub.deleteAllSnackbar': '{count}개의 기록을 삭제했습니다',
   'entryHub.emptyHint': '기록이 없습니다',
   'entryHub.emptySubtitle': '새 기록을 추가해 보세요',
@@ -839,15 +849,19 @@ const Map<String, String> _ko = {
   'entryHub.loadFailed': '불러오기 실패',
   'journalDetail.reviewDraftNotFound': '검토할 그래프 드래프트를 찾을 수 없습니다.',
   'journalDetail.graphConfirmedSnackbar': '지식그래프 확정 완료',
-  'journalDetail.msgProcessing': 'AI가 받아쓰기와 문장 정리를 진행하고 있어요. 잠시 후 아래로 당겨 새로고침해 보세요.',
+  'journalDetail.msgProcessing':
+      'AI가 받아쓰기와 문장 정리를 진행하고 있어요. 잠시 후 아래로 당겨 새로고침해 보세요.',
   'journalDetail.msgFailed': '처리에 실패했어요. 이 기록을 삭제한 뒤 다시 시도해 주세요.',
   'journalDetail.msgGraphProcessing': '기록에서 핵심 내용을 뽑아 지식그래프 초안을 만드는 중이에요…',
-  'journalDetail.msgStagingReady': 'AI가 만든 그래프 초안이 준비됐어요. 내용을 확인하고 확정하면 지식그래프에 저장됩니다.',
+  'journalDetail.msgStagingReady':
+      'AI가 만든 그래프 초안이 준비됐어요. 내용을 확인하고 확정하면 지식그래프에 저장됩니다.',
   'journalDetail.ctaReview': '검토하고 확정하기',
-  'journalDetail.msgSpeakersPending': '아래 화자 칩에서 누가 말했는지 지정해 주세요. 화자를 확정해야 그래프를 만들 수 있어요.',
+  'journalDetail.msgSpeakersPending':
+      '아래 화자 칩에서 누가 말했는지 지정해 주세요. 화자를 확정해야 그래프를 만들 수 있어요.',
   'journalDetail.msgGraphFailed': '그래프 생성에 실패했어요. 다시 시도해 주세요.',
   'journalDetail.ctaRetry': '다시 시도',
-  'journalDetail.msgReadyToBuild': '기록이 준비됐어요! 이제 핵심 내용을 지식그래프로 정리할 수 있어요. 확정 전에 검토할 수 있으니 부담 없이 만들어 보세요.',
+  'journalDetail.msgReadyToBuild':
+      '기록이 준비됐어요! 이제 핵심 내용을 지식그래프로 정리할 수 있어요. 확정 전에 검토할 수 있으니 부담 없이 만들어 보세요.',
   'journalDetail.ctaBuildGraph': '지식그래프 만들기',
   'journalDetail.msgWaitingForProcessing': '기록이 저장됐어요. 처리가 끝나면 그래프를 만들 수 있어요.',
   'journalDetail.manualEntryBadge': '직접 입력',
@@ -877,7 +891,8 @@ const Map<String, String> _ko = {
   'transEntry.addToVocab': '단어장에 추가',
   'transEntry.emptyPlaceholder': '(없음)',
   'audioCompose.stopFailedSnackbar': '녹음 중지 실패: {error}',
-  'audioCompose.micPermissionNeeded': '마이크 권한이 필요합니다. 브라우저 주소창 옆 자물쇠 아이콘에서 허용해 주세요.',
+  'audioCompose.micPermissionNeeded':
+      '마이크 권한이 필요합니다. 브라우저 주소창 옆 자물쇠 아이콘에서 허용해 주세요.',
   'audioCompose.startFailedSnackbar': '녹음 시작 실패: {error}',
   'audioCompose.fileInfoWithDuration': '파일 {filename} · {duration} · {kb}KB',
   'audioCompose.fileInfoNoDuration': '파일 {filename} · {kb}KB',
@@ -887,7 +902,8 @@ const Map<String, String> _ko = {
   'audioCompose.cannotReadFileData': '파일 데이터를 읽을 수 없습니다.',
   'audioCompose.cannotResolveFilePath': '파일 경로를 확인할 수 없습니다.',
   'audioCompose.tooLongTitle': '음성이 너무 깁니다',
-  'audioCompose.tooLongBody': '{name}은(는) {duration}로, 최대 {max}를 넘습니다.\n분량을 나눠서 업로드해 주세요.',
+  'audioCompose.tooLongBody':
+      '{name}은(는) {duration}로, 최대 {max}를 넘습니다.\n분량을 나눠서 업로드해 주세요.',
   'audioCompose.confirmAction': '확인',
   'audioCompose.cannotVerifyFile': '파일을 확인할 수 없습니다.',
   'audioCompose.stopBeforePicking': '녹음을 먼저 중지한 뒤 파일을 선택해 주세요.',
@@ -979,7 +995,8 @@ const Map<String, String> _ko = {
   'entityId.orDivider': '또는',
   'entityId.backButton': '뒤로',
   'conceptLink.closeSheetLabel': '개념 연결 닫기',
-  'conceptLink.existingConceptBody': '「{name}」와(과) 같은 개념이 이미 있어요. 연결하면 하나의 노드로 합쳐집니다.',
+  'conceptLink.existingConceptBody':
+      '「{name}」와(과) 같은 개념이 이미 있어요. 연결하면 하나의 노드로 합쳐집니다.',
   'conceptLink.otherCandidates': '다른 후보',
   'conceptLink.conceptInGraph': '지식 그래프에 있는 개념',
   'conceptLink.headerTitle': '개념 연결',
@@ -989,10 +1006,12 @@ const Map<String, String> _ko = {
   'conceptLink.linkToConcept': '「{name}」에 연결',
   'conceptLink.keepAsNew': '새 개념으로 유지',
   'speakerMerge.title': '화자 합치기 / 분리',
-  'speakerMerge.instructions': '같은 사람이면 카드를 길게 눌러 다른 화자 위로 끌어다 합치세요. 잘못 합쳤으면 분리 아이콘으로 다시 나눌 수 있어요.',
+  'speakerMerge.instructions':
+      '같은 사람이면 카드를 길게 눌러 다른 화자 위로 끌어다 합치세요. 잘못 합쳤으면 분리 아이콘으로 다시 나눌 수 있어요.',
   'speakerMerge.splitTooltip': '분리',
   'transcriptSpeaker.title': '화자별 스크립트',
-  'transcriptSpeaker.readOnlySubtitle': '화자별 STT 결과 (읽기 전용 — 일기 쓰기에서 화자를 지정하세요)',
+  'transcriptSpeaker.readOnlySubtitle':
+      '화자별 STT 결과 (읽기 전용 — 일기 쓰기에서 화자를 지정하세요)',
   'transcriptSpeaker.editableSubtitle': '목소리가 비슷하면 이름이 추천됩니다. 탭해서 확인하거나 수정하세요.',
   'transcriptSpeaker.suggestedSuffix': '{name} (추천)',
   'reviewPanel.itemLabelFallback': '항목',
@@ -1014,17 +1033,20 @@ const Map<String, String> _ko = {
   'reviewPanel.approveTooltip': '승인',
   'reviewPanel.noContentPlaceholder': '(내용 없음)',
   'reviewPanel.approvedLabel': '승인됨',
-  'reviewPanel.speakerLockedBanner': '화자는 여기서 수정할 수 없습니다. 잘못 지정했다면 화자 설정으로 돌아가세요.',
+  'reviewPanel.speakerLockedBanner':
+      '화자는 여기서 수정할 수 없습니다. 잘못 지정했다면 화자 설정으로 돌아가세요.',
   'reviewPanel.reopenSpeakersButton': '화자 다시 설정',
   'reviewPanel.reopenSpeakersDialogTitle': '화자 설정으로 돌아갈까요?',
-  'reviewPanel.reopenSpeakersDialogBody': '화자는 그래프의 핵심 입력이라 여기서는 바꿀 수 없습니다.\n화자 설정으로 돌아가 수정한 뒤, 그래프 초안을 다시 만들어야 합니다.',
+  'reviewPanel.reopenSpeakersDialogBody':
+      '화자는 그래프의 핵심 입력이라 여기서는 바꿀 수 없습니다.\n화자 설정으로 돌아가 수정한 뒤, 그래프 초안을 다시 만들어야 합니다.',
   'reviewPanel.noConceptsChatHint': '개념 없음 — 고립 노드가 될 수 있어요',
   'privacyPolicy.loadFailed': '처리방침을 불러오지 못했어요.',
   'privacyPolicy.pageTitle': '개인정보 처리방침',
   'privacyPolicy.versionLabel': '버전 {version}',
   'ontology.loadFailedSnackbar': '온톨로지 로드 실패: {error}',
   'ontology.title': '온톨로지 설정',
-  'ontology.description': 'GraphRAG 추출 시 사용하는 엔티티·관계 타입입니다.\n노드 색상은 아래 타입 정의를 따릅니다.',
+  'ontology.description':
+      'GraphRAG 추출 시 사용하는 엔티티·관계 타입입니다.\n노드 색상은 아래 타입 정의를 따릅니다.',
   'ontology.currentOntology': '현재 온톨로지',
   'ontology.defaultLabel': '(기본)',
   'ontology.entityTypesHeader': '엔티티 타입',
@@ -1034,18 +1056,22 @@ const Map<String, String> _ko = {
   'theme.darkModeTooltip': '야간 모드',
   'audioDropZone.unsupportedFileWithExt': '지원하지 않는 파일입니다. ({exts})',
   'audioDropZone.cannotReadDroppedFile': '드롭한 파일을 읽을 수 없습니다.',
-  'audioRecord.browserInterrupted': '브라우저가 녹음을 중단했습니다. 탭을 활성 상태로 유지하고 다시 시도해 주세요.',
+  'audioRecord.browserInterrupted':
+      '브라우저가 녹음을 중단했습니다. 탭을 활성 상태로 유지하고 다시 시도해 주세요.',
   'chatRichText.copied': '복사됨',
   'chatRichText.copy': '복사',
   'thinking.memoryDefault1': '기억을 뒤적이는 중…',
   'thinking.memoryDefault2': '생각을 정리하는 중…',
   'thinking.memoryDefault3': '연결고리를 찾는 중…',
   'precisionText.tooLongTitle': '입력이 너무 깁니다',
-  'precisionText.tooLongBody': '현재 {length}자 / 최대 {max}자입니다.\n너무 긴 텍스트는 추출 품질이 떨어질 수 있어요. 내용을 나눠서 여러 번 입력해 주세요.',
+  'precisionText.tooLongBody':
+      '현재 {length}자 / 최대 {max}자입니다.\n너무 긴 텍스트는 추출 품질이 떨어질 수 있어요. 내용을 나눠서 여러 번 입력해 주세요.',
   'precisionText.emptyTextSnackbar': '텍스트를 입력해 주세요',
-  'precisionText.hintText': '그냥 쓰면 나의 일기가 돼요.\n@를 입력해 화자·출처를 지정할 수 있어요. 예: @나 내일 회의 몇 시야?  @엄마 10시.',
+  'precisionText.hintText':
+      '그냥 쓰면 나의 일기가 돼요.\n@를 입력해 화자·출처를 지정할 수 있어요. 예: @나 내일 회의 몇 시야?  @엄마 10시.',
   'precisionText.splitPreviewLabel': '분리 미리보기',
-  'precisionText.infoHint': '@ 없이 쓰면 전체가 나의 글로 저장돼요 · @화자를 지정하면 다음 @화자 전까지가 그 화자의 발화가 돼요',
+  'precisionText.infoHint':
+      '@ 없이 쓰면 전체가 나의 글로 저장돼요 · @화자를 지정하면 다음 @화자 전까지가 그 화자의 발화가 돼요',
   'precisionText.saving': '저장 중…',
   'precisionText.saveButton': '일기 저장',
 };
@@ -1136,8 +1162,7 @@ const Map<String, String> _en = {
       'A journal entry is still processing — you can save a new one once it finishes.',
   'kg.quizLanguagePrompt': 'Which language do you want to practice?',
   'kg.clearGraphTitle': 'Delete entire knowledge graph',
-  'kg.clearGraphBody':
-      'All nodes, edges, and embedding chunks will be deleted.\n'
+  'kg.clearGraphBody': 'All nodes, edges, and embedding chunks will be deleted.\n'
       'Your journal translations are kept. Running GraphRAG again builds a fresh graph.',
   'kg.clearGraphAction': 'Delete all',
   'kg.retry': 'Try again',
@@ -1248,6 +1273,7 @@ const Map<String, String> _en = {
   'sidebar.deleteRoomBody':
       'Delete this chat room? Your knowledge graph is kept.',
   'sidebar.reviewTitle': 'Review',
+  'sidebar.learningProgress': 'My progress',
   'sidebar.collapseTooltip': 'Collapse sidebar',
   'sidebar.expandTooltip': 'Expand sidebar',
   'sidebar.newChat': 'New chat',
@@ -1277,8 +1303,7 @@ const Map<String, String> _en = {
   'journal.stageTextRefining': 'Refining journal…',
   // Compose window
   'compose.unsavedDraftTitle': 'You have an unsaved draft',
-  'compose.unsavedDraftBody':
-      'Closing now will discard the unsaved content.',
+  'compose.unsavedDraftBody': 'Closing now will discard the unsaved content.',
   'compose.keepWriting': 'Keep writing',
   'compose.myJournalTitle': 'My journal',
   'compose.writeJournalTitle': 'Write a journal',
@@ -1299,7 +1324,8 @@ const Map<String, String> _en = {
   'compose.tapToRetry': 'Tap to retry',
   // Settings screen
   'settings.speakerConsentGiven': 'Speaker identification enabled',
-  'settings.speakerConsentWithdrawn': 'Speaker identification consent withdrawn',
+  'settings.speakerConsentWithdrawn':
+      'Speaker identification consent withdrawn',
   'settings.changeFailed': 'Change failed: {error}',
   'settings.exportSaveDialogTitle': 'Save my data',
   'settings.exportSavedToFile': 'Saved your data to a file',
@@ -1320,13 +1346,13 @@ const Map<String, String> _en = {
   'settings.myProfileTitle': 'My profile',
   'settings.langLevelSubtitle': 'Language · Level',
   'settings.nativeLanguageTitle': 'Native language',
-  'settings.nativeLanguageSubtitle': 'Hints and explanations are generated in this language',
+  'settings.nativeLanguageSubtitle':
+      'Hints and explanations are generated in this language',
   'settings.learningLanguagesTitle': 'Learning languages & level',
   'settings.learningLanguagesSubtitle':
       'Register the languages you practice and set your level · switch per session in the tutor',
   'settings.dailyQuizGoalTitle': 'Daily quiz goal',
-  'settings.dailyQuizGoalSubtitle':
-      "How many questions auto-fill today's set.",
+  'settings.dailyQuizGoalSubtitle': "How many questions auto-fill today's set.",
   'settings.clozeLabel': 'Cloze',
   'settings.compositionLabel': 'Writing',
   'settings.reviewRandomRatio': 'Review {review}%  ·  Random explore {random}%',
@@ -1355,8 +1381,8 @@ const Map<String, String> _en = {
   'consent.title': 'Privacy Consent',
   'consent.intro':
       'Your journal and chat content is sent to processors abroad (e.g. '
-      'OpenAI) for AI processing. See the privacy policy for details on data '
-      'items, countries, and retention.',
+          'OpenAI) for AI processing. See the privacy policy for details on data '
+          'items, countries, and retention.',
   'consent.requiredTitle':
       '[Required] I agree to the collection/use of personal data and its transfer abroad.',
   'consent.requiredSubtitle':
@@ -1389,7 +1415,8 @@ const Map<String, String> _en = {
   'quizQueue.filterCloze': 'Cloze',
   'quizQueue.filterComposition': 'Writing',
   'quizQueue.removeFromQueueTitle': 'Remove from queue',
-  'quizQueue.removeFromQueueBody': 'Delete this question from the learning queue?',
+  'quizQueue.removeFromQueueBody':
+      'Delete this question from the learning queue?',
   'quizQueue.removedFromQueueSnackbar': 'Removed from queue',
   'quizQueue.deleteFailed': 'Delete failed: {error}',
   'quizQueue.reviewNoneScheduled': 'No review scheduled',
@@ -1399,7 +1426,7 @@ const Map<String, String> _en = {
   'quizQueue.refillTitle': 'Fill missing questions',
   'quizQueue.refillBody':
       'Explores the knowledge graph and generates only the quiz types you\'re short on. '
-      'If there are no new sources (or they\'ve already been explored), this finishes with no extra API calls.',
+          'If there are no new sources (or they\'ve already been explored), this finishes with no extra API calls.',
   'common.generate': 'Generate',
   'quizQueue.refillScheduledSnackbar':
       'Started generating questions. Refresh in a moment to see the results.',
@@ -1409,15 +1436,18 @@ const Map<String, String> _en = {
   'quizQueue.refillFailed': 'Question generation failed: {error}',
   'quizQueue.deleteSelectedTitle': 'Delete selected questions',
   'quizQueue.deleteSelectedBody': 'Remove {count} questions from the queue?',
-  'quizQueue.deletedSelectedSnackbar': 'Removed {count} questions from the queue',
+  'quizQueue.deletedSelectedSnackbar':
+      'Removed {count} questions from the queue',
   'quizQueue.bulkDeleteFailed': 'Bulk delete failed: {error}',
   'quizQueue.resetAllTitle': 'Reset entire quiz queue',
   'quizQueue.resetAllBody':
       'Clears new/review vocabulary and writing questions for every language, and resets hidden source-exploration history. Continue?',
   'quizQueue.resetAllAction': 'Reset all',
-  'quizQueue.resetDoneSnackbar': 'Reset {count} questions and exploration history',
+  'quizQueue.resetDoneSnackbar':
+      'Reset {count} questions and exploration history',
   'quizQueue.resetFailed': 'Reset failed: {error}',
-  'quizQueue.explorationLoadFailed': 'Failed to load exploration history: {error}',
+  'quizQueue.explorationLoadFailed':
+      'Failed to load exploration history: {error}',
   'quizQueue.explorationSheetTitle': 'Graph node exploration status',
   'quizQueue.explorationDone': 'Explored',
   'quizQueue.explorationPartial': 'Partial',
@@ -1451,12 +1481,13 @@ const Map<String, String> _en = {
   'quizQueue.progressSummary':
       '{percent}% · vocab {clozeDone}/{clozeTarget} · writing {compDone}/{compTarget}',
   'quizQueue.progressExplain':
-      "Based on new questions you've actually answered today. Tap Fill questions to generate only what's missing.",
-  'quizQueue.pinnedExplain': "Pinned questions are generated immediately, separate from today's set.",
+      "Based on new questions answered today. Select Statements and target languages in Pipeline to generate more.",
+  'quizQueue.pinnedExplain':
+      "Pinned questions are generated immediately, separate from today's set.",
   'quizQueue.allLanguages': 'All languages',
   'quizQueue.itemCount': '{count}',
   'quizQueue.loadFailed': 'Failed to load: {error}',
-  'quizQueue.emptyQueue': 'The queue is empty — try generating quizzes from your journal',
+  'quizQueue.emptyQueue': 'The queue is empty — select Statements in Pipeline',
   'quizQueue.noTarget': '(no target)',
   'quizQueue.streakCount': '{count} streak',
   // Quiz session screen
@@ -1469,9 +1500,10 @@ const Map<String, String> _en = {
   'quizSession.loadingQuestions': 'Loading questions…',
   'quizSession.emptyQueueTitle': 'No questions in the queue',
   'quizSession.emptyQueueSubtitle':
-      'Generate new questions from Dev tools → Question generation, then try again.',
+      'Select Statements in Dev tools → Quiz queue → Pipeline to generate questions.',
   'quizSession.progressTitle': '{label} {current}/{total}',
-  'quizSession.noAudioNote': 'This question has no audio. Only newly generated questions play audio.',
+  'quizSession.noAudioNote':
+      'This question has no audio. Only newly generated questions play audio.',
   'quizSession.compositionScore': 'Writing score {score}/5',
   'quizSession.correctBang': 'Correct!',
   'quizSession.incorrect': 'Incorrect',
@@ -1485,7 +1517,8 @@ const Map<String, String> _en = {
       'Look at the answer above and type it in to finish.',
   'clozeCard.wrongExternalHint':
       "That's incorrect. Use the hint and retype it in the chat box below.",
-  'clozeCard.wrongInternalHint': "That's incorrect. Use the hint and try again.",
+  'clozeCard.wrongInternalHint':
+      "That's incorrect. Use the hint and try again.",
   'clozeCard.letterHint': 'Letter hint',
   'clozeCard.showWord': 'Show word',
   'clozeCard.hintConfirmed': 'Hint checked',
@@ -1494,10 +1527,12 @@ const Map<String, String> _en = {
   'clozeCard.answerLabelConfirm': 'Check answer',
   'clozeCard.recheck': 'Check again',
   // Composition quiz card
-  'compQuizCard.defaultPrompt': 'Express the situation below naturally in English.',
+  'compQuizCard.defaultPrompt':
+      'Express the situation below naturally in English.',
   'compQuizCard.usefulExpressions': 'Expressions worth trying',
   'compQuizCard.answerLabel': 'Answer in English',
-  'compQuizCard.answerHint': "There's no single right answer — write a natural sentence.",
+  'compQuizCard.answerHint':
+      "There's no single right answer — write a natural sentence.",
   'compQuizCard.gradeButton': 'Grade my sentence',
   // MCQ quiz card
   'mcqCard.instruction': 'Pick the most natural English expression',
@@ -1509,8 +1544,7 @@ const Map<String, String> _en = {
   'scrambleCard.reset': 'Reset',
   // Quiz audio button
   'quizAudio.noAudioFile': 'This question has no audio file.',
-  'quizAudio.pluginNotRegistered':
-      'The audio plugin isn\'t registered.\n'
+  'quizAudio.pluginNotRegistered': 'The audio plugin isn\'t registered.\n'
       'Fully quit the app and relaunch it with run_windows.ps1.',
   'quizAudio.connectionFailed':
       'Could not connect to the audio server.\n{url}\nCheck that the backend is running.',
@@ -1535,7 +1569,7 @@ const Map<String, String> _en = {
   'vocabHub.deleteExtractedTitle': 'Delete extracted expressions',
   'vocabHub.deleteExtractedBody':
       'Deletes every expression extracted from "{name}" and re-extracts them '
-      'in the background.\n\nNewly extracted expressions will include a CEFR difficulty rating.',
+          'in the background.\n\nNewly extracted expressions will include a CEFR difficulty rating.',
   'vocabHub.deleteAndReextract': 'Delete & re-extract',
   'vocabHub.reextractStartedSnackbar': 'Re-extraction started',
   'vocabHub.pageTitle': 'Vocabulary',
@@ -1580,31 +1614,34 @@ const Map<String, String> _en = {
   'vocabAddCard.wordHint': 'e.g. itinerary',
   'vocabAddCard.meaningLabel': 'Meaning',
   'vocabAddCard.meaningHint': 'e.g. travel itinerary',
-  'vocabAddCard.missingFieldsSnackbar': 'Please enter both the word and its meaning',
+  'vocabAddCard.missingFieldsSnackbar':
+      'Please enter both the word and its meaning',
   'vocabAddCard.addingLabel': 'Adding…',
   'vocabAddCard.addButton': 'Add card',
   // Vocabulary picker sheet
   'vocabPicker.title': 'Choose a vocabulary list',
   'vocabPicker.createFailed': 'Failed to create vocabulary list: {error}',
-  'vocabPicker.emptyState': "You haven't created any vocabulary lists yet.\nUse the button above to create one!",
+  'vocabPicker.emptyState':
+      "You haven't created any vocabulary lists yet.\nUse the button above to create one!",
   'vocabPicker.wordCount': '{count} words',
   'vocabPicker.createFormTitle': 'Create a new vocabulary list',
   'vocabPicker.createFormHint': 'List name (e.g. Business English)',
   'vocabPicker.addedToVocabSnackbar': 'Added "{word}" to {vocab}',
   'vocabPicker.addToVocabTitle': 'Add to "{vocab}"',
   'vocabPicker.optional': 'Optional',
-  'vocabPicker.meaningLaterNote': 'You can add the meaning later from the vocabulary list',
+  'vocabPicker.meaningLaterNote':
+      'You can add the meaning later from the vocabulary list',
   // Statement bank screen
   'statementBank.reextractAllTitle': 'Re-extract everything',
   'statementBank.reextractAllBody':
       'Deletes every currently saved {lang} expression and re-extracts them '
-      'from all Statement nodes.\n\nNewly extracted expressions will include a CEFR difficulty rating.',
+          'from all Statement nodes.\n\nNewly extracted expressions will include a CEFR difficulty rating.',
   'statementBank.failed': 'Failed: {error}',
   'statementBank.deleteExprTitle': 'Delete expression',
   'statementBank.deleteExprMultiBody':
       'Delete "{expr}" from the vocabulary list?\n\n'
-      'It will be removed from all {count} nodes it appears in. '
-      'To remove it from just one node, delete that node in the knowledge graph instead.',
+          'It will be removed from all {count} nodes it appears in. '
+          'To remove it from just one node, delete that node in the knowledge graph instead.',
   'statementBank.deleteExprSingleBody':
       'Delete "{expr}"?\n\nA node with all its expressions deleted may be re-extracted later.',
   'statementBank.deletedSnackbar': '"{expr}" deleted',
@@ -1623,17 +1660,19 @@ const Map<String, String> _en = {
   'tutorVocab.pageTitle': 'Expressions learned with the tutor',
   'tutorVocab.subtitle': '{count} · long-press to delete',
   'tutorVocab.emptyTitle': "You haven't saved any expressions yet",
-  'tutorVocab.emptySubtitle': 'Save a confusing expression from drill feedback and it will show up here.',
-  'tutorVocab.confusedInSentence': 'You got confused in this sentence: {prompt}',
+  'tutorVocab.emptySubtitle':
+      'Save a confusing expression from drill feedback and it will show up here.',
+  'tutorVocab.confusedInSentence':
+      'You got confused in this sentence: {prompt}',
   // API client
-  'client.connectionFailed': "Couldn't connect to the server. Please try again in a moment.",
+  'client.connectionFailed':
+      "Couldn't connect to the server. Please try again in a moment.",
   'client.speakersPendingError': 'Speaker confirmation needed: {names}',
   // Graph review screen
   'graphReview.notEnoughContentSnackbar':
       'Nothing to commit — at least one Statement is required.',
   'graphReview.emptyConceptsTitle': 'Some items have no concept',
-  'graphReview.emptyConceptsBody':
-      '{count} item(s) have no concept.\n'
+  'graphReview.emptyConceptsBody': '{count} item(s) have no concept.\n'
       'Committing as-is leaves that Statement disconnected from the rest of '
       "your knowledge, and it can't be edited after committing.",
   'graphReview.goBackAndAdd': 'Go back and add one',
@@ -1677,19 +1716,20 @@ const Map<String, String> _en = {
   'inspector.saveFailed': 'Save failed: {error}',
   'inspector.deleteFailed': 'Delete failed: {error}',
   'inspector.deleteNodeTitle': 'Delete node',
-  'inspector.deleteNodeSimpleBody': 'This also deletes relations connected to "{name}".',
+  'inspector.deleteNodeSimpleBody':
+      'This also deletes relations connected to "{name}".',
   'inspector.deleteStatementBody': 'This deletes the Statement node "{name}".',
   'inspector.alsoDeletedLabel': 'Also deleted:',
   'inspector.relatedEdges': 'Connected relations (edges)',
   'inspector.orphanNodes': 'Orphaned concept/speaker nodes',
   'inspector.generatedQuizzes': 'Generated quizzes',
   'inspector.extractedExpressions': 'Extracted expressions',
-  'inspector.restoreFromTrashNote': 'Deleted items can be restored from the trash.',
+  'inspector.restoreFromTrashNote':
+      'Deleted items can be restored from the trash.',
   'inspector.deleteCompleteSnackbar':
       'Deleted — also removed {orphans} orphan nodes, {quizzes} quizzes, {exprs} expressions',
   'inspector.unlinkVoiceTitle': 'Unlink voice embedding',
-  'inspector.unlinkVoiceBody':
-      'Removes the voice-embedding link on this node.\n'
+  'inspector.unlinkVoiceBody': 'Removes the voice-embedding link on this node.\n'
       'If it was matched incorrectly, you can re-confirm the speaker from the journal.',
   'inspector.unlinkAction': 'Unlink',
   'inspector.voiceUnlinkedSnackbar': 'Voice embedding link removed',
@@ -1709,12 +1749,17 @@ const Map<String, String> _en = {
   'inspector.mergeConvertTitle': "Merge / convert '{name}'",
   'inspector.mergeIntoOtherTitle': "Merge '{name}' into another identity",
   'inspector.convertToNewEntity': 'Convert to a new entity',
-  'inspector.convertToNewEntitySubtitle': 'Changes this node in place to the Identity type.',
+  'inspector.convertToNewEntitySubtitle':
+      'Changes this node in place to the Identity type.',
   'inspector.mergeSearchHint': 'Search merge target',
-  'inspector.mergeIntoIdentity': 'Merge into an identity (carries over relations/journal links/aliases)',
-  'inspector.mergeIntoConcept': 'Merge into another concept (clean up duplicates)',
-  'inspector.convertedToIdentitySnackbar': "Converted '{name}' to an identity node.",
-  'inspector.mergedSnackbar': "Merged '{name}' — relations and journal links carried over.",
+  'inspector.mergeIntoIdentity':
+      'Merge into an identity (carries over relations/journal links/aliases)',
+  'inspector.mergeIntoConcept':
+      'Merge into another concept (clean up duplicates)',
+  'inspector.convertedToIdentitySnackbar':
+      "Converted '{name}' to an identity node.",
+  'inspector.mergedSnackbar':
+      "Merged '{name}' — relations and journal links carried over.",
   'inspector.nodeLabel': 'Node',
   'inspector.typeLabel': 'Type',
   'inspector.sourceTypeLabel': 'Source type: ',
@@ -1724,7 +1769,8 @@ const Map<String, String> _en = {
   'inspector.mergeIntoOtherButton': 'Merge into another identity',
   'inspector.relationsCount': 'Relations ({count})',
   'inspector.recordedDate': 'Recorded: {date}',
-  'inspector.storedNodesNote': 'Stored: PostgreSQL nodes table\nUpserted on GraphRAG batch',
+  'inspector.storedNodesNote':
+      'Stored: PostgreSQL nodes table\nUpserted on GraphRAG batch',
   'inspector.storedEdgesNote': 'Stored: PostgreSQL edges table',
   'inspector.edgeRelationTitle': 'Relation (Edge)',
   'inspector.sourceWord': 'source',
@@ -1737,12 +1783,17 @@ const Map<String, String> _en = {
   'inspector.embeddingVoiceMemoryTitle': 'Embedding · voice memory',
   'inspector.voiceEmbeddingLabel': 'Voice embedding',
   'inspector.profileDefault': 'Profile',
-  'inspector.voiceRegisteredDetail': '{label} · {samples} samples · {duration}s',
-  'inspector.voiceUnregisteredSpeaker': 'Not registered — registers when a speaker is confirmed after a journal recording',
-  'inspector.voiceNotSpeakerType': 'Not a Speaker node, or no voice samples yet',
+  'inspector.voiceRegisteredDetail':
+      '{label} · {samples} samples · {duration}s',
+  'inspector.voiceUnregisteredSpeaker':
+      'Not registered — registers when a speaker is confirmed after a journal recording',
+  'inspector.voiceNotSpeakerType':
+      'Not a Speaker node, or no voice samples yet',
   'inspector.aliasEmbeddingLabel': 'Alias embedding (fuzzy match)',
-  'inspector.aliasEmbeddingDetail': '{count} learned — suggests automatically even for a different name if similar enough',
-  'inspector.aliasEmbeddingNone': 'None yet — link another name to this identity to learn one',
+  'inspector.aliasEmbeddingDetail':
+      '{count} learned — suggests automatically even for a different name if similar enough',
+  'inspector.aliasEmbeddingNone':
+      'None yet — link another name to this identity to learn one',
   'inspector.sourceOriginalLabel': 'Source (original voice/text)',
   'inspector.noExpressionsYetLong':
       'No expressions extracted yet. Check back once extraction finishes.',
@@ -1773,7 +1824,8 @@ const Map<String, String> _en = {
   'timeline.emptySubtitle': 'Tap + to write your first entry',
   'timeline.hintAiProcessing': 'AI processing',
   'timeline.hintGraphProcessing': 'Building graph',
-  'timeline.hintGraphStagingReady': 'Graph draft awaiting review — tap to confirm',
+  'timeline.hintGraphStagingReady':
+      'Graph draft awaiting review — tap to confirm',
   'timeline.hintFailed': 'Processing failed',
   'timeline.hintGraphFailed': 'Graph build failed — tap to retry',
   'timeline.hintMakeGraph': 'Tap to build knowledge graph',
@@ -1820,12 +1872,14 @@ const Map<String, String> _en = {
   'insight.weekdayFriShort': 'F',
   'insight.weekdaySatShort': 'S',
   'trash.restoreDialogTitle': 'Restore node',
-  'trash.restoreDialogBody': 'Restores the node "{name}" along with any orphan nodes that were linked to it.',
+  'trash.restoreDialogBody':
+      'Restores the node "{name}" along with any orphan nodes that were linked to it.',
   'trash.restoreAction': 'Restore',
   'trash.restoredSnackbar': 'Restored',
   'trash.restoreFailedSnackbar': 'Restore failed: {error}',
   'trash.purgeDialogTitle': 'Delete permanently',
-  'trash.purgeDialogBody': 'This permanently deletes the node "{name}". This cannot be undone.',
+  'trash.purgeDialogBody':
+      'This permanently deletes the node "{name}". This cannot be undone.',
   'trash.purgeAction': 'Delete permanently',
   'trash.purgedSnackbar': 'Permanently deleted',
   'trash.purgeFailedSnackbar': 'Permanent delete failed: {error}',
@@ -1852,9 +1906,11 @@ const Map<String, String> _en = {
   'journalHub.deleteTooltip': 'Delete entry',
   'journalHub.loadFailed': 'Failed to load',
   'entryHub.deleteDialogTitle': 'Delete entry',
-  'entryHub.deleteDialogBody': "This also deletes the speaker voice data linked to this entry. This can't be undone. Delete it?",
+  'entryHub.deleteDialogBody':
+      "This also deletes the speaker voice data linked to this entry. This can't be undone. Delete it?",
   'entryHub.deleteAllDialogTitle': 'Delete all',
-  'entryHub.deleteAllDialogBody': "This deletes every journal entry and all linked speaker voice data. This can't be undone. Delete everything?",
+  'entryHub.deleteAllDialogBody':
+      "This deletes every journal entry and all linked speaker voice data. This can't be undone. Delete everything?",
   'entryHub.deleteAllSnackbar': 'Deleted {count} entries',
   'entryHub.emptyHint': 'No entries yet',
   'entryHub.emptySubtitle': 'Add a new entry to get started',
@@ -1872,17 +1928,24 @@ const Map<String, String> _en = {
   'entryHub.loadFailed': 'Failed to load',
   'journalDetail.reviewDraftNotFound': "Couldn't find a graph draft to review.",
   'journalDetail.graphConfirmedSnackbar': 'Knowledge graph confirmed',
-  'journalDetail.msgProcessing': "AI is transcribing and cleaning up the text. Pull down to refresh in a moment.",
-  'journalDetail.msgFailed': 'Processing failed. Delete this entry and try again.',
-  'journalDetail.msgGraphProcessing': 'Pulling out the key points to draft a knowledge graph…',
-  'journalDetail.msgStagingReady': 'Your AI-drafted graph is ready. Review it and confirm to save it to your knowledge graph.',
+  'journalDetail.msgProcessing':
+      "AI is transcribing and cleaning up the text. Pull down to refresh in a moment.",
+  'journalDetail.msgFailed':
+      'Processing failed. Delete this entry and try again.',
+  'journalDetail.msgGraphProcessing':
+      'Pulling out the key points to draft a knowledge graph…',
+  'journalDetail.msgStagingReady':
+      'Your AI-drafted graph is ready. Review it and confirm to save it to your knowledge graph.',
   'journalDetail.ctaReview': 'Review and confirm',
-  'journalDetail.msgSpeakersPending': 'Tag who said what using the speaker chips below. Speakers must be confirmed before building the graph.',
+  'journalDetail.msgSpeakersPending':
+      'Tag who said what using the speaker chips below. Speakers must be confirmed before building the graph.',
   'journalDetail.msgGraphFailed': 'Graph build failed. Please try again.',
   'journalDetail.ctaRetry': 'Retry',
-  'journalDetail.msgReadyToBuild': "Your entry is ready! You can now organize the key points into a knowledge graph. You'll get to review before confirming, so go ahead.",
+  'journalDetail.msgReadyToBuild':
+      "Your entry is ready! You can now organize the key points into a knowledge graph. You'll get to review before confirming, so go ahead.",
   'journalDetail.ctaBuildGraph': 'Build knowledge graph',
-  'journalDetail.msgWaitingForProcessing': "Your entry is saved. You'll be able to build a graph once processing finishes.",
+  'journalDetail.msgWaitingForProcessing':
+      "Your entry is saved. You'll be able to build a graph once processing finishes.",
   'journalDetail.manualEntryBadge': 'Typed entry',
   'journalDetail.stepRecord': 'Record',
   'journalDetail.stepSpeakerConfirm': 'Confirm speakers',
@@ -1895,7 +1958,8 @@ const Map<String, String> _en = {
   'transEntry.suggestedSuffix': '{type} (suggested)',
   'transEntry.typeLabel': 'Type · {label}',
   'transEntry.changeAction': 'Change',
-  'transEntry.speakerGroupAppliedSnackbar': 'Speaker group applied. Please tag each speaker.',
+  'transEntry.speakerGroupAppliedSnackbar':
+      'Speaker group applied. Please tag each speaker.',
   'transEntry.resetSuccessSnackbar': 'Reverted to the original speaker split',
   'transEntry.resetFailedSnackbar': 'Failed: {error}',
   'transEntry.mergeSpeakersButton': 'Merge / split speakers',
@@ -1905,12 +1969,14 @@ const Map<String, String> _en = {
   'transEntry.speakerScriptSubtitle': 'Tap to tag who wrote or said this',
   'transEntry.cleanedEntryTitle': 'Cleaned entry',
   'transEntry.rawEntryTitle': 'Original entry',
-  'transEntry.lockedNote': 'Type and speakers lock once a knowledge graph is built. To edit, delete the graph and rebuild it.',
+  'transEntry.lockedNote':
+      'Type and speakers lock once a knowledge graph is built. To edit, delete the graph and rebuild it.',
   'transEntry.addSelectedToVocab': 'Add "{word}" to vocabulary',
   'transEntry.addToVocab': 'Add to vocabulary',
   'transEntry.emptyPlaceholder': '(None)',
   'audioCompose.stopFailedSnackbar': 'Failed to stop recording: {error}',
-  'audioCompose.micPermissionNeeded': 'Microphone access is needed. Allow it via the lock icon next to your browser address bar.',
+  'audioCompose.micPermissionNeeded':
+      'Microphone access is needed. Allow it via the lock icon next to your browser address bar.',
   'audioCompose.startFailedSnackbar': 'Failed to start recording: {error}',
   'audioCompose.fileInfoWithDuration': 'File {filename} · {duration} · {kb}KB',
   'audioCompose.fileInfoNoDuration': 'File {filename} · {kb}KB',
@@ -1920,7 +1986,8 @@ const Map<String, String> _en = {
   'audioCompose.cannotReadFileData': "Couldn't read the file data.",
   'audioCompose.cannotResolveFilePath': "Couldn't resolve the file path.",
   'audioCompose.tooLongTitle': 'Recording is too long',
-  'audioCompose.tooLongBody': '{name} is {duration}, which exceeds the {max} limit.\nPlease split it and upload in parts.',
+  'audioCompose.tooLongBody':
+      '{name} is {duration}, which exceeds the {max} limit.\nPlease split it and upload in parts.',
   'audioCompose.confirmAction': 'OK',
   'audioCompose.cannotVerifyFile': "Couldn't verify the file.",
   'audioCompose.stopBeforePicking': 'Stop recording before selecting a file.',
@@ -1929,7 +1996,8 @@ const Map<String, String> _en = {
   'audioCompose.stopBeforeDropping': 'Stop recording before dropping a file.',
   'audioCompose.fileLoadFailedSnackbar': 'Failed to load file: {error}',
   'audioCompose.uploadFailedSnackbar': 'Upload failed: {error}',
-  'audioCompose.maxDurationReached': 'Recordings are capped at 10 minutes — recording stopped automatically.',
+  'audioCompose.maxDurationReached':
+      'Recordings are capped at 10 minutes — recording stopped automatically.',
   'audioCompose.dragHintWithDrag': 'Drag or tap to select an audio file',
   'audioCompose.dragHintTapOnly': 'Tap to select an audio file',
   'audioCompose.dropHere': 'Drop it here',
@@ -1946,7 +2014,8 @@ const Map<String, String> _en = {
   'audioCompose.stageStt': 'Transcribing (STT)',
   'audioCompose.stagePolish': 'Polishing sentences',
   'audioCompose.creatingEntry': 'Creating your journal entry',
-  'audioCompose.creatingEntrySubtitle': 'This can take up to about a minute depending on the recording length.',
+  'audioCompose.creatingEntrySubtitle':
+      'This can take up to about a minute depending on the recording length.',
   'progressCard.loadFailed': "Couldn't load the entry status.",
   'progressCard.graphConfirmedSnackbar': 'Knowledge graph confirmed',
   'progressCard.defaultLabel': 'Processing journal entry',
@@ -1956,7 +2025,8 @@ const Map<String, String> _en = {
   'progressCard.stepDone': 'Done',
   'progressCard.failedMessage': 'Processing failed. Close this and try again.',
   'progressCard.pendingHint': 'Tag who wrote or said this.',
-  'progressCard.confirmHint': 'Confirm the speakers to build the graph. Tap a speaker to change it if needed.',
+  'progressCard.confirmHint':
+      'Confirm the speakers to build the graph. Tap a speaker to change it if needed.',
   'progressCard.assignSpeakerFirst': 'Assign a speaker first',
   'progressCard.confirmAndBuildGraph': 'Confirm and build graph',
   'progressCard.confirmSpeakersButton': 'Confirm speakers',
@@ -1966,23 +2036,28 @@ const Map<String, String> _en = {
   'speakerId.voiceSimilarity': 'Voice similarity {score}',
   'speakerId.pickExisting': 'Pick an existing identity',
   'speakerId.registerNew': 'Register a new identity',
-  'speakerId.likelyUnregisteredHint': '"{label}" is likely an identity that hasn\'t been registered yet.',
+  'speakerId.likelyUnregisteredHint':
+      '"{label}" is likely an identity that hasn\'t been registered yet.',
   'speakerId.voiceSimilarTo': 'This voice sounds like "{name}". Is that right?',
   'speakerId.correctName': "Yes, it's {name}",
   'speakerId.pickOrRegisterNew': 'Pick existing / register new',
   'speakerId.whoIsSpeaker': 'Who is the speaker "{label}"?',
-  'speakerId.topSimilarityBelowThreshold': 'Top similarity {score} (below threshold)',
-  'speakerId.pickOrRegisterHint': 'Pick an existing identity, or register a new one if there isn\'t one.',
+  'speakerId.topSimilarityBelowThreshold':
+      'Top similarity {score} (below threshold)',
+  'speakerId.pickOrRegisterHint':
+      'Pick an existing identity, or register a new one if there isn\'t one.',
   'speakerId.nameSearchLabel': 'Search name or type a new one',
   'speakerId.nameSearchHint': 'e.g. Jane Doe · Acme Corp',
   'speakerId.registerAsSource': 'Register "{name}" as a source',
   'speakerId.registerAsNewIdentity': 'Register "{name}" as a new identity',
   'speakerId.existingIdentities': 'Existing identities',
-  'speakerId.noRegisteredIdentities': 'No identities registered yet. Type a name to create one.',
+  'speakerId.noRegisteredIdentities':
+      'No identities registered yet. Type a name to create one.',
   'speakerId.sourceInGraph': 'Source in the knowledge graph',
   'speakerId.identityInGraph': 'Identity in the knowledge graph',
   'speakerId.backButton': 'Back',
-  'speakerId.manualIntro': 'This creates a new identity in the knowledge graph and links it to this speaker.',
+  'speakerId.manualIntro':
+      'This creates a new identity in the knowledge graph and links it to this speaker.',
   'speakerId.newSourceNameLabel': 'New source name',
   'speakerId.newPersonNameLabel': 'New person name',
   'speakerId.newSourceNameHint': 'e.g. Acme Corp · Reuters',
@@ -2012,21 +2087,26 @@ const Map<String, String> _en = {
   'entityId.orDivider': 'or',
   'entityId.backButton': 'Back',
   'conceptLink.closeSheetLabel': 'Close concept link picker',
-  'conceptLink.existingConceptBody': 'A concept like "{name}" already exists. Linking merges it into one node.',
+  'conceptLink.existingConceptBody':
+      'A concept like "{name}" already exists. Linking merges it into one node.',
   'conceptLink.otherCandidates': 'Other candidates',
   'conceptLink.conceptInGraph': 'Concept in the knowledge graph',
   'conceptLink.headerTitle': 'Link concept',
   'conceptLink.closeTooltip': 'Close',
   'conceptLink.suggestedConcept': 'Suggested concept',
-  'conceptLink.suggestionSameConcept': 'This looks like the same concept as "{name}".',
+  'conceptLink.suggestionSameConcept':
+      'This looks like the same concept as "{name}".',
   'conceptLink.linkToConcept': 'Link to "{name}"',
   'conceptLink.keepAsNew': 'Keep as new concept',
   'speakerMerge.title': 'Merge / split speakers',
-  'speakerMerge.instructions': "If they're the same person, long-press a card and drag it onto another to merge. If you merged wrong, use the split icon to undo it.",
+  'speakerMerge.instructions':
+      "If they're the same person, long-press a card and drag it onto another to merge. If you merged wrong, use the split icon to undo it.",
   'speakerMerge.splitTooltip': 'Split',
   'transcriptSpeaker.title': 'Speaker script',
-  'transcriptSpeaker.readOnlySubtitle': 'Speaker-tagged STT results (read-only — tag speakers from the entry composer)',
-  'transcriptSpeaker.editableSubtitle': 'Names are suggested when the voice sounds similar. Tap to confirm or fix them.',
+  'transcriptSpeaker.readOnlySubtitle':
+      'Speaker-tagged STT results (read-only — tag speakers from the entry composer)',
+  'transcriptSpeaker.editableSubtitle':
+      'Names are suggested when the voice sounds similar. Tap to confirm or fix them.',
   'transcriptSpeaker.suggestedSuffix': '{name} (suggested)',
   'reviewPanel.itemLabelFallback': 'item',
   'reviewPanel.deletedSnackbar': '"{label}" deleted',
@@ -2035,29 +2115,35 @@ const Map<String, String> _en = {
   'reviewPanel.conceptCountBadge': '{count} concepts',
   'reviewPanel.approvedCountBadge': '{approved}/{total} approved',
   'reviewPanel.lockedAfterConfirm': 'Locked after confirming',
-  'reviewPanel.swipeHint': '← swipe to delete · → swipe to approve · tap concept=importance · long-press=identity',
+  'reviewPanel.swipeHint':
+      '← swipe to delete · → swipe to approve · tap concept=importance · long-press=identity',
   'reviewPanel.approveSwipeLabel': 'Approve',
   'reviewPanel.deleteSwipeLabel': 'Delete',
   'reviewPanel.approveAllButton': 'Approve all ({approved}/{total})',
   'reviewPanel.confirmNone': 'Commit to knowledge graph',
   'reviewPanel.confirmAllApproved': 'Approve all — commit to knowledge graph',
-  'reviewPanel.confirmNeedsApproval': 'Approve all to commit ({approved}/{total})',
+  'reviewPanel.confirmNeedsApproval':
+      'Approve all to commit ({approved}/{total})',
   'reviewPanel.speakerLockedTooltip': "Speakers can't be edited here",
   'reviewPanel.unapproveTooltip': 'Unapprove',
   'reviewPanel.approveTooltip': 'Approve',
   'reviewPanel.noContentPlaceholder': '(No content)',
   'reviewPanel.approvedLabel': 'Approved',
-  'reviewPanel.speakerLockedBanner': "Speakers can't be edited here. If one is wrong, go back to speaker setup.",
+  'reviewPanel.speakerLockedBanner':
+      "Speakers can't be edited here. If one is wrong, go back to speaker setup.",
   'reviewPanel.reopenSpeakersButton': 'Reopen speaker setup',
   'reviewPanel.reopenSpeakersDialogTitle': 'Go back to speaker setup?',
-  'reviewPanel.reopenSpeakersDialogBody': "Speakers are a core input to the graph, so they can't be changed here.\nGo back to speaker setup to fix it, then rebuild the graph draft.",
-  'reviewPanel.noConceptsChatHint': 'No concepts — this may become an isolated node',
+  'reviewPanel.reopenSpeakersDialogBody':
+      "Speakers are a core input to the graph, so they can't be changed here.\nGo back to speaker setup to fix it, then rebuild the graph draft.",
+  'reviewPanel.noConceptsChatHint':
+      'No concepts — this may become an isolated node',
   'privacyPolicy.loadFailed': "Couldn't load the privacy policy.",
   'privacyPolicy.pageTitle': 'Privacy policy',
   'privacyPolicy.versionLabel': 'Version {version}',
   'ontology.loadFailedSnackbar': 'Failed to load ontology: {error}',
   'ontology.title': 'Ontology settings',
-  'ontology.description': 'These are the entity and relation types used during GraphRAG extraction.\nNode colors follow the type definitions below.',
+  'ontology.description':
+      'These are the entity and relation types used during GraphRAG extraction.\nNode colors follow the type definitions below.',
   'ontology.currentOntology': 'Current ontology',
   'ontology.defaultLabel': '(Default)',
   'ontology.entityTypesHeader': 'Entity types',
@@ -2065,20 +2151,25 @@ const Map<String, String> _en = {
   'ontology.relationTypesHeader': 'Relation types',
   'theme.lightModeTooltip': 'Light mode',
   'theme.darkModeTooltip': 'Dark mode',
-  'audioDropZone.unsupportedFileWithExt': 'This file type is not supported. ({exts})',
+  'audioDropZone.unsupportedFileWithExt':
+      'This file type is not supported. ({exts})',
   'audioDropZone.cannotReadDroppedFile': "Couldn't read the dropped file.",
-  'audioRecord.browserInterrupted': 'The browser interrupted the recording. Keep the tab active and try again.',
+  'audioRecord.browserInterrupted':
+      'The browser interrupted the recording. Keep the tab active and try again.',
   'chatRichText.copied': 'Copied',
   'chatRichText.copy': 'Copy',
   'thinking.memoryDefault1': 'Digging through memory…',
   'thinking.memoryDefault2': 'Organizing thoughts…',
   'thinking.memoryDefault3': 'Finding connections…',
   'precisionText.tooLongTitle': 'Input is too long',
-  'precisionText.tooLongBody': 'Currently {length} chars / {max} max.\nVery long text can reduce extraction quality. Please split it into multiple entries.',
+  'precisionText.tooLongBody':
+      'Currently {length} chars / {max} max.\nVery long text can reduce extraction quality. Please split it into multiple entries.',
   'precisionText.emptyTextSnackbar': 'Please enter some text',
-  'precisionText.hintText': 'Just write and it becomes your journal.\nType @ to tag a speaker or source. e.g. @Me What time is the meeting tomorrow?  @Mom 10am.',
+  'precisionText.hintText':
+      'Just write and it becomes your journal.\nType @ to tag a speaker or source. e.g. @Me What time is the meeting tomorrow?  @Mom 10am.',
   'precisionText.splitPreviewLabel': 'Split preview',
-  'precisionText.infoHint': 'Without @, everything is saved as your writing · Tag @speaker and everything up to the next @speaker becomes their speech',
+  'precisionText.infoHint':
+      'Without @, everything is saved as your writing · Tag @speaker and everything up to the next @speaker becomes their speech',
   'precisionText.saving': 'Saving…',
   'precisionText.saveButton': 'Save entry',
 };

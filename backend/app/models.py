@@ -32,6 +32,9 @@ class User(Base):
     daily_cloze_target: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
     daily_composition_target: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     quiz_review_ratio: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    auto_generate_quizzes: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     # Consent (PIPA): the privacy-policy/terms version the user accepted and when.
     # speaker_id_consent_at is the SEPARATE consent required to derive a voiceprint
     # (a biometric feature = sensitive info); null means not consented / withdrawn.
@@ -410,6 +413,48 @@ class Quiz(Base):
     source_kind: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
+class QuizAttempt(Base):
+    """Immutable, idempotent record of one scored learner submission."""
+
+    __tablename__ = "quiz_attempts"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "idempotency_key",
+            name="uq_quiz_attempt_user_idempotency",
+        ),
+        Index("idx_quiz_attempts_user_answered", "user_id", "answered_at"),
+        Index("idx_quiz_attempts_quiz_answered", "quiz_id", "answered_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    quiz_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("quizzes.id", ondelete="CASCADE"), nullable=False
+    )
+    idempotency_key: Mapped[str] = mapped_column(String, nullable=False)
+    quiz_type: Mapped[str] = mapped_column(String, nullable=False)
+    language: Mapped[str] = mapped_column(String, nullable=False, default="english")
+    queue_kind: Mapped[str] = mapped_column(String, nullable=False)
+    answer_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    quality: Mapped[int] = mapped_column(Integer, nullable=False)
+    tutor_feedback: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    hint_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    revealed_tokens: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    answer_revealed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    xp_awarded: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    xp_policy_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    source: Mapped[str] = mapped_column(String, nullable=False, default="live")
+    answered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class QuizBatch(Base):
     """Immutable generation unit for the daily and pinned learning tracks."""
 
@@ -478,6 +523,45 @@ class QuizGenerationState(Base):
     latest_source_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class QuizGenerationRun(Base):
+    """Durable node × language quiz-generation request."""
+
+    __tablename__ = "quiz_generation_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "idempotency_key",
+            name="uq_quiz_generation_run_idempotency",
+        ),
+        Index("idx_quiz_generation_runs_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    idempotency_key: Mapped[str] = mapped_column(String, nullable=False)
+    source: Mapped[str] = mapped_column(String, nullable=False, default="manual")
+    status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
+    node_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    languages: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    items: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
 

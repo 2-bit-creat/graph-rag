@@ -556,7 +556,14 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   void _onChatInputChanged() {
     if (chatSession.mode != ChatMode.quizWord) return;
     unawaited(
-        chatSession.updateClozeDraft(_chatInputController.text).then((clear) {
+        chatSession.updateClozeDraft(
+          _chatInputController.text,
+          hintLevel: _clozeCardKey.currentState?.telemetryHintLevel ?? 0,
+          revealedTokens:
+              _clozeCardKey.currentState?.telemetryRevealedTokens ?? const [],
+          answerRevealed:
+              _clozeCardKey.currentState?.telemetryAnswerRevealed ?? false,
+        ).then((clear) {
       if (clear && mounted) _chatInputController.clear();
     }));
   }

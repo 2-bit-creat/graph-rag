@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../api/client.dart';
+import '../utils/idempotency_key.dart';
 import '../app_navigator.dart';
 import '../compose/journal_phase.dart';
 import '../l10n/app_strings.dart';
@@ -545,6 +546,7 @@ class ChatSessionController extends ChangeNotifier {
       final resp = await apiClient.submitQuizAnswer(
         quizId: quiz['id'].toString(),
         answer: answer,
+        idempotencyKey: newIdempotencyKey('attempt'),
       );
       _quizFeedback =
           (resp['tutor_feedback'] as Map?)?.cast<String, dynamic>() ?? {};
@@ -609,6 +611,9 @@ class ChatSessionController extends ChangeNotifier {
     String? answer,
     List<int>? order,
     int? selectedIndex,
+    int hintLevel = 0,
+    List<String> revealedTokens = const [],
+    bool answerRevealed = false,
   }) async {
     final quiz = activeQuiz;
     if (quiz == null) return null;
@@ -618,6 +623,10 @@ class ChatSessionController extends ChangeNotifier {
         answer: answer,
         order: order,
         selectedIndex: selectedIndex,
+        idempotencyKey: newIdempotencyKey('attempt'),
+        hintLevel: hintLevel,
+        revealedTokens: revealedTokens,
+        answerRevealed: answerRevealed,
       );
       final summary =
           answer ?? order?.join(' ') ?? selectedIndex?.toString() ?? '';
@@ -635,7 +644,12 @@ class ChatSessionController extends ChangeNotifier {
   /// answer word, and a match commits that word (advancing the "cursor" to
   /// the next blank) instead of waiting for an explicit submit. Returns true
   /// when the composer should clear itself (a word just completed).
-  Future<bool> updateClozeDraft(String text) async {
+  Future<bool> updateClozeDraft(
+    String text, {
+    int hintLevel = 0,
+    List<String> revealedTokens = const [],
+    bool answerRevealed = false,
+  }) async {
     if (_mode != ChatMode.quizWord || !wordQuizUsesComposer || _wordQuizSolved) {
       return false;
     }
@@ -671,7 +685,11 @@ class ChatSessionController extends ChangeNotifier {
     }
     notifyListeners();
     if (allWordsMatched) {
-      unawaited(_finalizeClozeSubmission());
+      unawaited(_finalizeClozeSubmission(
+        hintLevel: hintLevel,
+        revealedTokens: revealedTokens,
+        answerRevealed: answerRevealed,
+      ));
     }
     return true;
   }
@@ -679,10 +697,19 @@ class ChatSessionController extends ChangeNotifier {
   /// Records the already-confirmed-correct cloze answer for real grading/SRS.
   /// Runs after the UI has already moved on, so a slow or failed request
   /// can't undo the learner-visible completion.
-  Future<void> _finalizeClozeSubmission() async {
+  Future<void> _finalizeClozeSubmission({
+    int hintLevel = 0,
+    List<String> revealedTokens = const [],
+    bool answerRevealed = false,
+  }) async {
     final answer = _clozeCompletedWords.join(' ');
     try {
-      final result = await submitWordQuiz(answer: answer);
+      final result = await submitWordQuiz(
+        answer: answer,
+        hintLevel: hintLevel,
+        revealedTokens: revealedTokens,
+        answerRevealed: answerRevealed,
+      );
       if (result != null) {
         _quizFeedback = result;
         notifyListeners();

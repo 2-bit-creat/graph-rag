@@ -15,7 +15,7 @@ from ..pipeline_runner import (
     run_journal_text_pipeline,
 )
 from ..pipeline_trace import PipelineTracer
-from ..workers.quiz_refill import refill_user_quizzes
+from ..quiz_generation_runs import create_generation_run, process_generation_run
 from ..quiz_pipeline import run_quiz_generate_pipeline
 from ..quiz_types import ENABLED_QUIZ_TYPES, validate_quiz_type
 from ..speaker_confirmation import (
@@ -516,9 +516,20 @@ async def apply_entry_graph(
             pipeline_trace=trace,
         )
 
-    # Quizzes are generated straight from Statement nodes (no expression
-    # extraction). Top up the per-language quiz queues off the confirmed graph.
-    background_tasks.add_task(refill_user_quizzes, user.id)
+    statement_node_ids = [
+        uuid.UUID(value) for value in (summary.get("statement_node_ids") or [])
+    ]
+    if getattr(user, "auto_generate_quizzes", False) and statement_node_ids:
+        run, created = await create_generation_run(
+            session,
+            user,
+            node_ids=statement_node_ids,
+            languages=crud.get_effective_target_languages(user),
+            idempotency_key=f"auto:journal:{entry_id}",
+            source="auto",
+        )
+        if created:
+            background_tasks.add_task(process_generation_run, run.id)
 
     return GraphBuildOut(
         entry_id=entry_id,

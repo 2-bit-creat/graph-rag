@@ -15,14 +15,12 @@ Map<String, dynamic> quizOnlyTrace(Map<String, dynamic> trace) {
   layoutCopy['nodes'] = (layout['nodes'] as List<dynamic>? ?? [])
       .where((n) => (n as Map)['phase']?.toString() == 'quiz_path')
       .toList();
-  layoutCopy['edges'] = (layout['edges'] as List<dynamic>? ?? [])
-      .where((e) {
-        final edge = e as Map;
-        final src = edge['source']?.toString() ?? '';
-        final tgt = edge['target']?.toString() ?? '';
-        return src.startsWith('quiz_') || tgt.startsWith('quiz_');
-      })
-      .toList();
+  layoutCopy['edges'] = (layout['edges'] as List<dynamic>? ?? []).where((e) {
+    final edge = e as Map;
+    final src = edge['source']?.toString() ?? '';
+    final tgt = edge['target']?.toString() ?? '';
+    return src.startsWith('quiz_') || tgt.startsWith('quiz_');
+  }).toList();
   layoutCopy['phases'] = (layout['phases'] as List<dynamic>? ?? [])
       .where((p) => (p as Map)['id']?.toString() == 'quiz_path')
       .toList();
@@ -61,6 +59,7 @@ class QuizPipelinePanel extends StatefulWidget {
     this.canvasKey,
     this.onAfterGenerate,
     this.onQuizDeleted,
+    this.showGenerator = true,
     // Legacy — ignored
     this.onFreedomChanged,
     this.isFreedomOn,
@@ -79,6 +78,7 @@ class QuizPipelinePanel extends StatefulWidget {
   final GlobalKey<PipelineTraceCanvasState>? canvasKey;
   final Future<void> Function(String quizId)? onAfterGenerate;
   final Future<void> Function(String quizId)? onQuizDeleted;
+  final bool showGenerator;
   // Legacy (ignored)
   final Future<void> Function(bool)? onFreedomChanged;
   final bool? isFreedomOn;
@@ -94,8 +94,8 @@ class _QuizPipelinePanelState extends State<QuizPipelinePanel> {
   bool _blueprintLoading = true;
   String? _blueprintError;
   String? _generating;
-  String? _selectedLanguage;  // null = first target language from profile
-  String? _selectedVocabId;   // null = auto (default:language)
+  String? _selectedLanguage; // null = first target language from profile
+  String? _selectedVocabId; // null = auto (default:language)
   final _artifactCache = <String, String>{};
 
   @override
@@ -129,15 +129,15 @@ class _QuizPipelinePanelState extends State<QuizPipelinePanel> {
             'flow_layout': layout,
           });
           final nodes =
-              (filtered['flow_layout'] as Map?)?['nodes'] as List<dynamic>? ?? [];
+              (filtered['flow_layout'] as Map?)?['nodes'] as List<dynamic>? ??
+                  [];
           if (nodes.isNotEmpty) trace = filtered;
         }
       } catch (_) {}
     }
 
     if (trace == null) {
-      error =
-          'Quiz Path 파이프라인을 불러올 수 없습니다.\n'
+      error = 'Quiz Path 파이프라인을 불러올 수 없습니다.\n'
           '백엔드를 최신 코드로 재시작했는지 확인하세요.';
     }
 
@@ -230,7 +230,9 @@ class _QuizPipelinePanelState extends State<QuizPipelinePanel> {
       if (!mounted) return;
       widget.canvasKey?.currentState?.focusQuizPath();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${quizTypeLabel(quizType)} 생성 완료 · Lv.${result['difficulty_level']}')),
+        SnackBar(
+            content: Text(
+                '${quizTypeLabel(quizType)} 생성 완료 · Lv.${result['difficulty_level']}')),
       );
     } catch (e) {
       if (mounted) {
@@ -272,29 +274,31 @@ class _QuizPipelinePanelState extends State<QuizPipelinePanel> {
           AppSpacing.xxl,
         ),
         children: [
-          QuizGraphGenerateCard(
-            profile: widget.profile,
-            generating: _generating,
-            vocabularies: widget.vocabularies,
-            selectedLanguage: _selectedLanguage,
-            selectedVocabId: _selectedVocabId,
-            onLanguageChanged: (lang) => setState(() {
-              _selectedLanguage = lang;
-              _selectedVocabId = null; // reset vocab when language changes
-            }),
-            onVocabChanged: (v) => setState(() => _selectedVocabId = v),
-            onGenerate: _generate,
-            onPlay: (type) => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => QuizSessionScreen(
-                  quizType: type,
-                  vocabSource: _selectedVocabId,
+          if (widget.showGenerator) ...[
+            QuizGraphGenerateCard(
+              profile: widget.profile,
+              generating: _generating,
+              vocabularies: widget.vocabularies,
+              selectedLanguage: _selectedLanguage,
+              selectedVocabId: _selectedVocabId,
+              onLanguageChanged: (lang) => setState(() {
+                _selectedLanguage = lang;
+                _selectedVocabId = null;
+              }),
+              onVocabChanged: (v) => setState(() => _selectedVocabId = v),
+              onGenerate: _generate,
+              onPlay: (type) => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => QuizSessionScreen(
+                    quizType: type,
+                    vocabSource: _selectedVocabId,
+                  ),
                 ),
               ),
             ),
-          ),
-          const SizedBox(height: AppSpacing.xl),
+            const SizedBox(height: AppSpacing.xl),
+          ],
           AppSectionHeader(
             title: 'Quiz Path 파이프라인',
             subtitle: widget.selected != null
@@ -386,44 +390,46 @@ class _QuizPipelinePanelState extends State<QuizPipelinePanel> {
                           .withValues(alpha: 0.35)
                       : null,
                   child: ListTile(
-                  dense: true,
-                  title: Text(
-                    item['context_sentence']?.toString() ?? '(문제)',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                  subtitle: Text(_itemSubtitle(item)),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        tooltip: '풀기',
-                        icon: const Icon(Icons.play_circle_outline, size: 22),
-                        onPressed: id.isEmpty
-                            ? null
-                            : () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => QuizSessionScreen(
-                                      quizType: type,
-                                      quizIds: [id],
+                    dense: true,
+                    title: Text(
+                      item['context_sentence']?.toString() ?? '(문제)',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                    subtitle: Text(_itemSubtitle(item)),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          tooltip: '풀기',
+                          icon: const Icon(Icons.play_circle_outline, size: 22),
+                          onPressed: id.isEmpty
+                              ? null
+                              : () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => QuizSessionScreen(
+                                        quizType: type,
+                                        quizIds: [id],
+                                      ),
                                     ),
                                   ),
-                                ),
-                      ),
-                      IconButton(
-                        tooltip: '삭제',
-                        icon: const Icon(Icons.delete_outline, size: 20),
-                        onPressed: id.isEmpty ? null : () => _confirmDelete(id),
-                      ),
-                      if (selected)
-                        Icon(Icons.check_circle,
-                            size: 18, color: Theme.of(context).colorScheme.primary),
-                    ],
+                        ),
+                        IconButton(
+                          tooltip: '삭제',
+                          icon: const Icon(Icons.delete_outline, size: 20),
+                          onPressed:
+                              id.isEmpty ? null : () => _confirmDelete(id),
+                        ),
+                        if (selected)
+                          Icon(Icons.check_circle,
+                              size: 18,
+                              color: Theme.of(context).colorScheme.primary),
+                      ],
+                    ),
+                    onTap: id.isEmpty ? null : () => widget.onSelect?.call(id),
                   ),
-                  onTap: id.isEmpty ? null : () => widget.onSelect?.call(id),
-                ),
                 ),
               );
             }),
@@ -453,7 +459,8 @@ class _SelectedQuizCard extends StatelessWidget {
         children: [
           Text(
             item['context_sentence']?.toString() ?? '(문제)',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(height: 1.4),
+            style:
+                Theme.of(context).textTheme.bodyMedium?.copyWith(height: 1.4),
           ),
           const SizedBox(height: AppSpacing.md),
           Row(
@@ -468,7 +475,8 @@ class _SelectedQuizCard extends StatelessWidget {
                             context,
                             MaterialPageRoute(
                               builder: (_) => QuizSessionScreen(
-                                quizType: item['quiz_type']?.toString() ?? 'cloze',
+                                quizType:
+                                    item['quiz_type']?.toString() ?? 'cloze',
                                 quizIds: [id],
                               ),
                             ),
@@ -522,18 +530,23 @@ class QuizGraphGenerateCard extends StatelessWidget {
   static const _buttons = [
     (type: 'cloze', icon: Icons.spellcheck, label: '단어 완성 퀴즈', primary: true),
     (type: 'scramble', icon: Icons.reorder, label: '문장 배열 퀴즈', primary: false),
-    (type: 'mcq_nuance', icon: Icons.psychology_alt, label: '뉘앙스 선택 퀴즈', primary: false),
+    (
+      type: 'mcq_nuance',
+      icon: Icons.psychology_alt,
+      label: '뉘앙스 선택 퀴즈',
+      primary: false
+    ),
   ];
 
   static const _kLangMeta = {
-    'english':    (label: '영어 🇺🇸'),
-    'german':     (label: '독일어 🇩🇪'),
-    'japanese':   (label: '일본어 🇯🇵'),
-    'chinese':    (label: '중국어 🇨🇳'),
-    'spanish':    (label: '스페인어 🇪🇸'),
-    'french':     (label: '프랑스어 🇫🇷'),
+    'english': (label: '영어 🇺🇸'),
+    'german': (label: '독일어 🇩🇪'),
+    'japanese': (label: '일본어 🇯🇵'),
+    'chinese': (label: '중국어 🇨🇳'),
+    'spanish': (label: '스페인어 🇪🇸'),
+    'french': (label: '프랑스어 🇫🇷'),
     'portuguese': (label: '포르투갈어 🇧🇷'),
-    'italian':    (label: '이탈리아어 🇮🇹'),
+    'italian': (label: '이탈리아어 🇮🇹'),
   };
 
   String get _settingsHint {
@@ -626,16 +639,19 @@ class QuizGraphGenerateCard extends StatelessWidget {
                   color: AppColors.hubQuiz.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(Icons.auto_awesome_rounded, color: AppColors.hubQuiz, size: 22),
+                child: const Icon(Icons.auto_awesome_rounded,
+                    color: AppColors.hubQuiz, size: 22),
               ),
               const SizedBox(width: AppSpacing.md),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('문제 생성', style: Theme.of(context).textTheme.titleSmall),
+                    Text('문제 생성',
+                        style: Theme.of(context).textTheme.titleSmall),
                     if (_settingsHint.isNotEmpty)
-                      Text(_settingsHint, style: Theme.of(context).textTheme.bodySmall),
+                      Text(_settingsHint,
+                          style: Theme.of(context).textTheme.bodySmall),
                   ],
                 ),
               ),
@@ -648,13 +664,16 @@ class QuizGraphGenerateCard extends StatelessWidget {
             const SizedBox(height: 4),
             Wrap(
               spacing: 6,
-              children: langs.map((l) => ChoiceChip(
-                label: Text(l.label, style: const TextStyle(fontSize: 12)),
-                selected: effectiveLang == l.key,
-                onSelected: generating != null
-                    ? null
-                    : (_) => onLanguageChanged?.call(l.key),
-              )).toList(),
+              children: langs
+                  .map((l) => ChoiceChip(
+                        label:
+                            Text(l.label, style: const TextStyle(fontSize: 12)),
+                        selected: effectiveLang == l.key,
+                        onSelected: generating != null
+                            ? null
+                            : (_) => onLanguageChanged?.call(l.key),
+                      ))
+                  .toList(),
             ),
           ],
           // ── Vocab set selector ───────────────────────────────────────────
@@ -669,21 +688,26 @@ class QuizGraphGenerateCard extends StatelessWidget {
           else
             DropdownButtonFormField<String>(
               key: ValueKey('$effectiveLang:$effectiveVocabId'),
-              value: effectiveVocabId,
+              initialValue: effectiveVocabId,
               decoration: const InputDecoration(
                 isDense: true,
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               ),
               items: filteredVocabs.map((v) {
                 final id = v['id']?.toString() ?? '';
                 final name = v['name']?.toString() ?? id;
                 final wc = v['word_count'];
                 final label = wc != null ? '$name ($wc개)' : name;
-                return DropdownMenuItem(value: id, child: Text(label, overflow: TextOverflow.ellipsis));
+                return DropdownMenuItem(
+                    value: id,
+                    child: Text(label, overflow: TextOverflow.ellipsis));
               }).toList(),
               onChanged: generating != null
                   ? null
-                  : (v) { if (v != null) onVocabChanged?.call(v); },
+                  : (v) {
+                      if (v != null) onVocabChanged?.call(v);
+                    },
             ),
           const SizedBox(height: AppSpacing.sm),
           // ── Quiz type buttons ────────────────────────────────────────────
@@ -741,7 +765,8 @@ class _QuizTypeRow extends StatelessWidget {
                       : Icon(icon, size: 18),
                   label: Text(label, style: const TextStyle(fontSize: 13)),
                   style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
                   ),
                 )
               : OutlinedButton.icon(
@@ -755,7 +780,8 @@ class _QuizTypeRow extends StatelessWidget {
                       : Icon(icon, size: 18),
                   label: Text(label, style: const TextStyle(fontSize: 13)),
                   style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
                   ),
                 ),
         ),

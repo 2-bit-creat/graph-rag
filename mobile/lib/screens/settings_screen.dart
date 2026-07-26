@@ -10,7 +10,6 @@ import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import 'privacy_policy_screen.dart';
-import 'quiz_queue_screen.dart';
 
 // ─── Static data ──────────────────────────────────────────────────────────────
 
@@ -40,13 +39,20 @@ String _cefrLabel(int level) {
 
 Color _cefrColor(String cefr) {
   switch (cefr) {
-    case 'Pre-A1~A1': return Colors.grey;
-    case 'A2':        return Colors.green.shade600;
-    case 'B1':        return Colors.teal.shade600;
-    case 'B2':        return Colors.blue.shade600;
-    case 'C1':        return Colors.purple.shade600;
-    case 'C2':        return Colors.red.shade700;
-    default:          return Colors.grey;
+    case 'Pre-A1~A1':
+      return Colors.grey;
+    case 'A2':
+      return Colors.green.shade600;
+    case 'B1':
+      return Colors.teal.shade600;
+    case 'B2':
+      return Colors.blue.shade600;
+    case 'C1':
+      return Colors.purple.shade600;
+    case 'C2':
+      return Colors.red.shade700;
+    default:
+      return Colors.grey;
   }
 }
 
@@ -164,17 +170,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final profile = await apiClient.getQuizProfile();
       if (mounted) {
         setState(() {
-final rawLangs = profile['target_languages'];
+          final rawLangs = profile['target_languages'];
           if (rawLangs is List && rawLangs.isNotEmpty) {
             _targetLanguages = rawLangs.map((e) => e.toString()).toSet();
           } else {
-            _targetLanguages = {profile['target_language']?.toString() ?? 'english'};
+            _targetLanguages = {
+              profile['target_language']?.toString() ?? 'english'
+            };
           }
           _nativeLanguage = profile['native_language']?.toString() ?? 'korean';
-          _dailyClozeTarget = (profile['daily_cloze_target'] as num?)?.toDouble() ?? 20;
+          _dailyClozeTarget =
+              (profile['daily_cloze_target'] as num?)?.toDouble() ?? 20;
           _dailyCompositionTarget =
               (profile['daily_composition_target'] as num?)?.toDouble() ?? 5;
-          _quizReviewRatio = (profile['quiz_review_ratio'] as num?)?.toDouble() ?? 0.5;
+          _quizReviewRatio =
+              (profile['quiz_review_ratio'] as num?)?.toDouble() ?? 0.5;
           // Sync the app UI language to the loaded native language.
           appLocaleController.setFromNativeLanguage(_nativeLanguage);
 
@@ -274,8 +284,12 @@ final rawLangs = profile['target_languages'];
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('common.later'))),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr('settings.runNow'))),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(tr('common.later'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(tr('settings.runNow'))),
         ],
       ),
     );
@@ -306,7 +320,10 @@ final rawLangs = profile['target_languages'];
           ? const AppLoadingScreen()
           : ListView(
               padding: const EdgeInsets.fromLTRB(
-                AppSpacing.pageH, AppSpacing.md, AppSpacing.pageH, AppSpacing.xxl,
+                AppSpacing.pageH,
+                AppSpacing.md,
+                AppSpacing.pageH,
+                AppSpacing.xxl,
               ),
               children: [
                 // ── Native language ─────────────────────────────────────────
@@ -316,24 +333,28 @@ final rawLangs = profile['target_languages'];
                   child: Wrap(
                     spacing: AppSpacing.sm,
                     runSpacing: AppSpacing.xs,
-                    children: _kNativeLanguages.map((lang) => ChoiceChip(
-                      label: Text(lang.label),
-                      selected: _nativeLanguage == lang.key,
-                      onSelected: _saving
-                          ? null
-                          : (_) => setState(() {
-                                _nativeLanguage = lang.key;
-                                // A learner can't "learn" their own native
-                                // language — drop it if it was already picked
-                                // as a target.
-                                if (_targetLanguages.remove(lang.key) &&
-                                    _targetLanguages.isEmpty) {
-                                  _targetLanguages.add(
-                                    _kLanguages(forNative: lang.key).first.key,
-                                  );
-                                }
-                              }),
-                    )).toList(),
+                    children: _kNativeLanguages
+                        .map((lang) => ChoiceChip(
+                              label: Text(lang.label),
+                              selected: _nativeLanguage == lang.key,
+                              onSelected: _saving
+                                  ? null
+                                  : (_) => setState(() {
+                                        _nativeLanguage = lang.key;
+                                        // A learner can't "learn" their own native
+                                        // language — drop it if it was already picked
+                                        // as a target.
+                                        if (_targetLanguages.remove(lang.key) &&
+                                            _targetLanguages.isEmpty) {
+                                          _targetLanguages.add(
+                                            _kLanguages(forNative: lang.key)
+                                                .first
+                                                .key,
+                                          );
+                                        }
+                                      }),
+                            ))
+                        .toList(),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.md),
@@ -348,10 +369,12 @@ final rawLangs = profile['target_languages'];
                       Wrap(
                         spacing: AppSpacing.sm,
                         runSpacing: AppSpacing.xs,
-                        children: _kLanguages(forNative: _nativeLanguage).map((lang) {
+                        children:
+                            _kLanguages(forNative: _nativeLanguage).map((lang) {
                           final selected = _targetLanguages.contains(lang.key);
                           return FilterChip(
-                            avatar: const Icon(Icons.language_rounded, size: 16),
+                            avatar:
+                                const Icon(Icons.language_rounded, size: 16),
                             label: Text(lang.label),
                             selected: selected,
                             onSelected: _saving
@@ -359,7 +382,8 @@ final rawLangs = profile['target_languages'];
                                 : (on) => setState(() {
                                       if (on) {
                                         _targetLanguages.add(lang.key);
-                                        _langLevels.putIfAbsent(lang.key, () => 10);
+                                        _langLevels.putIfAbsent(
+                                            lang.key, () => 10);
                                       } else if (_targetLanguages.length > 1) {
                                         _targetLanguages.remove(lang.key);
                                       }
@@ -369,7 +393,8 @@ final rawLangs = profile['target_languages'];
                       ),
                       const SizedBox(height: 16),
                       ..._targetLanguages.map((lang) {
-                        final langInfo = _kLanguages(forNative: _nativeLanguage).firstWhere(
+                        final langInfo =
+                            _kLanguages(forNative: _nativeLanguage).firstWhere(
                           (l) => l.key == lang,
                           orElse: () => (key: lang, label: lang),
                         );
@@ -381,7 +406,8 @@ final rawLangs = profile['target_languages'];
                           cefr: cefr,
                           cefrColor: _cefrColor(cefr),
                           disabled: _saving,
-                          onChanged: (v) => setState(() => _langLevels[lang] = v),
+                          onChanged: (v) =>
+                              setState(() => _langLevels[lang] = v),
                         );
                       }),
                     ],
@@ -389,64 +415,17 @@ final rawLangs = profile['target_languages'];
                 ),
                 const SizedBox(height: AppSpacing.md),
 
-                _SectionCard(
-                  title: tr('settings.dailyQuizGoalTitle'),
-                  subtitle: tr('settings.dailyQuizGoalSubtitle'),
-                  child: Column(
+                const SizedBox(height: AppSpacing.md),
+                AppSurfaceCard(
+                  child: Row(
                     children: [
-                      _QuotaSlider(
-                        label: tr('settings.clozeLabel'),
-                        value: _dailyClozeTarget,
-                        max: 100,
-                        onChanged: (v) => setState(() => _dailyClozeTarget = v),
-                      ),
-                      _QuotaSlider(
-                        label: tr('settings.compositionLabel'),
-                        value: _dailyCompositionTarget,
-                        max: 50,
-                        onChanged: (v) => setState(() => _dailyCompositionTarget = v),
-                      ),
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: Alignment.centerLeft,
+                      const Icon(Icons.local_fire_department_rounded,
+                          color: AppColors.accentWarm),
+                      const SizedBox(width: AppSpacing.md),
+                      const Expanded(
                         child: Text(
-                          tr('settings.reviewRandomRatio', {
-                            'review': (_quizReviewRatio * 100).round(),
-                            'random': (100 - _quizReviewRatio * 100).round(),
-                          }),
-                          style: Theme.of(context).textTheme.titleSmall,
+                          '일일 단어·작문 목표는 ‘내 학습률’에서 설정할 수 있습니다.',
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(tr('settings.reviewRandomExplain')),
-                      ),
-                      Slider(
-                        value: _quizReviewRatio,
-                        onChanged: _saving
-                            ? null
-                            : (v) => setState(() => _quizReviewRatio = v),
-                      ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          for (final preset in [
-                            (0.25, tr('settings.reviewPreset25')),
-                            (0.5, tr('settings.reviewPresetBalanced')),
-                            (0.75, tr('settings.reviewPreset75')),
-                          ]) ...[
-                            _ReviewRatioChoice(
-                              label: preset.$2,
-                              selected: (_quizReviewRatio - preset.$1).abs() < 0.01,
-                              onTap: _saving
-                                  ? null
-                                  : () => setState(
-                                      () => _quizReviewRatio = preset.$1),
-                            ),
-                            if (preset.$1 != 0.75) const SizedBox(height: 8),
-                          ],
-                        ],
                       ),
                     ],
                   ),
@@ -460,26 +439,14 @@ final rawLangs = profile['target_languages'];
                     onPressed: _saving ? null : _save,
                     child: _saving
                         ? const SizedBox(
-                            height: 20, width: 20,
+                            height: 20,
+                            width: 20,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : Text(tr('settings.saveProfileButton')),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.md),
-
-                SizedBox(
-                  height: 52,
-                  child: FilledButton.tonalIcon(
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const QuizQueueScreen()),
-                    ),
-                    icon: const Icon(Icons.inventory_2_outlined),
-                    label: Text(tr('settings.goToQuizQueue')),
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.lg),
 
                 // ── Privacy & data ───────────────────────────────────────────
                 Card(
@@ -545,75 +512,6 @@ final rawLangs = profile['target_languages'];
 
 // ─── Reusable sub-widgets ─────────────────────────────────────────────────────
 
-class _QuotaSlider extends StatelessWidget {
-  const _QuotaSlider({required this.label, required this.value, required this.max, required this.onChanged});
-  final String label;
-  final double value;
-  final double max;
-  final ValueChanged<double> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        SizedBox(width: 72, child: Text(label)),
-        Expanded(child: Slider(value: value, min: 0, max: max, divisions: max.round(), onChanged: onChanged)),
-        SizedBox(width: 30, child: Text('${value.round()}')),
-      ],
-    );
-  }
-}
-
-class _ReviewRatioChoice extends StatelessWidget {
-  const _ReviewRatioChoice({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: selected ? scheme.primaryContainer : scheme.surfaceContainerLow,
-      borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-          child: Row(
-            children: [
-              Icon(
-                selected
-                    ? Icons.check_circle_rounded
-                    : Icons.circle_outlined,
-                size: 18,
-                color: selected ? scheme.primary : scheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    color: selected ? scheme.onPrimaryContainer : scheme.onSurface,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _SectionCard extends StatelessWidget {
   const _SectionCard({
     required this.title,
@@ -640,8 +538,8 @@ class _SectionCard extends StatelessWidget {
                   child: Text(
                     subtitle!,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -685,7 +583,9 @@ class _LangLevelSlider extends StatelessWidget {
               Icon(Icons.translate_rounded,
                   size: 18, color: Theme.of(context).colorScheme.primary),
               const SizedBox(width: 8),
-              Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+              Text(label,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w600, fontSize: 13)),
               const Spacer(),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),

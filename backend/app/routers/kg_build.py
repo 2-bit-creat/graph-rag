@@ -40,7 +40,7 @@ from ..entity_types import (
     normalize_entity_type,
 )
 from ..journal_pipeline import transcribe_audio
-from ..models import JournalGraphLink, Node, SpeakerProfile, User
+from ..models import JournalEntry, JournalGraphLink, Node, SpeakerProfile, User
 from ..speaker_diarization import SpeakerSegment, diarize_audio
 from ..storage import save_audio_workfile
 
@@ -842,6 +842,7 @@ async def kg_commit(
     """
     node_ids: set[str] = set()
     edge_ids: set[str] = set()
+    statement_node_ids: set[str] = set()
 
     occurred_at = _date.today()
     if body.journal_entry_id is not None:
@@ -876,6 +877,7 @@ async def kg_commit(
             occurred_at=occurred_at,
         )
         node_ids.add(str(stmt_node.id))
+        statement_node_ids.add(str(stmt_node.id))
 
         # ── Speaker → Statement ──────────────────────────────────────────────
         edge = await crud.create_edge(
@@ -943,9 +945,24 @@ async def kg_commit(
     except Exception as _eq_exc:
         logger.warning("kg_commit: failed to enqueue expression extraction: %s", _eq_exc)
 
-    from ..workers.quiz_refill import refill_user_quizzes
+    if getattr(user, "auto_generate_quizzes", False) and statement_node_ids:
+        from ..quiz_generation_runs import (
+            create_generation_run,
+            process_generation_run,
+        )
 
-    background_tasks.add_task(refill_user_quizzes, user.id)
+        run, created = await create_generation_run(
+            session,
+            user,
+            node_ids=[_uuid.UUID(value) for value in statement_node_ids],
+            languages=crud.get_effective_target_languages(user),
+            idempotency_key=(
+                f"auto:kg:{body.journal_entry_id or _uuid.uuid4()}"
+            ),
+            source="auto",
+        )
+        if created:
+            background_tasks.add_task(process_generation_run, run.id)
 
     return KgCommitOut(
         ok=True,
@@ -1383,18 +1400,20 @@ async def _persist_claims(
     claims: list[dict],
     context_type: str,
     occurred_at: _date | None = None,
-) -> tuple[set[str], set[str]]:
+) -> tuple[set[str], set[str], set[str]]:
     """Persist claims as (Person|Source)-SPOKE_OR_PUBLISHED->(Statement)-CONTEXT->(Concept).
 
     The head node is a Person for spoken/diary attribution and a Source for
     외부 출처 (매체·기관·AI) attribution — claim["speaker_type"] decides.
-    Returns (node_ids, edge_ids) as string sets. Shared by /kg/commit and the
+    Returns (node_ids, edge_ids, statement_node_ids) as string sets. Shared by
+    /kg/commit and the
     journal-entry graph builder. NEVER creates Vocab nodes (architecture rule #1).
     ``occurred_at`` stamps new Statement nodes with the source entry's date so
     the graph can answer "언제…?" queries (see [[temporal.py]]).
     """
     node_ids: set[str] = set()
     edge_ids: set[str] = set()
+    statement_node_ids: set[str] = set()
 
     for claim in claims:
         speaker_name = (claim.get("speaker") or "").strip()
@@ -1415,6 +1434,7 @@ async def _persist_claims(
             occurred_at=occurred_at,
         )
         node_ids.add(str(stmt_node.id))
+        statement_node_ids.add(str(stmt_node.id))
 
         edge = await crud.create_edge(
             session, source_id=speaker_node.id, target_id=stmt_node.id,
@@ -1432,7 +1452,7 @@ async def _persist_claims(
                 node_ids=node_ids, edge_ids=edge_ids,
             )
 
-    return node_ids, edge_ids
+    return node_ids, edge_ids, statement_node_ids
 
 
 # ─── Journal-entry → Statement graph (used by 내 일기 "지식 그래프 생성") ──────────
@@ -1666,7 +1686,7 @@ async def persist_entry_claims(
             c.setdefault("speaker_type", "Source")
 
     entry_date = entry.created_at.date() if entry is not None and entry.created_at else None
-    node_ids, edge_ids = await _persist_claims(
+    node_ids, edge_ids, statement_node_ids = await _persist_claims(
         session, user_id, claims, context_type, occurred_at=entry_date
     )
     await _link_confirmed_voices_to_nodes(session, user_id, entry_id)
@@ -1699,6 +1719,7 @@ async def persist_entry_claims(
         "node_count": len(node_ids),
         "edge_count": len(edge_ids),
         "context_type": context_type,
+        "statement_node_ids": sorted(statement_node_ids),
     }
 
 
@@ -1843,10 +1864,48 @@ async def kg_stats(
 @router.get("/debug/runs")
 async def kg_debug_runs(
     _user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
     _: None = Depends(require_debug_enabled),
 ) -> list[dict]:
-    """Returns recent KG extract pipeline runs (in-memory, last 50)."""
-    return list(_run_log)
+    """Return recent persisted journal/KG pipeline traces plus legacy extracts.
+
+    The old debug screen only read ``_run_log``, which is populated by the
+    legacy ``POST /kg/extract`` endpoint and is wiped on restart.  The active
+    journal flow persists its trace on ``JournalEntry``, so surface that first.
+    """
+    entries = (
+        await session.scalars(
+            select(JournalEntry)
+            .where(
+                JournalEntry.user_id == _user.id,
+                JournalEntry.pipeline_trace.is_not(None),
+            )
+            .order_by(JournalEntry.created_at.desc())
+            .limit(50)
+        )
+    ).all()
+    persisted: list[dict] = []
+    for entry in entries:
+        trace = entry.pipeline_trace if isinstance(entry.pipeline_trace, dict) else {}
+        if not trace.get("steps"):
+            continue
+        timing = trace.get("timing") if isinstance(trace.get("timing"), dict) else {}
+        persisted.append({
+            "kind": "journal_pipeline",
+            "run_id": trace.get("run_id") or str(entry.id),
+            "entry_id": str(entry.id),
+            "mode": "journal",
+            "timestamp": trace.get("completed_at") or trace.get("started_at") or entry.created_at.isoformat(),
+            "status": trace.get("status") or entry.status,
+            "latency_ms": sum(value for value in timing.values() if isinstance(value, int)),
+            "trace": trace,
+        })
+    legacy = [{**run, "kind": "legacy_extract"} for run in _run_log]
+    return sorted(
+        [*persisted, *legacy],
+        key=lambda run: run.get("timestamp") or "",
+        reverse=True,
+    )[:50]
 
 
 # ─── Calendar data endpoint ────────────────────────────────────────────────────

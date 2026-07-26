@@ -3691,6 +3691,7 @@ async def update_user_profile_settings(
     daily_cloze_target: int | None = None,
     daily_composition_target: int | None = None,
     quiz_review_ratio: float | None = None,
+    auto_generate_quizzes: bool | None = None,
 ) -> User:
     from .level_guidelines import clamp_level
 
@@ -3722,6 +3723,8 @@ async def update_user_profile_settings(
         user.daily_composition_target = max(0, min(100, int(daily_composition_target)))
     if quiz_review_ratio is not None:
         user.quiz_review_ratio = max(0.0, min(1.0, float(quiz_review_ratio)))
+    if auto_generate_quizzes is not None:
+        user.auto_generate_quizzes = bool(auto_generate_quizzes)
     await session.commit()
     await session.refresh(user)
     return user
@@ -4139,7 +4142,9 @@ async def list_quiz_generations(
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[Quiz], int]:
-    filters = [Quiz.user_id == user_id, Quiz.queue_kind != "archived"]
+    # Developer generation history intentionally includes archived versions so
+    # prompt/trace quality can be compared across regenerations.
+    filters = [Quiz.user_id == user_id]
     count_q = select(func.count()).select_from(Quiz).where(*filters)
     total = int((await session.execute(count_q)).scalar_one())
     result = await session.execute(

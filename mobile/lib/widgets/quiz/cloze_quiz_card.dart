@@ -60,6 +60,14 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
   bool? _graded;
   bool _solved = false;
 
+  int get telemetryHintLevel => _hintLevel;
+  bool get telemetryAnswerRevealed => _answerRevealed;
+  List<String> get telemetryRevealedTokens {
+    if (_answerRevealed || _hintLevel >= 2) return [_blank];
+    if (_hintLevel == 1 && _blank.isNotEmpty) return [_blank[0]];
+    return const [];
+  }
+
   @override
   void dispose() {
     _controller.dispose();
@@ -338,6 +346,17 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
     return plain == _blank || accepted.contains(plain);
   }
 
+  bool _isAcceptedAnswer(String raw) {
+    final plain = raw.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+    final accepted = <String>{
+      _blank,
+      for (final value
+          in (widget.quizData['accepted_answers'] as List? ?? const []))
+        value.toString().trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' '),
+    };
+    return accepted.contains(plain);
+  }
+
   void _revealHint() {
     setState(() => _hintLevel = (_hintLevel + 1).clamp(0, 2).toInt());
     // Tapping this button steals keyboard focus from the chat composer below —
@@ -402,9 +421,22 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
       return;
     }
 
-    if (text.toLowerCase() == _blank) {
-      setState(() => _solved = true);
-      widget.onSolved();
+    if (_isAcceptedAnswer(text)) {
+      setState(() => _submitting = true);
+      var correct = false;
+      try {
+        // Persist the corrected answer as its own learning attempt. The old
+        // local-only retry made the final answer and any hints invisible to
+        // developer history and learner progress.
+        correct = await widget.onSubmit(text);
+      } finally {
+        if (mounted) setState(() => _submitting = false);
+      }
+      if (!mounted) return;
+      if (correct) {
+        setState(() => _solved = true);
+        widget.onSolved();
+      }
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

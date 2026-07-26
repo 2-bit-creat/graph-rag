@@ -4,7 +4,6 @@ import '../api/client.dart';
 import '../widgets/app_ui.dart';
 import '../widgets/pipeline_flow_canvas.dart';
 import '../widgets/quiz_pipeline_panel.dart';
-import 'quiz_queue_screen.dart';
 
 class QuizPipelineHubScreen extends StatefulWidget {
   const QuizPipelineHubScreen({super.key, this.initialQuizId});
@@ -20,7 +19,6 @@ class _QuizPipelineHubScreenState extends State<QuizPipelineHubScreen> {
   Map<String, dynamic>? _trace;
   Map<String, dynamic>? _selected;
   Map<String, dynamic>? _profile;
-  List<dynamic> _vocabularies = [];
   bool _loading = true;
   bool _traceLoading = false;
   final _canvasKey = GlobalKey<PipelineTraceCanvasState>();
@@ -37,23 +35,16 @@ class _QuizPipelineHubScreenState extends State<QuizPipelineHubScreen> {
     try {
       final data = await apiClient.listQuizGenerations();
       Map<String, dynamic>? profile;
-      List<dynamic> vocabs = [];
       try {
         profile = await apiClient.getQuizProfile();
       } catch (_) {}
-      try {
-        vocabs = await apiClient.listVocabularies();
-      } catch (_) {}
       if (!mounted) return;
       setState(() {
-        _items = ((data['items'] as List<dynamic>?) ?? [])
-            .where((item) {
-              final type = (item as Map)['quiz_type']?.toString();
-              return type == 'cloze' || type == 'composition';
-            })
-            .toList();
+        _items = ((data['items'] as List<dynamic>?) ?? []).where((item) {
+          final type = (item as Map)['quiz_type']?.toString();
+          return type == 'cloze' || type == 'composition';
+        }).toList();
         _profile = profile;
-        _vocabularies = vocabs;
         _loading = false;
       });
       if (widget.initialQuizId != null && _selected == null) {
@@ -71,12 +62,10 @@ class _QuizPipelineHubScreenState extends State<QuizPipelineHubScreen> {
       final data = await apiClient.listQuizGenerations();
       if (!mounted) return;
       setState(() {
-        _items = ((data['items'] as List<dynamic>?) ?? [])
-            .where((item) {
-              final type = (item as Map)['quiz_type']?.toString();
-              return type == 'cloze' || type == 'composition';
-            })
-            .toList();
+        _items = ((data['items'] as List<dynamic>?) ?? []).where((item) {
+          final type = (item as Map)['quiz_type']?.toString();
+          return type == 'cloze' || type == 'composition';
+        }).toList();
       });
       await _select(quizId);
     } catch (_) {}
@@ -128,19 +117,9 @@ class _QuizPipelineHubScreenState extends State<QuizPipelineHubScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppHubAppBar(
-        title: '문제 생성',
-        subtitle: '개발자 도구 · Quiz Path trace',
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.inventory_2_outlined),
-            tooltip: '학습 큐',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const QuizQueueScreen()),
-            ),
-          ),
-        ],
+      appBar: const AppHubAppBar(
+        title: '생성 이력',
+        subtitle: 'Quiz Path trace · 보관된 버전 포함',
       ),
       body: _loading
           ? const AppLoadingScreen(message: '생성 기록 불러오는 중…')
@@ -156,6 +135,7 @@ class _QuizPipelineHubScreenState extends State<QuizPipelineHubScreen> {
               onRefresh: () => _load(silent: true),
               onAfterGenerate: _afterGenerate,
               onQuizDeleted: _onQuizDeleted,
+              showGenerator: false,
             ),
     );
   }

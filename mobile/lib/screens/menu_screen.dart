@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../auth/account_controller.dart';
@@ -7,9 +8,10 @@ import '../theme/app_theme_controller.dart';
 import '../widgets/app_ui.dart';
 import 'accounts_overview_screen.dart';
 import 'pipeline_debug_hub_screen.dart';
-import 'quiz_generation_screen.dart';
-import 'quiz_pipeline_hub_screen.dart';
+import 'quiz_queue_screen.dart';
 import 'kg_debug_screen.dart';
+import 'kg_insight_screen.dart';
+import 'learning_progress_screen.dart';
 import 'settings_screen.dart';
 import 'vocabulary_hub_screen.dart';
 
@@ -52,6 +54,7 @@ class _MenuScreenState extends State<MenuScreen> {
       ),
     );
     if (ok != true) return;
+    if (!mounted) return;
     final nav = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
     try {
@@ -71,7 +74,10 @@ class _MenuScreenState extends State<MenuScreen> {
       appBar: AppBar(title: Text(tr('menu.accountSettingsTitle'))),
       body: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(
-          AppSpacing.pageH, AppSpacing.pageV, AppSpacing.pageH, AppSpacing.xxl,
+          AppSpacing.pageH,
+          AppSpacing.pageV,
+          AppSpacing.pageH,
+          AppSpacing.xxl,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -90,9 +96,32 @@ class _MenuScreenState extends State<MenuScreen> {
               color: AppColors.hubQuiz,
               onTap: () => _open(const VocabularyHubScreen()),
             ),
+            const SizedBox(height: AppSpacing.sm),
+            AppHubTile(
+              icon: Icons.local_fire_department_rounded,
+              title: '내 학습률',
+              subtitle: '오늘의 목표 · XP · 연속 학습 · 성장 배지',
+              color: AppColors.accentWarm,
+              onTap: () => _open(const LearningProgressScreen()),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            AppHubTile(
+              icon: Icons.insights_outlined,
+              title: '기록 인사이트',
+              subtitle: 'Statement 작성 활동과 지식 그래프 통계',
+              color: AppColors.hubGraph,
+              onTap: () => _open(
+                Scaffold(
+                  appBar: AppBar(title: const Text('기록 인사이트')),
+                  body: const KgInsightScreen(),
+                ),
+              ),
+            ),
             const SizedBox(height: AppSpacing.xl),
 
-            AppSectionHeader(title: tr('account.switch'), subtitle: accountController.current ?? ''),
+            AppSectionHeader(
+                title: tr('account.switch'),
+                subtitle: accountController.current ?? ''),
             const SizedBox(height: AppSpacing.sm),
             AppHubTile(
               icon: Icons.switch_account_rounded,
@@ -117,6 +146,7 @@ class _MenuScreenState extends State<MenuScreen> {
 
             // 설정 진입점은 상단 프로필 헤더가 겸한다(중복 타일 제거).
             // ── 개발자 도구 (접힘, 잠금 없음) ─────────────────────────────
+            if (kDebugMode) ...[
             Material(
               color: Colors.transparent,
               child: InkWell(
@@ -130,7 +160,7 @@ class _MenuScreenState extends State<MenuScreen> {
                       const Expanded(
                         child: AppSectionHeader(
                           title: '개발자 도구',
-                          subtitle: '문제 생성 · 파이프라인 디버그',
+                          subtitle: '퀴즈 품질 · 파이프라인 디버그',
                         ),
                       ),
                       Icon(
@@ -147,11 +177,11 @@ class _MenuScreenState extends State<MenuScreen> {
             if (_devToolsExpanded) ...[
               const SizedBox(height: AppSpacing.md),
               AppHubTile(
-                icon: Icons.auto_fix_high_rounded,
-                title: '문제 생성',
-                subtitle: '일기 기반 작문 문제 만들기 · 대기 큐 관리',
+                icon: Icons.playlist_add_check_rounded,
+                title: '퀴즈 큐',
+                subtitle: '문제 관리 · Statement 선택 생성 · Quiz Path trace',
                 color: AppColors.hubQuiz,
-                onTap: () => _open(const QuizGenerationScreen()),
+                onTap: () => _open(const QuizQueueScreen()),
               ),
               const SizedBox(height: AppSpacing.sm),
               AppHubTile(
@@ -160,14 +190,6 @@ class _MenuScreenState extends State<MenuScreen> {
                 subtitle: '음성·텍스트 기록별 처리 trace · GraphRAG 단계',
                 color: AppColors.hubVoice,
                 onTap: () => _open(const PipelineDebugHubScreen()),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              AppHubTile(
-                icon: Icons.quiz_outlined,
-                title: 'Quiz Path',
-                subtitle: '지식 그래프 · Quiz Path trace',
-                color: AppColors.hubQuiz,
-                onTap: () => _open(const QuizPipelineHubScreen()),
               ),
               const SizedBox(height: AppSpacing.sm),
               AppHubTile(
@@ -190,6 +212,7 @@ class _MenuScreenState extends State<MenuScreen> {
                 color: AppColors.hubGraph,
                 onTap: () => _open(const AccountsOverviewScreen()),
               ),
+            ],
             ],
           ],
         ),
@@ -258,7 +281,8 @@ class _ThemeModeTile extends StatelessWidget {
                                 .titleSmall
                                 ?.copyWith(fontWeight: FontWeight.w700)),
                         const SizedBox(height: 2),
-                        Text(dark ? tr('menu.nightMode') : tr('menu.normalMode'),
+                        Text(
+                            dark ? tr('menu.nightMode') : tr('menu.normalMode'),
                             style: Theme.of(context)
                                 .textTheme
                                 .bodySmall

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import crud
@@ -19,11 +20,11 @@ from ..composition_quiz import (
 )
 from ..config import get_settings
 from ..db import get_session
-from ..deps import request_user_dep
+from ..deps import request_user_dep, require_debug_enabled
 from ..languages import DEFAULT_NATIVE, SUPPORTED_NATIVE, valid_target_for_native
 from ..level_adjuster import reclassify_queue_by_level
 from ..level_guidelines import cefr_label, window_for_level
-from ..models import User
+from ..models import Quiz, QuizAttempt, QuizGenerationRun, User
 from ..pipeline_flow import build_quiz_only_flow_layout
 from ..quiz_bundle import BundleSeedError, generate_quiz_bundle
 from ..quiz_pipeline import (
@@ -31,7 +32,19 @@ from ..quiz_pipeline import (
     trace_quiz_sm2_update,
 )
 from ..quiz_presenter import quiz_queue_item_dict
+from ..quiz_generation_runs import (
+    create_generation_run,
+    list_generation_runs,
+    process_generation_run,
+    run_dict,
+)
 from ..quiz_queue import build_session, count_queues, grade_answer, pick_quizzes_by_ids, record_quiz_result
+from ..quiz_progress import (
+    DEFAULT_TIMEZONE,
+    add_attempt,
+    dashboard as progress_dashboard,
+    find_idempotent_attempt,
+)
 from ..quiz_batch import create_extra_daily_batch, fill_user_daily_batches
 from ..quiz_audio_engine import resolve_quiz_tts_text, synthesize_quiz_audio
 from ..quiz_settings import quiz_selection_settings
@@ -46,11 +59,19 @@ from ..schemas import (
     QuizGenerateOut,
     QuizGenerateRequest,
     QuizGenerationListOut,
+    QuizGenerationRunCreateRequest,
+    QuizGenerationRunListOut,
+    QuizGenerationRunOut,
+    QuizGenerationRunRetryRequest,
     QuizGenerationTraceOut,
     QuizExplorationListOut,
     QuizItemOut,
     QuizQueueItemOut,
     QuizQueueListOut,
+    QuizAdminDetailOut,
+    QuizAdminListOut,
+    QuizAttemptOut,
+    QuizProgressDashboardOut,
     QuizSessionOut,
     QuizSessionRequest,
     QuizSubmitRequest,
@@ -59,6 +80,26 @@ from ..schemas import (
 from ..workers.quiz_refill import refill_user_quizzes
 
 router = APIRouter(prefix="/quiz", tags=["quiz"])
+
+
+def _attempt_out(attempt: QuizAttempt) -> QuizAttemptOut:
+    return QuizAttemptOut(
+        id=attempt.id,
+        quiz_id=attempt.quiz_id,
+        quiz_type=attempt.quiz_type,
+        language=attempt.language,
+        queue_kind=attempt.queue_kind,
+        answer_payload=attempt.answer_payload,
+        correct=attempt.correct,
+        quality=attempt.quality,
+        tutor_feedback=attempt.tutor_feedback,
+        hint_level=attempt.hint_level,
+        revealed_tokens=list(attempt.revealed_tokens or []),
+        answer_revealed=attempt.answer_revealed,
+        xp_awarded=attempt.xp_awarded,
+        source=attempt.source,
+        answered_at=attempt.answered_at,
+    )
 
 
 def _quiz_audio_url(quiz) -> str | None:
@@ -110,6 +151,9 @@ async def get_profile(
         daily_cloze_target=user.daily_cloze_target,
         daily_composition_target=user.daily_composition_target,
         quiz_review_ratio=user.quiz_review_ratio,
+        auto_generate_quizzes=bool(
+            getattr(user, "auto_generate_quizzes", False)
+        ),
         daily_progress_by_language=daily_progress,
     )
 
@@ -175,11 +219,114 @@ async def list_queue_items(
     )
 
 
+@router.get("/admin/items", response_model=QuizAdminListOut)
+async def list_admin_quiz_items(
+    queue_kinds: list[Literal["new", "review"]] | None = Query(None),
+    quiz_types: list[Literal["cloze", "composition"]] | None = Query(None),
+    languages: list[str] | None = Query(None),
+    tracks: list[Literal["daily", "pinned"]] | None = Query(None),
+    include_archived: bool = False,
+    sort: Literal["created_desc", "created_asc", "studied_desc"] = "created_desc",
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_debug_enabled),
+) -> QuizAdminListOut:
+    filters = [
+        Quiz.user_id == user.id,
+        Quiz.quiz_type.in_(("cloze", "composition")),
+    ]
+    if not include_archived:
+        filters.append(Quiz.queue_kind != "archived")
+    if queue_kinds:
+        filters.append(Quiz.queue_kind.in_(queue_kinds))
+    if quiz_types:
+        filters.append(Quiz.quiz_type.in_(quiz_types))
+    if languages:
+        filters.append(func.lower(Quiz.language).in_([v.lower() for v in languages]))
+    if tracks:
+        filters.append(Quiz.track.in_(tracks))
+    ordering = {
+        "created_desc": Quiz.created_at.desc(),
+        "created_asc": Quiz.created_at.asc(),
+        "studied_desc": Quiz.last_answered_at.desc().nullslast(),
+    }[sort]
+    total = int(
+        await session.scalar(select(func.count()).select_from(Quiz).where(*filters))
+        or 0
+    )
+    items = list(
+        (
+            await session.scalars(
+                select(Quiz)
+                .where(*filters)
+                .order_by(ordering, Quiz.created_at.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+        ).all()
+    )
+    node_ids = {node_id for item in items for node_id in (item.source_nodes or [])}
+    names = await crud.get_node_names(session, node_ids)
+    return QuizAdminListOut(
+        items=[QuizQueueItemOut(**quiz_queue_item_dict(item, names)) for item in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/admin/items/{quiz_id}", response_model=QuizAdminDetailOut)
+async def get_admin_quiz_item(
+    quiz_id: uuid.UUID,
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_debug_enabled),
+) -> QuizAdminDetailOut:
+    quiz = await crud.get_quiz(session, quiz_id, user.id)
+    if quiz is None:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    names = await crud.get_node_names(session, set(quiz.source_nodes or []))
+    attempts = list(
+        (
+            await session.scalars(
+                select(QuizAttempt)
+                .where(
+                    QuizAttempt.user_id == user.id,
+                    QuizAttempt.quiz_id == quiz.id,
+                )
+                .order_by(QuizAttempt.answered_at.desc())
+            )
+        ).all()
+    )
+    return QuizAdminDetailOut(
+        item=QuizQueueItemOut(**quiz_queue_item_dict(quiz, names)),
+        attempts=[_attempt_out(attempt) for attempt in attempts],
+        generation_key=quiz.generation_key,
+        pipeline_trace=quiz.pipeline_trace,
+        debug_run_dir=quiz.debug_run_dir,
+        source_node_ids=list(quiz.source_nodes or []),
+    )
+
+
+@router.get("/progress/dashboard", response_model=QuizProgressDashboardOut)
+async def get_progress_dashboard(
+    timezone: str = Query(DEFAULT_TIMEZONE, min_length=1, max_length=80),
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> QuizProgressDashboardOut:
+    return QuizProgressDashboardOut(
+        **await progress_dashboard(session, user, timezone_name=timezone)
+    )
+
+
 @router.get("/queue/explorations", response_model=QuizExplorationListOut)
 async def list_queue_explorations(
     language: str | None = Query(None),
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_debug_enabled),
 ) -> QuizExplorationListOut:
     """Show Statement coverage, including per-language quiz-type counts."""
     languages = (
@@ -250,6 +397,118 @@ async def list_queue_explorations(
     )
 
 
+@router.post("/generation-runs", response_model=QuizGenerationRunOut)
+async def start_generation_run(
+    payload: QuizGenerationRunCreateRequest,
+    background: BackgroundTasks,
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_debug_enabled),
+) -> QuizGenerationRunOut:
+    try:
+        run, created = await create_generation_run(
+            session,
+            user,
+            node_ids=payload.node_ids,
+            languages=payload.languages,
+            idempotency_key=payload.idempotency_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if created:
+        background.add_task(process_generation_run, run.id)
+    return QuizGenerationRunOut(**run_dict(run))
+
+
+@router.get("/generation-runs", response_model=QuizGenerationRunListOut)
+async def get_generation_runs(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_debug_enabled),
+) -> QuizGenerationRunListOut:
+    runs, total = await list_generation_runs(
+        session, user.id, limit=limit, offset=offset
+    )
+    return QuizGenerationRunListOut(
+        items=[QuizGenerationRunOut(**run_dict(run)) for run in runs],
+        total=total,
+    )
+
+
+@router.get("/generation-runs/{run_id}", response_model=QuizGenerationRunOut)
+async def get_generation_run(
+    run_id: uuid.UUID,
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_debug_enabled),
+) -> QuizGenerationRunOut:
+    run = await session.get(QuizGenerationRun, run_id)
+    if run is None or run.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Generation run not found")
+    return QuizGenerationRunOut(**run_dict(run))
+
+
+@router.post(
+    "/generation-runs/{run_id}/retry",
+    response_model=QuizGenerationRunOut,
+)
+async def retry_generation_run(
+    run_id: uuid.UUID,
+    payload: QuizGenerationRunRetryRequest,
+    background: BackgroundTasks,
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_debug_enabled),
+) -> QuizGenerationRunOut:
+    previous = await session.get(QuizGenerationRun, run_id)
+    if previous is None or previous.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Generation run not found")
+    failed = [
+        item for item in (previous.items or []) if item.get("status") == "failed"
+    ]
+    if not failed:
+        raise HTTPException(status_code=409, detail="재시도할 실패 항목이 없습니다.")
+
+    node_ids = list(
+        dict.fromkeys(uuid.UUID(str(item["node_id"])) for item in failed)
+    )
+    languages = list(
+        dict.fromkeys(str(item["language"]).lower() for item in failed)
+    )
+    try:
+        run, created = await create_generation_run(
+            session,
+            user,
+            node_ids=node_ids,
+            languages=languages,
+            idempotency_key=payload.idempotency_key,
+            source="retry",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    failed_pairs = {
+        (str(item["node_id"]), str(item["language"]).lower()) for item in failed
+    }
+    if created:
+        run.items = [
+            item
+            for item in (run.items or [])
+            if (str(item["node_id"]), str(item["language"]).lower())
+            in failed_pairs
+        ]
+        run.node_ids = list(dict.fromkeys(item["node_id"] for item in run.items))
+        run.languages = list(
+            dict.fromkeys(item["language"] for item in run.items)
+        )
+        run.total_count = len(run.items)
+        await session.commit()
+        await session.refresh(run)
+        background.add_task(process_generation_run, run.id)
+    return QuizGenerationRunOut(**run_dict(run))
+
+
 @router.delete("/queue/reset")
 async def reset_quiz_queue(
     user: User = Depends(request_user_dep),
@@ -283,6 +542,7 @@ async def list_generations(
     offset: int = Query(0, ge=0),
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_debug_enabled),
 ) -> QuizGenerationListOut:
     items, total = await crud.list_quiz_generations(
         session, user.id, limit=limit, offset=offset
@@ -427,6 +687,7 @@ async def get_generation_trace(
     quiz_id: uuid.UUID,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_debug_enabled),
 ) -> QuizGenerationTraceOut:
     quiz = await crud.get_quiz(session, quiz_id, user.id)
     if quiz is None:
@@ -456,6 +717,7 @@ async def get_generation_artifact(
     artifact_path: str,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_debug_enabled),
 ) -> FileResponse:
     quiz = await crud.get_quiz(session, quiz_id, user.id)
     if quiz is None:
@@ -532,6 +794,7 @@ async def update_profile_settings(
         daily_cloze_target=payload.daily_cloze_target,
         daily_composition_target=payload.daily_composition_target,
         quiz_review_ratio=payload.quiz_review_ratio,
+        auto_generate_quizzes=payload.auto_generate_quizzes,
     )
     if payload.level is not None and payload.level != prev_level:
         await reclassify_queue_by_level(session, user.id, payload.level)
@@ -633,6 +896,37 @@ async def submit_quiz(
     quiz = await crud.get_quiz(session, quiz_id, user.id)
     if quiz is None:
         raise HTTPException(status_code=404, detail="Quiz not found")
+    idempotency_key = payload.idempotency_key or f"submit-{uuid.uuid4()}"
+    # Serialize identical client retries before checking the unique key. This
+    # prevents two fast taps from both grading/updating SM-2 before one loses
+    # the unique-index race at commit time.
+    await session.execute(
+        select(func.pg_advisory_xact_lock(func.hashtext(idempotency_key)))
+    )
+    existing = await find_idempotent_attempt(session, user.id, idempotency_key)
+    if existing is not None:
+        if existing.quiz_id != quiz.id:
+            raise HTTPException(status_code=409, detail="Idempotency key already used")
+        return QuizSubmitResponse(
+            correct=existing.correct,
+            quality=existing.quality,
+            quiz=_quiz_out(quiz),
+            explanation=(quiz.quiz_data or {}).get("explanation"),
+            tutor_feedback=existing.tutor_feedback,
+            attempt_id=existing.id,
+            xp_awarded=existing.xp_awarded,
+        )
+
+    answer_payload = {
+        key: value
+        for key, value in {
+            "answer": payload.answer,
+            "order": payload.order,
+            "selected_index": payload.selected_index,
+            "entry_id": str(payload.entry_id) if payload.entry_id else None,
+        }.items()
+        if value is not None
+    }
 
     if quiz.quiz_type == "composition":
         qd = quiz.quiz_data or {}
@@ -649,7 +943,26 @@ async def submit_quiz(
             eval_result.get("verdict", "understandable"),
             eval_result.get("quality"),
         )
-        quiz = await record_quiz_result(session, quiz, correct=correct, quality=quality)
+        feedback = merge_composition_feedback(qd, eval_result)
+        attempt = await add_attempt(
+            session,
+            user_id=user.id,
+            quiz=quiz,
+            idempotency_key=idempotency_key,
+            answer_payload=answer_payload,
+            correct=correct,
+            quality=quality,
+            tutor_feedback=feedback,
+            hint_level=payload.hint_level,
+            revealed_tokens=payload.revealed_tokens,
+            answer_revealed=payload.answer_revealed,
+        )
+        quiz = await record_quiz_result(
+            session, quiz, correct=correct, quality=quality, commit=False
+        )
+        await session.commit()
+        await session.refresh(quiz)
+        await session.refresh(attempt)
         await trace_quiz_sm2_update(
             session, quiz_id, user.id, quiz, correct=correct, quality=quality,
         )
@@ -658,12 +971,31 @@ async def submit_quiz(
             quality=quality,
             quiz=_quiz_out(quiz),
             explanation=None,
-            tutor_feedback=merge_composition_feedback(qd, eval_result),
+            tutor_feedback=feedback,
+            attempt_id=attempt.id,
+            xp_awarded=attempt.xp_awarded,
         )
 
-    submit_payload = payload.model_dump(exclude_none=True)
-    correct, quality = grade_answer(quiz, submit_payload)
-    quiz = await record_quiz_result(session, quiz, correct=correct, quality=quality)
+    correct, quality = grade_answer(quiz, answer_payload)
+    attempt = await add_attempt(
+        session,
+        user_id=user.id,
+        quiz=quiz,
+        idempotency_key=idempotency_key,
+        answer_payload=answer_payload,
+        correct=correct,
+        quality=quality,
+        tutor_feedback=None,
+        hint_level=payload.hint_level,
+        revealed_tokens=payload.revealed_tokens,
+        answer_revealed=payload.answer_revealed,
+    )
+    quiz = await record_quiz_result(
+        session, quiz, correct=correct, quality=quality, commit=False
+    )
+    await session.commit()
+    await session.refresh(quiz)
+    await session.refresh(attempt)
 
     await trace_quiz_sm2_update(
         session,
@@ -683,6 +1015,8 @@ async def submit_quiz(
         quality=quality,
         quiz=_quiz_out(quiz),
         explanation=explanation,
+        attempt_id=attempt.id,
+        xp_awarded=attempt.xp_awarded,
     )
 
 
