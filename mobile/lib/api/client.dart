@@ -221,8 +221,11 @@ class ApiClient {
   Exception _friendlyError(DioException e, String action) {
     final status = e.response?.statusCode;
     final detail = e.response?.data?.toString();
+    // A response (including HTTP 500) reached the backend.  Do not hide that
+    // useful fact behind the generic offline message; Dio labels browser/CORS
+    // failures as `unknown`, but actual HTTP failures retain a response.
     if (e.type == DioExceptionType.connectionError ||
-        e.type == DioExceptionType.unknown) {
+        (e.type == DioExceptionType.unknown && e.response == null)) {
       return Exception(tr('client.connectionFailed'));
     }
     if (appLocaleController.isEnglish) {

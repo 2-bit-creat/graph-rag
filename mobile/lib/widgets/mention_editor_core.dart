@@ -261,8 +261,10 @@ class MentionHighlightPainter extends CustomPainter {
   // 스크롤 시 자동 repaint 되게 한다.
   final ScrollController scroll;
 
-  static const _radius = Radius.circular(6);
-  static const _hPad = 3.0;
+  // Confirmed mentions are drawn as compact chips, not selection highlights.
+  static const _radius = Radius.circular(12);
+  static const _hPad = 6.0;
+  static const _vInset = 2.0;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -316,8 +318,12 @@ class MentionHighlightPainter extends CustomPainter {
         final line = lines[lineIndex];
         final top = line.baseline - line.ascent;
         final bottom = line.baseline + line.descent;
-        final rect =
-            Rect.fromLTRB(span[0] - _hPad, top, span[1] + _hPad, bottom);
+        final rect = Rect.fromLTRB(
+          span[0] - _hPad,
+          top + _vInset,
+          span[1] + _hPad,
+          bottom - _vInset,
+        );
         canvas.drawRRect(RRect.fromRectAndRadius(rect, _radius), paint);
       });
     }
@@ -423,8 +429,10 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
 
   /// 매칭 대상 이름: 세션 배지 + 그래프 화자 (긴 이름 우선).
   List<String> matchableNames() {
-    final names = <String>{..._badges, ..._graphSpeakers.map((o) => o.name)};
-    final list = names.toList()..sort((a, b) => b.length.compareTo(a.length));
+    // Graph speakers are suggestions only. A mention becomes active only
+    // after the user explicitly picks a row from the suggestion list.
+    final list = _badges.toList()
+      ..sort((a, b) => b.length.compareTo(a.length));
     return list;
   }
 

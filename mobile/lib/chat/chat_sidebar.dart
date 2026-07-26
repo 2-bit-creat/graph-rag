@@ -7,7 +7,6 @@ import '../screens/kg_insight_screen.dart';
 import '../screens/kg_timeline_screen.dart';
 import '../screens/menu_screen.dart';
 import '../screens/quiz_queue_screen.dart';
-import '../screens/vocabulary_hub_screen.dart';
 import '../theme/app_theme.dart';
 import 'chat_session_controller.dart';
 import 'journal_task_controller.dart';
@@ -138,8 +137,6 @@ class _ChatSidebarState extends State<ChatSidebar> {
           body: const KgInsightScreen(),
         ),
       );
-
-  void _pushVocab() => _push(const VocabularyHubScreen());
 
   void _pushQuizQueue() => _push(const QuizQueueScreen());
 
@@ -291,10 +288,6 @@ class _ChatSidebarState extends State<ChatSidebar> {
             icon: Icons.bar_chart_rounded,
             label: tr('sidebar.reviewTitle'),
             onTap: _pushInsight),
-        _CompactNavTile(
-            icon: Icons.menu_book_rounded,
-            label: tr('sidebar.vocabBank'),
-            onTap: _pushVocab),
         _CompactNavTile(
             icon: Icons.playlist_add_check_rounded,
             label: tr('sidebar.quizQueue'),

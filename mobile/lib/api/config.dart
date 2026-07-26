@@ -8,7 +8,11 @@ const String apiBaseUrl = String.fromEnvironment(
 
 String get resolvedApiBaseUrl {
   if (apiBaseUrl.isNotEmpty) return apiBaseUrl;
-  if (kIsWeb) return 'http://localhost:8000';
+  // Flutter web must call the same host that served the app.  `localhost`
+  // means the phone itself when a development server is opened through its
+  // LAN address (e.g. http://192.168.x.x:5435), so requests never reach the
+  // laptop backend in that case.
+  if (kIsWeb) return 'http://${Uri.base.host}:8000';
   if (defaultTargetPlatform == TargetPlatform.android) {
     return 'http://10.0.2.2:8000';
   }

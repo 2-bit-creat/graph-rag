@@ -11,6 +11,7 @@ import 'quiz_generation_screen.dart';
 import 'quiz_pipeline_hub_screen.dart';
 import 'kg_debug_screen.dart';
 import 'settings_screen.dart';
+import 'vocabulary_hub_screen.dart';
 
 /// 계정 · 설정. 내 일기/돌아보기/단어장/퀴즈 큐 같은 자주 쓰는 목적지는 이제
 /// [ChatSidebar]의 컴팩트 nav 블록에서 바로 열린다 — 여긴 자주 안 쓰는 항목
@@ -78,6 +79,17 @@ class _MenuScreenState extends State<MenuScreen> {
             _ProfileHeader(onTap: () => _open(const SettingsScreen())),
             const SizedBox(height: AppSpacing.md),
             const _ThemeModeTile(),
+            const SizedBox(height: AppSpacing.xl),
+
+            AppSectionHeader(title: tr('menu.myProfile')),
+            const SizedBox(height: AppSpacing.sm),
+            AppHubTile(
+              icon: Icons.menu_book_rounded,
+              title: tr('sidebar.vocabBank'),
+              subtitle: '',
+              color: AppColors.hubQuiz,
+              onTap: () => _open(const VocabularyHubScreen()),
+            ),
             const SizedBox(height: AppSpacing.xl),
 
             AppSectionHeader(title: tr('account.switch'), subtitle: accountController.current ?? ''),

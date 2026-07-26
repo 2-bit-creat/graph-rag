@@ -1,4 +1,6 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:async' show unawaited;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -493,6 +495,14 @@ class _InputBarState extends State<_InputBar> {
 
   bool get _canType => widget.enabled && !widget.busy && !_journalSaving;
 
+  void _showKeyboardFromTap() {
+    // Keep this inside the actual TextField tap. On iOS Safari, focus gained
+    // after an async quiz transition can draw a caret but cannot raise the
+    // software keyboard; a user-gesture-bound request restores that channel.
+    _focusNode.requestFocus();
+    unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.show'));
+  }
+
   void _insertNewline() {
     final value = widget.controller.value;
     final text = value.text;
@@ -747,6 +757,7 @@ class _InputBarState extends State<_InputBar> {
                       controller: widget.controller,
                       focusNode: _focusNode,
                       enabled: canType,
+                      onTap: _showKeyboardFromTap,
                       minLines: 1,
                       // Auto-grows with content up to ~6 lines, then scrolls —
                       // the standard composer behavior; capped so it never

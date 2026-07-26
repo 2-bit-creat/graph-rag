@@ -149,6 +149,10 @@ _MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_composition_target INTEGER NOT NULL DEFAULT 5",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS quiz_review_ratio DOUBLE PRECISION NOT NULL DEFAULT 0.5",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS level_stats JSONB",
+    # Existing installations predate these columns even though new installs
+    # receive them through CREATE TABLE above.
+    "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS question_ko TEXT",
+    "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS sentence_en TEXT",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS difficulty_level INTEGER NOT NULL DEFAULT 10",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS queue_kind TEXT NOT NULL DEFAULT 'new'",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS ease_factor DOUBLE PRECISION NOT NULL DEFAULT 2.5",
@@ -266,6 +270,7 @@ _MIGRATIONS = [
         OR EXISTS (SELECT 1 FROM nodes WHERE nodes.id = speaker_profiles.node_id AND nodes.deleted_at IS NOT NULL)
       )
     """,
+    "ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS distill_state JSONB",
     "ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS summary_state JSONB",
     "CREATE INDEX IF NOT EXISTS idx_alias_embeddings_embedding ON node_alias_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50)",
     "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS occurred_at DATE",

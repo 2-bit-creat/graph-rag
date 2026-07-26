@@ -119,6 +119,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
 
   /// Runs while [_pinChatToBottom] keeps the feed glued to its tail.
   Timer? _bottomPinTimer;
+  Timer? _chatPeekTimer;
+  bool _chatPeekThrough = false;
   Set<String> _glowIds = const {};
   int _glowSeq = 0;
   int _lastMsgCount = 0;
@@ -129,6 +131,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   ComposePhase? _prevJournalPhase;
   ComposePhase? _prevComposePhase;
   String? _prevJournalGraphStatus;
+  bool _wasGraphReviewPending = false;
   bool _graphReloadScheduled = false;
 
   // ── 바텀시트 (지도 앱 스타일: 40% 기본 / 90% 포커스 / 최소화-입력줄만) ────
@@ -240,7 +243,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     // The chat remains available; its height is controlled by dragging.
   }
 
-  void _activateInputMode() {
+  void _expandChatForInput() {
     if (mounted) {
       setState(() {
         _chatExpandedForInput = true;
@@ -248,6 +251,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         _chatSheetSize = _sheetFocusSize;
       });
     }
+  }
+
+  void _activateInputMode() {
+    _expandChatForInput();
     // The first request stays inside the user's menu-tap gesture, which is
     // required for iOS Safari to open its software keyboard.
     _chatInputFocusNode.requestFocus();
@@ -390,13 +397,18 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       height: (_chatExpandedForInput && !_chatManuallySized)
           ? graphAreaHeight
           : _chatSheetSize * graphAreaHeight,
-      child: IgnorePointer(
-        ignoring: false,
-        child: _buildGraphChatPanel(
-          scrollController: _chatScrollController,
-          graphAreaHeight: graphAreaHeight,
-          typeColors: typeColors,
-          nodeById: nodeById,
+      child: AnimatedOpacity(
+        opacity: _chatPeekThrough ? 0.18 : 1,
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+        child: IgnorePointer(
+          ignoring: false,
+          child: _buildGraphChatPanel(
+            scrollController: _chatScrollController,
+            graphAreaHeight: graphAreaHeight,
+            typeColors: typeColors,
+            nodeById: nodeById,
+          ),
         ),
       ),
     );
@@ -443,7 +455,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
               left: 0,
               right: 0,
               bottom: 0,
-              height: _inputBarHeight + 24,
+              // The panel itself is intentionally translucent. The mask must
+              // be wider and end in an opaque version of that color, otherwise
+              // the final bubble still ghosts through above the composer.
+              height: _inputBarHeight + 56,
               child: IgnorePointer(
                 child: DecoratedBox(
                   decoration: BoxDecoration(
@@ -452,10 +467,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
                       end: Alignment.bottomCenter,
                       colors: [
                         context.shell.panelBackground.withValues(alpha: 0),
-                        context.shell.panelBackground.withValues(alpha: 0.88),
-                        context.shell.panelBackground,
+                        context.shell.panelBackground.withValues(alpha: 0.96),
+                        context.shell.panelBackground.withValues(alpha: 1),
                       ],
-                      stops: const [0, 0.62, 1],
+                      stops: const [0, 0.46, 0.78],
                     ),
                   ),
                 ),
@@ -479,6 +494,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     _prevJournalPhase = journalTask.phase;
     _prevComposePhase = composeSession.phase;
     _prevJournalGraphStatus = journalTask.entry?['graph_status']?.toString();
+    _wasGraphReviewPending = _isLiveGraphReviewPending;
     composeSession.entriesChanged.addListener(_onEntriesChanged);
     chatSession.onReferencedNodes = _onReferencedNodes;
     chatSession.addListener(_onChatChanged);
@@ -492,6 +508,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   @override
   void dispose() {
     _bottomPinTimer?.cancel();
+    _chatPeekTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     chatSession.removeListener(_onChatChanged);
     chatSession.errors.removeListener(_onChatError);
@@ -551,22 +568,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       _scrollChatToBottom();
     }
     if (enteredFooterMode &&
-        (mode == ChatMode.journal ||
-            mode == ChatMode.quizComposition ||
-            mode == ChatMode.quizWord)) {
-      _restoreComposerFocusAfterBuild();
-    }
-    // Defensive re-focus for word quizzes generally (covers entering the
-    // mode and any card change, not just the explicit "다음 문제" tap).
-    // Deferred a frame: requestFocus() here runs synchronously inside
-    // notifyListeners(), i.e. still against the OLD build where the composer
-    // was `enabled: false` (wordQuizSolved was true for the just-finished
-    // question) — EditableText only opens its platform text-input connection
-    // on a focus-state TRANSITION, so focusing before the rebuild that flips
-    // `enabled` to true leaves the field visually focused but not accepting
-    // keystrokes. Requesting it after the next frame targets the rebuilt,
-    // enabled field instead.
-    if (mode == ChatMode.quizWord && quizCardChanged) {
+        (mode == ChatMode.journal || mode == ChatMode.quizComposition)) {
       _restoreComposerFocusAfterBuild();
     }
     // A reply landing can leave the composer looking enabled but no longer
@@ -587,6 +589,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
 
   void _onJournalTaskChanged() {
     final graphStatus = journalTask.entry?['graph_status']?.toString() ?? '';
+    final graphReviewPending = _isLiveGraphReviewPending;
+    final graphReviewJustBecameReady =
+        graphReviewPending && !_wasGraphReviewPending;
     _maybeReloadGraph(_prevJournalPhase, journalTask.phase);
     if (graphStatus == 'graph_ready' &&
         _prevJournalGraphStatus != 'graph_ready') {
@@ -594,8 +599,22 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     }
     _prevJournalPhase = journalTask.phase;
     _prevJournalGraphStatus = graphStatus;
+    _wasGraphReviewPending = graphReviewPending;
     if (mounted) setState(() {});
+    if (graphReviewJustBecameReady) {
+      // The progress card is already in the feed; it grows in place when the
+      // graph draft becomes reviewable. Keep following its new bottom while
+      // that expanded content lays out so the required action is never hidden.
+      _scrollChatToBottom(animated: false);
+      _pinChatToBottom(window: const Duration(milliseconds: 1200));
+    }
   }
+
+  bool get _isLiveGraphReviewPending =>
+      journalTask.phase == ComposePhase.needsInput &&
+      !journalTask.speakerReviewOverride &&
+      !journalTask.awaitingSpeakerAck &&
+      isGraphReviewPending(journalTask.entry);
 
   void _onEntriesChanged() {
     _maybeReloadGraph(_prevComposePhase, composeSession.phase);
@@ -878,10 +897,17 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     }
 
     if (langs.length <= 1) {
-      _activateInputMode();
+      if (quizType == 'composition') {
+        _activateInputMode();
+      } else {
+        // iOS Safari only opens its keyboard from a real user gesture.  Do
+        // not pre-focus the cloze composer after this async quiz load: it
+        // leaves a visible caret with no platform keyboard connection.
+        _expandChatForInput();
+      }
       await chatSession.startQuiz(quizType,
           language: langs.isNotEmpty ? langs.first : null);
-      _restoreComposerFocusAfterBuild();
+      if (quizType == 'composition') _restoreComposerFocusAfterBuild();
       return;
     }
     if (!mounted) return;
@@ -921,9 +947,13 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       ),
     );
     if (chosen != null) {
-      _activateInputMode();
+      if (quizType == 'composition') {
+        _activateInputMode();
+      } else {
+        _expandChatForInput();
+      }
       await chatSession.startQuiz(quizType, language: chosen);
-      _restoreComposerFocusAfterBuild();
+      if (quizType == 'composition') _restoreComposerFocusAfterBuild();
     }
   }
 
@@ -1002,15 +1032,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
                   answer: answer, order: order, selectedIndex: selectedIndex),
           onNext: () {
             chatSession.nextQuiz();
-            // "다음 문제" steals focus from the composer — the next blank
-            // needs typing to work immediately, not after a manual tap back.
-            // Deferred a frame for the same reason as the defensive re-focus
-            // in _onChatChanged: requesting focus before the rebuild that
-            // flips the composer back to `enabled: true` leaves it focused
-            // but not actually accepting keystrokes.
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) _chatInputFocusNode.requestFocus();
-            });
+            // Leave the composer unfocused. A real tap on it is required for
+            // iOS Safari to create a usable software-keyboard connection.
+            _chatInputFocusNode.unfocus();
           },
           onExit: chatSession.exitMode,
           externalResult: chatSession.quizFeedback,
@@ -1019,10 +1043,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           clozeLiveDraft: chatSession.clozeLiveDraft,
           onClozeHintRequested: () {
             _chatInputController.clear();
-            // Hint/reveal-answer buttons steal focus from the composer — without
-            // this, typing goes nowhere once the hint button disables itself
-            // (힌트 확인됨) and there's nothing left to return focus to.
-            _chatInputFocusNode.requestFocus();
+            _chatInputFocusNode.unfocus();
           },
         );
       case ChatMode.journal:
@@ -1072,11 +1093,21 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   }
 
   void _highlightNodes(Set<String> nodeIds) {
+    final usePeekThrough = MediaQuery.sizeOf(context).width < 700;
+    _chatPeekTimer?.cancel();
     setState(() {
       _glowIds = nodeIds;
       _glowSeq++;
+      if (usePeekThrough) _chatPeekThrough = true;
     });
     _canvasKey.currentState?.focusOnNodes(nodeIds);
+    if (usePeekThrough) {
+      // Let the user see the graph pan and glow, then restore the chat
+      // automatically so the interaction never needs a second tap.
+      _chatPeekTimer = Timer(const Duration(milliseconds: 1600), () {
+        if (mounted) setState(() => _chatPeekThrough = false);
+      });
+    }
   }
 
   void _syncSelection(Map<String, dynamic> graph) {

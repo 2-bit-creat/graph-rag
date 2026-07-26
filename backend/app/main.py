@@ -99,7 +99,12 @@ app.include_router(kg_build.router)
 app.include_router(ontology.router)
 app.include_router(legal.router)
 
-
 @app.get("/health", tags=["health"])
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# Starlette's ServerErrorMiddleware sits outside middleware added with
+# `add_middleware`, so an unhandled 500 could otherwise lose CORS headers.
+# This must run after every decorator-based route above has been registered.
+app = CORSMiddleware(app, **_cors_kwargs)
