@@ -92,52 +92,53 @@ class GraphChatPanel extends StatelessWidget {
         child: Material(
           color: Colors.transparent,
           child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _SheetDragHandle(
-              onDragUpdate: onHandleDragUpdate,
-              onDragEnd: onHandleDragEnd,
-            ),
-            Expanded(
-              child: quizMode && listFooter != null
-                  ? Padding(
-                      padding: EdgeInsets.fromLTRB(
-                        AppSpacing.md,
-                        AppSpacing.xs,
-                        AppSpacing.md,
-                        listBottomInset,
-                      ),
-                      child: LayoutBuilder(
-                        builder: (context, constraints) => Align(
-                          alignment: MediaQuery.viewInsetsOf(context).bottom > 0
-                              ? Alignment.bottomCenter
-                              : Alignment.topCenter,
-                          child: SizedBox(
-                            width: double.infinity,
-                            child: QuizViewportScope(
-                              availableHeight: constraints.maxHeight,
-                              child: listFooter!,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _SheetDragHandle(
+                onDragUpdate: onHandleDragUpdate,
+                onDragEnd: onHandleDragEnd,
+              ),
+              Expanded(
+                child: quizMode && listFooter != null
+                    ? Padding(
+                        padding: EdgeInsets.fromLTRB(
+                          AppSpacing.md,
+                          AppSpacing.xs,
+                          AppSpacing.md,
+                          listBottomInset,
+                        ),
+                        child: LayoutBuilder(
+                          builder: (context, constraints) => Align(
+                            alignment:
+                                MediaQuery.viewInsetsOf(context).bottom > 0
+                                    ? Alignment.bottomCenter
+                                    : Alignment.topCenter,
+                            child: SizedBox(
+                              width: double.infinity,
+                              child: QuizViewportScope(
+                                availableHeight: constraints.maxHeight,
+                                child: listFooter!,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    )
-                  : Stack(
-                      children: [
-                        Positioned.fill(child: _buildMessageList(context)),
-                        Positioned(
-                          right: 14,
-                          bottom: 100,
-                          child: _ScrollToBottomButton(
-                            controller: scrollController,
+                      )
+                    : Stack(
+                        children: [
+                          Positioned.fill(child: _buildMessageList(context)),
+                          Positioned(
+                            right: 14,
+                            bottom: 100,
+                            child: _ScrollToBottomButton(
+                              controller: scrollController,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-            ),
-          ],
+                        ],
+                      ),
+              ),
+            ],
+          ),
         ),
-      ),
       ),
     );
   }
@@ -151,9 +152,8 @@ class GraphChatPanel extends StatelessWidget {
         onVerticalDragUpdate: onHandleDragUpdate == null
             ? null
             : (details) => onHandleDragUpdate!(details.primaryDelta ?? 0),
-        onVerticalDragEnd: onHandleDragEnd == null
-            ? null
-            : (_) => onHandleDragEnd!(),
+        onVerticalDragEnd:
+            onHandleDragEnd == null ? null : (_) => onHandleDragEnd!(),
         child: Center(
           child: Padding(
             padding: const EdgeInsets.all(AppSpacing.xl),
@@ -408,7 +408,14 @@ class ChatInputBar extends StatelessWidget {
                     _ModeChip(label: modeLabel!, onExit: onExitMode),
                     if (modeActions != null) ...[
                       const SizedBox(width: 8),
-                      Expanded(child: modeActions!),
+                      // Quiz hints are input-assistance controls, like a
+                      // numeric field's stepper buttons. Keep them in the
+                      // active TextField's tap region so using a hint does not
+                      // dismiss the software keyboard. The mode chip and the
+                      // rest of the panel intentionally remain outside.
+                      Expanded(
+                        child: TextFieldTapRegion(child: modeActions!),
+                      ),
                     ],
                   ],
                 ),
@@ -430,7 +437,7 @@ class ChatInputBar extends StatelessWidget {
               clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
                 color: shell.barBackground,
-              borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(24),
                 border: Border.all(color: shell.panelBorder),
                 boxShadow: [
                   BoxShadow(
@@ -498,7 +505,8 @@ class _InputBar extends StatefulWidget {
 
 class _InputBarState extends State<_InputBar> {
   FocusNode? _ownedFocusNode;
-  FocusNode get _focusNode => widget.focusNode ?? (_ownedFocusNode ??= FocusNode());
+  FocusNode get _focusNode =>
+      widget.focusNode ?? (_ownedFocusNode ??= FocusNode());
 
   final _mentionFieldKey = GlobalKey<MentionAutocompleteFieldState>();
   AudioRecordController? _recorder;
@@ -642,7 +650,8 @@ class _InputBarState extends State<_InputBar> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr('chat.recordingStartFailed', {'error': e}))),
+          SnackBar(
+              content: Text(tr('chat.recordingStartFailed', {'error': e}))),
         );
       }
     }
@@ -726,8 +735,9 @@ class _InputBarState extends State<_InputBar> {
             _ModeMenuButton(onSelected: widget.onModeSelected!),
           if (journalMode) ...[
             _CompactIconButton(
-              tooltip:
-                  recording ? tr('chat.micTooltipStop') : tr('chat.micTooltipStart'),
+              tooltip: recording
+                  ? tr('chat.micTooltipStop')
+                  : tr('chat.micTooltipStart'),
               icon: recording ? Icons.stop_rounded : Icons.mic_none_rounded,
               active: recording,
               onTap: _journalSaving ? null : _toggleMic,
@@ -1033,7 +1043,9 @@ class _CompactIconButton extends StatelessWidget {
     final shell = context.shell;
     final color = onTap == null
         ? shell.mutedText
-        : (active ? Colors.redAccent : shell.primaryText.withValues(alpha: 0.72));
+        : (active
+            ? Colors.redAccent
+            : shell.primaryText.withValues(alpha: 0.72));
     return Tooltip(
       message: tooltip,
       child: InkWell(
@@ -1082,8 +1094,7 @@ class _ModeChip extends StatelessWidget {
                     borderRadius: BorderRadius.circular(20),
                     child: Padding(
                       padding: const EdgeInsets.all(2),
-                      child: Icon(Icons.close_rounded,
-                          size: 14, color: onChip),
+                      child: Icon(Icons.close_rounded, size: 14, color: onChip),
                     ),
                   ),
               ],
@@ -1451,7 +1462,8 @@ class _CopyMessageButtonState extends State<_CopyMessageButton> {
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.w600,
-                color: _copied ? AppColors.accent : muted.withValues(alpha: 0.8),
+                color:
+                    _copied ? AppColors.accent : muted.withValues(alpha: 0.8),
               ),
             ),
           ],
@@ -1632,8 +1644,9 @@ class _JournalModeBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final cleanText = text.replaceAll(
-        RegExp(r'[\u{1F300}-\u{1FAFF}]', unicode: true), '').trim();
+    final cleanText = text
+        .replaceAll(RegExp(r'[\u{1F300}-\u{1FAFF}]', unicode: true), '')
+        .trim();
     final lines = cleanText.split('\n');
     final title = lines.isEmpty ? '' : lines.first.trim();
     final body = lines.skip(1).join('\n').trim();
@@ -1673,12 +1686,12 @@ class _JournalModeBanner extends StatelessWidget {
                 padding: const EdgeInsets.only(left: 26),
                 child: Text(
                   body,
-                style: TextStyle(
-                  color: context.shell.primaryText,
-                  fontSize: 12.5,
-                  height: 1.5,
+                  style: TextStyle(
+                    color: context.shell.primaryText,
+                    fontSize: 12.5,
+                    height: 1.5,
+                  ),
                 ),
-              ),
               ),
             ],
           ],
@@ -1721,8 +1734,7 @@ class _JournalSubmitBubble extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(Icons.edit_note_rounded,
-                      size: 14,
-                      color: scheme.primary),
+                      size: 14, color: scheme.primary),
                   const SizedBox(width: 4),
                   Text(
                     tr('chat.journalSavedLabel'),
@@ -1750,4 +1762,3 @@ class _JournalSubmitBubble extends StatelessWidget {
     );
   }
 }
-

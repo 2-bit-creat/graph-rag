@@ -1048,11 +1048,19 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
 
   void _requestWordQuizHint() {
     if (!chatSession.wordQuizUsesComposer || chatSession.wordQuizSolved) return;
+    final keepComposerFocused = _chatInputFocusNode.hasFocus;
     // Clearing the shared composer synchronously drives updateClozeDraft('')
     // through its listener, so only the active blank loses its live draft.
-    // GestureDetector never requests keyboard focus, unlike OutlinedButton.
     _chatInputController.clear();
     _clozeCardKey.currentState?.requestHint();
+    // TextFieldTapRegion prevents the normal outside-tap unfocus. Reassert the
+    // existing focus synchronously as a fallback for mobile web engines that
+    // briefly blur Flutter's hidden editable element while handling the tap.
+    // Do not focus an already-unfocused composer: a hint viewed while reviewing
+    // the card should not unexpectedly summon the keyboard.
+    if (keepComposerFocused) {
+      _chatInputFocusNode.requestFocus();
+    }
   }
 
   /// Feature cards that live INSIDE the chat scroll so they grow with content and

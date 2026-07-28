@@ -45,9 +45,9 @@ class _CardShell extends StatelessWidget {
         ? 2.0
         : (heightCompact ? 2.0 : (keyboardOpen ? 4.0 : 8.0));
     // The surrounding quiz panel has already removed its header, padding, and
-    // docked composer from this height. Keep the card inside that exact area
-    // on mobile web: the body becomes scrollable instead of shrinking text or
-    // overflowing below the iOS keyboard.
+    // docked composer from this height. Use the remaining area as a maximum,
+    // not a fixed height: short cards keep their natural size while long cards
+    // scroll internally instead of shrinking text or overflowing.
     // CSS visualViewport values often land between logical pixels. Floor the
     // result and retain a small cross-browser gutter so rounding in Safari,
     // Chrome, different DPRs, and OS keyboard variants cannot exceed the
@@ -92,7 +92,10 @@ class _CardShell extends StatelessWidget {
                 : (useKeyboardCompactStyle ? 4 : (compact ? 6 : 10)));
 
     return Container(
-      height: viewportHeight,
+      key: const ValueKey('quiz-card-shell'),
+      constraints: viewportHeight == null
+          ? null
+          : BoxConstraints(maxHeight: viewportHeight),
       margin: EdgeInsets.fromLTRB(0, topMargin, 0, bottomMargin),
       padding: EdgeInsets.all(heightCompact
           ? 6
@@ -114,10 +117,12 @@ class _CardShell extends StatelessWidget {
             )
           : Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 if (header != null) header,
                 if (titleGap != null) titleGap,
-                Expanded(
+                Flexible(
+                  fit: FlexFit.loose,
                   child: SingleChildScrollView(
                     primary: false,
                     child: measuredChild,
