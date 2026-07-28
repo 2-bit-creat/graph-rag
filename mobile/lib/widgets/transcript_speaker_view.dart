@@ -101,12 +101,12 @@ class TranscriptSpeakerView extends StatelessWidget {
 
               return Padding(
                 padding: const EdgeInsets.only(bottom: 10),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     if (pid != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2, right: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
                         child: ActionChip(
                           avatar: Icon(
                             isConfirmed
@@ -136,19 +136,21 @@ class TranscriptSpeakerView extends StatelessWidget {
                         ),
                       )
                     else
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4, right: 8),
-                        child: Text(
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 4, bottom: 4),
+                          child: Text(
                           label,
                           style: const TextStyle(
                             fontWeight: FontWeight.w600,
                             fontSize: 12,
                           ),
+                          ),
                         ),
                       ),
-                    Expanded(
-                      child: Text(text, style: const TextStyle(fontSize: 14)),
-                    ),
+                    const SizedBox(height: 3),
+                    Text(text, style: const TextStyle(fontSize: 14)),
                   ],
                 ),
               );

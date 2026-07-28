@@ -121,7 +121,31 @@ async def save_node_expressions(
             expr_key = (item.get("expression") or "").strip().lower()
             if is_german:
                 expr_key = _strip_german_article(expr_key)
-            if not expr_key or expr_key in seen:
+            if not expr_key:
+                continue
+            if expr_key in seen:
+                # Keep accumulated learning state, but enrich older entries
+                # when a newer analysis has better provenance/metadata.
+                existing = next(
+                    (entry for entry in lang_exprs if (entry.get("expression") or "").lower() == expr_key),
+                    None,
+                )
+                if existing is not None:
+                    for key, value in {
+                        "meaning": (item.get("meaning_ko") or item.get("meaning") or "").strip(),
+                        "example": (item.get("example_en") or item.get("example") or "").strip(),
+                        "surface_form": (item.get("surface_form") or "").strip(),
+                        "meaning_parts": item.get("meaning_parts") or [],
+                        "kind": (item.get("kind") or "").strip(),
+                        "utility_score": int(item.get("utility_score") or 0),
+                        "source_segment": (item.get("source_segment") or "").strip(),
+                        "reference_answers": item.get("reference_answers") or [],
+                        "surface_segments": item.get("surface_segments") or [],
+                    }.items():
+                        if value:
+                            existing[key] = value
+                    if existing.get("quiz_status") == "stale":
+                        existing["quiz_status"] = "available"
                 continue
             cefr = (item.get("cefr") or "").strip().upper()
             if cefr not in {"A1", "A2", "B1", "B2", "C1", "C2"}:
@@ -133,6 +157,15 @@ async def save_node_expressions(
                 "surface_form": (item.get("surface_form") or "").strip(),
                 "meaning_parts": item.get("meaning_parts") or [],
                 "cefr": cefr,
+                # Inventory metadata is intentionally stored with the existing
+                # user wordbook file so old clients continue to read it.
+                "kind": (item.get("kind") or "").strip(),
+                "utility_score": int(item.get("utility_score") or 0),
+                "source_segment": (item.get("source_segment") or "").strip(),
+                "reference_answers": item.get("reference_answers") or [],
+                "surface_segments": item.get("surface_segments") or [],
+                "quiz_status": (item.get("quiz_status") or "available").strip(),
+                "rejection_reason": (item.get("rejection_reason") or "").strip(),
                 "added_at": now,
             })
             seen.add(expr_key)
@@ -142,6 +175,54 @@ async def save_node_expressions(
             done.append(language)
         _write_store_sync(user_id, store)
     await asyncio.to_thread(_save)
+
+
+async def set_expression_quiz_status(
+    user_id: uuid.UUID,
+    node_id: str,
+    language: str,
+    expressions: list[str],
+    status: str,
+    *,
+    reason: str = "",
+) -> None:
+    """Update inventory state without relying on a stale UI-side flag."""
+    keys = {(value or "").strip().lower() for value in expressions if (value or "").strip()}
+    if not keys:
+        return
+
+    def _update() -> None:
+        store = _read_store_sync(user_id)
+        items = store.get("expressions", {}).get(node_id, {}).get(language, [])
+        changed = False
+        for item in items:
+            if (item.get("expression") or "").strip().lower() not in keys:
+                continue
+            item["quiz_status"] = status
+            if reason:
+                item["rejection_reason"] = reason
+            changed = True
+        if changed:
+            _write_store_sync(user_id, store)
+
+    await asyncio.to_thread(_update)
+
+
+async def list_available_node_expressions(
+    user_id: uuid.UUID,
+    node_id: str,
+    language: str,
+) -> list[dict[str, Any]]:
+    """Return materialisable expressions, highest utility first."""
+    items = await get_node_expressions(user_id, node_id, language)
+    available = [
+        item for item in items
+        if str(item.get("quiz_status") or "available") == "available"
+    ]
+    return sorted(
+        available,
+        key=lambda item: (-int(item.get("utility_score") or 0), item.get("added_at") or ""),
+    )
 
 
 async def get_statement_bank_for_language(

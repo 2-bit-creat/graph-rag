@@ -516,11 +516,10 @@ class _InputBarState extends State<_InputBar> {
   bool get _canType => widget.enabled && !widget.busy && !_journalSaving;
 
   void _showKeyboardFromTap() {
-    // Keep this inside the actual TextField tap. On iOS Safari, focus gained
-    // after an async quiz transition can draw a caret but cannot raise the
-    // software keyboard; a user-gesture-bound request restores that channel.
+    // Let the TextField's native tap path open the keyboard. Calling
+    // TextInput.show manually crashes the current Flutter web engine on iOS
+    // Safari with an unexpected-null error, leaving the field unfocusable.
     _focusNode.requestFocus();
-    unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.show'));
   }
 
   void _insertNewline() {
@@ -754,7 +753,10 @@ class _InputBarState extends State<_InputBar> {
                     key: _mentionFieldKey,
                     focusNode: _focusNode,
                     minLines: 1,
-                    maxLines: 8,
+                    // Keep the docked composer compact on phones. Longer
+                    // journal text remains scrollable inside the field so the
+                    // mic/attach/send controls stay easy to reach.
+                    maxLines: 4,
                     showCounter: false,
                     // Docked at the bottom of the screen — open upward so the
                     // popup never renders off-screen below the viewport.

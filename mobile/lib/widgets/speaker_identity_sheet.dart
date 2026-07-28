@@ -225,14 +225,21 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
   @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.viewInsetsOf(context).bottom;
+    final availableHeight = MediaQuery.sizeOf(context).height - bottom;
     return Padding(
       padding: EdgeInsets.fromLTRB(20, 0, 20, 16 + bottom),
-      child: _loading
-          ? const SizedBox(
-              height: 160,
-              child: Center(child: CircularProgressIndicator()),
-            )
-          : _buildBody(context),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: availableHeight * 0.86),
+        child: SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          child: _loading
+              ? const SizedBox(
+                  height: 160,
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              : _buildBody(context),
+        ),
+      ),
     );
   }
 

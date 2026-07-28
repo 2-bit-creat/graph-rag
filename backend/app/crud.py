@@ -22,6 +22,7 @@ from .models import (
     OntologyVersion,
     Quiz,
     QuizGenerationState,
+    QuizLearningMaterial,
     QuizSourceExploration,
     ReviewSchedule,
     SpeakerEntryAppearance,
@@ -3903,13 +3904,21 @@ async def list_quiz_source_explorations(
     """
     lang = (language or "english").lower()
     rows = await session.execute(
-        select(Node, QuizSourceExploration)
+        select(Node, QuizSourceExploration, QuizLearningMaterial)
         .outerjoin(
             QuizSourceExploration,
             and_(
                 QuizSourceExploration.user_id == user_id,
                 QuizSourceExploration.node_id == Node.id,
                 QuizSourceExploration.language == lang,
+            ),
+        )
+        .outerjoin(
+            QuizLearningMaterial,
+            and_(
+                QuizLearningMaterial.user_id == user_id,
+                QuizLearningMaterial.node_id == Node.id,
+                QuizLearningMaterial.language == lang,
             ),
         )
         .where(
@@ -3920,7 +3929,7 @@ async def list_quiz_source_explorations(
         .order_by(Node.created_at.desc())
     )
     result: list[dict] = []
-    for node, exploration in rows.all():
+    for node, exploration, material in rows.all():
         content = ""
         if node.description:
             try:
@@ -3937,14 +3946,19 @@ async def list_quiz_source_explorations(
                 # queue-reset ``unexplored`` state.
                 "status": (
                     "explored"
+                    if material and material.status == "ready"
+                    else "partial"
+                    if material and material.status in {"pending", "analyzing", "stale", "failed"}
+                    else "explored"
                     if exploration and exploration.status in {"completed", "explored"}
                     else "unexplored"
                 ),
+                "material_status": material.status if material else "unprocessed",
                 "cloze_status": exploration.cloze_status if exploration else "available",
                 "word_count": exploration.word_count if exploration else 0,
-                "expression_count": exploration.expression_count if exploration else 0,
-                "composition_count": exploration.composition_count if exploration else 0,
-                "updated_at": exploration.updated_at if exploration else None,
+                "expression_count": material.expression_count if material else (exploration.expression_count if exploration else 0),
+                "composition_count": material.composition_count if material else (exploration.composition_count if exploration else 0),
+                "updated_at": material.updated_at if material else (exploration.updated_at if exploration else None),
             }
         )
     return result

@@ -40,11 +40,7 @@ async def enqueue(
 ) -> None:
     """Add a single (node, language) extraction job."""
     from .config import get_settings
-    from .node_expression_store import is_extracted
-
     if not get_settings().expression_extraction_enabled:
-        return
-    if await is_extracted(user_id, node_id, language):
         return
     await _queue.put(ExtractionJob(
         user_id=user_id,
@@ -74,8 +70,11 @@ async def enqueue_bulk(
     if not node_info_list or not languages:
         return 0
 
-    node_ids = [n["node_id"] for n in node_info_list]
-    pending_pairs = await get_pending_node_language_pairs(user_id, node_ids, languages)
+    pending_pairs = [
+        (str(item["node_id"]), language)
+        for item in node_info_list
+        for language in dict.fromkeys(languages)
+    ]
 
     # Group pending languages by node_id → one job per node
     node_langs: dict[str, list[str]] = {}
@@ -105,36 +104,28 @@ async def enqueue_bulk(
 
 
 async def _process_one(job: ExtractionJob) -> None:
-    from .node_expression_store import is_extracted, save_node_expressions
-    from .statement_vocab_extractor import extract_multilang
-
-    # Filter out already-done languages
-    pending_langs = [
-        lang for lang in job.languages
-        if not await is_extracted(job.user_id, job.node_id, lang)
-    ]
-    if not pending_langs:
-        return
-
+    """Run the unified material analysis instead of a vocabulary-only pass."""
+    from .db import async_session_factory
+    from .models import User
+    from .quiz_materials import ensure_learning_material
     try:
-        results = await extract_multilang(
-            node_name=job.node_name,
-            content_ko=job.content_ko,
-            translation_en=job.translation_en,
-            languages=pending_langs,
-        )
-        for lang, expressions in results.items():
-            await save_node_expressions(job.user_id, job.node_id, lang, expressions, node_name=job.node_name)
-            logger.info(
-                "Saved %d %s expressions for node %s (user %s)",
-                len(expressions), lang, job.node_id, job.user_id,
-            )
-        # Mark any language that returned nothing as done too (avoid infinite retry)
-        for lang in pending_langs:
-            if lang not in results:
-                await save_node_expressions(job.user_id, job.node_id, lang, [])
+        async with async_session_factory() as session:
+            user = await session.get(User, job.user_id)
+            if user is None:
+                return
+            for lang in job.languages:
+                material, _, _ = await ensure_learning_material(
+                    session,
+                    user,
+                    node_id=uuid.UUID(job.node_id),
+                    language=lang,
+                )
+                logger.info(
+                    "Learning material %s for node=%s language=%s user=%s",
+                    material.status, job.node_id, lang, job.user_id,
+                )
     except Exception as exc:
-        logger.warning("Extraction failed node=%s langs=%s: %s", job.node_id, pending_langs, exc)
+        logger.warning("Learning-material analysis failed node=%s langs=%s: %s", job.node_id, job.languages, exc)
 
 
 async def _worker() -> None:

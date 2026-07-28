@@ -16,7 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from . import crud
 from .composition_quiz import generate_composition_quiz
 from .models import Quiz, QuizBatch, QuizGenerationState, QuizSourceExploration, User
-from .quiz_bundle import CLOZE_GENERATOR_VERSION, BundleSeedError, generate_quiz_bundle
+from .quiz_bundle import CLOZE_GENERATOR_VERSION, BundleSeedError
+from .quiz_materials import ensure_learning_material, materialize_node_expressions
 from .tutor import DrillSeedError
 
 _LOCKS: dict[uuid.UUID, asyncio.Lock] = {}
@@ -313,39 +314,40 @@ async def fill_daily_batch(
             needs_cloze = "cloze" not in source_covered
             cloze_attempted = needs_cloze and generated["cloze"] < cloze_missing
             try:
-                created, trace = await generate_quiz_bundle(
-                    session, user, language=language, seed_node_ids={source_id},
+                material, composition_cards, trace = await ensure_learning_material(
+                    session, user, node_id=uuid.UUID(source_id), language=language
                 )
+                comp_count = 0
+                for quiz in composition_cards:
+                    if needs_composition and generated["composition"] < composition_missing:
+                        generated["composition"] += 1
+                        comp_count += 1
+                        quiz.track = "daily"
+                        quiz.source_kind = "learning_material"
+                    else:
+                        quiz.queue_kind = "archived"
+                word_count = 0
+                if cloze_attempted:
+                    clozes, _ = await materialize_node_expressions(
+                        session,
+                        user,
+                        node_id=uuid.UUID(source_id),
+                        language=language,
+                        limit=min(8, max(1, cloze_missing - generated["cloze"])),
+                        queue_missing=max(0, cloze_missing - generated["cloze"]),
+                    )
+                    for quiz in clozes:
+                        if generated["cloze"] >= cloze_missing:
+                            quiz.queue_kind = "archived"
+                            continue
+                        generated["cloze"] += 1
+                        word_count += 1
+                        quiz.track = "daily"
+                        quiz.source_kind = "expression_inventory"
+                expression_count = material.expression_count
+                valid_cloze_count = word_count
             except BundleSeedError:
                 continue
-            comp_count = word_count = 0
-            valid_cloze_count = sum(1 for quiz in created if quiz.quiz_type == "cloze")
-            expression_count = next(
-                (
-                    int(step.get("input", {}).get("expression_count") or 0)
-                    for step in (trace.get("steps") or [])
-                    if step.get("name") == "bundle_structural_validation"
-                ),
-                0,
-            )
-            for quiz in created:
-                if (
-                    quiz.quiz_type == "cloze"
-                    and cloze_attempted
-                ):
-                    generated["cloze"] += 1
-                    word_count += 1
-                elif (
-                    quiz.quiz_type == "composition"
-                    and needs_composition
-                ):
-                    generated["composition"] += 1
-                    comp_count += 1
-                else:
-                    quiz.queue_kind = "archived"
-                    continue
-                quiz.track = "daily"
-                quiz.source_kind = "exploration"
             await _record_exploration(
                 session,
                 user.id,
@@ -411,7 +413,6 @@ async def create_pinned_batch(
         batch = await _get_or_create_batch(
             session, user, language=language, track="pinned", sequence=sequence
         )
-        seed = {str(node_id)}
         created = {
             "cloze": 0,
             "composition": 0,
@@ -420,10 +421,14 @@ async def create_pinned_batch(
             "quiz_ids": {"cloze": [], "composition": []},
         }
         try:
-            quizzes, _ = await generate_quiz_bundle(
-                session, user, language=language, seed_node_ids=seed
+            _, composition, _ = await ensure_learning_material(
+                session, user, node_id=node_id, language=language, priority=100
             )
-            for quiz in quizzes:
+            clozes, _ = await materialize_node_expressions(
+                session, user, node_id=node_id, language=language,
+                limit=3, direct_node=True, queue_missing=3,
+            )
+            for quiz in composition + clozes:
                 await _stamp(session, quiz, batch, "pinned")
                 if quiz.quiz_type == "cloze":
                     created["cloze"] += 1

@@ -2,7 +2,7 @@ import uuid
 
 
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -401,14 +401,11 @@ async def read_node(
 @router.get("/nodes/{node_id}/study-quizzes")
 async def read_node_study_quizzes(
     node_id: uuid.UUID,
+    background: BackgroundTasks,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Return already-generated, studyable quizzes sourced from one Statement.
-
-    This intentionally never triggers generation: the graph is an explorer for
-    the learner's existing quiz bank, not a second way to create new cards.
-    """
+    """Return node quizzes and prioritise material analysis when none exist."""
     from sqlalchemy import select
     from ..models import Quiz
 
@@ -419,7 +416,7 @@ async def read_node_study_quizzes(
         raise HTTPException(status_code=400, detail="only Statement nodes have study quizzes")
 
     rows = await session.execute(
-        select(Quiz.id, Quiz.quiz_type)
+        select(Quiz.id, Quiz.quiz_type, Quiz.language)
         .where(
             Quiz.user_id == user.id,
             Quiz.source_nodes.contains([node_id]),
@@ -429,14 +426,42 @@ async def read_node_study_quizzes(
         .order_by(Quiz.created_at.desc())
     )
     grouped = {"cloze": [], "composition": []}
-    for quiz_id, quiz_type in rows.all():
-        grouped[str(quiz_type)].append(str(quiz_id))
+    by_language = {"cloze": {}, "composition": {}}
+    for quiz_id, quiz_type, language in rows.all():
+        kind = str(quiz_type)
+        quiz_id_str = str(quiz_id)
+        lang = (str(language).strip().lower() if language else "english")
+        grouped[kind].append(quiz_id_str)
+        by_language[kind].setdefault(lang, []).append(quiz_id_str)
+    material_status: dict[str, str] = {}
+    if not grouped["cloze"] and not grouped["composition"]:
+        from ..models import QuizLearningMaterial
+        from ..quiz_materials import analyse_material_background
+        languages = crud.get_effective_target_languages(user)
+        material_rows = (
+            await session.scalars(
+                select(QuizLearningMaterial).where(
+                    QuizLearningMaterial.user_id == user.id,
+                    QuizLearningMaterial.node_id == node_id,
+                    QuizLearningMaterial.language.in_(languages),
+                )
+            )
+        ).all()
+        material_status = {row.language: row.status for row in material_rows}
+        if any(material_status.get(language) not in {"ready", "analyzing"} for language in languages):
+            background.add_task(analyse_material_background, user.id, node_id, languages, priority=100)
     return {
         "node_id": str(node_id),
-        "word": {"count": len(grouped["cloze"]), "quiz_ids": grouped["cloze"]},
+        "material_status": material_status,
+        "word": {
+            "count": len(grouped["cloze"]),
+            "quiz_ids": grouped["cloze"],
+            "by_language": by_language["cloze"],
+        },
         "composition": {
             "count": len(grouped["composition"]),
             "quiz_ids": grouped["composition"],
+            "by_language": by_language["composition"],
         },
     }
 
@@ -554,6 +579,7 @@ async def remove_edge(
 @router.post("/nodes", response_model=NodeOut, status_code=status.HTTP_201_CREATED)
 async def add_node(
     payload: NodeCreate,
+    background: BackgroundTasks,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> NodeOut:
@@ -570,6 +596,10 @@ async def add_node(
     )
     await crud.index_identity_alias(session, user.id, node, name)
     await session.commit()
+    if node.type == "Statement" and len((node.description or node.name or "").strip()) >= 6:
+        from ..quiz_materials import analyse_material_background
+        languages = crud.get_effective_target_languages(user)
+        background.add_task(analyse_material_background, user.id, node.id, languages)
     out = await crud.get_node_out(session, node.id, user.id)
     if out is None:
         raise HTTPException(status_code=404, detail="node not found")
@@ -583,6 +613,8 @@ async def edit_node(
     node_id: uuid.UUID,
 
     payload: NodeUpdate,
+
+    background: BackgroundTasks,
 
     user: User = Depends(request_user_dep),
 
@@ -599,6 +631,15 @@ async def edit_node(
     if node is None:
 
         raise HTTPException(status_code=404, detail="node not found")
+
+    if node.type == "Statement" and len((node.description or node.name or "").strip()) >= 6:
+        from ..quiz_materials import analyse_material_background
+        background.add_task(
+            analyse_material_background,
+            user.id,
+            node.id,
+            crud.get_effective_target_languages(user),
+        )
 
     out = await crud.get_node_out(session, node_id, user.id)
     if out is None:

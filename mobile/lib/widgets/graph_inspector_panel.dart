@@ -37,7 +37,11 @@ class GraphInspectorPanel extends StatefulWidget {
   final VoidCallback? onUpdated;
   final void Function(Map<String, dynamic> node)? onSelectNode;
   final void Function(Map<String, dynamic> edge)? onSelectEdge;
-  final Future<void> Function(String quizType, List<String> quizIds)?
+  final Future<void> Function(
+    String quizType,
+    List<String> quizIds,
+    String? language,
+  )?
       onStudyQuizzes;
   final ScrollController? scrollController;
 
@@ -223,6 +227,62 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     final word = (_studyQuizzes?['word'] as Map?)?.cast<String, dynamic>() ?? const {};
     final composition =
         (_studyQuizzes?['composition'] as Map?)?.cast<String, dynamic>() ?? const {};
+    const languageLabels = {
+      'english': '영어',
+      'german': '독일어',
+      'korean': '한국어',
+      'japanese': '일본어',
+      'chinese': '중국어',
+      'spanish': '스페인어',
+      'french': '프랑스어',
+    };
+    String languageLabel(String code) => languageLabels[code] ?? code;
+
+    Future<void> chooseLanguage(
+      String type,
+      Map<String, dynamic> group,
+      List<String> allIds,
+    ) async {
+      final raw = group['by_language'];
+      final byLanguage = <String, List<String>>{};
+      if (raw is Map) {
+        for (final entry in raw.entries) {
+          final ids = (entry.value as List? ?? const [])
+              .map((id) => id.toString())
+              .toList();
+          if (ids.isNotEmpty) byLanguage[entry.key.toString()] = ids;
+        }
+      }
+      if (byLanguage.length <= 1) {
+        final language = byLanguage.keys.isEmpty ? null : byLanguage.keys.first;
+        await widget.onStudyQuizzes?.call(type, allIds, language);
+        return;
+      }
+      if (!mounted) return;
+      final chosen = await showModalBottomSheet<String>(
+        context: context,
+        builder: (ctx) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const ListTile(title: Text('공부할 언어 선택')),
+              for (final language in byLanguage.keys)
+                ListTile(
+                  leading: const Icon(Icons.translate_rounded),
+                  title: Text(languageLabel(language)),
+                  trailing: Text('${byLanguage[language]!.length}개'),
+                  onTap: () => Navigator.pop(ctx, language),
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      );
+      if (chosen != null) {
+        await widget.onStudyQuizzes?.call(type, byLanguage[chosen]!, chosen);
+      }
+    }
+
     Widget button(String type, Map<String, dynamic> group, String label) {
       final ids = (group['quiz_ids'] as List? ?? const [])
           .map((id) => id.toString())
@@ -231,7 +291,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       return OutlinedButton(
         onPressed: ids.isEmpty || widget.onStudyQuizzes == null
             ? null
-            : () => widget.onStudyQuizzes!(type, ids),
+            : () => chooseLanguage(type, group, ids),
         child: Text('$label $count'),
       );
     }

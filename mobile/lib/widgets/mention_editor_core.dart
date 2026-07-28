@@ -542,7 +542,10 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     if (at < 0) return null;
     if (at > 0 && !RegExp(r'\s').hasMatch(upto[at - 1])) return null;
     final partial = upto.substring(at + 1);
-    if (partial.length > 20 || partial.contains(RegExp(r'\s'))) return null;
+    // Speaker names may contain spaces (for example "김 철수"). Keep the
+    // autocomplete context alive while the user is typing the full name;
+    // only a newline ends a mention because it starts a new dialogue line.
+    if (partial.length > 40 || partial.contains('\n')) return null;
     return (at: at, partial: partial);
   }
 

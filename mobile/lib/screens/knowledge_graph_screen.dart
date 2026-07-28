@@ -260,10 +260,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
 
   void _activateInputMode() {
     _expandChatForInput();
-    // The first request stays inside the user's menu-tap gesture, which is
-    // required for iOS Safari to open its software keyboard.
+    // Let the actual TextField tap establish the browser's native IME
+    // connection. Calling TextInput.show manually can throw an
+    // unexpected-null error in Flutter web on iOS Safari.
     _chatInputFocusNode.requestFocus();
-    unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.show'));
     for (final delay in const [
       Duration(milliseconds: 80),
       Duration(milliseconds: 280),
@@ -272,8 +272,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       Future<void>.delayed(delay, () {
         if (!mounted) return;
         _chatInputFocusNode.requestFocus();
-        unawaited(
-            SystemChannels.textInput.invokeMethod<void>('TextInput.show'));
         _pinChatToBottom(window: const Duration(milliseconds: 180));
       });
     }
@@ -287,7 +285,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       if (!mounted || !_inputEnabled) return;
       _chatInputFocusNode.unfocus();
       FocusScope.of(context).requestFocus(_chatInputFocusNode);
-      unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.show'));
       _pinChatToBottom(window: const Duration(milliseconds: 180));
     });
   }
@@ -1260,11 +1257,15 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
             Navigator.pop(ctx);
             _selectEdge(e, showSheet: true);
           },
-          onStudyQuizzes: (quizType, quizIds) async {
+          onStudyQuizzes: (quizType, quizIds, language) async {
             Navigator.pop(ctx);
             _activateInputMode();
             _ensureChatVisible();
-            await chatSession.startQuiz(quizType, quizIds: quizIds);
+            await chatSession.startQuiz(
+              quizType,
+              language: language,
+              quizIds: quizIds,
+            );
           },
         ),
       ),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
@@ -27,30 +28,38 @@ async def test_daily_fill_explores_every_source_for_each_language(
 
     calls: list[tuple[str, str]] = []
 
-    async def fake_bundle(session, user, *, language, seed_node_ids=None, **kwargs):
-        node_id = next(iter(seed_node_ids))
-        calls.append((language, node_id))
-        created = []
-        for quiz_type in ("cloze", "composition"):
-            created.append(await crud.create_quiz(
-                session,
-                user_id=user.id,
-                quiz_type=quiz_type,
-                question_ko=f"{language}-{node_id}-{quiz_type}",
-                sentence_en="I compared the result." if quiz_type == "cloze" else None,
-                quiz_data={
-                    "language": language,
-                    "blank": "compared",
-                    "prompt_en": "I ___ the result.",
-                },
-                difficulty_level=20,
-                queue_kind="new",
-                language=language,
-                source_nodes=[node_id],
-            ))
-        return created, {}
+    async def fake_material(session, user, *, node_id, language, **kwargs):
+        calls.append((language, str(node_id)))
+        composition = await crud.create_quiz(
+            session,
+            user_id=user.id,
+            quiz_type="composition",
+            question_ko=f"{language}-{node_id}-composition",
+            quiz_data={"language": language},
+            difficulty_level=20,
+            queue_kind="new",
+            language=language,
+            source_nodes=[node_id],
+        )
+        return SimpleNamespace(expression_count=1), [composition], {"steps": []}
 
-    monkeypatch.setattr(quiz_batch, "generate_quiz_bundle", fake_bundle)
+    async def fake_materialize(session, user, *, node_id, language, **kwargs):
+        cloze = await crud.create_quiz(
+            session,
+            user_id=user.id,
+            quiz_type="cloze",
+            question_ko=f"{language}-{node_id}-cloze",
+            sentence_en="I compared the result.",
+            quiz_data={"language": language, "blank": "compared", "prompt_en": "I ___ the result."},
+            difficulty_level=20,
+            queue_kind="new",
+            language=language,
+            source_nodes=[node_id],
+        )
+        return [cloze], {"steps": []}
+
+    monkeypatch.setattr(quiz_batch, "ensure_learning_material", fake_material)
+    monkeypatch.setattr(quiz_batch, "materialize_node_expressions", fake_materialize)
 
     result = await quiz_batch.fill_user_daily_batches(db_session, iso_user)
 

@@ -13,7 +13,8 @@ from . import crud
 from .db import async_session_factory
 from .models import Node, Quiz, QuizGenerationRun, User
 from .quiz_batch import _record_exploration
-from .quiz_bundle import BundleSeedError, generate_quiz_bundle
+from .quiz_bundle import BundleSeedError
+from .quiz_materials import ensure_learning_material, materialize_node_expressions
 
 logger = logging.getLogger(__name__)
 
@@ -179,21 +180,20 @@ async def process_generation_run(run_id: uuid.UUID) -> None:
             node_id = uuid.UUID(str(item["node_id"]))
             language = str(item["language"]).lower()
             try:
-                created, trace = await generate_quiz_bundle(
+                _, composition, trace = await ensure_learning_material(
+                    session, user, node_id=node_id, language=language,
+                    priority=100 if run.source == "manual" else 0,
+                    force=run.source == "manual",
+                )
+                clozes, _ = await materialize_node_expressions(
                     session,
                     user,
+                    node_id=node_id,
                     language=language,
-                    seed_node_ids={str(node_id)},
-                    generation_version=f"{run.id}:{index}",
-                    allow_existing_expressions=True,
+                    limit=8,
+                    direct_node=run.source == "manual",
                 )
-                await _archive_previous_pair(
-                    session,
-                    user.id,
-                    node_id,
-                    language,
-                    keep_ids={quiz.id for quiz in created},
-                )
+                created = composition + clozes
                 counts = {
                     "cloze": sum(q.quiz_type == "cloze" for q in created),
                     "composition": sum(q.quiz_type == "composition" for q in created),

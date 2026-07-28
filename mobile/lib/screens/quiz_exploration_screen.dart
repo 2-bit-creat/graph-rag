@@ -26,6 +26,8 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
   final Set<String> _selectedNodes = {};
   final Set<String> _selectedLanguages = {};
   Timer? _pollTimer;
+  Timer? _settleRefreshTimer;
+  bool _hadActiveRun = false;
 
   static const _languageLabels = {
     'english': '영어',
@@ -50,6 +52,7 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _settleRefreshTimer?.cancel();
     super.dispose();
   }
 
@@ -106,6 +109,9 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
       final status = run['status']?.toString();
       return status == 'queued' || status == 'running';
     });
+    if (hasActive) {
+      _hadActiveRun = true;
+    }
     if (hasActive && _pollTimer == null) {
       _pollTimer = Timer.periodic(
         const Duration(seconds: 3),
@@ -114,6 +120,17 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
     } else if (!hasActive) {
       _pollTimer?.cancel();
       _pollTimer = null;
+      if (_hadActiveRun) {
+        _hadActiveRun = false;
+        // The run is marked completed just before the exploration aggregate
+        // is updated. Fetch once more after that transaction settles so the
+        // node card does not remain at zero until a full page navigation.
+        _settleRefreshTimer?.cancel();
+        _settleRefreshTimer = Timer(
+          const Duration(milliseconds: 900),
+          () => _load(silent: true),
+        );
+      }
     }
   }
 

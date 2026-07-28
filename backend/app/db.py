@@ -219,6 +219,41 @@ _MIGRATIONS = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_quiz_generation_runs_user_created ON quiz_generation_runs (user_id, created_at DESC)",
     """
+    CREATE TABLE IF NOT EXISTS quiz_learning_materials (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        node_id UUID NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+        language TEXT NOT NULL,
+        source_hash TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        priority INTEGER NOT NULL DEFAULT 0,
+        composition_count INTEGER NOT NULL DEFAULT 0,
+        expression_count INTEGER NOT NULL DEFAULT 0,
+        expansion_count INTEGER NOT NULL DEFAULT 0,
+        result JSONB,
+        error TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (user_id, node_id, language)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_quiz_learning_materials_user_status ON quiz_learning_materials (user_id, language, status)",
+    """
+    CREATE TABLE IF NOT EXISTS quiz_policy_decisions (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        policy TEXT NOT NULL,
+        policy_version TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        details JSONB,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_quiz_policy_decisions_user_created ON quiz_policy_decisions (user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_quiz_policy_decisions_policy_created ON quiz_policy_decisions (policy, created_at DESC)",
+    """
     CREATE TABLE IF NOT EXISTS quiz_batches (
         id UUID PRIMARY KEY,
         user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

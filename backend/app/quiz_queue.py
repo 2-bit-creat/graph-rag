@@ -12,6 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import get_settings
 from .level_guidelines import window_for_level
 from .models import Quiz, User
+from .quiz_policies import (
+    PRESENTATION_POLICY_VERSION,
+    REVIEW_POLICY_VERSION,
+    presentation_reason,
+    record_policy_decision,
+    review_reason,
+)
 from .quiz_types import validate_quiz_type
 
 
@@ -142,7 +149,20 @@ async def build_session(
         )
         picked.extend((await session.execute(extra_review)).scalars().all())
 
-    return picked[:size]
+    picked = picked[:size]
+    for quiz in picked:
+        tier, reason = presentation_reason(quiz)
+        await record_policy_decision(
+            session,
+            user_id=user_id,
+            policy="presentation",
+            policy_version=PRESENTATION_POLICY_VERSION,
+            entity_type="quiz",
+            entity_id=quiz.id,
+            reason=reason,
+            details={"tier": tier, "quiz_type": quiz.quiz_type, "language": quiz.language},
+        )
+    return picked
 
 
 async def pick_quizzes_by_ids(
@@ -240,6 +260,18 @@ async def record_quiz_result(
     quiz.next_review_at = datetime.now(UTC) + timedelta(days=quiz.interval_days)
     if quiz.queue_kind == "new" and quiz.repetitions > 0:
         quiz.queue_kind = "review"
+
+    reason, details = review_reason(quiz, correct=correct, quality=quality)
+    await record_policy_decision(
+        session,
+        user_id=quiz.user_id,
+        policy="review",
+        policy_version=REVIEW_POLICY_VERSION,
+        entity_type="quiz",
+        entity_id=quiz.id,
+        reason=reason,
+        details=details,
+    )
 
     if commit:
         await session.commit()

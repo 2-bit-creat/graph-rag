@@ -565,6 +565,64 @@ class QuizGenerationRun(Base):
     )
 
 
+class QuizLearningMaterial(Base):
+    """Current learning-material analysis for one Statement and target language.
+
+    This is intentionally separate from generated cards.  It lets a node be
+    analysed once, while composition cards are prepared immediately and cloze
+    cards are materialised later when a queue actually needs them.
+    """
+
+    __tablename__ = "quiz_learning_materials"
+    __table_args__ = (
+        UniqueConstraint("user_id", "node_id", "language", name="uq_quiz_learning_material"),
+        Index("idx_quiz_learning_materials_user_status", "user_id", "language", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False
+    )
+    language: Mapped[str] = mapped_column(String, nullable=False)
+    source_hash: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    composition_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expression_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expansion_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class QuizPolicyDecision(Base):
+    """Explainable audit trail for generation, presentation and review policies."""
+
+    __tablename__ = "quiz_policy_decisions"
+    __table_args__ = (
+        Index("idx_quiz_policy_decisions_user_created", "user_id", "created_at"),
+        Index("idx_quiz_policy_decisions_policy_created", "policy", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    policy: Mapped[str] = mapped_column(String, nullable=False)
+    policy_version: Mapped[str] = mapped_column(String, nullable=False)
+    entity_type: Mapped[str] = mapped_column(String, nullable=False)
+    entity_id: Mapped[str] = mapped_column(String, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Ontology(Base):
     """Single-row, user-editable ontology (entity types + relation types)."""
 

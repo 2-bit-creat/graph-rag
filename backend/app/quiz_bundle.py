@@ -123,6 +123,16 @@ def _client() -> AsyncOpenAI:
     return AsyncOpenAI(api_key=get_settings().openai_api_key)
 
 
+def _usage_payload(response: Any) -> dict[str, int]:
+    """Persist provider token accounting in traces without storing secrets."""
+    usage = getattr(response, "usage", None)
+    return {
+        "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+        "completion_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+        "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+    }
+
+
 class BundleSeedError(ValueError):
     """No usable Statement to build a quiz bundle from (empty graph)."""
 
@@ -659,6 +669,21 @@ def _expression_key(value: str) -> str:
     return " ".join(re.findall(r"[\w'-]+", value.casefold()))
 
 
+def _expression_utility_score(chunk: dict[str, Any]) -> int:
+    """Transparent first-pass ranking for deferred cloze materialisation."""
+    canonical = str(chunk.get("canonical_form") or chunk.get("text") or "").strip()
+    words = len(_ENGLISH_WORD_RE.findall(canonical)) or len(canonical.split())
+    kind = str(chunk.get("kind") or "")
+    score = 10 + min(words, 4) * 3
+    if kind in {"collocation", "verb_phrase", "grammar", "discourse_frame"}:
+        score += 5
+    elif kind == "domain_term":
+        score += 2
+    if chunk.get("meaning_parts"):
+        score += 2
+    return score
+
+
 def _segment_entity_terms(segment: dict[str, Any]) -> tuple[list[str], list[str]]:
     """Return native and target spellings that may provide context, never answers."""
     native: list[str] = []
@@ -921,6 +946,7 @@ async def generate_quiz_bundle(
     seed_node_ids: set[str] | None = None,
     generation_version: str | None = None,
     allow_existing_expressions: bool = False,
+    materialize_cloze: bool = True,
 ) -> tuple[list[Quiz], dict]:
     """Generate composition units and expression clozes from one Statement.
 
@@ -1015,6 +1041,7 @@ async def generate_quiz_bundle(
             "raw_expression_count": raw_expression_count,
             "semantic_normalizations": semantic_normalizations,
             "response_keys": list(raw.keys()),
+            "usage": _usage_payload(resp),
         },
         artifacts=[("bundle_plan.json", raw, "application/json")],
     )
@@ -1142,6 +1169,11 @@ async def generate_quiz_bundle(
                     ) if isinstance((chunk.get("reference_answers") or [{}])[0], dict) else "",
                     "surface_form": chunk.get("surface_form"),
                     "meaning_parts": chunk.get("meaning_parts") or [],
+                    "kind": chunk.get("kind") or "",
+                    "utility_score": _expression_utility_score(chunk),
+                    "source_segment": chunk.get("source_segment") or "",
+                    "reference_answers": chunk.get("reference_answers") or [],
+                    "surface_segments": chunk.get("surface_segments") or [],
                 }
                 for chunk in accepted_chunks
             ],
@@ -1151,7 +1183,7 @@ async def generate_quiz_bundle(
     # Stage two generates one card per extracted expression. There is no repair
     # call and no subjective LLM approval/rejection call after this point.
     cloze_items: list[Any] = []
-    if accepted_chunks:
+    if accepted_chunks and materialize_cloze:
         cloze_system = _build_cloze_system_prompt(
             native_label, target_label, level, lang_guide(language), language
         )
@@ -1182,7 +1214,7 @@ async def generate_quiz_bundle(
         cloze_items = list(cloze_raw.get("cloze") or [])
         tracer.finish_step(
             cloze_step,
-            output={"returned_count": len(cloze_items), "response_keys": list(cloze_raw.keys())},
+            output={"returned_count": len(cloze_items), "response_keys": list(cloze_raw.keys()), "usage": _usage_payload(cloze_resp)},
             artifacts=[("cloze.json", cloze_raw, "application/json")],
         )
 
@@ -1229,7 +1261,7 @@ async def generate_quiz_bundle(
         "structural_rejections": structural_reasons,
         "llm_quality_gate": "disabled",
     })
-    if not any(q["quiz_type"] == "cloze" for q in to_create):
+    if materialize_cloze and not any(q["quiz_type"] == "cloze" for q in to_create):
         logger.warning("Bundle produced no structurally renderable cloze: user=%s node=%s", user.id, seed_node_id)
 
     trace = tracer.finish(status="completed")
@@ -1316,4 +1348,174 @@ async def generate_quiz_bundle(
         if spec["quiz_type"] == "cloze":
             active_expression_keys.add(identity)
 
+    return created, trace
+
+
+async def materialize_expression_clozes(
+    session: AsyncSession,
+    user: User,
+    *,
+    node_id: str,
+    language: str,
+    expressions: list[dict[str, Any]] | None = None,
+    limit: int = 8,
+    generation_version: str | None = None,
+) -> tuple[list[Quiz], dict]:
+    """Turn already analysed wordbook entries into cloze cards.
+
+    Unlike :func:`generate_quiz_bundle`, this never runs the composition/LLM
+    planning pass again.  It is the deferred second stage used by the automatic
+    queue and by an explicit wordbook selection.
+    """
+    from .node_expression_store import (
+        list_available_node_expressions,
+        set_expression_quiz_status,
+    )
+
+    language = (language or "english").lower()
+    level = crud.get_language_level(user, language)
+    native_language = (getattr(user, "native_language", None) or "korean").lower()
+    native_label = _lang_label(native_language)
+    target_label = _lang_label(language)
+    node_uuid = uuid.UUID(str(node_id))
+    source = next(
+        (
+            row for row in await crud.get_all_statement_nodes(session, user.id)
+            if str(row.get("node_id")) == str(node_id)
+        ),
+        None,
+    )
+    if source is None:
+        raise BundleSeedError("Statement node not found")
+    picked = list(expressions or await list_available_node_expressions(user.id, str(node_id), language))[:max(1, min(limit, 8))]
+    if not picked:
+        return [], {"status": "no_available_expressions", "steps": []}
+
+    names = [str(item.get("expression") or "") for item in picked]
+    await set_expression_quiz_status(user.id, str(node_id), language, names, "generating")
+    bundle_id = uuid.uuid4()
+    tracer = PipelineTracer(bundle_id)
+    tracer.run.current_phase = "quiz_materialize"
+    tracer.run.status = "quiz_materialize"
+    chunks: list[dict[str, Any]] = []
+    for index, item in enumerate(picked):
+        refs = item.get("reference_answers") or []
+        if not refs and item.get("example"):
+            refs = [{"text": str(item["example"])}]
+        normalized_refs = [
+            value if isinstance(value, dict) else {"text": str(value)}
+            for value in refs
+        ]
+        segment = str(item.get("source_segment") or source.get("content_ko") or "")
+        chunks.append({
+            "expression_id": f"stored:{index}",
+            "canonical_form": str(item.get("expression") or "").strip(),
+            "surface_form": str(item.get("surface_form") or item.get("expression") or "").strip(),
+            "surface_segments": item.get("surface_segments") or [],
+            "meaning": str(item.get("meaning") or "").strip(),
+            "meaning_parts": item.get("meaning_parts") or [],
+            "kind": str(item.get("kind") or "collocation"),
+            "excluded_native_terms": [],
+            "excluded_target_terms": [],
+            "segment_index": index,
+            "source_segment": segment,
+            "semantic_guardrails": _source_semantic_guardrails(segment, language),
+            "reference_answers": normalized_refs,
+        })
+    system = _build_cloze_system_prompt(
+        native_label, target_label, level, lang_guide(language), language
+    )
+    payload = {"source_statement": str(source.get("content_ko") or ""), "expressions": chunks}
+    step = tracer.begin_step(
+        "deferred_cloze_generate", "llm", phase="quiz_materialize",
+        input_data={"node_id": str(node_id), "expression_count": len(chunks), "expressions": names},
+    )
+    settings = get_settings()
+    step.model = settings.openai_model
+    step.system_prompt = system
+    try:
+        response = await _client().chat.completions.create(
+            model=settings.openai_model,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            temperature=0.25,
+            response_format=_CLOZE_RESPONSE_FORMAT,
+            timeout=settings.openai_timeout_sec,
+        )
+        raw = json.loads(response.choices[0].message.content or "{}")
+        items = list(raw.get("cloze") or [])
+        tracer.finish_step(step, output={"returned_count": len(items), "usage": _usage_payload(response)}, artifacts=[("deferred_cloze.json", raw, "application/json")])
+    except Exception:
+        await set_expression_quiz_status(user.id, str(node_id), language, names, "available")
+        raise
+
+    source_meta = {"node_id": str(node_id), "bundle_id": str(bundle_id), "mode": "statement", "language": language, "materialized": True}
+    candidates, reasons = _prepare_cloze_candidates(
+        items,
+        language=language,
+        level=level,
+        source_meta=source_meta,
+        expression_contracts={str(chunk["expression_id"]): chunk for chunk in chunks},
+        native_language=native_language,
+    )
+    chunks_by_id = {str(chunk["expression_id"]): chunk for chunk in chunks}
+    trace_step = tracer.begin_step("deferred_cloze_validation", "policy", phase="quiz_materialize", input_data={"candidate_count": len(items)})
+    trace_step_output = {"accepted_count": len(candidates), "structural_rejections": reasons}
+    tracer.finish_step(trace_step, output=trace_step_output)
+    trace = tracer.finish(status="completed")
+    created: list[Quiz] = []
+    emitted: list[str] = []
+    for candidate in candidates:
+        chunk = chunks_by_id.get(str(candidate["expression_id"]))
+        if chunk is None:
+            continue
+        expression_key = _expression_key(chunk["canonical_form"])
+        existing = await session.scalar(
+            select(Quiz).where(
+                Quiz.user_id == user.id,
+                Quiz.language == language,
+                Quiz.quiz_type == "cloze",
+                Quiz.queue_kind != "archived",
+                Quiz.generation_key == hashlib.sha256(
+                    f"{user.id}|{language}|vocabulary|cloze|{expression_key}".encode()
+                ).hexdigest(),
+            )
+        )
+        if existing is not None:
+            emitted.append(chunk["canonical_form"])
+            continue
+        spec = candidate["spec"]
+        spec["quiz_data"].update({
+            "canonical_form": chunk["canonical_form"],
+            "surface_form": candidate["blank"],
+            "meaning": chunk["meaning"],
+            "meaning_parts": chunk["meaning_parts"],
+            "source_segment": chunk["source_segment"],
+            "surface_segments": chunk["surface_segments"],
+        })
+        identity = f"{user.id}|{language}|vocabulary|cloze|{expression_key}"
+        if generation_version:
+            identity = f"{identity}|{generation_version}"
+        quiz = await crud.create_quiz(
+            session,
+            user_id=user.id,
+            quiz_type="cloze",
+            question_ko=spec["question_ko"],
+            sentence_en=spec["sentence_en"],
+            quiz_data=spec["quiz_data"],
+            difficulty_level=level,
+            queue_kind="new",
+            language=language,
+            source_nodes=[node_uuid],
+            pipeline_trace=trace,
+            debug_run_dir=tracer.debug_dir_relative,
+            generation_key=hashlib.sha256(identity.encode()).hexdigest(),
+        )
+        created.append(quiz)
+        emitted.append(chunk["canonical_form"])
+
+    if emitted:
+        await set_expression_quiz_status(user.id, str(node_id), language, emitted, "emitted")
+    rejected = [name for name in names if name not in emitted]
+    if rejected:
+        await set_expression_quiz_status(user.id, str(node_id), language, rejected, "available")
     return created, trace

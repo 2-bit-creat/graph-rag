@@ -24,9 +24,10 @@ from ..deps import request_user_dep, require_debug_enabled
 from ..languages import DEFAULT_NATIVE, SUPPORTED_NATIVE, valid_target_for_native
 from ..level_adjuster import reclassify_queue_by_level
 from ..level_guidelines import cefr_label, window_for_level
-from ..models import Quiz, QuizAttempt, QuizGenerationRun, User
+from ..models import Quiz, QuizAttempt, QuizGenerationRun, QuizLearningMaterial, QuizPolicyDecision, User
 from ..pipeline_flow import build_quiz_only_flow_layout
 from ..quiz_bundle import BundleSeedError, generate_quiz_bundle
+from ..quiz_materials import ensure_learning_material, materialize_node_expressions
 from ..quiz_pipeline import (
     trace_quiz_queue_pick,
     trace_quiz_sm2_update,
@@ -360,6 +361,7 @@ async def list_queue_explorations(
             item["language_stats"].append({
                 "language": lang,
                 "status": row["status"],
+                "material_status": row.get("material_status", "unprocessed"),
                 "cloze_status": row["cloze_status"],
                 "generated_counts": {
                     "cloze": row["word_count"],
@@ -448,6 +450,146 @@ async def get_generation_run(
     if run is None or run.user_id != user.id:
         raise HTTPException(status_code=404, detail="Generation run not found")
     return QuizGenerationRunOut(**run_dict(run))
+
+
+@router.get("/materials/{node_id}")
+async def get_learning_material(
+    node_id: uuid.UUID,
+    language: str = Query(...),
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Read the inventory state needed by a graph-node learning surface."""
+    language = language.lower()
+    row = await session.scalar(
+        select(QuizLearningMaterial).where(
+            QuizLearningMaterial.user_id == user.id,
+            QuizLearningMaterial.node_id == node_id,
+            QuizLearningMaterial.language == language,
+        )
+    )
+    from ..node_expression_store import get_node_expressions
+    expressions = await get_node_expressions(user.id, str(node_id), language)
+    return {
+        "node_id": str(node_id),
+        "language": language,
+        "status": row.status if row else "unprocessed",
+        "composition_count": row.composition_count if row else 0,
+        "expression_count": row.expression_count if row else len(expressions),
+        "error": row.error if row else None,
+        "expressions": expressions,
+    }
+
+
+@router.post("/materials/{node_id}/analyse")
+async def analyse_learning_material(
+    node_id: uuid.UUID,
+    language: str = Query(...),
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Queue/upgrade analysis for a node selected from the knowledge graph."""
+    language = language.lower()
+    # Direct selection is intentionally synchronous here: it either returns a
+    # ready inventory or a truthful failure instead of making the client poll a
+    # hidden task. The graph-save path remains background-only.
+    row, composition, _ = await ensure_learning_material(
+        session, user, node_id=node_id, language=language, priority=100
+    )
+    return {
+        "node_id": str(node_id),
+        "language": language,
+        "status": row.status,
+        "composition_quiz_ids": [str(quiz.id) for quiz in composition],
+        "composition_count": row.composition_count,
+        "expression_count": row.expression_count,
+    }
+
+
+@router.post("/materials/{node_id}/expressions/materialize")
+async def materialize_learning_expressions(
+    node_id: uuid.UUID,
+    language: str = Query(...),
+    expressions: list[str] | None = None,
+    limit: int = Query(6, ge=1, le=8),
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Create cloze cards for selected (or top-ranked) stored expressions."""
+    language = language.lower()
+    selected = None
+    if expressions:
+        from ..node_expression_store import get_node_expressions
+        requested = {value.strip().lower() for value in expressions if value.strip()}
+        selected = [
+            item for item in await get_node_expressions(user.id, str(node_id), language)
+            if str(item.get("expression") or "").lower() in requested
+            and str(item.get("quiz_status") or "available") == "available"
+        ]
+    created, _ = await materialize_node_expressions(
+        session,
+        user,
+        node_id=node_id,
+        language=language,
+        expressions=selected,
+        limit=limit,
+        direct_node=True,
+        queue_missing=limit,
+    )
+    return {"status": "ok", "quiz_ids": [str(quiz.id) for quiz in created], "count": len(created)}
+
+
+@router.get("/admin/policy-dashboard")
+async def policy_dashboard(
+    limit: int = Query(30, ge=1, le=200),
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Read-only, explainable policy overview for the manager surface."""
+    materials = (
+        await session.scalars(
+            select(QuizLearningMaterial)
+            .where(QuizLearningMaterial.user_id == user.id)
+            .order_by(QuizLearningMaterial.updated_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    decisions = (
+        await session.scalars(
+            select(QuizPolicyDecision)
+            .where(QuizPolicyDecision.user_id == user.id)
+            .order_by(QuizPolicyDecision.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    queues = await count_queues(session, user.id)
+    token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    for material in materials:
+        trace = (material.result or {}).get("trace") or {}
+        for step in trace.get("steps") or []:
+            usage = (step.get("output") or {}).get("usage") or {}
+            for key in token_usage:
+                token_usage[key] += int(usage.get(key) or 0)
+    return {
+        "policies": [
+            {"name": "generation", "version": "generation-v1-inventory-first", "summary": "학습 소재 분석 후 미생성 표현만 필요할 때 문제화"},
+            {"name": "presentation", "version": "presentation-v1-tiered", "summary": "직접 선택 노드, 지연 복습, 오늘 복습, 새 문제 순"},
+            {"name": "review", "version": "review-v1-sm2", "summary": "풀이 품질과 결과로 다음 복습 시점 계산"},
+        ],
+        "queues": queues,
+        "token_usage": token_usage,
+        "materials": [
+            {"node_id": str(row.node_id), "language": row.language, "status": row.status,
+             "composition_count": row.composition_count, "expression_count": row.expression_count,
+             "expansion_count": row.expansion_count, "error": row.error, "updated_at": row.updated_at}
+            for row in materials
+        ],
+        "recent_decisions": [
+            {"policy": row.policy, "version": row.policy_version, "entity_type": row.entity_type,
+             "entity_id": row.entity_id, "reason": row.reason, "details": row.details or {}, "created_at": row.created_at}
+            for row in decisions
+        ],
+    }
 
 
 @router.post(
@@ -756,6 +898,7 @@ async def update_level(
 @router.patch("/profile/settings", response_model=LearningProfileOut)
 async def update_profile_settings(
     payload: ProfileSettingsUpdateRequest,
+    background: BackgroundTasks,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> LearningProfileOut:
@@ -810,8 +953,18 @@ async def update_profile_settings(
     if payload.level is not None and payload.level != prev_level:
         await reclassify_queue_by_level(session, user.id, payload.level)
 
-    # NOTE: retroactive extraction is NOT triggered here.
-    # Frontend must call POST /vocabularies/statement-bank/reprocess after user confirms.
+    new_languages = set(crud.get_effective_target_languages(user)) - prev_langs
+    if new_languages:
+        from ..quiz_materials import analyse_material_background
+        for source in await crud.get_all_statement_nodes(session, user.id):
+            node_id = source.get("node_id")
+            if node_id:
+                background.add_task(
+                    analyse_material_background,
+                    user.id,
+                    uuid.UUID(str(node_id)),
+                    sorted(new_languages),
+                )
 
     return await get_profile(user=user, session=session)
 

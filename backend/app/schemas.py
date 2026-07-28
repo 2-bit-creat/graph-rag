@@ -718,7 +718,8 @@ class QuizQueueItemOut(BaseModel):
 
 class QuizExplorationLanguageOut(BaseModel):
     language: str
-    status: Literal["explored", "unexplored"]
+    status: Literal["explored", "partial", "unexplored"]
+    material_status: str = "unprocessed"
     cloze_status: str = "available"
     # Actual cards kept from this source after exploration, keyed by quiz type.
     # This is distinct from expression_count, which counts only candidates found
