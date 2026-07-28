@@ -1,77 +1,52 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: Graph RAG FastAPI backend on AWS Lambda (container image) via a Function URL
+Description: Graph RAG FastAPI backend with safe Lambda deployments
 
 Parameters:
-  DatabaseUrl:
+  AppSecretName:
     Type: String
-    NoEcho: true
-    Description: Async Postgres URL, e.g. postgresql+asyncpg://... (Neon pooled endpoint recommended)
-  OpenAiApiKey:
+    Default: graph-rag/prod/app
+    Description: Secrets Manager JSON secret containing DATABASE_URL, OPENAI_API_KEY, and JWT_SECRET.
+  AppVersion:
     Type: String
-    NoEcho: true
-  JwtSecret:
+    Default: unknown
+    Description: Non-secret Git commit SHA shown by /ready.
+  EnableCanary:
     Type: String
-    NoEcho: true
-    Description: Long random string for signing auth tokens. Required — the app refuses to boot in production on the placeholder default.
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Enable after the first alias-creation deployment.
   Environment:
     Type: String
     Default: production
     AllowedValues: [production, development]
-    Description: Deployment environment. "production" enforces auth (no token-less fallback) and rejects an insecure JWT secret.
   CorsOrigins:
     Type: String
     Default: ""
-    Description: Comma-separated allowed web origins (e.g. the CloudFront domain serving the Flutter web build). Leave empty for a native-only mobile client. Do NOT use "*" — the app also allows credentials in dev.
   S3Bucket:
     Type: String
     Default: ""
-    Description: Media bucket for audio uploads + quiz TTS. Leave empty only for a short-lived smoke test — Lambda's filesystem does not persist, so any real deployment must set this.
   MediaBaseUrl:
     Type: String
     Default: ""
-    Description: Public base URL (typically a CloudFront domain) fronting S3Bucket, used to build playable media URLs.
   DbRequireSsl:
     Type: String
     Default: "true"
     AllowedValues: ["true", "false"]
-    Description: Neon (and most managed Postgres) require TLS.
   DbDisablePreparedCache:
     Type: String
     Default: "true"
     AllowedValues: ["true", "false"]
-    Description: Required when DatabaseUrl points at Neon's pooled (-pooler) endpoint (PgBouncer transaction mode).
   DbLambdaPooling:
     Type: String
     Default: "true"
     AllowedValues: ["true", "false"]
-    Description: Skip SQLAlchemy's connection pool in favor of the DB-side pooler — keeps cold Lambda containers from exhausting Neon's free-tier connection cap.
-  RunDbMigrations:
-    Type: String
-    Default: "false"
-    AllowedValues: ["true", "false"]
-    Description: Run init_db()'s ~90 idempotent schema statements at cold start. Each is a real round trip to a remote DB (measured ~60-70s total against Neon) — fine once, but eats most of the cold-start timeout budget on every container otherwise. Set "true" for the first deploy against a fresh DB (or after adding a new migration), then flip back to "false".
 
 Globals:
   Function:
     Timeout: 120
-    # 2048, not 1024: Lambda scales CPU with memory, and this is a container
-    # image importing llama-index/openai/sqlalchemy at cold start — an
-    # import-bound workload that gets nearly linearly faster with more CPU.
-    # Billing is GB-ms, so doubling memory is cost-neutral whenever it more
-    # than halves duration, which is the usual outcome for a cold start
-    # dominated by module imports.
     MemorySize: 2048
-    # x86_64, not arm64/Graviton: emulated arm64 builds hit a Docker Desktop
-    # containerd export bug on this machine (see backend/Dockerfile). Costs
-    # ~20% more per ms than Graviton would, but builds reliably.
     Architectures: [x86_64]
-    # No ReservedConcurrentExecutions: this account's whole-region Lambda
-    # concurrency limit is 10 (AWS's brand-new-account default before a quota
-    # increase), and AWS requires >=10 UNRESERVED remain after any reservation
-    # — so no positive reservation is possible here. The account-wide limit of
-    # 10 already acts as the cost ceiling. Revisit once a quota increase is
-    # requested/granted.
 
 Resources:
   GraphRagFunction:
@@ -82,35 +57,121 @@ Resources:
       DockerTag: latest
     Properties:
       PackageType: Image
+      AutoPublishAlias: live
       Policies:
-        # storage.py's boto3 put_object/list_objects_v2/delete_objects calls
-        # (audio uploads, quiz TTS) had no IAM permission at all before this —
-        # the function's role was CloudWatch-Logs-only. Scoped to just the
-        # media bucket, not a blanket S3 policy.
         - S3CrudPolicy:
             BucketName: !Ref S3Bucket
       Environment:
         Variables:
-          DATABASE_URL: !Ref DatabaseUrl
-          OPENAI_API_KEY: !Ref OpenAiApiKey
+          # Dynamic references keep secret values out of source, SAM config,
+          # GitHub Actions, and CloudFormation event output.
+          DATABASE_URL: !Sub '{{resolve:secretsmanager:${AppSecretName}:SecretString:DATABASE_URL}}'
+          OPENAI_API_KEY: !Sub '{{resolve:secretsmanager:${AppSecretName}:SecretString:OPENAI_API_KEY}}'
+          JWT_SECRET: !Sub '{{resolve:secretsmanager:${AppSecretName}:SecretString:JWT_SECRET}}'
+          APP_VERSION: !Ref AppVersion
           CORS_ORIGINS: !Ref CorsOrigins
           ENVIRONMENT: !Ref Environment
-          JWT_SECRET: !Ref JwtSecret
           S3_BUCKET: !Ref S3Bucket
           MEDIA_BASE_URL: !Ref MediaBaseUrl
           DB_REQUIRE_SSL: !Ref DbRequireSsl
           DB_DISABLE_PREPARED_CACHE: !Ref DbDisablePreparedCache
           DB_LAMBDA_POOLING: !Ref DbLambdaPooling
-          RUN_DB_MIGRATIONS: !Ref RunDbMigrations
+          # Deployments invoke migrations explicitly before traffic moves.
+          RUN_DB_MIGRATIONS: "false"
       FunctionUrlConfig:
         AuthType: NONE
-        # No Cors block here — FastAPI's own CORSMiddleware (main.py, driven by
-        # CORS_ORIGINS) is the single source of truth for CORS. Function URL's
-        # native CORS handling would add its own Access-Control-Allow-Origin on
-        # top of the app's, and the browser rejects a response with the same
-        # header appearing twice ("multiple values ... only one is allowed").
+      DeploymentPreference:
+        Enabled: !Equals [!Ref EnableCanary, "true"]
+        Type: Canary10Percent5Minutes
+        Alarms:
+          - !Ref LambdaErrorsAlarm
+          - !Ref LambdaThrottlesAlarm
+          - !Ref LambdaDurationAlarm
+        Hooks:
+          PreTraffic: !Ref DeploymentValidationHook
+
+  DeploymentValidationHook:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: infra/hooks/
+      Handler: deploy_hook.handler
+      Runtime: python3.12
+      Timeout: 120
+      Environment:
+        Variables:
+          FUNCTION_NAME: !Ref GraphRagFunction
+          NEW_VERSION: !Ref GraphRagFunction.Version
+          APP_VERSION: !Ref AppVersion
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !Ref GraphRagFunction.Version
+            - Effect: Allow
+              Action: codedeploy:PutLifecycleEventHookExecutionStatus
+              Resource: !Sub arn:${AWS::Partition}:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentgroup:${ServerlessDeploymentApplication}/*
+
+  LambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Roll back when the Graph RAG Lambda reports errors during a canary.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref GraphRagFunction
+
+  LambdaThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Roll back when the Graph RAG Lambda is throttled during a canary.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref GraphRagFunction
+
+  LambdaDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Roll back when p95 Lambda duration approaches the timeout during a canary.
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      ExtendedStatistic: p95
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 110000
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref GraphRagFunction
+
+  GraphRagLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${GraphRagFunction}
+      RetentionInDays: 14
 
 Outputs:
   FunctionUrl:
-    Description: Lambda Function URL — set as API_BASE_URL for the Flutter build (no trailing slash)
+    Description: Lambda Function URL pointing to the live alias
     Value: !GetAtt GraphRagFunctionUrl.FunctionUrl
+  FunctionName:
+    Value: !Ref GraphRagFunction
+  DeploymentRoleHint:
+    Description: Deploy with GitHub OIDC; no long-lived AWS credentials are required.
+    Value: GitHubActionsOIDC

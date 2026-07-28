@@ -1,0 +1,166 @@
+name: CI and production deployment
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Deployment scope
+        required: true
+        type: choice
+        default: all
+        options: [all, backend, frontend]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: graph-rag-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+  STACK_NAME: graph-rag-backend
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: graphrag
+          POSTGRES_PASSWORD: graphrag
+          POSTGRES_DB: graphrag
+        options: >-
+          --health-cmd "pg_isready -U graphrag -d graphrag"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+        ports: ["5432:5432"]
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+        ports: ["6379:6379"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject tracked secret filenames
+        run: |
+          if git ls-files | grep -E '(^|/)\.env($|\.)|(^|/)\.deploy-secrets\.env$'; then
+            echo "A tracked secret filename is not allowed." >&2
+            exit 1
+          fi
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test backend and validate migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://graphrag:graphrag@127.0.0.1:5432/graphrag
+          REDIS_URL: redis://127.0.0.1:6379/0
+          OPENAI_API_KEY: ""
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python scripts/check_migrations.py
+          pytest -q
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.24.5"
+          channel: stable
+      - name: Test and build Flutter web
+        working-directory: mobile
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+          flutter build web --release --dart-define=API_BASE_URL=https://placeholder.invalid
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flutter-web-${{ github.sha }}
+          path: mobile/build/web
+          retention-days: 1
+      - uses: aws-actions/setup-sam@v2
+      - name: Validate and build SAM image
+        run: |
+          sam validate --lint
+          sam build --cached --parallel
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/setup-sam@v2
+      - uses: actions/download-artifact@v4
+        with:
+          name: flutter-web-${{ github.sha }}
+          path: mobile/build/web
+      - name: Deploy backend through SAM and CodeDeploy
+        id: backend
+        if: github.event.inputs.scope != 'frontend'
+        env:
+          APP_VERSION: ${{ github.sha }}
+          CORS_ORIGINS: ${{ vars.WEB_ORIGIN }}
+          MEDIA_BUCKET: ${{ vars.MEDIA_BUCKET }}
+          MEDIA_BASE_URL: ${{ vars.MEDIA_BASE_URL }}
+        run: |
+          FUNCTION_NAME="$(aws cloudformation describe-stack-resource --stack-name "$STACK_NAME" --logical-resource-id GraphRagFunction --query 'StackResourceDetail.PhysicalResourceId' --output text 2>/dev/null || true)"
+          if [[ -n "$FUNCTION_NAME" && "$FUNCTION_NAME" != "None" ]] && aws lambda get-alias --function-name "$FUNCTION_NAME" --name live >/dev/null 2>&1; then
+            ENABLE_CANARY=true
+          else
+            ENABLE_CANARY=false
+          fi
+          sam build --cached --parallel
+          sam deploy --config-env github --no-confirm-changeset --no-fail-on-empty-changeset --capabilities CAPABILITY_IAM \
+            --parameter-overrides AppVersion="$APP_VERSION" EnableCanary="$ENABLE_CANARY" CorsOrigins="$CORS_ORIGINS" S3Bucket="$MEDIA_BUCKET" MediaBaseUrl="$MEDIA_BASE_URL"
+          API_BASE_URL="$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query 'Stacks[0].Outputs[?OutputKey==`FunctionUrl`].OutputValue' --output text)"
+          echo "api_base_url=$API_BASE_URL" >> "$GITHUB_OUTPUT"
+          echo "canary_enabled=$ENABLE_CANARY" >> "$GITHUB_OUTPUT"
+      - name: Publish frontend
+        id: frontend
+        if: github.event.inputs.scope != 'backend'
+        env:
+          WEB_BUCKET: ${{ vars.WEB_BUCKET }}
+          WEB_DISTRIBUTION_ID: ${{ vars.WEB_DISTRIBUTION_ID }}
+          APP_VERSION: ${{ github.sha }}
+          API_BASE_URL: ${{ steps.backend.outputs.api_base_url || vars.API_BASE_URL }}
+        run: |
+          aws s3api put-bucket-versioning --bucket "$WEB_BUCKET" --versioning-configuration Status=Enabled
+          bash scripts/deploy_frontend.sh mobile/build/web
+      - name: Smoke test production
+        if: github.event.inputs.scope != 'backend'
+        env:
+          API_BASE_URL: ${{ steps.backend.outputs.api_base_url || vars.API_BASE_URL }}
+          WEB_ORIGIN: ${{ vars.WEB_ORIGIN }}
+        run: python scripts/smoke_test.py --api "$API_BASE_URL" --web "$WEB_ORIGIN" --sha "${{ github.sha }}"
+      - name: Write deployment summary
+        if: always()
+        run: |
+          {
+            echo "## Graph RAG deployment"
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo "- Backend canary: \`${{ steps.backend.outputs.canary_enabled || 'not-run' }}\`"
+            echo "- API: ${{ steps.backend.outputs.api_base_url || vars.API_BASE_URL }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Collect sanitized diagnostics
+        if: failure()
+        run: bash scripts/collect_deploy_diagnostics.sh deploy-diagnostics
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: deploy-diagnostics-${{ github.run_id }}
+          path: deploy-diagnostics
+          retention-days: 14

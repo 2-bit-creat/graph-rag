@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .db import init_db
+from .db import database_readiness, init_db
 from .routers import auth, debug, graph, graph_chat, graph_chat_distill, jobs, journal, kg_build, legal, ontology, quiz, tutor, vocabulary
 
 settings = get_settings()
@@ -102,6 +102,12 @@ app.include_router(legal.router)
 @app.get("/health", tags=["health"])
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/ready", tags=["health"])
+async def ready() -> dict[str, str]:
+    """Public, sanitized readiness signal used by deployment smoke tests."""
+    return await database_readiness()
 
 
 # Starlette's ServerErrorMiddleware sits outside middleware added with

@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # the schema is already up to date. Run once with this True after a schema
     # change (or on first deploy), then flip to False for fast cold starts.
     run_db_migrations: bool = True
+    # Build metadata is injected by the deployment workflow. It is deliberately
+    # non-secret and is safe to expose from /ready for release verification.
+    app_version: str = "local"
     openai_api_key: str = ""
     # Single model for every LLM call — quiz generation, tutor, chat, cleanup.
     # (The old gpt-4o "premium" path was removed for cost; the bundle generator

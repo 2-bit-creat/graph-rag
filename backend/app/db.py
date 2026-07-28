@@ -1,7 +1,10 @@
 from collections.abc import AsyncGenerator
 import asyncio
+import hashlib
 import logging
 import socket
+from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
@@ -534,6 +537,148 @@ async def init_db() -> None:
     await _seed_ontology_presets()
 
 
+_MIGRATION_LOCK_ID = 714_223_901
+_LEGACY_BASELINE_VERSION = "0000_legacy_baseline"
+_VERSIONED_MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations" / "versions"
+_UNSAFE_MIGRATION_TOKENS = (
+    "DROP ",
+    "TRUNCATE ",
+    "ALTER TABLE ",
+    "RENAME ",
+    "UPDATE ",
+    "DELETE ",
+    "INSERT ",
+)
+
+
+def migration_checksum(sql: str) -> str:
+    return hashlib.sha256(sql.encode("utf-8")).hexdigest()
+
+
+def validate_migration_sql(sql: str) -> None:
+    """Permit only additive, expand-compatible SQL in automatic deploys.
+
+    Changes that can invalidate a rollback (or rewrite production data) must use
+    the separately approved operational runbook, never a normal main push.
+    """
+    normalized = " ".join(sql.upper().split())
+    # ALTER TABLE is only allowed for ADD COLUMN / ADD CONSTRAINT. It is checked
+    # separately because the broad ALTER token is otherwise unsafe.
+    if normalized.startswith("ALTER TABLE "):
+        if " ADD COLUMN " not in normalized and " ADD CONSTRAINT " not in normalized:
+            raise ValueError("automatic ALTER TABLE migrations may only add columns or constraints")
+        if " NOT NULL" in normalized or " DROP " in normalized or " RENAME " in normalized:
+            raise ValueError("automatic ALTER TABLE migrations may not narrow, drop, or rename")
+        return
+    if any(token in normalized for token in _UNSAFE_MIGRATION_TOKENS):
+        raise ValueError("automatic migrations must be additive; destructive/data SQL is blocked")
+    if not normalized.startswith(("CREATE TABLE ", "CREATE INDEX ")):
+        raise ValueError("automatic migrations must start with CREATE TABLE or CREATE INDEX")
+
+
+def versioned_migration_files() -> list[Path]:
+    if not _VERSIONED_MIGRATIONS_DIR.exists():
+        return []
+    files = sorted(_VERSIONED_MIGRATIONS_DIR.glob("[0-9][0-9][0-9][0-9]_*.sql"))
+    versions = [path.stem.split("_", 1)[0] for path in files]
+    if len(versions) != len(set(versions)):
+        raise RuntimeError("duplicate versioned migration number")
+    return files
+
+
+async def _ensure_migration_table(conn) -> None:
+    await conn.exec_driver_sql(
+        """
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            version TEXT PRIMARY KEY,
+            checksum TEXT NOT NULL,
+            applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            duration_ms INTEGER NOT NULL,
+            git_sha TEXT NOT NULL
+        )
+        """
+    )
+
+
+async def latest_schema_version() -> str:
+    async with engine.begin() as conn:
+        await _ensure_migration_table(conn)
+        row = (await conn.exec_driver_sql(
+            "SELECT version FROM schema_migrations ORDER BY applied_at DESC, version DESC LIMIT 1"
+        )).first()
+    return row[0] if row else "uninitialized"
+
+
+async def database_readiness() -> dict[str, str]:
+    try:
+        async with engine.connect() as conn:
+            await conn.exec_driver_sql("SELECT 1")
+        return {
+            "status": "ok",
+            "database": "ok",
+            "schema_version": await latest_schema_version(),
+            "app_version": settings.app_version,
+        }
+    except Exception:
+        # Do not expose DB hostnames, driver messages, or credentials through a
+        # public Function URL. Full detail remains in CloudWatch logs.
+        return {
+            "status": "unavailable",
+            "database": "unavailable",
+            "schema_version": "unknown",
+            "app_version": settings.app_version,
+        }
+
+
+async def run_deployment_migrations(*, git_sha: str) -> dict[str, object]:
+    """Run the legacy baseline once, then checksum-guarded additive migrations."""
+    applied: list[str] = []
+    await _wait_for_db()
+    async with engine.begin() as conn:
+        await _ensure_migration_table(conn)
+        await conn.exec_driver_sql(f"SELECT pg_advisory_xact_lock({_MIGRATION_LOCK_ID})")
+        rows = await conn.exec_driver_sql("SELECT version, checksum FROM schema_migrations")
+        recorded = {row[0]: row[1] for row in rows}
+
+        # This project already has a production schema managed by the legacy
+        # idempotent list. Preserve that behavior exactly once before moving to
+        # explicit files; it avoids guessing the remote DB's current state.
+        if _LEGACY_BASELINE_VERSION not in recorded:
+            started = datetime.now(UTC)
+            await _run_legacy_migrations(conn)
+            checksum = migration_checksum("legacy-bootstrap-v1")
+            elapsed = int((datetime.now(UTC) - started).total_seconds() * 1000)
+            await conn.exec_driver_sql(
+                "INSERT INTO schema_migrations (version, checksum, duration_ms, git_sha) VALUES (:v, :c, :d, :g)",
+                {"v": _LEGACY_BASELINE_VERSION, "c": checksum, "d": elapsed, "g": git_sha},
+            )
+            recorded[_LEGACY_BASELINE_VERSION] = checksum
+            applied.append(_LEGACY_BASELINE_VERSION)
+
+        for path in versioned_migration_files():
+            version = path.stem.split("_", 1)[0]
+            sql = path.read_text(encoding="utf-8")
+            checksum = migration_checksum(sql)
+            if version in recorded:
+                if recorded[version] != checksum:
+                    raise RuntimeError(f"migration checksum changed: {version}")
+                continue
+            validate_migration_sql(sql)
+            started = datetime.now(UTC)
+            await conn.exec_driver_sql(sql)
+            elapsed = int((datetime.now(UTC) - started).total_seconds() * 1000)
+            await conn.exec_driver_sql(
+                "INSERT INTO schema_migrations (version, checksum, duration_ms, git_sha) VALUES (:v, :c, :d, :g)",
+                {"v": version, "c": checksum, "d": elapsed, "g": git_sha},
+            )
+            applied.append(version)
+
+    # Ontology rows are data the existing initializer requires. Seed only after
+    # schema DDL commits, so an interrupted migration never leaves a marker.
+    await _seed_ontology_presets()
+    return {"status": "ok", "applied": applied, "schema_version": await latest_schema_version()}
+
+
 async def _run_migrations() -> None:
     # One physical connection for the whole DDL sequence below, not one per
     # statement — with db_lambda_pooling's NullPool (no connection reuse
@@ -547,6 +692,10 @@ async def _run_migrations() -> None:
     # of pure round-trip time (measured against Neon) — fine once, not on
     # every cold start. See Settings.run_db_migrations.
     async with engine.begin() as conn:
+        await _run_legacy_migrations(conn)
+
+
+async def _run_legacy_migrations(conn) -> None:
         await conn.exec_driver_sql("SET lock_timeout = '10s'")
         try:
             async with conn.begin_nested():
