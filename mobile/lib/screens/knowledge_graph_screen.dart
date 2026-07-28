@@ -279,6 +279,17 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     }
   }
 
+  /// Word quizzes must enter with an unfocused composer on iOS Safari.
+  /// Programmatic focus before/after the async quiz request can leave Flutter
+  /// believing the field is focused while the browser has no editable DOM
+  /// connection. A real tap on the TextField can only recreate that connection
+  /// when the FocusNode is not already holding stale focus.
+  void _prepareWordQuizInput() {
+    _expandChatForInput();
+    _chatInputFocusNode.unfocus();
+    FocusManager.instance.primaryFocus?.unfocus();
+  }
+
   /// Recreate the platform text-input connection after an async mode switch.
   /// On iOS Safari a request made while the old quiz is still busy can leave
   /// the Flutter field focused but with no keyboard to bring back on tap.
@@ -879,17 +890,18 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         if (quizType == 'composition') {
           _activateInputMode();
         } else {
-          // Request the editor connection while this menu tap is still a real
-          // user gesture. Waiting for the async quiz load leaves iOS Safari
-          // with a visible field that cannot open its keyboard until a drag.
-          _activateInputMode();
+          _prepareWordQuizInput();
         }
         await chatSession.startQuiz(quizType,
             language: langs.isNotEmpty ? langs.first : null);
         // For a cloze quiz, retain the native connection made during the menu
         // tap. Recreating it after this async transition leaves iOS Safari with
         // a focused Flutter field that cannot open its keyboard when tapped.
-        if (quizType == 'composition') _restoreComposerFocusAfterBuild();
+        if (quizType == 'composition') {
+          _restoreComposerFocusAfterBuild();
+        } else {
+          _prepareWordQuizInput();
+        }
         return;
       }
       if (!mounted) return;
@@ -932,10 +944,14 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         if (quizType == 'composition') {
           _activateInputMode();
         } else {
-          _activateInputMode();
+          _prepareWordQuizInput();
         }
         await chatSession.startQuiz(quizType, language: chosen);
-        if (quizType == 'composition') _restoreComposerFocusAfterBuild();
+        if (quizType == 'composition') {
+          _restoreComposerFocusAfterBuild();
+        } else {
+          _prepareWordQuizInput();
+        }
       }
     } finally {
       if (mounted) setState(() => _quizStarting = false);
@@ -1652,13 +1668,20 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
                     studyQuizzes: _selectedStudyQuizzes,
                     studyLoading: _selectedStudyLoading,
                     onStudyQuizzes: (quizType, quizIds, language) async {
-                      _activateInputMode();
+                      if (quizType == 'composition') {
+                        _activateInputMode();
+                      } else {
+                        _prepareWordQuizInput();
+                      }
                       _ensureChatVisible();
                       await chatSession.startQuiz(
                         quizType,
                         language: language,
                         quizIds: quizIds,
                       );
+                      if (quizType != 'composition') {
+                        _prepareWordQuizInput();
+                      }
                     },
                     onDetail: _showInspectorSheet,
                     onClose: _clearSelection,

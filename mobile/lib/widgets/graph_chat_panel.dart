@@ -1,6 +1,4 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'dart:async' show unawaited;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -515,13 +513,6 @@ class _InputBarState extends State<_InputBar> {
 
   bool get _canType => widget.enabled && !widget.busy && !_journalSaving;
 
-  void _showKeyboardFromTap() {
-    // Let the TextField's native tap path open the keyboard. Calling
-    // TextInput.show manually crashes the current Flutter web engine on iOS
-    // Safari with an unexpected-null error, leaving the field unfocusable.
-    _focusNode.requestFocus();
-  }
-
   void _insertNewline() {
     final value = widget.controller.value;
     final text = value.text;
@@ -779,7 +770,6 @@ class _InputBarState extends State<_InputBar> {
                       controller: widget.controller,
                       focusNode: _focusNode,
                       enabled: canType,
-                      onTap: _showKeyboardFromTap,
                       minLines: 1,
                       // Auto-grows with content up to ~6 lines, then scrolls —
                       // the standard composer behavior; capped so it never

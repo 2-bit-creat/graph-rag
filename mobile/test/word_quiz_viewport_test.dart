@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:graphrag_mobile/chat/chat_mode_cards.dart';
+import 'package:graphrag_mobile/widgets/graph_chat_panel.dart';
 import 'package:graphrag_mobile/widgets/quiz/quiz_viewport_scope.dart';
 
 void main() {
@@ -58,4 +59,33 @@ void main() {
       }
     }
   }
+
+  testWidgets('word quiz composer receives focus from the real field tap',
+      (tester) async {
+    final focusNode = FocusNode();
+    final inputController = TextEditingController();
+    addTearDown(focusNode.dispose);
+    addTearDown(inputController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatInputBar(
+            inputController: inputController,
+            busy: false,
+            onSend: (_) {},
+            modeLabel: '단어 퀴즈',
+            inputEnabled: true,
+            inputHint: '빈칸에 들어갈 표현을 입력하세요',
+            inputFocusNode: focusNode,
+          ),
+        ),
+      ),
+    );
+
+    expect(focusNode.hasFocus, isFalse);
+    await tester.tap(find.byType(TextField));
+    await tester.pump();
+    expect(focusNode.hasFocus, isTrue);
+  });
 }
