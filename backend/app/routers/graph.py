@@ -614,11 +614,11 @@ async def edit_node(
 
     payload: NodeUpdate,
 
-    background: BackgroundTasks,
-
     user: User = Depends(request_user_dep),
 
     session: AsyncSession = Depends(get_session),
+
+    background: BackgroundTasks = None,
 
 ) -> NodeOut:
 
@@ -632,7 +632,11 @@ async def edit_node(
 
         raise HTTPException(status_code=404, detail="node not found")
 
-    if node.type == "Statement" and len((node.description or node.name or "").strip()) >= 6:
+    if (
+        background is not None
+        and node.type == "Statement"
+        and len((node.description or node.name or "").strip()) >= 6
+    ):
         from ..quiz_materials import analyse_material_background
         background.add_task(
             analyse_material_background,

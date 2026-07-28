@@ -7,7 +7,7 @@ import uuid
 import pytest
 
 from app import crud
-from app.models import Node, SpeakerProfile
+from app.models import Node, SpeakerProfile, User
 
 
 @pytest.mark.asyncio
@@ -50,6 +50,14 @@ async def test_unlink_voice_from_node_clears_bidirectional_link(db_session, dev_
 @pytest.mark.asyncio
 async def test_unlink_voice_from_node_returns_none_for_other_user(db_session, dev_user):
     other_user_id = uuid.uuid4()
+    db_session.add(
+        User(
+            id=other_user_id,
+            email=f"other-{other_user_id.hex}@test.local",
+            password_hash="x",
+        )
+    )
+    await db_session.flush()
     node = Node(user_id=other_user_id, name="Other", type="Speaker")
     db_session.add(node)
     await db_session.commit()
