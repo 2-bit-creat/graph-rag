@@ -39,9 +39,10 @@ class _CardShell extends StatelessWidget {
         ? 0.0
         : (heightCompact ? 2.0 : (keyboardOpen ? 4.0 : 8.0));
     // The surrounding quiz panel has already removed its header, padding, and
-    // docked composer from this height. Filling it therefore uses the blank
-    // area above the keyboard without asking the card to exceed the viewport.
-    final viewportMinHeight = fillKeyboardArea && availableHeight != null
+    // docked composer from this height. Keep the card inside that exact area
+    // on mobile web: the body becomes scrollable instead of shrinking text or
+    // overflowing below the iOS keyboard.
+    final viewportHeight = fillKeyboardArea && availableHeight != null
         ? (availableHeight - topMargin - bottomMargin)
             .clamp(0.0, double.infinity)
         : null;
@@ -51,51 +52,67 @@ class _CardShell extends StatelessWidget {
             onChange: (size) => onContentHeightChanged!(size.height),
             child: child,
           );
+    final header = title == null
+        ? null
+        : Row(
+            children: [
+              Expanded(
+                child: Text(title!,
+                    // w800 breaks CanvasKit's Korean fallback glyphs on web.
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w700)),
+              ),
+              if (onClose != null)
+                InkWell(
+                  onTap: onClose,
+                  child: const Padding(
+                    padding: EdgeInsets.all(2),
+                    child: Icon(Icons.close_rounded, size: 18),
+                  ),
+                ),
+            ],
+          );
+    final titleGap = title == null
+        ? null
+        : SizedBox(
+            height: heightCompact
+                ? 2
+                : (useKeyboardCompactStyle ? 4 : (compact ? 6 : 10)));
+
     return Container(
-      constraints: viewportMinHeight == null
-          ? null
-          : BoxConstraints(minHeight: viewportMinHeight),
+      height: viewportHeight,
       margin: EdgeInsets.fromLTRB(0, topMargin, 0, bottomMargin),
-      padding: EdgeInsets.all(
-          heightCompact
-              ? 6
-              : (useKeyboardCompactStyle ? 8 : (compact ? 10 : 14))),
+      padding: EdgeInsets.all(heightCompact
+          ? 6
+          : (useKeyboardCompactStyle ? 8 : (compact ? 10 : 14))),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: context.shell.panelBorder),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (title != null)
-            Row(
+      child: viewportHeight == null
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
               children: [
+                if (header != null) header,
+                if (titleGap != null) titleGap,
+                measuredChild,
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (header != null) header,
+                if (titleGap != null) titleGap,
                 Expanded(
-                  child: Text(title!,
-                      // w800 breaks CanvasKit's Korean fallback glyphs on web.
-                      style: const TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w700)),
-                ),
-                if (onClose != null)
-                  InkWell(
-                    onTap: onClose,
-                    child: const Padding(
-                      padding: EdgeInsets.all(2),
-                      child: Icon(Icons.close_rounded, size: 18),
-                    ),
+                  child: SingleChildScrollView(
+                    primary: false,
+                    child: measuredChild,
                   ),
+                ),
               ],
             ),
-          if (title != null)
-            SizedBox(
-                height: heightCompact
-                    ? 2
-                    : (useKeyboardCompactStyle ? 4 : (compact ? 6 : 10))),
-          measuredChild,
-        ],
-      ),
     );
   }
 }
@@ -133,7 +150,8 @@ class DistillDraftCard extends StatelessWidget {
                   height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2)),
               const SizedBox(width: 10),
-              Text(tr('chat.distillProcessing'), style: const TextStyle(fontSize: 13)),
+              Text(tr('chat.distillProcessing'),
+                  style: const TextStyle(fontSize: 13)),
             ],
           ),
         ),
@@ -232,7 +250,8 @@ class _SentenceRow extends StatelessWidget {
                         child: Text(
                           matched.isEmpty
                               ? tr('chat.alreadyInGraph')
-                              : tr('chat.alreadyInGraphMatched', {'matched': matched}),
+                              : tr('chat.alreadyInGraphMatched',
+                                  {'matched': matched}),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -278,9 +297,10 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
   Widget build(BuildContext context) {
     final qd =
         (widget.quiz['quiz_data'] as Map?)?.cast<String, dynamic>() ?? {};
-    final prompt = (widget.quiz['question_native'] ?? widget.quiz['question_ko'])
-            ?.toString() ??
-        '';
+    final prompt =
+        (widget.quiz['question_native'] ?? widget.quiz['question_ko'])
+                ?.toString() ??
+            '';
     final glossary = (qd['glossary'] as List?) ?? [];
     final fb = widget.feedback;
 
@@ -322,7 +342,8 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
                       height: 14,
                       child: CircularProgressIndicator(strokeWidth: 2)),
                   const SizedBox(width: 8),
-                  Text(tr('chat.grading'), style: const TextStyle(fontSize: 12.5)),
+                  Text(tr('chat.grading'),
+                      style: const TextStyle(fontSize: 12.5)),
                 ] else
                   Expanded(
                     child: Text(tr('chat.compositionHint'),

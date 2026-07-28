@@ -20,6 +20,7 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
   List<dynamic> _runs = [];
   bool _loading = true;
   int _selectedIndex = 0;
+  bool _showMobileDetail = false;
 
   @override
   void initState() {
@@ -34,6 +35,13 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
       if (mounted) {
         setState(() {
           _runs = runs;
+          if (_runs.isEmpty) {
+            _selectedIndex = 0;
+            _showMobileDetail = false;
+          } else if (_selectedIndex >= _runs.length) {
+            _selectedIndex = 0;
+            _showMobileDetail = false;
+          }
           _loading = false;
         });
       }
@@ -44,124 +52,163 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final mobile = constraints.maxWidth < 720;
+        if (mobile) {
+          return PopScope(
+            canPop: !_showMobileDetail,
+            onPopInvokedWithResult: (didPop, _) {
+              if (!didPop && _showMobileDetail) {
+                setState(() => _showMobileDetail = false);
+              }
+            },
+            child: _showMobileDetail && _runs.isNotEmpty
+                ? _mobileDetail(context)
+                : _runList(context, mobile: true),
+          );
+        }
+        final listWidth = (constraints.maxWidth * 0.30).clamp(260.0, 360.0);
+        return Row(
+          children: [
+            SizedBox(width: listWidth, child: _runList(context)),
+            const VerticalDivider(width: 1),
+            Expanded(child: _detailBody()),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _runList(BuildContext context, {bool mobile = false}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // ── Left panel: run list ───────────────────────────────────────────
-        SizedBox(
-          width: 220,
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, AppSpacing.sm),
+          child: Row(
+            children: [
+              Text('최근 실행', style: Theme.of(context).textTheme.titleSmall),
+              const Spacer(),
+              IconButton(
+                icon: const Icon(Icons.refresh, size: 18),
+                onPressed: _load,
+                tooltip: '새로고침',
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+              : _runs.isEmpty
+                  ? Center(
+                      child: Text('실행 기록 없음',
+                          style: TextStyle(
+                              color: AppColors.textMuted, fontSize: 13)),
+                    )
+                  : ListView.separated(
+                      itemCount: _runs.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, i) => _runTile(i, mobile),
+                    ),
+        ),
+        const Divider(height: 1),
+        Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, AppSpacing.sm),
-                child: Row(
-                  children: [
-                    Text('최근 실행',
-                        style: Theme.of(context).textTheme.titleSmall),
-                    const Spacer(),
-                    IconButton(
-                      icon: const Icon(Icons.refresh, size: 18),
-                      onPressed: _load,
-                      tooltip: '새로고침',
-                      visualDensity: VisualDensity.compact,
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(height: 1),
-              Expanded(
-                child: _loading
-                    ? const Center(
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                    : _runs.isEmpty
-                        ? Center(
-                            child: Text('실행 기록 없음',
-                                style: TextStyle(
-                                    color: AppColors.textMuted, fontSize: 13)),
-                          )
-                        : ListView.separated(
-                            itemCount: _runs.length,
-                            separatorBuilder: (_, __) =>
-                                const Divider(height: 1),
-                            itemBuilder: (context, i) {
-                              final r = _runs[i] as Map<String, dynamic>;
-                              final ok = r['status'] == 'ok' ||
-                                  r['status'] == 'completed';
-                              final ts = _formatTs(r['timestamp']?.toString());
-                              final latency = r['latency_ms'];
-                              final mode = r['kind'] == 'journal_pipeline'
-                                  ? '저장된 KG 파이프라인'
-                                  : r['mode'] == 'diary'
-                                      ? '일기 추출'
-                                      : '외부 텍스트 추출';
-                              return ListTile(
-                                dense: true,
-                                selected: _selectedIndex == i,
-                                selectedTileColor:
-                                    AppColors.primary.withValues(alpha: 0.07),
-                                leading: Icon(
-                                  ok
-                                      ? Icons.check_circle_outline
-                                      : Icons.error_outline,
-                                  size: 16,
-                                  color:
-                                      ok ? AppColors.accent : Colors.redAccent,
-                                ),
-                                title: Text('$mode 모드',
-                                    style: const TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600)),
-                                subtitle: Text('$ts · ${latency ?? '?'}ms',
-                                    style: const TextStyle(fontSize: 11)),
-                                onTap: () => setState(() => _selectedIndex = i),
-                              );
-                            },
-                          ),
-              ),
-              const Divider(height: 1),
-              // DB sandbox actions
-              Padding(
-                padding: const EdgeInsets.all(AppSpacing.md),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text('DB 샌드박스',
-                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                              color: AppColors.textMuted,
-                            )),
-                    const SizedBox(height: AppSpacing.sm),
-                    OutlinedButton.icon(
-                      onPressed: _confirmReset,
-                      icon: const Icon(Icons.refresh, size: 16),
-                      label:
-                          const Text('그래프 초기화', style: TextStyle(fontSize: 13)),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.redAccent,
-                        side: const BorderSide(
-                            color: Colors.redAccent, width: 0.8),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    ),
-                  ],
+              Text('DB 샌드박스',
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: AppColors.textMuted,
+                      )),
+              const SizedBox(height: AppSpacing.sm),
+              OutlinedButton.icon(
+                onPressed: _confirmReset,
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('그래프 초기화', style: TextStyle(fontSize: 13)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.redAccent,
+                  side: const BorderSide(color: Colors.redAccent, width: 0.8),
+                  visualDensity: VisualDensity.compact,
                 ),
               ),
             ],
           ),
         ),
-        const VerticalDivider(width: 1),
-        // ── Right panel: run detail ────────────────────────────────────────
-        Expanded(
-          child: _runs.isEmpty
-              ? Center(
-                  child: AppEmptyState(
-                    icon: Icons.terminal_rounded,
-                    title: '실행 기록 없음',
-                    subtitle: '일기를 저장하거나 그래프를 생성하면 단계별 기록이 여기에 남습니다.',
-                  ),
-                )
-              : _RunDetail(run: _runs[_selectedIndex] as Map<String, dynamic>),
+      ],
+    );
+  }
+
+  Widget _runTile(int index, bool mobile) {
+    final run = _runs[index] as Map<String, dynamic>;
+    final ok = run['status'] == 'ok' || run['status'] == 'completed';
+    final mode = run['kind'] == 'journal_pipeline'
+        ? '저장된 KG 파이프라인'
+        : run['mode'] == 'diary'
+            ? '일기 추출'
+            : '외부 텍스트 추출';
+    return ListTile(
+      dense: !mobile,
+      selected: _selectedIndex == index,
+      selectedTileColor: AppColors.primary.withValues(alpha: 0.07),
+      leading: Icon(
+        ok ? Icons.check_circle_outline : Icons.error_outline,
+        size: 18,
+        color: ok ? AppColors.accent : Colors.redAccent,
+      ),
+      title: Text('$mode 모드',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+      subtitle: Text(
+        '${_formatTs(run['timestamp']?.toString())} · ${run['latency_ms'] ?? '?'}ms',
+        style: const TextStyle(fontSize: 11),
+      ),
+      trailing: mobile ? const Icon(Icons.chevron_right_rounded) : null,
+      onTap: () => setState(() {
+        _selectedIndex = index;
+        if (mobile) _showMobileDetail = true;
+      }),
+    );
+  }
+
+  Widget _detailBody() {
+    if (_runs.isEmpty) {
+      return Center(
+        child: AppEmptyState(
+          icon: Icons.terminal_rounded,
+          title: '실행 기록 없음',
+          subtitle: '일기를 저장하거나 그래프를 생성하면 단계별 기록이 여기에 남습니다.',
         ),
+      );
+    }
+    return _RunDetail(run: _runs[_selectedIndex] as Map<String, dynamic>);
+  }
+
+  Widget _mobileDetail(BuildContext context) {
+    return Column(
+      children: [
+        Padding(
+          padding:
+              const EdgeInsets.fromLTRB(8, AppSpacing.sm, AppSpacing.md, 0),
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: '최근 실행 목록',
+                onPressed: () => setState(() => _showMobileDetail = false),
+                icon: const Icon(Icons.arrow_back_rounded),
+              ),
+              Text('실행 상세', style: Theme.of(context).textTheme.titleSmall),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(child: _detailBody()),
       ],
     );
   }

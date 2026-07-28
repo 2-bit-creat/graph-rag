@@ -22,7 +22,6 @@ class GraphInspectorPanel extends StatefulWidget {
     this.onUpdated,
     this.onSelectNode,
     this.onSelectEdge,
-    this.onStudyQuizzes,
     this.scrollController,
   });
 
@@ -37,12 +36,6 @@ class GraphInspectorPanel extends StatefulWidget {
   final VoidCallback? onUpdated;
   final void Function(Map<String, dynamic> node)? onSelectNode;
   final void Function(Map<String, dynamic> edge)? onSelectEdge;
-  final Future<void> Function(
-    String quizType,
-    List<String> quizIds,
-    String? language,
-  )?
-      onStudyQuizzes;
   final ScrollController? scrollController;
 
   /// Bottom sheet vs fixed side panel layout.
@@ -58,9 +51,6 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
   final _relationCtrl = TextEditingController();
   String? _type;
   bool _saving = false;
-  String? _studyNodeId;
-  Map<String, dynamic>? _studyQuizzes;
-  bool _studyLoading = false;
 
   @override
   void didUpdateWidget(covariant GraphInspectorPanel oldWidget) {
@@ -146,10 +136,13 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     if (desc.startsWith('{')) {
       try {
         final map = (jsonDecode(desc) as Map).cast<String, dynamic>();
-        return (map['context_type'] as String? ?? tr('inspector.uncategorized')).trim();
+        return (map['context_type'] as String? ?? tr('inspector.uncategorized'))
+            .trim();
       } catch (_) {}
     }
-    return desc.split('\n').first.trim().isEmpty ? tr('inspector.uncategorized') : desc.split('\n').first.trim();
+    return desc.split('\n').first.trim().isEmpty
+        ? tr('inspector.uncategorized')
+        : desc.split('\n').first.trim();
   }
 
   String _buildStmtDescription(String contextType, String content) =>
@@ -164,13 +157,15 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     if (raw.isNotEmpty) {
       return Padding(
         padding: const EdgeInsets.only(top: 6),
-        child: _SourceTranscriptSection(raw: raw, label: tr('inspector.sourceRawLabel')),
+        child: _SourceTranscriptSection(
+            raw: raw, label: tr('inspector.sourceRawLabel')),
       );
     }
     if (clean.isNotEmpty) {
       return Padding(
         padding: const EdgeInsets.only(top: 6),
-        child: _SourceTranscriptSection(raw: clean, label: tr('inspector.sourceFullLabel')),
+        child: _SourceTranscriptSection(
+            raw: clean, label: tr('inspector.sourceFullLabel')),
       );
     }
     return const SizedBox.shrink();
@@ -189,131 +184,11 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         _descCtrl.text = node['description']?.toString() ?? '';
       }
       _type = _resolveEntityType(node['type']?.toString());
-      _loadStudyQuizzes(node);
     }
     final edge = widget.selectedEdge;
     if (edge != null) {
       _relationCtrl.text = edge['relation']?.toString() ?? '';
     }
-  }
-
-  void _loadStudyQuizzes(Map<String, dynamic> node) {
-    if (!_isStatementNode(node)) return;
-    final id = node['id']?.toString();
-    if (id == null || id == _studyNodeId) return;
-    _studyNodeId = id;
-    _studyQuizzes = null;
-    _studyLoading = true;
-    apiClient.nodeStudyQuizzes(id).then((data) {
-      if (!mounted || _studyNodeId != id) return;
-      setState(() {
-        _studyQuizzes = data;
-        _studyLoading = false;
-      });
-    }).catchError((_) {
-      if (!mounted || _studyNodeId != id) return;
-      setState(() => _studyLoading = false);
-    });
-  }
-
-  Widget _studyQuizSection(Map<String, dynamic> node) {
-    if (!_isStatementNode(node)) return const SizedBox.shrink();
-    if (_studyLoading) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 10),
-        child: Center(child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))),
-      );
-    }
-    final word = (_studyQuizzes?['word'] as Map?)?.cast<String, dynamic>() ?? const {};
-    final composition =
-        (_studyQuizzes?['composition'] as Map?)?.cast<String, dynamic>() ?? const {};
-    const languageLabels = {
-      'english': '영어',
-      'german': '독일어',
-      'korean': '한국어',
-      'japanese': '일본어',
-      'chinese': '중국어',
-      'spanish': '스페인어',
-      'french': '프랑스어',
-    };
-    String languageLabel(String code) => languageLabels[code] ?? code;
-
-    Future<void> chooseLanguage(
-      String type,
-      Map<String, dynamic> group,
-      List<String> allIds,
-    ) async {
-      final raw = group['by_language'];
-      final byLanguage = <String, List<String>>{};
-      if (raw is Map) {
-        for (final entry in raw.entries) {
-          final ids = (entry.value as List? ?? const [])
-              .map((id) => id.toString())
-              .toList();
-          if (ids.isNotEmpty) byLanguage[entry.key.toString()] = ids;
-        }
-      }
-      if (byLanguage.length <= 1) {
-        final language = byLanguage.keys.isEmpty ? null : byLanguage.keys.first;
-        await widget.onStudyQuizzes?.call(type, allIds, language);
-        return;
-      }
-      if (!mounted) return;
-      final chosen = await showModalBottomSheet<String>(
-        context: context,
-        builder: (ctx) => SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const ListTile(title: Text('공부할 언어 선택')),
-              for (final language in byLanguage.keys)
-                ListTile(
-                  leading: const Icon(Icons.translate_rounded),
-                  title: Text(languageLabel(language)),
-                  trailing: Text('${byLanguage[language]!.length}개'),
-                  onTap: () => Navigator.pop(ctx, language),
-                ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        ),
-      );
-      if (chosen != null) {
-        await widget.onStudyQuizzes?.call(type, byLanguage[chosen]!, chosen);
-      }
-    }
-
-    Widget button(String type, Map<String, dynamic> group, String label) {
-      final ids = (group['quiz_ids'] as List? ?? const [])
-          .map((id) => id.toString())
-          .toList();
-      final count = (group['count'] as num?)?.toInt() ?? ids.length;
-      return OutlinedButton(
-        onPressed: ids.isEmpty || widget.onStudyQuizzes == null
-            ? null
-            : () => chooseLanguage(type, group, ids),
-        child: Text('$label $count'),
-      );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('이 진술에서 만든 문제', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              button('cloze', word, tr('chat.mode.word')),
-              button('composition', composition, tr('chat.mode.composition')),
-            ],
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -384,10 +259,15 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         if (!isStatement) {
           return AlertDialog(
             title: Text(tr('inspector.deleteNodeTitle')),
-            content: Text(tr('inspector.deleteNodeSimpleBody', {'name': node['name']})),
+            content: Text(
+                tr('inspector.deleteNodeSimpleBody', {'name': node['name']})),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('common.cancel'))),
-              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr('common.delete'))),
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: Text(tr('common.cancel'))),
+              FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: Text(tr('common.delete'))),
             ],
           );
         }
@@ -403,12 +283,25 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
             children: [
               Text(tr('inspector.deleteStatementBody', {'name': node['name']})),
               const SizedBox(height: 12),
-              Text(tr('inspector.alsoDeletedLabel'), style: const TextStyle(fontWeight: FontWeight.w600)),
+              Text(tr('inspector.alsoDeletedLabel'),
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
               const SizedBox(height: 4),
-              _ImpactRow(icon: Icons.share_outlined, label: tr('inspector.relatedEdges'), count: edgeCount),
-              _ImpactRow(icon: Icons.bubble_chart_outlined, label: tr('inspector.orphanNodes'), count: orphanCount),
-              _ImpactRow(icon: Icons.quiz_outlined, label: tr('inspector.generatedQuizzes'), count: quizCount),
-              _ImpactRow(icon: Icons.translate_outlined, label: tr('inspector.extractedExpressions'), count: exprCount),
+              _ImpactRow(
+                  icon: Icons.share_outlined,
+                  label: tr('inspector.relatedEdges'),
+                  count: edgeCount),
+              _ImpactRow(
+                  icon: Icons.bubble_chart_outlined,
+                  label: tr('inspector.orphanNodes'),
+                  count: orphanCount),
+              _ImpactRow(
+                  icon: Icons.quiz_outlined,
+                  label: tr('inspector.generatedQuizzes'),
+                  count: quizCount),
+              _ImpactRow(
+                  icon: Icons.translate_outlined,
+                  label: tr('inspector.extractedExpressions'),
+                  count: exprCount),
               const SizedBox(height: 12),
               Text(
                 tr('inspector.restoreFromTrashNote'),
@@ -417,7 +310,9 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('common.cancel'))),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text(tr('common.cancel'))),
             FilledButton(
               style: FilledButton.styleFrom(backgroundColor: Colors.red),
               onPressed: () => Navigator.pop(ctx, true),
@@ -489,8 +384,12 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         title: Text(tr('inspector.unlinkVoiceTitle')),
         content: Text(tr('inspector.unlinkVoiceBody')),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('common.cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr('inspector.unlinkAction'))),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(tr('common.cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(tr('inspector.unlinkAction'))),
         ],
       ),
     );
@@ -578,7 +477,8 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
                   padding: const EdgeInsets.all(16),
                   children: [
                     if (node != null) ..._nodeInspector(node, theme),
-                    if (edge != null && node == null) ..._edgeInspector(edge, theme),
+                    if (edge != null && node == null)
+                      ..._edgeInspector(edge, theme),
                   ],
                 ),
               ),
@@ -589,7 +489,8 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     );
   }
 
-  Widget _buildHeader(ThemeData theme, Map<String, dynamic>? node, Map<String, dynamic>? edge) {
+  Widget _buildHeader(
+      ThemeData theme, Map<String, dynamic>? node, Map<String, dynamic>? edge) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(0, 4, 0, 0),
       child: Row(
@@ -617,10 +518,12 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
   }
 
   bool _isChunkNode(Map<String, dynamic> node) {
-    return canonicalEntityType(node['type']?.toString() ?? '').toLowerCase() == 'chunk';
+    return canonicalEntityType(node['type']?.toString() ?? '').toLowerCase() ==
+        'chunk';
   }
 
-  String? _neighborChunkPreview(Map<String, dynamic> node, {required bool forward}) {
+  String? _neighborChunkPreview(Map<String, dynamic> node,
+      {required bool forward}) {
     final id = node['id'].toString();
     final rel = 'NEXT_TURN';
     for (final e in widget.edges) {
@@ -636,18 +539,22 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     return null;
   }
 
-  List<Widget> _chunkReadOnlySection(Map<String, dynamic> node, ThemeData theme) {
+  List<Widget> _chunkReadOnlySection(
+      Map<String, dynamic> node, ThemeData theme) {
     final speaker = node['speaker_name']?.toString() ?? '—';
-    final text = node['text']?.toString() ?? node['description']?.toString() ?? '';
+    final text =
+        node['text']?.toString() ?? node['description']?.toString() ?? '';
     final created = node['created_at']?.toString() ?? '';
     final prev = _neighborChunkPreview(node, forward: false);
     final next = _neighborChunkPreview(node, forward: true);
 
     return [
-      Text(tr('inspector.chunkUtterance'), style: theme.textTheme.labelLarge?.copyWith(color: Colors.grey)),
+      Text(tr('inspector.chunkUtterance'),
+          style: theme.textTheme.labelLarge?.copyWith(color: Colors.grey)),
       const SizedBox(height: 8),
       if (created.isNotEmpty)
-        Text(tr('inspector.createdLabel', {'date': created.split('T').first}), style: theme.textTheme.bodySmall),
+        Text(tr('inspector.createdLabel', {'date': created.split('T').first}),
+            style: theme.textTheme.bodySmall),
       const SizedBox(height: 6),
       Chip(
         avatar: const Icon(Icons.person, size: 16),
@@ -659,7 +566,8 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         width: double.infinity,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+          color:
+              theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
           borderRadius: BorderRadius.circular(8),
         ),
         child: SelectableText(
@@ -669,7 +577,8 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       ),
       if (prev != null || next != null) ...[
         const SizedBox(height: 12),
-        Text(tr('inspector.conversationFlow'), style: theme.textTheme.labelMedium),
+        Text(tr('inspector.conversationFlow'),
+            style: theme.textTheme.labelMedium),
         if (prev != null) Text('← $prev', style: theme.textTheme.bodySmall),
         if (next != null) Text('→ $next', style: theme.textTheme.bodySmall),
       ],
@@ -729,10 +638,13 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
           ),
           const SizedBox(width: 3),
           Text(
-            embCount > 0 ? tr('inspector.embeddingsLearnedCount', {'count': embCount}) : tr('inspector.embeddingPending'),
+            embCount > 0
+                ? tr('inspector.embeddingsLearnedCount', {'count': embCount})
+                : tr('inspector.embeddingPending'),
             style: TextStyle(
               fontSize: 11,
-              color: embCount > 0 ? const Color(0xFFB07BFF) : AppColors.textMuted,
+              color:
+                  embCount > 0 ? const Color(0xFFB07BFF) : AppColors.textMuted,
             ),
           ),
         ],
@@ -758,7 +670,8 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
           child: TextButton.icon(
             onPressed: _saving ? null : _reindexAliases,
             icon: const Icon(Icons.auto_awesome, size: 15),
-            label: Text(tr('inspector.generateAliasEmbedding'), style: const TextStyle(fontSize: 12)),
+            label: Text(tr('inspector.generateAliasEmbedding'),
+                style: const TextStyle(fontSize: 12)),
             style: TextButton.styleFrom(
               visualDensity: VisualDensity.compact,
               padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -777,7 +690,9 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       final n = await apiClient.reindexAliasEmbeddings();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr('inspector.aliasEmbeddingsGenerated', {'count': n}))),
+          SnackBar(
+              content:
+                  Text(tr('inspector.aliasEmbeddingsGenerated', {'count': n}))),
         );
       }
       widget.onUpdated?.call();
@@ -851,15 +766,18 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                       child: Text(
                           isConcept
-                              ? tr('inspector.mergeConvertTitle', {'name': name})
-                              : tr('inspector.mergeIntoOtherTitle', {'name': name}),
+                              ? tr(
+                                  'inspector.mergeConvertTitle', {'name': name})
+                              : tr('inspector.mergeIntoOtherTitle',
+                                  {'name': name}),
                           style: Theme.of(ctx).textTheme.titleSmall),
                     ),
                     if (isConcept)
                       ListTile(
                         leading: const Icon(Icons.person_add_alt_1),
                         title: Text(tr('inspector.convertToNewEntity')),
-                        subtitle: Text(tr('inspector.convertToNewEntitySubtitle')),
+                        subtitle:
+                            Text(tr('inspector.convertToNewEntitySubtitle')),
                         onTap: () => Navigator.pop(ctx, {'mergeInto': null}),
                       ),
                     Padding(
@@ -888,7 +806,8 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
                               ? Icons.account_circle
                               : Icons.person_outline),
                           title: Text(p['is_self'] == true
-                              ? tr('graphReview.selfSuffix', {'name': p['name']})
+                              ? tr(
+                                  'graphReview.selfSuffix', {'name': p['name']})
                               : (p['name'] ?? '').toString()),
                           subtitle: Text((p['type'] ?? '').toString(),
                               style: const TextStyle(fontSize: 11)),
@@ -954,9 +873,12 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         _isChunkNode(node) ? _chunkReadOnlySection(node, theme) : <Widget>[];
     final id = node['id'].toString();
     final locked = node['source_entry_id'] != null;
-    final color = colorForType(_type ?? node['type']?.toString() ?? '', widget.typeColors);
-    final outgoing = widget.edges.where((e) => e['source_id'].toString() == id).toList();
-    final incoming = widget.edges.where((e) => e['target_id'].toString() == id).toList();
+    final color = colorForType(
+        _type ?? node['type']?.toString() ?? '', widget.typeColors);
+    final outgoing =
+        widget.edges.where((e) => e['source_id'].toString() == id).toList();
+    final incoming =
+        widget.edges.where((e) => e['target_id'].toString() == id).toList();
 
     return [
       ...chunkSection,
@@ -968,7 +890,8 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
             decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
           const SizedBox(width: 8),
-          Text(tr('inspector.nodeLabel'), style: theme.textTheme.labelLarge?.copyWith(color: Colors.grey)),
+          Text(tr('inspector.nodeLabel'),
+              style: theme.textTheme.labelLarge?.copyWith(color: Colors.grey)),
         ],
       ),
       if (locked) ...[
@@ -978,12 +901,18 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       const SizedBox(height: 12),
       TextField(
         controller: _nameCtrl,
-        decoration: InputDecoration(labelText: tr('sidebar.nameLabel'), border: const OutlineInputBorder(), isDense: true),
+        decoration: InputDecoration(
+            labelText: tr('sidebar.nameLabel'),
+            border: const OutlineInputBorder(),
+            isDense: true),
       ),
       const SizedBox(height: 10),
       DropdownButtonFormField<String>(
         value: _selectedTypeValue(),
-        decoration: InputDecoration(labelText: tr('inspector.typeLabel'), border: const OutlineInputBorder(), isDense: true),
+        decoration: InputDecoration(
+            labelText: tr('inspector.typeLabel'),
+            border: const OutlineInputBorder(),
+            isDense: true),
         items: _typeDropdownItems(),
         onChanged: (v) => setState(() => _type = v),
       ),
@@ -994,11 +923,13 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
           children: [
             Icon(Icons.category_outlined, size: 13, color: AppColors.textMuted),
             const SizedBox(width: 4),
-            Text(tr('inspector.sourceTypeLabel'), style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+            Text(tr('inspector.sourceTypeLabel'),
+                style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
             Chip(
               label: Text(
                 _stmtCtxType(node),
-                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                style:
+                    const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
               ),
               visualDensity: VisualDensity.compact,
               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -1012,13 +943,14 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         controller: _descCtrl,
         maxLines: 3,
         decoration: InputDecoration(
-          labelText: _isStatementNode(node) ? tr('inspector.statementContentLabel') : tr('inspector.descriptionLabel'),
+          labelText: _isStatementNode(node)
+              ? tr('inspector.statementContentLabel')
+              : tr('inspector.descriptionLabel'),
           border: const OutlineInputBorder(),
           isDense: true,
         ),
       ),
       _sourceTranscriptWidget(node),
-      _studyQuizSection(node),
       if (((node['importance_score'] as num?)?.toInt() ?? 0) > 0) ...[
         const SizedBox(height: 12),
         _ImportanceCard(score: (node['importance_score'] as num).toInt()),
@@ -1026,11 +958,14 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       const SizedBox(height: 14),
       _EmbeddingStatusCard(
         node: node,
-        onUnlinkVoice: node['voice_embedding_registered'] == true ? _unlinkNodeVoice : null,
+        onUnlinkVoice: node['voice_embedding_registered'] == true
+            ? _unlinkNodeVoice
+            : null,
       ),
       if (_isStatementNode(node)) ...[
         const SizedBox(height: 10),
-        _NodeExpressionButton(nodeId: id, nodeName: node['name']?.toString() ?? ''),
+        _NodeExpressionButton(
+            nodeId: id, nodeName: node['name']?.toString() ?? ''),
       ],
       // 병합·전환: 잘못 추출된 노드를 사후 교정하는 허브. Concept는 정체성 전환/
       // 정체성·개념 병합, 정체성은 다른 정체성에 병합(중복 제거). 병합 시 관계와
@@ -1055,7 +990,10 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
             child: FilledButton(
               onPressed: _saving ? null : _saveNode,
               child: _saving
-                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
                   : Text(tr('common.save')),
             ),
           ),
@@ -1068,23 +1006,31 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         ],
       ),
       const SizedBox(height: 20),
-      Text(tr('inspector.relationsCount', {'count': outgoing.length + incoming.length}), style: theme.textTheme.titleSmall),
+      Text(
+          tr('inspector.relationsCount',
+              {'count': outgoing.length + incoming.length}),
+          style: theme.textTheme.titleSmall),
       const SizedBox(height: 8),
       ...outgoing.map((e) => _RelationTile(
-            label: '${e['relation']} → ${widget.nodeById[e['target_id'].toString()]?['name'] ?? '?'}',
+            label:
+                '${e['relation']} → ${widget.nodeById[e['target_id'].toString()]?['name'] ?? '?'}',
             onTap: () => widget.onSelectEdge?.call(e),
           )),
       ...incoming.map((e) => _RelationTile(
-            label: '${widget.nodeById[e['source_id'].toString()]?['name'] ?? '?'} → ${e['relation']}',
+            label:
+                '${widget.nodeById[e['source_id'].toString()]?['name'] ?? '?'} → ${e['relation']}',
             onTap: () => widget.onSelectEdge?.call(e),
           )),
       const SizedBox(height: 16),
       Builder(builder: (context) {
-        final recorded = (node['occurred_at'] ?? node['entry_created_at'] ?? node['created_at'])
+        final recorded = (node['occurred_at'] ??
+                node['entry_created_at'] ??
+                node['created_at'])
             ?.toString()
             .split('T')
             .first;
-        if (recorded == null || recorded.isEmpty) return const SizedBox.shrink();
+        if (recorded == null || recorded.isEmpty)
+          return const SizedBox.shrink();
         return Padding(
           padding: const EdgeInsets.only(bottom: 4),
           child: Text(tr('inspector.recordedDate', {'date': recorded}),
@@ -1093,12 +1039,14 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       }),
       Text(
         'ID: ${id.substring(0, 8)}… · ${node['created_at']?.toString().split('T').first ?? ''}',
-        style: TextStyle(fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
+        style: TextStyle(
+            fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
       ),
       const SizedBox(height: 8),
       Text(
         tr('inspector.storedNodesNote'),
-        style: TextStyle(fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
+        style: TextStyle(
+            fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
       ),
     ];
   }
@@ -1111,7 +1059,8 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     final suggestions = _relationSuggestions(_relationCtrl.text);
 
     return [
-      Text(tr('inspector.edgeRelationTitle'), style: theme.textTheme.labelLarge?.copyWith(color: Colors.grey)),
+      Text(tr('inspector.edgeRelationTitle'),
+          style: theme.textTheme.labelLarge?.copyWith(color: Colors.grey)),
       if (locked) ...[
         const SizedBox(height: 10),
         _LockedNotice(),
@@ -1156,7 +1105,9 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       Row(
         children: [
           Expanded(
-            child: FilledButton(onPressed: _saving ? null : _saveEdge, child: Text(tr('common.save'))),
+            child: FilledButton(
+                onPressed: _saving ? null : _saveEdge,
+                child: Text(tr('common.save'))),
           ),
           const SizedBox(width: 8),
           IconButton.outlined(
@@ -1168,7 +1119,8 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       const SizedBox(height: 16),
       Text(
         tr('inspector.storedEdgesNote'),
-        style: TextStyle(fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
+        style: TextStyle(
+            fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
       ),
     ];
   }
@@ -1263,7 +1215,9 @@ class _ImportanceCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 2),
-          Text(tr('inspector.pointsSuffix'), style: TextStyle(fontSize: 12, color: Colors.deepOrange.shade600)),
+          Text(tr('inspector.pointsSuffix'),
+              style:
+                  TextStyle(fontSize: 12, color: Colors.deepOrange.shade600)),
         ],
       ),
     );
@@ -1282,11 +1236,11 @@ class _EmbeddingStatusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final voiceOk = node['voice_embedding_registered'] == true;
-    final aliasEmbCount =
-        (node['alias_embedding_count'] as num?)?.toInt() ?? 0;
+    final aliasEmbCount = (node['alias_embedding_count'] as num?)?.toInt() ?? 0;
     final label = node['voice_profile_label']?.toString();
     final samples = node['voice_sample_count'];
-    final duration = (node['voice_total_duration_sec'] as num?)?.toDouble() ?? 0.0;
+    final duration =
+        (node['voice_total_duration_sec'] as num?)?.toDouble() ?? 0.0;
     final isSpeakerLike = isSpeakerLikeType(node['type']?.toString());
 
     return Card(
@@ -1331,7 +1285,8 @@ class _EmbeddingStatusCard extends StatelessWidget {
               label: tr('inspector.aliasEmbeddingLabel'),
               ok: aliasEmbCount > 0,
               detail: aliasEmbCount > 0
-                  ? tr('inspector.aliasEmbeddingDetail', {'count': aliasEmbCount})
+                  ? tr('inspector.aliasEmbeddingDetail',
+                      {'count': aliasEmbCount})
                   : tr('inspector.aliasEmbeddingNone'),
             ),
             if (voiceOk && onUnlinkVoice != null) ...[
@@ -1380,10 +1335,13 @@ class _StatusRow extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+              Text(label,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w600, fontSize: 12)),
               Text(
                 detail,
-                style: TextStyle(fontSize: 11, color: Colors.grey[700], height: 1.3),
+                style: TextStyle(
+                    fontSize: 11, color: Colors.grey[700], height: 1.3),
               ),
             ],
           ),
@@ -1400,7 +1358,8 @@ class _SourceTranscriptSection extends StatefulWidget {
   final String? label;
 
   @override
-  State<_SourceTranscriptSection> createState() => _SourceTranscriptSectionState();
+  State<_SourceTranscriptSection> createState() =>
+      _SourceTranscriptSectionState();
 }
 
 class _SourceTranscriptSectionState extends State<_SourceTranscriptSection> {
@@ -1425,7 +1384,8 @@ class _SourceTranscriptSectionState extends State<_SourceTranscriptSection> {
                   color: Colors.grey[600],
                 ),
                 const SizedBox(width: 4),
-                Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                Text(label,
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600])),
               ],
             ),
           ),
@@ -1478,7 +1438,8 @@ class _NodeExpressionButtonState extends State<_NodeExpressionButton> {
 
     if (!mounted) return;
     if (error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error)));
       return;
     }
 
@@ -1510,7 +1471,10 @@ class _NodeExpressionButtonState extends State<_NodeExpressionButton> {
     return OutlinedButton.icon(
       onPressed: _loading ? null : _showExpressions,
       icon: _loading
-          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+          ? const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2))
           : const Icon(Icons.translate, size: 18),
       label: Text(tr('inspector.viewLearnedExpressions')),
     );
@@ -1518,17 +1482,17 @@ class _NodeExpressionButtonState extends State<_NodeExpressionButton> {
 }
 
 Map<String, String> get _kLangLabelMap => {
-  'english':    tr('kg.langEnglish'),
-  'japanese':   tr('lang.japanese'),
-  'chinese':    tr('lang.chinese'),
-  'spanish':    tr('lang.spanish'),
-  'french':     tr('lang.french'),
-  'german':     tr('kg.langGerman'),
-  'portuguese': tr('lang.portuguese'),
-  'italian':    tr('lang.italian'),
-  'arabic':     tr('lang.arabic'),
-  'russian':    tr('lang.russian'),
-};
+      'english': tr('kg.langEnglish'),
+      'japanese': tr('lang.japanese'),
+      'chinese': tr('lang.chinese'),
+      'spanish': tr('lang.spanish'),
+      'french': tr('lang.french'),
+      'german': tr('kg.langGerman'),
+      'portuguese': tr('lang.portuguese'),
+      'italian': tr('lang.italian'),
+      'arabic': tr('lang.arabic'),
+      'russian': tr('lang.russian'),
+    };
 
 class _ExpressionsBottomSheet extends StatefulWidget {
   const _ExpressionsBottomSheet({required this.nodeName, required this.byLang});
@@ -1537,7 +1501,8 @@ class _ExpressionsBottomSheet extends StatefulWidget {
   final Map<String, dynamic> byLang;
 
   @override
-  State<_ExpressionsBottomSheet> createState() => _ExpressionsBottomSheetState();
+  State<_ExpressionsBottomSheet> createState() =>
+      _ExpressionsBottomSheetState();
 }
 
 class _ExpressionsBottomSheetState extends State<_ExpressionsBottomSheet>
@@ -1569,7 +1534,8 @@ class _ExpressionsBottomSheetState extends State<_ExpressionsBottomSheet>
           children: [
             const SizedBox(height: 8),
             Container(
-              width: 40, height: 4,
+              width: 40,
+              height: 4,
               decoration: BoxDecoration(
                 color: Colors.grey[400],
                 borderRadius: BorderRadius.circular(2),
@@ -1598,7 +1564,9 @@ class _ExpressionsBottomSheetState extends State<_ExpressionsBottomSheet>
                 controller: _tabs,
                 isScrollable: true,
                 tabAlignment: TabAlignment.start,
-                tabs: _langs.map((l) => Tab(text: _kLangLabelMap[l] ?? l)).toList(),
+                tabs: _langs
+                    .map((l) => Tab(text: _kLangLabelMap[l] ?? l))
+                    .toList(),
               ),
             const Divider(height: 1),
             Expanded(
@@ -1608,9 +1576,11 @@ class _ExpressionsBottomSheetState extends State<_ExpressionsBottomSheet>
                     )
                   : TabBarView(
                       controller: _tabs,
-                      children: _langs.map((l) => _ExpressionList(
-                        items: List<Map>.from(widget.byLang[l] ?? []),
-                      )).toList(),
+                      children: _langs
+                          .map((l) => _ExpressionList(
+                                items: List<Map>.from(widget.byLang[l] ?? []),
+                              ))
+                          .toList(),
                     ),
             ),
           ],
@@ -1646,7 +1616,8 @@ class _ExpressionList extends StatelessWidget {
             children: [
               Text(
                 expr,
-                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                style:
+                    const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
               ),
               if (meaning.isNotEmpty) ...[
                 const SizedBox(height: 2),
@@ -1691,7 +1662,8 @@ class _RelationTile extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
             children: [
-              Expanded(child: Text(label, style: const TextStyle(fontSize: 12))),
+              Expanded(
+                  child: Text(label, style: const TextStyle(fontSize: 12))),
               Icon(Icons.chevron_right, size: 18, color: Colors.grey[500]),
             ],
           ),
@@ -1702,7 +1674,8 @@ class _RelationTile extends StatelessWidget {
 }
 
 class _ImpactRow extends StatelessWidget {
-  const _ImpactRow({required this.icon, required this.label, required this.count});
+  const _ImpactRow(
+      {required this.icon, required this.label, required this.count});
 
   final IconData icon;
   final String label;
@@ -1716,7 +1689,8 @@ class _ImpactRow extends StatelessWidget {
         children: [
           Icon(icon, size: 15, color: Colors.grey.shade600),
           const SizedBox(width: 6),
-          Expanded(child: Text('• $label', style: const TextStyle(fontSize: 13))),
+          Expanded(
+              child: Text('• $label', style: const TextStyle(fontSize: 13))),
           Text(
             tr('inspector.countSuffix', {'count': count}),
             style: TextStyle(

@@ -146,10 +146,9 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
     final sizingLength = active && display.length > targetWord.length
         ? display.length
         : targetWord.length;
-    final width = ((sizingLength * (dense ? 8.0 : 9.5) +
-                (dense ? 10.0 : 12.0)) *
-            scale)
-        .clamp(dense ? 24.0 : 30.0, 180.0);
+    final width =
+        ((sizingLength * (dense ? 8.0 : 9.5) + (dense ? 10.0 : 12.0)) * scale)
+            .clamp(dense ? 24.0 : 30.0, 180.0);
     final showHint = active && display.isEmpty && hintText != null;
     return InkWell(
       onTap: widget.externalInput ? null : () => _focusNode.requestFocus(),
@@ -621,18 +620,11 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
     final tight = widget.externalInput &&
         availableHeight != null &&
         availableHeight < 340;
-    final ultraDense = widget.externalInput &&
-        availableHeight != null &&
-        availableHeight < 250;
-    // A keyboard alone must not change the quiz typography. Only reduce the
-    // content once the measured quiz viewport is genuinely constrained.
-    final dense = tight;
-    // Most keyboard-open cards still have a visible safety gap beneath them.
-    // Preserve the normal reading size there; shrink only in the genuinely
-    // constrained viewport that would otherwise overflow.
-    final contentScale = ultraDense ? 0.92 : 1.0;
-    final sectionGap =
-        ultraDense ? 2.0 : (tight ? 3.0 : (dense ? 5.0 : (compact ? 8.0 : 14.0)));
+    // A constrained keyboard viewport changes spacing, not reading size. The
+    // card shell scrolls its body when needed, so long prompts remain legible
+    // instead of being progressively scaled down on Safari or Chrome.
+    final dense = !widget.externalInput && tight;
+    final sectionGap = tight ? 4.0 : (compact ? 8.0 : 14.0);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -642,7 +634,6 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
           blank,
           compact: compact,
           dense: dense,
-          scale: contentScale,
         ),
         if (contextKo.isNotEmpty && !_isAnswerOnlyContext(contextKo)) ...[
           SizedBox(height: sectionGap),
@@ -651,16 +642,15 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
                   color: scheme.onSurfaceVariant,
                   fontWeight: FontWeight.w800,
-                  fontSize: tight ? 13 : null,
                 ),
           ),
           SizedBox(height: dense ? 2 : 4),
-          _buildContextKo(contextKo, dense: dense || tight),
+          _buildContextKo(contextKo, dense: dense),
         ],
         if (_effectiveAnswerRevealed && blank.isNotEmpty) ...[
           SizedBox(height: sectionGap),
           _answerPanel(
-              blank: blank, wrongFirstTry: wrongFirstTry, dense: dense || tight),
+              blank: blank, wrongFirstTry: wrongFirstTry, dense: dense),
         ],
         if (wrongFirstTry) ...[
           const SizedBox(height: 7),
@@ -676,11 +666,10 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
           ),
         ],
         if (hintKo.isNotEmpty && !_effectiveAnswerRevealed) ...[
-          SizedBox(height: tight ? 2 : (dense ? 4 : 8)),
+          SizedBox(height: tight ? 4 : (dense ? 4 : 8)),
           Text(hintKo,
               style: TextStyle(
-                  fontSize: tight ? 11 : (dense ? 11.5 : 13),
-                  color: scheme.onSurfaceVariant)),
+                  fontSize: dense ? 11.5 : 13, color: scheme.onSurfaceVariant)),
         ],
         if (!_effectiveAnswerRevealed && !widget.externalInput) ...[
           SizedBox(height: sectionGap),
@@ -696,15 +685,13 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
                         ? tr('clozeCard.showWord')
                         : tr('clozeCard.hintConfirmed')),
                 onPressed: _hintLevel >= 2 ? null : requestHint,
-                dense: dense || tight,
+                dense: dense,
               ),
               _actionButton(
                 icon: Icons.visibility_outlined,
                 label: tr('clozeCard.showAnswer'),
-                onPressed: _effectiveAnswerRevealed
-                    ? null
-                    : revealAnswer,
-                dense: dense || tight,
+                onPressed: _effectiveAnswerRevealed ? null : revealAnswer,
+                dense: dense,
               ),
               if (_showAudio)
                 QuizAudioButton(

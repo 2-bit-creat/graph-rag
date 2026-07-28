@@ -104,6 +104,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   String? _selectedEdgeId;
   Map<String, dynamic>? _selectedNode;
   Map<String, dynamic>? _selectedEdge;
+  Map<String, dynamic>? _selectedStudyQuizzes;
+  bool _selectedStudyLoading = false;
   final _canvasKey = GlobalKey<KnowledgeGraphCanvasState>();
   // 화자 숨김(Speaker-to-Color) 모드: head 노드를 물리에서 제거하고
   // Statement를 화자색으로 인코딩 — 슈퍼노드(성게) 뭉침 해소용.
@@ -315,23 +317,25 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         _chatExpandedForInput = false;
         _chatManuallySized = true;
         final standardMin = _sheetMinChildSize(context, graphAreaHeight);
-        // Reserve exactly the measured quiz content plus the panel handle,
-        // shell/header chrome, and docked composer. This replaces the old
-        // fixed percentage so a long question cannot be dragged into overflow
-        // while a short question still has useful travel.
-        const quizOverflowSafetyReserve = 50.0;
-        final wordQuizMin = _wordQuizContentHeight <= 0
-            ? _sheetDefaultSize
-            : ((_wordQuizContentHeight +
-                        _inputBarHeight +
-                        62 +
-                        quizOverflowSafetyReserve) /
+        // A long question now scrolls inside the quiz card. Do not make its
+        // full natural height the sheet minimum: reserve a comfortable reading
+        // viewport instead, so short cards remain compact and long cards stay
+        // usable without forcing an oversized sheet.
+        const quizReadViewportMin = 220.0;
+        const quizReadViewportMax = 340.0;
+        const quizChromeReserve = 86.0;
+        final readableQuizHeight = _wordQuizContentHeight <= 0
+            ? quizReadViewportMin
+            : _wordQuizContentHeight
+                .clamp(quizReadViewportMin, quizReadViewportMax)
+                .toDouble();
+        final wordQuizMin =
+            ((readableQuizHeight + _inputBarHeight + quizChromeReserve) /
                     graphAreaHeight)
                 .clamp(standardMin, _sheetFocusSize)
                 .toDouble();
-        final minSheetSize = chatSession.mode == ChatMode.quizWord
-            ? wordQuizMin
-            : standardMin;
+        final minSheetSize =
+            chatSession.mode == ChatMode.quizWord ? wordQuizMin : standardMin;
         final next = (_chatSheetSize - delta / graphAreaHeight)
             .clamp(minSheetSize, _sheetFocusSize)
             .toDouble();
@@ -552,15 +556,16 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   /// blank instead of waiting for the learner to hit send.
   void _onChatInputChanged() {
     if (chatSession.mode != ChatMode.quizWord) return;
-    unawaited(
-        chatSession.updateClozeDraft(
-          _chatInputController.text,
-          hintLevel: _clozeCardKey.currentState?.telemetryHintLevel ?? 0,
-          revealedTokens:
-              _clozeCardKey.currentState?.telemetryRevealedTokens ?? const [],
-          answerRevealed:
-              _clozeCardKey.currentState?.telemetryAnswerRevealed ?? false,
-        ).then((clear) {
+    unawaited(chatSession
+        .updateClozeDraft(
+      _chatInputController.text,
+      hintLevel: _clozeCardKey.currentState?.telemetryHintLevel ?? 0,
+      revealedTokens:
+          _clozeCardKey.currentState?.telemetryRevealedTokens ?? const [],
+      answerRevealed:
+          _clozeCardKey.currentState?.telemetryAnswerRevealed ?? false,
+    )
+        .then((clear) {
       if (clear && mounted) _chatInputController.clear();
     }));
   }
@@ -593,10 +598,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     final quizCardChanged =
         (mode == ChatMode.quizComposition || mode == ChatMode.quizWord) &&
             quizId != _lastActiveQuizId;
-    final wordQuizJustSolved =
-        mode == ChatMode.quizWord &&
-            chatSession.wordQuizSolved &&
-            !_lastWordQuizSolved;
+    final wordQuizJustSolved = mode == ChatMode.quizWord &&
+        chatSession.wordQuizSolved &&
+        !_lastWordQuizSolved;
     if (enteredFooterMode || distillReady || quizCardChanged) {
       _scrollChatToBottom();
     }
@@ -857,82 +861,82 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   Future<void> _startQuizWithLanguagePrompt(String quizType) async {
     if (mounted) setState(() => _quizStarting = true);
     try {
-    List<String> langs = const ['english'];
-    try {
-      final profile = await apiClient.getUserProfile();
-      final raw = profile['target_languages'];
-      if (raw is List && raw.isNotEmpty) {
-        langs = raw.map((e) => e.toString()).toList();
-      } else {
-        final single = profile['target_language']?.toString();
-        if (single != null && single.isNotEmpty) langs = [single];
+      List<String> langs = const ['english'];
+      try {
+        final profile = await apiClient.getUserProfile();
+        final raw = profile['target_languages'];
+        if (raw is List && raw.isNotEmpty) {
+          langs = raw.map((e) => e.toString()).toList();
+        } else {
+          final single = profile['target_language']?.toString();
+          if (single != null && single.isNotEmpty) langs = [single];
+        }
+      } catch (_) {
+        // Profile fetch failed — fall back to the backend's own default.
       }
-    } catch (_) {
-      // Profile fetch failed — fall back to the backend's own default.
-    }
 
-    if (langs.length <= 1) {
-      if (quizType == 'composition') {
-        _activateInputMode();
-      } else {
-        // Request the editor connection while this menu tap is still a real
-        // user gesture. Waiting for the async quiz load leaves iOS Safari
-        // with a visible field that cannot open its keyboard until a drag.
-        _activateInputMode();
+      if (langs.length <= 1) {
+        if (quizType == 'composition') {
+          _activateInputMode();
+        } else {
+          // Request the editor connection while this menu tap is still a real
+          // user gesture. Waiting for the async quiz load leaves iOS Safari
+          // with a visible field that cannot open its keyboard until a drag.
+          _activateInputMode();
+        }
+        await chatSession.startQuiz(quizType,
+            language: langs.isNotEmpty ? langs.first : null);
+        // For a cloze quiz, retain the native connection made during the menu
+        // tap. Recreating it after this async transition leaves iOS Safari with
+        // a focused Flutter field that cannot open its keyboard when tapped.
+        if (quizType == 'composition') _restoreComposerFocusAfterBuild();
+        return;
       }
-      await chatSession.startQuiz(quizType,
-          language: langs.isNotEmpty ? langs.first : null);
-      // For a cloze quiz, retain the native connection made during the menu
-      // tap. Recreating it after this async transition leaves iOS Safari with
-      // a focused Flutter field that cannot open its keyboard when tapped.
-      if (quizType == 'composition') _restoreComposerFocusAfterBuild();
-      return;
-    }
-    if (!mounted) return;
-    final chosen = await showModalBottomSheet<String>(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(tr('kg.quizLanguagePrompt'),
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w700, fontSize: 15)),
+      if (!mounted) return;
+      final chosen = await showModalBottomSheet<String>(
+        context: context,
+        builder: (ctx) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(tr('kg.quizLanguagePrompt'),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w700, fontSize: 15)),
+                ),
               ),
-            ),
-            for (final code in langs)
-              ListTile(
-                leading: Text(
-                  _quizLanguages
+              for (final code in langs)
+                ListTile(
+                  leading: Text(
+                    _quizLanguages
+                        .firstWhere((l) => l.key == code,
+                            orElse: () => (key: code, label: code, flag: '🌐'))
+                        .flag,
+                    style: const TextStyle(fontSize: 20),
+                  ),
+                  title: Text(_quizLanguages
                       .firstWhere((l) => l.key == code,
                           orElse: () => (key: code, label: code, flag: '🌐'))
-                      .flag,
-                  style: const TextStyle(fontSize: 20),
+                      .label),
+                  onTap: () => Navigator.pop(ctx, code),
                 ),
-                title: Text(_quizLanguages
-                    .firstWhere((l) => l.key == code,
-                        orElse: () => (key: code, label: code, flag: '🌐'))
-                    .label),
-                onTap: () => Navigator.pop(ctx, code),
-              ),
-            const SizedBox(height: 8),
-          ],
+              const SizedBox(height: 8),
+            ],
+          ),
         ),
-      ),
-    );
-    if (chosen != null) {
-      if (quizType == 'composition') {
-        _activateInputMode();
-      } else {
-        _activateInputMode();
+      );
+      if (chosen != null) {
+        if (quizType == 'composition') {
+          _activateInputMode();
+        } else {
+          _activateInputMode();
+        }
+        await chatSession.startQuiz(quizType, language: chosen);
+        if (quizType == 'composition') _restoreComposerFocusAfterBuild();
       }
-      await chatSession.startQuiz(quizType, language: chosen);
-      if (quizType == 'composition') _restoreComposerFocusAfterBuild();
-    }
     } finally {
       if (mounted) setState(() => _quizStarting = false);
     }
@@ -1006,7 +1010,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.5),
+                  color: Theme.of(context)
+                      .colorScheme
+                      .primary
+                      .withValues(alpha: 0.5),
                 ),
               ),
               child: Text(
@@ -1174,13 +1181,21 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     }
 
     // Show the card immediately with what we have; upgrade to full detail.
+    final nodeId = node['id']?.toString();
+    final isStatement = isStatementNode(node);
     setState(() {
       _selectedNode = node;
-      _selectedNodeId = node['id']?.toString();
+      _selectedNodeId = nodeId;
       _selectedEdge = null;
       _selectedEdgeId = null;
+      _selectedStudyQuizzes = null;
+      _selectedStudyLoading = isStatement;
     });
     _canvasKey.currentState?.centerOnNode(node['id'].toString());
+
+    if (isStatement && nodeId != null) {
+      unawaited(_loadSelectedStudyQuizzes(nodeId));
+    }
 
     Map<String, dynamic> detail = node;
     try {
@@ -1195,6 +1210,20 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     await _showInspectorSheet();
   }
 
+  Future<void> _loadSelectedStudyQuizzes(String nodeId) async {
+    try {
+      final data = await apiClient.nodeStudyQuizzes(nodeId);
+      if (!mounted || _selectedNodeId != nodeId) return;
+      setState(() {
+        _selectedStudyQuizzes = data;
+        _selectedStudyLoading = false;
+      });
+    } catch (_) {
+      if (!mounted || _selectedNodeId != nodeId) return;
+      setState(() => _selectedStudyLoading = false);
+    }
+  }
+
   Future<void> _selectEdge(Map<String, dynamic>? edge,
       {bool showSheet = false}) async {
     setState(() {
@@ -1202,6 +1231,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       _selectedEdgeId = edge?['id']?.toString();
       _selectedNode = null;
       _selectedNodeId = null;
+      _selectedStudyQuizzes = null;
+      _selectedStudyLoading = false;
     });
     if (edge != null && showSheet && mounted) {
       await _showInspectorSheet();
@@ -1256,16 +1287,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           onSelectEdge: (e) {
             Navigator.pop(ctx);
             _selectEdge(e, showSheet: true);
-          },
-          onStudyQuizzes: (quizType, quizIds, language) async {
-            Navigator.pop(ctx);
-            _activateInputMode();
-            _ensureChatVisible();
-            await chatSession.startQuiz(
-              quizType,
-              language: language,
-              quizIds: quizIds,
-            );
           },
         ),
       ),
@@ -1414,6 +1435,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       _selectedNodeId = null;
       _selectedEdge = null;
       _selectedEdgeId = null;
+      _selectedStudyQuizzes = null;
+      _selectedStudyLoading = false;
       _glowIds = const {};
       _glowSeq++;
     });
@@ -1626,6 +1649,17 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
                     edges: edges,
                     nodeById: nodeById,
                     typeColors: typeColors,
+                    studyQuizzes: _selectedStudyQuizzes,
+                    studyLoading: _selectedStudyLoading,
+                    onStudyQuizzes: (quizType, quizIds, language) async {
+                      _activateInputMode();
+                      _ensureChatVisible();
+                      await chatSession.startQuiz(
+                        quizType,
+                        language: language,
+                        quizIds: quizIds,
+                      );
+                    },
                     onDetail: _showInspectorSheet,
                     onClose: _clearSelection,
                   ),
@@ -2128,6 +2162,9 @@ class _SelectionInfoCard extends StatelessWidget {
     required this.edges,
     required this.nodeById,
     required this.typeColors,
+    required this.studyQuizzes,
+    required this.studyLoading,
+    required this.onStudyQuizzes,
     required this.onDetail,
     required this.onClose,
   });
@@ -2137,6 +2174,13 @@ class _SelectionInfoCard extends StatelessWidget {
   final List<Map<String, dynamic>> edges;
   final Map<String, Map<String, dynamic>> nodeById;
   final Map<String, Color> typeColors;
+  final Map<String, dynamic>? studyQuizzes;
+  final bool studyLoading;
+  final Future<void> Function(
+    String quizType,
+    List<String> quizIds,
+    String? language,
+  ) onStudyQuizzes;
   final VoidCallback onDetail;
   final VoidCallback onClose;
 
@@ -2159,6 +2203,107 @@ class _SelectionInfoCard extends StatelessWidget {
     return (
       contextType: parsed.hasContextType ? parsed.contextType : null,
       content: parsed.content,
+    );
+  }
+
+  static const _languageLabels = {
+    'english': '영어',
+    'german': '독일어',
+    'korean': '한국어',
+    'japanese': '일본어',
+    'chinese': '중국어',
+    'spanish': '스페인어',
+    'french': '프랑스어',
+  };
+
+  Future<void> _startStudyQuiz(
+    BuildContext context,
+    String quizType,
+    Map<String, dynamic> group,
+  ) async {
+    final allIds = (group['quiz_ids'] as List? ?? const [])
+        .map((id) => id.toString())
+        .toList();
+    if (allIds.isEmpty) return;
+    final byLanguage = <String, List<String>>{};
+    final raw = group['by_language'];
+    if (raw is Map) {
+      for (final entry in raw.entries) {
+        final ids = (entry.value as List? ?? const [])
+            .map((id) => id.toString())
+            .toList();
+        if (ids.isNotEmpty) byLanguage[entry.key.toString()] = ids;
+      }
+    }
+    if (byLanguage.length <= 1) {
+      final language = byLanguage.keys.isEmpty ? null : byLanguage.keys.first;
+      await onStudyQuizzes(quizType, allIds, language);
+      return;
+    }
+    final chosen = await showModalBottomSheet<String>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: Text(
+                quizType == 'composition' ? '작문 퀴즈 언어 선택' : '단어 퀴즈 언어 선택',
+              ),
+            ),
+            for (final language in byLanguage.keys)
+              ListTile(
+                leading: const Icon(Icons.translate_rounded),
+                title: Text(_languageLabels[language] ?? language),
+                trailing: Text('${byLanguage[language]!.length}개'),
+                onTap: () => Navigator.pop(sheetContext, language),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (chosen != null) {
+      await onStudyQuizzes(quizType, byLanguage[chosen]!, chosen);
+    }
+  }
+
+  Widget _studyQuizButtons(BuildContext context) {
+    if (studyLoading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 4),
+        child: SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    final word = (studyQuizzes?['word'] as Map?)?.cast<String, dynamic>() ??
+        const <String, dynamic>{};
+    final composition =
+        (studyQuizzes?['composition'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{};
+    Widget button(String type, Map<String, dynamic> group, String label) {
+      final count = (group['count'] as num?)?.toInt() ?? 0;
+      return OutlinedButton(
+        onPressed:
+            count == 0 ? null : () => _startStudyQuiz(context, type, group),
+        style: OutlinedButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        ),
+        child: Text('$label $count'),
+      );
+    }
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      children: [
+        button('cloze', word, '단어 퀴즈'),
+        button('composition', composition, '작문 퀴즈'),
+      ],
     );
   }
 
@@ -2363,6 +2508,19 @@ class _SelectionInfoCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             body,
+            if (isStatement) ...[
+              const SizedBox(height: 10),
+              Text(
+                '이 진술에서 만든 문제',
+                style: TextStyle(
+                  color: shell.mutedText,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 5),
+              _studyQuizButtons(context),
+            ],
             const SizedBox(height: 6),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
