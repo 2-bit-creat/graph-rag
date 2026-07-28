@@ -71,9 +71,7 @@ jobs:
           pytest -q
       - uses: subosito/flutter-action@v2
         with:
-          # audioplayers 6.7 requires Dart >= 3.6. Flutter 3.27 supplies it
-          # while retaining the dart:js_util APIs used by the current web code.
-          flutter-version: "3.27.4"
+          flutter-version: "3.44.8"
           channel: stable
       - name: Test and build Flutter web
         working-directory: mobile

@@ -1,11 +1,7 @@
-import 'dart:js_util' as js_util;
-
 dynamic _dartify(dynamic value) {
-  if (value == null || value is String || value is num || value is bool) {
-    return value;
-  }
-  if (value is Map || value is List) return value;
-  return js_util.dartify(value);
+  // Dio decodes JSON responses into Dart Maps and Lists. This keeps the
+  // compatibility layer without the removed `dart:js_util` library.
+  return value;
 }
 
 Map<String, dynamic> jsonMap(dynamic value) {
