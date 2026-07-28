@@ -32,18 +32,30 @@ class _CardShell extends StatelessWidget {
     final availableHeight = QuizViewportScope.maybeHeightOf(context);
     final heightCompact = availableHeight != null && availableHeight < 280;
     final compact = MediaQuery.sizeOf(context).width < 600;
-    final fillKeyboardArea = fillKeyboardViewport && keyboardOpen;
+    // Do not gate the bounded layout on MediaQuery.viewInsets. Mobile web
+    // browsers can resize the visual viewport before reporting an inset (or
+    // keep reporting zero), which briefly leaves the card at natural height
+    // and produces tiny 1–2 px overflows. QuizViewportScope is derived from
+    // the parent's real constraints, so it is the authoritative measurement.
+    final fillAvailableArea =
+        fillKeyboardViewport && availableHeight != null;
     final useKeyboardCompactStyle = keyboardOpen && !fillKeyboardViewport;
     final topMargin = compact ? 2.0 : 4.0;
-    final bottomMargin = fillKeyboardArea
-        ? 0.0
+    final bottomMargin = fillAvailableArea
+        ? 2.0
         : (heightCompact ? 2.0 : (keyboardOpen ? 4.0 : 8.0));
     // The surrounding quiz panel has already removed its header, padding, and
     // docked composer from this height. Keep the card inside that exact area
     // on mobile web: the body becomes scrollable instead of shrinking text or
     // overflowing below the iOS keyboard.
-    final viewportHeight = fillKeyboardArea && availableHeight != null
-        ? (availableHeight - topMargin - bottomMargin)
+    // CSS visualViewport values often land between logical pixels. Floor the
+    // result and retain a small cross-browser gutter so rounding in Safari,
+    // Chrome, different DPRs, and OS keyboard variants cannot exceed the
+    // parent constraint.
+    const viewportSafetyGutter = 4.0;
+    final viewportHeight = fillAvailableArea
+        ? (availableHeight - topMargin - bottomMargin - viewportSafetyGutter)
+            .floorToDouble()
             .clamp(0.0, double.infinity)
         : null;
     final measuredChild = onContentHeightChanged == null
