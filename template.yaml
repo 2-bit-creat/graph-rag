@@ -2,6 +2,15 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: Graph RAG FastAPI backend with safe Lambda deployments
 
+# S3CrudPolicy expands the parameterized bucket name into a nested Fn::Sub;
+# cfn-lint W1031 cannot resolve that macro-generated ARN, although CloudFormation
+# resolves it correctly at deployment time.
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        - W1031
+
 Parameters:
   AppSecretName:
     Type: String
