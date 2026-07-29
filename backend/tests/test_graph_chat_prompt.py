@@ -6,7 +6,9 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
+from openai import APIConnectionError
 
 from app import crud, graph_chat
 
@@ -50,6 +52,36 @@ def test_build_graph_chat_messages_omits_summary_when_none():
     assert len(messages) == 3
     assert not any(m["content"].startswith("지금까지의 대화 요약") for m in messages)
     assert messages[1]["content"] == "ctx"
+
+
+@pytest.mark.asyncio
+async def test_graph_chat_completion_retries_transient_provider_failure(monkeypatch):
+    calls = 0
+
+    async def flaky_create(**_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise APIConnectionError(request=httpx.Request("POST", "https://api.openai.com"))
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))]
+        )
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=flaky_create)))
+    settings = SimpleNamespace(
+        openai_model="gpt-4o-mini",
+        graph_chat_max_completion_tokens=20,
+        openai_timeout_sec=1,
+    )
+    monkeypatch.setattr(graph_chat, "_get_client", lambda: client)
+    monkeypatch.setattr(graph_chat.asyncio, "sleep", AsyncMock())
+
+    response = await graph_chat._create_chat_completion(
+        messages=[{"role": "user", "content": "hello"}], settings=settings
+    )
+
+    assert response.choices[0].message.content == "ok"
+    assert calls == 2
 
 
 @pytest.mark.asyncio

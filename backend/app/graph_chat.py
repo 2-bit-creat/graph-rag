@@ -8,6 +8,7 @@ Cost per turn: one embedding call + one chat call.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -15,6 +16,7 @@ from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import get_settings
@@ -42,6 +44,36 @@ _backfill_checked: set[uuid.UUID] = set()
 class GraphChatResult:
     answer: str
     referenced_node_ids: list[str] = field(default_factory=list)
+
+
+async def _create_chat_completion(*, messages: list[dict[str, str]], settings: Any):
+    """Create a chat completion with bounded retries for transient provider faults."""
+    attempts = 3
+    for attempt in range(attempts):
+        try:
+            return await _get_client().chat.completions.create(
+                model=settings.openai_model,
+                messages=messages,
+                temperature=0.5,
+                max_tokens=settings.graph_chat_max_completion_tokens,
+                timeout=settings.openai_timeout_sec,
+            )
+        except (APIConnectionError, APITimeoutError, RateLimitError, APIStatusError) as exc:
+            status_code = getattr(exc, "status_code", None)
+            retryable = isinstance(exc, (APIConnectionError, APITimeoutError, RateLimitError)) or (
+                isinstance(status_code, int) and status_code >= 500
+            )
+            logger.warning(
+                "graph_chat: completion failed (attempt %s/%s, type=%s, status=%s, retryable=%s)",
+                attempt + 1,
+                attempts,
+                type(exc).__name__,
+                status_code,
+                retryable,
+            )
+            if not retryable or attempt == attempts - 1:
+                raise
+            await asyncio.sleep(0.5 * (2**attempt))
 
 
 async def _retrieve_seeds(
@@ -366,13 +398,7 @@ async def graph_chat_answer(
         native_language=native_language,
     )
 
-    resp = await _get_client().chat.completions.create(
-        model=settings.openai_model,
-        messages=messages,
-        temperature=0.5,
-        max_tokens=settings.graph_chat_max_completion_tokens,
-        timeout=settings.openai_timeout_sec,
-    )
+    resp = await _create_chat_completion(messages=messages, settings=settings)
     answer = (resp.choices[0].message.content or "").strip()
 
     return GraphChatResult(
