@@ -211,6 +211,8 @@ Resources:
                   - iam:GetRolePolicy
                   - iam:PassRole
                   - iam:PutRolePolicy
+                  - iam:TagRole
+                  - iam:UntagRole
                 Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${DeploymentStackName}-*
 
 Outputs:
