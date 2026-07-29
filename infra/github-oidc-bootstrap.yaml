@@ -105,6 +105,15 @@ Resources:
                 Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/${DeploymentStackName}-*
               - Effect: Allow
                 Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:CompleteLayerUpload
+                  - ecr:DescribeImages
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:UploadLayerPart
+                Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/graphragbackend*
+              - Effect: Allow
+                Action:
                   - ecr:CreateRepository
                   - ecr:DescribeRepositories
                 Resource: "*"
