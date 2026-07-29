@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 import 'dart:ui';
 
+import 'package:characters/characters.dart';
+
 /// Base node radius in world coordinates.
 const kGraphNodeRadius = 28.0;
 
@@ -638,8 +640,9 @@ String graphShortLabel(String name, double worldRadius) {
   final n = name.trim();
   if (n.isEmpty) return '?';
   final maxChars = (worldRadius * 0.55).round().clamp(6, 20);
-  if (n.length <= maxChars) return n;
-  return '${n.substring(0, maxChars - 1)}…';
+  final chars = n.characters;
+  if (chars.length <= maxChars) return n;
+  return '${chars.take(maxChars - 1)}…';
 }
 
 String formatRelationLabel(String relation) {
@@ -656,8 +659,9 @@ String graphRelationDisplayLabel(String relation, {int maxLen = 11}) {
   final r = relation.trim();
   if (r.isEmpty) return '';
   var display = r.replaceAll(RegExp(r'\s+'), ' ');
-  if (display.length <= maxLen) return display;
-  return '${display.substring(0, maxLen - 1)}…';
+  final chars = display.characters;
+  if (chars.length <= maxLen) return display;
+  return '${chars.take(maxLen - 1)}…';
 }
 
 double graphEdgeLabelOpacity(double zoom, {bool highlighted = false}) {
