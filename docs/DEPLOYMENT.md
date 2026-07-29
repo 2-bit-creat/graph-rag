@@ -46,6 +46,12 @@ actual Function URL is available. Its verification build uses a deliberately
 invalid placeholder and must never be uploaded to S3. A frontend-only release
 uses the protected GitHub `production` variable `API_BASE_URL`.
 
+Flutter's `index.html`, `flutter_bootstrap.js`, and `main.dart.js` have fixed
+filenames. The frontend publishing script gives the loader and main bundle a
+release query string and sends all fixed entrypoints with `no-cache`; only
+content-addressed assets receive the long immutable cache policy. This prevents
+an already-open browser from retaining an old API base URL after a release.
+
 The Lambda's actual physical function name (`graph-rag-backend-GraphRagFunction-xxxxx`) can drift
 if the function resource is ever replaced — look it up rather than trust a hardcoded copy:
 
