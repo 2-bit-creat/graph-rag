@@ -6,6 +6,7 @@ import socket
 from datetime import UTC, datetime
 from pathlib import Path
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import NullPool
@@ -648,8 +649,12 @@ async def run_deployment_migrations(*, git_sha: str) -> dict[str, object]:
             await _run_legacy_migrations(conn)
             checksum = migration_checksum("legacy-bootstrap-v1")
             elapsed = int((datetime.now(UTC) - started).total_seconds() * 1000)
-            await conn.exec_driver_sql(
-                "INSERT INTO schema_migrations (version, checksum, duration_ms, git_sha) VALUES (:v, :c, :d, :g)",
+            await conn.execute(
+                text(
+                    "INSERT INTO schema_migrations "
+                    "(version, checksum, duration_ms, git_sha) "
+                    "VALUES (:v, :c, :d, :g)"
+                ),
                 {"v": _LEGACY_BASELINE_VERSION, "c": checksum, "d": elapsed, "g": git_sha},
             )
             recorded[_LEGACY_BASELINE_VERSION] = checksum
@@ -667,8 +672,12 @@ async def run_deployment_migrations(*, git_sha: str) -> dict[str, object]:
             started = datetime.now(UTC)
             await conn.exec_driver_sql(sql)
             elapsed = int((datetime.now(UTC) - started).total_seconds() * 1000)
-            await conn.exec_driver_sql(
-                "INSERT INTO schema_migrations (version, checksum, duration_ms, git_sha) VALUES (:v, :c, :d, :g)",
+            await conn.execute(
+                text(
+                    "INSERT INTO schema_migrations "
+                    "(version, checksum, duration_ms, git_sha) "
+                    "VALUES (:v, :c, :d, :g)"
+                ),
                 {"v": version, "c": checksum, "d": elapsed, "g": git_sha},
             )
             applied.append(version)
