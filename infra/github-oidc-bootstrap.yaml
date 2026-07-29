@@ -172,7 +172,9 @@ Resources:
                 Action:
                   - lambda:AddPermission
                   - lambda:CreateAlias
+                  - lambda:CreateFunction
                   - lambda:DeleteAlias
+                  - lambda:DeleteFunction
                   - lambda:GetAlias
                   - lambda:GetFunction
                   - lambda:ListVersionsByFunction
@@ -181,6 +183,8 @@ Resources:
                   - lambda:UpdateAlias
                   - lambda:UpdateFunctionCode
                   - lambda:UpdateFunctionConfiguration
+                  - lambda:TagResource
+                  - lambda:UntagResource
                 Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${DeploymentStackName}-*
               - Effect: Allow
                 Action:
