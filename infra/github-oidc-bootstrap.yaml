@@ -177,6 +177,7 @@ Resources:
                   - lambda:DeleteFunction
                   - lambda:GetAlias
                   - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
                   - lambda:ListVersionsByFunction
                   - lambda:PublishVersion
                   - lambda:RemovePermission
