@@ -96,8 +96,10 @@ Resources:
                   - codedeploy:DeleteApplication
                   - codedeploy:DeleteDeploymentGroup
                   - codedeploy:GetApplication
+                  - codedeploy:GetApplicationRevision
                   - codedeploy:GetDeploymentGroup
                   - codedeploy:ListTagsForResource
+                  - codedeploy:RegisterApplicationRevision
                   - codedeploy:TagResource
                   - codedeploy:UntagResource
                   - codedeploy:UpdateDeploymentGroup
