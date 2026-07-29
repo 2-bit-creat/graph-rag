@@ -92,12 +92,34 @@ Resources:
       DeploymentPreference:
         Enabled: !Equals [!Ref EnableCanary, "true"]
         Type: Canary10Percent5Minutes
+        Role: !GetAtt GraphRagCodeDeployServiceRole.Arn
         Alarms:
           - !Ref LambdaErrorsAlarm
           - !Ref LambdaThrottlesAlarm
           - !Ref LambdaDurationAlarm
         Hooks:
           PreTraffic: !Ref DeploymentValidationHook
+
+  GraphRagCodeDeployServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codedeploy.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSCodeDeployRoleForLambda
+      Policies:
+        - PolicyName: InvokeDeploymentValidationHook
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-DeploymentValidationHook-*
 
   DeploymentValidationHook:
     Type: AWS::Serverless::Function
