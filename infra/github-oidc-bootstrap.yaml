@@ -176,9 +176,14 @@ Resources:
                 Resource: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${WebDistributionId}
               - Effect: Allow
                 Action:
+                  - codedeploy:CreateDeployment
+                  - codedeploy:ContinueDeployment
                   - codedeploy:GetDeployment
                   - codedeploy:GetDeploymentConfig
                   - codedeploy:GetDeploymentGroup
+                  - codedeploy:ListDeploymentTargets
+                  - codedeploy:ListDeployments
+                  - codedeploy:StopDeployment
                 Resource: "*"
               - Effect: Allow
                 Action:
