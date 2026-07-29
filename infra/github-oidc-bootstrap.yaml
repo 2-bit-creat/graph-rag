@@ -175,6 +175,7 @@ Resources:
                   - lambda:DeleteAlias
                   - lambda:GetAlias
                   - lambda:GetFunction
+                  - lambda:ListVersionsByFunction
                   - lambda:PublishVersion
                   - lambda:RemovePermission
                   - lambda:UpdateAlias
@@ -183,9 +184,18 @@ Resources:
                 Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${DeploymentStackName}-*
               - Effect: Allow
                 Action:
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:PutMetricAlarm
+                Resource: !Sub arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${DeploymentStackName}-*
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
                   - logs:DescribeLogStreams
                   - logs:FilterLogEvents
                   - logs:GetLogEvents
+                  - logs:PutRetentionPolicy
                 Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${DeploymentStackName}-*:*
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
