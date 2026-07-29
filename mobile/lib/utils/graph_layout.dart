@@ -642,7 +642,7 @@ String graphShortLabel(String name, double worldRadius) {
   final maxChars = (worldRadius * 0.55).round().clamp(6, 20);
   final chars = n.characters;
   if (chars.length <= maxChars) return n;
-  return '${chars.take(maxChars - 1)}…';
+  return '${chars.take(maxChars - 1)}\u2026';
 }
 
 String formatRelationLabel(String relation) {
@@ -661,7 +661,7 @@ String graphRelationDisplayLabel(String relation, {int maxLen = 11}) {
   var display = r.replaceAll(RegExp(r'\s+'), ' ');
   final chars = display.characters;
   if (chars.length <= maxLen) return display;
-  return '${chars.take(maxLen - 1)}…';
+  return '${chars.take(maxLen - 1)}\u2026';
 }
 
 double graphEdgeLabelOpacity(double zoom, {bool highlighted = false}) {
