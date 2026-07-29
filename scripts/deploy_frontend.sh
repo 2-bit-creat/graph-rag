@@ -29,5 +29,6 @@ aws s3 sync "$build_dir" "s3://$WEB_BUCKET" --delete --exclude index.html --excl
 aws s3 cp "$build_dir/index.html" "s3://$WEB_BUCKET/index.html" --cache-control 'no-cache,no-store,must-revalidate'
 aws s3 cp "$build_dir/version.json" "s3://$WEB_BUCKET/version.json" --cache-control 'no-cache,no-store,must-revalidate'
 invalidation_id="$(aws cloudfront create-invalidation --distribution-id "$WEB_DISTRIBUTION_ID" --paths '/*' --query 'Invalidation.Id' --output text)"
+aws cloudfront wait invalidation-completed --distribution-id "$WEB_DISTRIBUTION_ID" --id "$invalidation_id"
 printf '%s\n' "$invalidation_id" > "$GITHUB_OUTPUT"
 trap - EXIT

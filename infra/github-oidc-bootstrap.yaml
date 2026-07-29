@@ -97,6 +97,9 @@ Resources:
                   - codedeploy:DeleteDeploymentGroup
                   - codedeploy:GetApplication
                   - codedeploy:GetDeploymentGroup
+                  - codedeploy:ListTagsForResource
+                  - codedeploy:TagResource
+                  - codedeploy:UntagResource
                   - codedeploy:UpdateDeploymentGroup
                 Resource: !Sub arn:${AWS::Partition}:codedeploy:${AWS::Region}:${AWS::AccountId}:application:${DeploymentStackName}-*
               - Effect: Allow
@@ -104,11 +107,15 @@ Resources:
                   - codedeploy:CreateDeploymentGroup
                   - codedeploy:DeleteDeploymentGroup
                   - codedeploy:GetDeploymentGroup
+                  - codedeploy:ListTagsForResource
+                  - codedeploy:TagResource
+                  - codedeploy:UntagResource
                   - codedeploy:UpdateDeploymentGroup
                 Resource: !Sub arn:${AWS::Partition}:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentgroup:${DeploymentStackName}-*/*
               - Effect: Allow
                 Action:
                   - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackResource
                   - cloudformation:ListStackResources
                   - cloudformation:ValidateTemplate
                   - ecr:GetAuthorizationToken
@@ -151,6 +158,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - s3:GetBucketVersioning
+                  - s3:ListBucketVersions
                   - s3:PutBucketVersioning
                   - s3:ListBucket
                 Resource: !Sub arn:${AWS::Partition}:s3:::${WebBucketName}
@@ -162,11 +170,14 @@ Resources:
                   - s3:PutObject
                 Resource: !Sub arn:${AWS::Partition}:s3:::${WebBucketName}/*
               - Effect: Allow
-                Action: cloudfront:CreateInvalidation
+                Action:
+                  - cloudfront:CreateInvalidation
+                  - cloudfront:GetInvalidation
                 Resource: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${WebDistributionId}
               - Effect: Allow
                 Action:
                   - codedeploy:GetDeployment
+                  - codedeploy:GetDeploymentConfig
                   - codedeploy:GetDeploymentGroup
                 Resource: "*"
               - Effect: Allow
@@ -179,6 +190,8 @@ Resources:
                   - lambda:GetAlias
                   - lambda:GetFunction
                   - lambda:GetFunctionConfiguration
+                  - lambda:GetFunctionUrlConfig
+                  - lambda:GetPolicy
                   - lambda:ListVersionsByFunction
                   - lambda:PublishVersion
                   - lambda:RemovePermission
@@ -190,9 +203,13 @@ Resources:
                 Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${DeploymentStackName}-*
               - Effect: Allow
                 Action:
+                  - lambda:AddPermission
                   - lambda:CreateFunctionUrlConfig
                   - lambda:DeleteFunctionUrlConfig
                   - lambda:GetFunctionConfiguration
+                  - lambda:GetFunctionUrlConfig
+                  - lambda:GetPolicy
+                  - lambda:RemovePermission
                   - lambda:UpdateFunctionUrlConfig
                 Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${DeploymentStackName}-*:*
               - Effect: Allow
@@ -205,6 +222,7 @@ Resources:
                 Action:
                   - logs:CreateLogGroup
                   - logs:DeleteLogGroup
+                  - logs:DeleteRetentionPolicy
                   - logs:DescribeLogStreams
                   - logs:FilterLogEvents
                   - logs:GetLogEvents
@@ -222,10 +240,13 @@ Resources:
                   - iam:DetachRolePolicy
                   - iam:GetRole
                   - iam:GetRolePolicy
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListRolePolicies
                   - iam:PassRole
                   - iam:PutRolePolicy
                   - iam:TagRole
                   - iam:UntagRole
+                  - iam:UpdateAssumeRolePolicy
                 Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${DeploymentStackName}-*
 
 Outputs:
