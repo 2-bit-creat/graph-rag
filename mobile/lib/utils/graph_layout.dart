@@ -719,7 +719,9 @@ const _semanticTypeColors = <String, Color>{
   'source': Color(0xFFFFC53D),
   // Identity(정체성): 사람인지 확정되지 않은 개체(반려동물·단체 등). 정체성
   // 계층이라 warm 계열(살구/코랄)로 person·source와 묶되 구분되는 톤.
-  'identity': Color(0xFFF07B5B),
+  // Identity is the graph's primary index/head category. Keep it visibly
+  // orange everywhere rather than inheriting a legacy ontology's gray swatch.
+  'identity': Color(0xFFFF8C42),
   'organization': Color(0xFF5BABFF),
   'company': Color(0xFF5BABFF),
   'topic': Color(0xFF5B9DFF),
@@ -744,7 +746,16 @@ Map<String, Color> buildTypeColorMap(List<dynamic>? entityTypes) {
     if (raw is! Map) continue;
     final name = raw['name']?.toString();
     final color = raw['color']?.toString();
-    if (name != null && color != null) map[name] = parseHexColor(color);
+    if (name == null) continue;
+    final canonical = canonicalEntityType(name).toLowerCase();
+    // Identity is a structural graph category, not a user-defined semantic
+    // type. Old saved ontologies may still carry its former gray color, so
+    // normalize it to the same orange used by nodes and legend filters.
+    if (canonical == 'identity') {
+      map[name] = _semanticTypeColors['identity']!;
+    } else if (color != null) {
+      map[name] = parseHexColor(color);
+    }
   }
   return map;
 }

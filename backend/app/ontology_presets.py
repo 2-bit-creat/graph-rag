@@ -102,7 +102,7 @@ DAILY_LIFE_ENGLISH: OntologyPreset = {
     "entity_types": [
         {
             "name": "Identity",
-            "color": "#f07b5b",
+            "color": "#ff8c42",
             "description": "정체성 카테고리 — 이름/별칭으로 재식별되는 반복 등장 개체 전체 "
             "(Person·Source 포함 상위 분류이자, 사람도 매체도 아닌 반려동물·단체 등의 기본 타입)",
         },

@@ -290,6 +290,16 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     FocusManager.instance.primaryFocus?.unfocus();
   }
 
+  /// End an input-owning mode without leaving a stale browser text connection.
+  /// This is especially important after a composition answer: the field may
+  /// still look focused after the quiz card has been removed.
+  void _exitInputMode() {
+    _chatInputFocusNode.unfocus();
+    FocusManager.instance.primaryFocus?.unfocus();
+    unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.hide'));
+    chatSession.exitMode();
+  }
+
   /// Recreate the platform text-input connection after an async mode switch.
   /// On iOS Safari a request made while the old quiz is still busy can leave
   /// the Flutter field focused but with no keyboard to bring back on tap.
@@ -389,7 +399,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           busy: chatSession.busy,
           onSend: _sendChat,
           modeLabel: _modeLabel(),
-          onExitMode: chatSession.exitMode,
+          onExitMode: _exitInputMode,
           modeActions: _wordQuizComposerActions(),
           onModeSelected: _onModeSelected,
           inputEnabled: _inputEnabled,
@@ -615,8 +625,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     if (enteredFooterMode || distillReady || quizCardChanged) {
       _scrollChatToBottom();
     }
-    if (enteredFooterMode &&
-        (mode == ChatMode.journal || mode == ChatMode.quizComposition)) {
+    if (enteredFooterMode && mode == ChatMode.journal) {
       _restoreComposerFocusAfterBuild();
     }
     if (wordQuizJustSolved) {
@@ -824,7 +833,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       // Do not layer a language picker over a previous mode or an already-open
       // iOS keyboard. Starting another quiz is equivalent to closing the old
       // one first, then opening the new chooser.
-      if (chatSession.mode != ChatMode.normal) chatSession.exitMode();
+      if (chatSession.mode != ChatMode.normal) _exitInputMode();
       _chatInputFocusNode.unfocus();
       await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
       await Future<void>.delayed(const Duration(milliseconds: 180));
@@ -887,21 +896,15 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       }
 
       if (langs.length <= 1) {
-        if (quizType == 'composition') {
-          _activateInputMode();
-        } else {
-          _prepareWordQuizInput();
-        }
+        // A quiz is entered after an asynchronous request. Do not retain (or
+        // manufacture) composer focus across that transition: on mobile web it
+        // can leave Flutter with a stale focus node that no longer owns a real
+        // native text-input connection. The learner's next tap restores the
+        // keyboard normally for both composition and word quizzes.
+        _prepareWordQuizInput();
         await chatSession.startQuiz(quizType,
             language: langs.isNotEmpty ? langs.first : null);
-        // For a cloze quiz, retain the native connection made during the menu
-        // tap. Recreating it after this async transition leaves iOS Safari with
-        // a focused Flutter field that cannot open its keyboard when tapped.
-        if (quizType == 'composition') {
-          _restoreComposerFocusAfterBuild();
-        } else {
-          _prepareWordQuizInput();
-        }
+        _prepareWordQuizInput();
         return;
       }
       if (!mounted) return;
@@ -941,17 +944,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         ),
       );
       if (chosen != null) {
-        if (quizType == 'composition') {
-          _activateInputMode();
-        } else {
-          _prepareWordQuizInput();
-        }
+        _prepareWordQuizInput();
         await chatSession.startQuiz(quizType, language: chosen);
-        if (quizType == 'composition') {
-          _restoreComposerFocusAfterBuild();
-        } else {
-          _prepareWordQuizInput();
-        }
+        _prepareWordQuizInput();
       }
     } finally {
       if (mounted) setState(() => _quizStarting = false);
@@ -1073,7 +1068,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           loading: chatSession.distillLoading,
           onToggle: chatSession.toggleDistillSentence,
           onSave: chatSession.saveDistillAsJournal,
-          onCancel: chatSession.exitMode,
+          onCancel: _exitInputMode,
         );
       case ChatMode.quizComposition:
         final quiz = chatSession.activeQuiz;
@@ -1084,7 +1079,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           feedback: chatSession.quizFeedback,
           busy: chatSession.busy,
           onNext: chatSession.nextQuiz,
-          onExit: chatSession.exitMode,
+          onExit: _exitInputMode,
         );
       case ChatMode.quizWord:
         final quiz = chatSession.activeQuiz;
@@ -1101,7 +1096,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
             // iOS Safari to create a usable software-keyboard connection.
             _chatInputFocusNode.unfocus();
           },
-          onExit: chatSession.exitMode,
+          onExit: _exitInputMode,
           externalResult: chatSession.quizFeedback,
           clozeSolved: chatSession.wordQuizSolved,
           clozeCompletedWords: chatSession.clozeCompletedWords,
@@ -1148,7 +1143,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
                       color: context.shell.primaryText, fontSize: 13)),
             ),
             TextButton(
-                onPressed: chatSession.exitMode, child: Text(tr('quiz.close'))),
+                onPressed: _exitInputMode, child: Text(tr('quiz.close'))),
             FilledButton(
               onPressed: () => chatSession.startQuiz(chatSession.quizType),
               child: Text(tr('quiz.more')),
