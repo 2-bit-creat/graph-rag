@@ -661,7 +661,8 @@ String graphRelationDisplayLabel(String relation, {int maxLen = 11}) {
   var display = r.replaceAll(RegExp(r'\s+'), ' ');
   final chars = display.characters;
   if (chars.length <= maxLen) return display;
-  return '${chars.take(maxLen - 1)}\u2026';
+  // Relation chips have a hard width cap; do not add an extra glyph beyond it.
+  return chars.take(maxLen).toString();
 }
 
 double graphEdgeLabelOpacity(double zoom, {bool highlighted = false}) {
