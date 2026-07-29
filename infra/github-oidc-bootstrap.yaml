@@ -85,6 +85,9 @@ Resources:
                   - cloudformation:UpdateStack
                 Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${DeploymentStackName}-*-CompanionStack/*
               - Effect: Allow
+                Action: cloudformation:CreateChangeSet
+                Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:transform/Serverless-2016-10-31
+              - Effect: Allow
                 Action:
                   - cloudformation:DescribeStacks
                   - cloudformation:ListStackResources
