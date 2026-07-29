@@ -588,6 +588,10 @@ def versioned_migration_files() -> list[Path]:
 
 
 async def _ensure_migration_table(conn) -> None:
+    # Lock before the first CREATE TABLE. Concurrent CodeDeploy hook retries can
+    # otherwise both observe a missing table and race while PostgreSQL creates
+    # its backing composite type, despite CREATE TABLE IF NOT EXISTS.
+    await conn.exec_driver_sql(f"SELECT pg_advisory_xact_lock({_MIGRATION_LOCK_ID})")
     await conn.exec_driver_sql(
         """
         CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -637,7 +641,6 @@ async def run_deployment_migrations(*, git_sha: str) -> dict[str, object]:
     await _wait_for_db()
     async with engine.begin() as conn:
         await _ensure_migration_table(conn)
-        await conn.exec_driver_sql(f"SELECT pg_advisory_xact_lock({_MIGRATION_LOCK_ID})")
         rows = await conn.exec_driver_sql("SELECT version, checksum FROM schema_migrations")
         recorded = {row[0]: row[1] for row in rows}
 
