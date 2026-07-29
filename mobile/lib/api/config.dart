@@ -1,6 +1,10 @@
 import 'package:flutter/foundation.dart';
 
-/// Override at build time: --dart-define=API_BASE_URL=http://192.168.x.x:8000
+/// Required for a production web build. The deployment workflow injects the
+/// HTTPS Lambda Function URL. Local development may instead point at the
+/// backend running on the workstation.
+///
+/// Example: --dart-define=API_BASE_URL=http://192.168.x.x:8000
 const String apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
   defaultValue: '',
@@ -8,6 +12,10 @@ const String apiBaseUrl = String.fromEnvironment(
 
 String get resolvedApiBaseUrl {
   if (apiBaseUrl.isNotEmpty) return apiBaseUrl;
+  // Production web bundles must be built with API_BASE_URL. Keep the fallback
+  // exclusively useful for local runs, where Flutter's dev server host is
+  // reachable on port 8000. The CI/CD workflow validates and injects an HTTPS
+  // value before it publishes any web bundle.
   // Flutter web must call the same host that served the app.  `localhost`
   // means the phone itself when a development server is opened through its
   // LAN address (e.g. http://192.168.x.x:5435), so requests never reach the

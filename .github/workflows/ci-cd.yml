@@ -108,10 +108,14 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - uses: aws-actions/setup-sam@v2
-      - uses: actions/download-artifact@v4
+      # The verify job intentionally builds with a non-routable placeholder.
+      # Rebuild below once the production Function URL is known; publishing the
+      # verify artifact would permanently ship placeholder.invalid to browsers.
+      - uses: subosito/flutter-action@v2
+        if: github.event.inputs.scope != 'backend'
         with:
-          name: flutter-web-${{ github.sha }}
-          path: mobile/build/web
+          flutter-version: "3.44.8"
+          channel: stable
       - name: Deploy backend through SAM and CodeDeploy
         id: backend
         if: github.event.inputs.scope != 'frontend'
@@ -142,6 +146,15 @@ jobs:
           APP_VERSION: ${{ github.sha }}
           API_BASE_URL: ${{ steps.backend.outputs.api_base_url || vars.API_BASE_URL }}
         run: |
+          test -n "$API_BASE_URL"
+          case "$API_BASE_URL" in
+            https://*) ;;
+            *) echo "API_BASE_URL must be an HTTPS URL" >&2; exit 1 ;;
+          esac
+          cd mobile
+          flutter pub get
+          flutter build web --release --dart-define=API_BASE_URL="$API_BASE_URL"
+          cd ..
           aws s3api put-bucket-versioning --bucket "$WEB_BUCKET" --versioning-configuration Status=Enabled
           bash scripts/deploy_frontend.sh mobile/build/web
       - name: Smoke test production

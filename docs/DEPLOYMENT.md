@@ -28,6 +28,24 @@ Lambda (container image, x86_64)  ←───┘        (not routed through Clo
 | Media CloudFront (`MEDIA_BASE_URL`) | `https://d2ocj6tslcohiq.cloudfront.net` (dist. `E9XVCK79B7R9G`) |
 | DB | Neon, pooled endpoint, `ap-southeast-1` |
 
+### Web API URL contract
+
+The web CloudFront distribution only serves Flutter assets. It does **not**
+proxy `/api/*`. Browser API calls go directly to the Lambda Function URL over
+HTTPS, with FastAPI allowing the web CloudFront origin through CORS.
+
+This is intentional for the current Lambda Function URL architecture. Every
+production web build must receive the Function URL with:
+
+```bash
+flutter build web --release --dart-define=API_BASE_URL=https://<function-id>.lambda-url.<region>.on.aws
+```
+
+The GitHub deployment workflow rebuilds after the backend deployment, when the
+actual Function URL is available. Its verification build uses a deliberately
+invalid placeholder and must never be uploaded to S3. A frontend-only release
+uses the protected GitHub `production` variable `API_BASE_URL`.
+
 The Lambda's actual physical function name (`graph-rag-backend-GraphRagFunction-xxxxx`) can drift
 if the function resource is ever replaced — look it up rather than trust a hardcoded copy:
 
