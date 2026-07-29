@@ -170,8 +170,16 @@ Resources:
                 Resource: "*"
               - Effect: Allow
                 Action:
+                  - lambda:AddPermission
+                  - lambda:CreateAlias
+                  - lambda:DeleteAlias
                   - lambda:GetAlias
                   - lambda:GetFunction
+                  - lambda:PublishVersion
+                  - lambda:RemovePermission
+                  - lambda:UpdateAlias
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
                 Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${DeploymentStackName}-*
               - Effect: Allow
                 Action:
