@@ -30,8 +30,11 @@ def handler(event: dict, context) -> None:
         for action in ("migrate", "ready"):
             payload = {**payload_base, "action": action, "request_id": str(uuid.uuid4())}
             response = lambda_client.invoke(
-                FunctionName=os.environ["FUNCTION_NAME"],
-                Qualifier=os.environ["NEW_VERSION"],
+                # Ref on AWS::Lambda::Version resolves to the qualified function
+                # ARN, not to the bare numeric qualifier. Invoking that ARN
+                # directly guarantees the validation runs against the candidate
+                # version without passing an invalid ARN as Qualifier.
+                FunctionName=os.environ["NEW_VERSION"],
                 InvocationType="RequestResponse",
                 Payload=json.dumps(payload).encode("utf-8"),
             )

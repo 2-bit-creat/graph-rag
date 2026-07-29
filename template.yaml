@@ -130,7 +130,6 @@ Resources:
       Timeout: 120
       Environment:
         Variables:
-          FUNCTION_NAME: !Ref GraphRagFunction
           NEW_VERSION: !Ref GraphRagFunction.Version
           APP_VERSION: !Ref AppVersion
       Policies:
