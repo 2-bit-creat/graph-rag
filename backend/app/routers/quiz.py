@@ -19,7 +19,7 @@ from ..composition_quiz import (
     verdict_to_sm2,
 )
 from ..config import get_settings
-from ..db import get_session
+from ..db import AsyncSessionLocal, get_session
 from ..deps import request_user_dep, require_debug_enabled
 from ..languages import DEFAULT_NATIVE, SUPPORTED_NATIVE, valid_target_for_native
 from ..level_adjuster import reclassify_queue_by_level
@@ -47,7 +47,12 @@ from ..quiz_progress import (
     find_idempotent_attempt,
 )
 from ..quiz_batch import create_extra_daily_batch, fill_user_daily_batches
-from ..quiz_audio_engine import resolve_quiz_tts_text, synthesize_quiz_audio
+from ..quiz_audio_engine import (
+    answer_audio_asset_key,
+    resolve_cloze_answer_tts_text,
+    resolve_quiz_tts_text,
+    synthesize_quiz_audio,
+)
 from ..quiz_settings import quiz_selection_settings
 from ..quiz_types import ENABLED_QUIZ_TYPES, validate_quiz_type
 from ..tutor import DrillSeedError, evaluate_attempt_against_reference
@@ -166,28 +171,55 @@ async def get_profile(
 
 
 async def _ensure_cloze_audio(session: AsyncSession, quizzes: list) -> None:
-    """Backfill TTS for legacy bundle quizzes that were created without audio."""
+    """Backfill legacy cloze audio, including the new answer-first asset."""
     changed = False
     for quiz in quizzes:
         if quiz.quiz_type != "cloze":
             continue
+        quiz_changed = False
         qd = dict(quiz.quiz_data or {})
-        if qd.get("audio_url"):
-            continue
-        text = resolve_quiz_tts_text(
-            "cloze", {"sentence_en": quiz.sentence_target, "quiz_data": qd}
-        )
-        audio_url, _ = await synthesize_quiz_audio(
-            quiz.id,
-            text,
-            language=quiz.language or qd.get("language") or "english",
-        )
-        if audio_url:
-            qd["audio_url"] = audio_url
+        language = quiz.language or qd.get("language") or "english"
+        if not qd.get("audio_url"):
+            text = resolve_quiz_tts_text(
+                "cloze", {"sentence_en": quiz.sentence_target, "quiz_data": qd}
+            )
+            audio_url, _ = await synthesize_quiz_audio(
+                quiz.id, text, language=language
+            )
+            if audio_url:
+                qd["audio_url"] = audio_url
+                changed = True
+                quiz_changed = True
+        if not qd.get("answer_audio_url"):
+            answer_text = resolve_cloze_answer_tts_text({"quiz_data": qd})
+            answer_url, _ = await synthesize_quiz_audio(
+                quiz.id,
+                answer_text,
+                language=language,
+                variant="answer",
+                asset_key=answer_audio_asset_key(answer_text, language),
+            )
+            if answer_url:
+                qd["answer_audio_url"] = answer_url
+                changed = True
+                quiz_changed = True
+        if quiz_changed:
             quiz.quiz_data = qd
-            changed = True
     if changed:
         await session.commit()
+
+
+async def _backfill_cloze_audio_background(quiz_ids: list[uuid.UUID]) -> None:
+    """Prepare later session cards without delaying the first question."""
+    if not quiz_ids:
+        return
+    async with AsyncSessionLocal() as background_session:
+        quizzes = [
+            quiz
+            for quiz_id in quiz_ids
+            if (quiz := await background_session.get(Quiz, quiz_id)) is not None
+        ]
+        await _ensure_cloze_audio(background_session, quizzes)
 
 
 @router.get("/queue/items", response_model=QuizQueueListOut)
@@ -978,6 +1010,7 @@ async def update_profile_settings(
 @router.post("/session", response_model=QuizSessionOut)
 async def start_session(
     payload: QuizSessionRequest,
+    background_tasks: BackgroundTasks,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> QuizSessionOut:
@@ -1036,7 +1069,20 @@ async def start_session(
                 language=payload.language,
             )
     if picked:
-        await _ensure_cloze_audio(session, picked)
+        # The learner sees this first card immediately, so ensure its answer
+        # clip before returning. Remaining legacy cards are repaired in the
+        # background while the learner works on the first one.
+        await _ensure_cloze_audio(session, picked[:1])
+        remaining_legacy_ids = [
+            quiz.id
+            for quiz in picked[1:]
+            if quiz.quiz_type == "cloze"
+            and not (quiz.quiz_data or {}).get("answer_audio_url")
+        ]
+        if remaining_legacy_ids:
+            background_tasks.add_task(
+                _backfill_cloze_audio_background, remaining_legacy_ids
+            )
         lo, hi = window_for_level(user.current_level)
         await trace_quiz_queue_pick(
             session,
