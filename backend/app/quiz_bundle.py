@@ -1341,6 +1341,7 @@ async def generate_quiz_bundle(
                     "audio_url": audio_url,
                     **({"answer_audio_url": answer_audio_url} if answer_audio_url else {}),
                 }
+                await crud.sync_quiz_audio_links(session, [quiz])
                 await session.commit()
                 await session.refresh(quiz)
             elif tts_error:

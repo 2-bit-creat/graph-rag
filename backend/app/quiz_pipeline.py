@@ -164,6 +164,7 @@ async def _run_vocab_node_quiz_pipeline(
 
     trace_data = tracer._persist()
     quiz.pipeline_trace = trace_data
+    await crud.sync_quiz_audio_links(session, [quiz])
     await session.commit()
     await session.refresh(quiz)
     return quiz, trace_data
@@ -557,6 +558,7 @@ async def run_quiz_generate_pipeline(
 
     trace_data = tracer._persist()
     quiz.pipeline_trace = trace_data
+    await crud.sync_quiz_audio_links(session, [quiz])
     await session.commit()
     await session.refresh(quiz)
 

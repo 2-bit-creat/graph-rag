@@ -19,7 +19,7 @@ from ..composition_quiz import (
     verdict_to_sm2,
 )
 from ..config import get_settings
-from ..db import AsyncSessionLocal, get_session
+from ..db import async_session_factory, get_session
 from ..deps import request_user_dep, require_debug_enabled
 from ..languages import DEFAULT_NATIVE, SUPPORTED_NATIVE, valid_target_for_native
 from ..level_adjuster import reclassify_queue_by_level
@@ -206,6 +206,7 @@ async def _ensure_cloze_audio(session: AsyncSession, quizzes: list) -> None:
         if quiz_changed:
             quiz.quiz_data = qd
     if changed:
+        await crud.sync_quiz_audio_links(session, quizzes)
         await session.commit()
 
 
@@ -213,7 +214,7 @@ async def _backfill_cloze_audio_background(quiz_ids: list[uuid.UUID]) -> None:
     """Prepare later session cards without delaying the first question."""
     if not quiz_ids:
         return
-    async with AsyncSessionLocal() as background_session:
+    async with async_session_factory() as background_session:
         quizzes = [
             quiz
             for quiz_id in quiz_ids

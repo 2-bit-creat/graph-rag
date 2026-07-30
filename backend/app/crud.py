@@ -4219,6 +4219,44 @@ async def archive_quiz(
     return quiz
 
 
+async def sync_quiz_audio_links(session: AsyncSession, quizzes: list[Quiz]) -> None:
+    """Persist the authoritative audio pointers for quizzes that have TTS URLs.
+
+    The MP3 URL remains in quiz_data for backwards-compatible clients, but it is
+    never used as a reference count.  This function is called when a quiz is
+    created/backfilled and again defensively before a permanent deletion.
+    """
+    for quiz in quizzes:
+        qd = quiz.quiz_data or {}
+        for role, field in (("sentence", "audio_url"), ("answer", "answer_audio_url")):
+            raw = qd.get(field)
+            asset_key = Path(urlparse(str(raw)).path).stem if raw else ""
+            if not asset_key:
+                continue
+            asset = await session.scalar(
+                select(QuizAudioAsset).where(QuizAudioAsset.asset_key == asset_key)
+            )
+            if asset is None:
+                asset = QuizAudioAsset(
+                    asset_key=asset_key,
+                    kind=role,
+                    storage_key=f"quiz-audio/{asset_key}.mp3",
+                )
+                session.add(asset)
+                await session.flush()
+            link = await session.scalar(
+                select(QuizAudioLink).where(
+                    QuizAudioLink.quiz_id == quiz.id,
+                    QuizAudioLink.role == role,
+                )
+            )
+            if link is None:
+                session.add(QuizAudioLink(quiz_id=quiz.id, audio_asset_id=asset.id, role=role))
+            elif link.audio_asset_id != asset.id:
+                link.audio_asset_id = asset.id
+    await session.flush()
+
+
 async def delete_quiz_permanent(
     session: AsyncSession, quiz_id: uuid.UUID, user_id: uuid.UUID
 ) -> dict | None:
@@ -4226,46 +4264,11 @@ async def delete_quiz_permanent(
     if quiz is None:
         return None
     # Reconcile URL-only legacy rows into authoritative links before deletion.
-    qd = dict(quiz.quiz_data or {})
-    for role, field in (("sentence", "audio_url"), ("answer", "answer_audio_url")):
-        raw = qd.get(field)
-        if not raw:
-            continue
-        asset_key = Path(urlparse(str(raw)).path).stem
-        if not asset_key:
-            continue
-        asset = await session.scalar(select(QuizAudioAsset).where(QuizAudioAsset.asset_key == asset_key))
-        if asset is None:
-            asset = QuizAudioAsset(
-                asset_key=asset_key,
-                kind=role,
-                storage_key=f"quiz-audio/{asset_key}.mp3",
-            )
-            session.add(asset)
-            await session.flush()
-        linked = await session.scalar(select(QuizAudioLink).where(QuizAudioLink.quiz_id == quiz.id, QuizAudioLink.role == role))
-        if linked is None:
-            session.add(QuizAudioLink(quiz_id=quiz.id, audio_asset_id=asset.id, role=role))
-    await session.flush()
+    await sync_quiz_audio_links(session, [quiz])
     # A legacy peer may still carry only a JSON URL. Reconcile every matching
     # quiz before reachability is evaluated, so a shared answer is never
     # mistaken for an orphan merely because it was not deleted first.
-    assets_by_key = {
-        asset.asset_key: asset
-        for asset in (await session.execute(select(QuizAudioAsset))).scalars()
-    }
-    for peer in (await session.execute(select(Quiz))).scalars():
-        peer_qd = peer.quiz_data or {}
-        for role, field in (("sentence", "audio_url"), ("answer", "answer_audio_url")):
-            raw = peer_qd.get(field)
-            key = Path(urlparse(str(raw)).path).stem if raw else ""
-            asset = assets_by_key.get(key)
-            if asset is None:
-                continue
-            linked = await session.scalar(select(QuizAudioLink).where(QuizAudioLink.quiz_id == peer.id, QuizAudioLink.role == role))
-            if linked is None:
-                session.add(QuizAudioLink(quiz_id=peer.id, audio_asset_id=asset.id, role=role))
-    await session.flush()
+    await sync_quiz_audio_links(session, list((await session.execute(select(Quiz))).scalars()))
     links = list((await session.execute(select(QuizAudioLink).where(QuizAudioLink.quiz_id == quiz.id))).scalars())
     assets = [await session.get(QuizAudioAsset, link.audio_asset_id) for link in links]
     await session.execute(delete(QuizAudioLink).where(QuizAudioLink.quiz_id == quiz.id))

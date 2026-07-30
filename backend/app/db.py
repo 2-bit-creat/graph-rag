@@ -772,7 +772,9 @@ async def _run_legacy_migrations(conn) -> None:
                 # Vector index builds (ivfflat/hnsw) may fail on empty/small datasets
                 # or if the installed pgvector predates HNSW support — non-fatal.
                 is_vector_index_sql = "USING ivfflat" in sql or "USING hnsw" in sql
-                if not is_vector_index_sql and "lock timeout" not in str(exc).lower():
+                error_text = str(exc).lower()
+                is_duplicate_ddl = "already exists" in error_text or "duplicatetableerror" in error_text
+                if not is_vector_index_sql and "lock timeout" not in error_text and not is_duplicate_ddl:
                     raise
                 logger.warning("Migration skipped (non-fatal): %s", exc)
 
