@@ -1,6 +1,8 @@
 import json
 import re
 import uuid
+from pathlib import Path
+from urllib.parse import urlparse
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -22,6 +24,8 @@ from .models import (
     Ontology,
     OntologyVersion,
     Quiz,
+    QuizAudioAsset,
+    QuizAudioLink,
     QuizGenerationState,
     QuizLearningMaterial,
     QuizSourceExploration,
@@ -4217,16 +4221,74 @@ async def archive_quiz(
 
 async def delete_quiz_permanent(
     session: AsyncSession, quiz_id: uuid.UUID, user_id: uuid.UUID
-) -> bool:
+) -> dict | None:
     quiz = await get_quiz(session, quiz_id, user_id)
     if quiz is None:
-        return False
+        return None
+    # Reconcile URL-only legacy rows into authoritative links before deletion.
+    qd = dict(quiz.quiz_data or {})
+    for role, field in (("sentence", "audio_url"), ("answer", "answer_audio_url")):
+        raw = qd.get(field)
+        if not raw:
+            continue
+        asset_key = Path(urlparse(str(raw)).path).stem
+        if not asset_key:
+            continue
+        asset = await session.scalar(select(QuizAudioAsset).where(QuizAudioAsset.asset_key == asset_key))
+        if asset is None:
+            asset = QuizAudioAsset(
+                asset_key=asset_key,
+                kind=role,
+                storage_key=f"quiz-audio/{asset_key}.mp3",
+            )
+            session.add(asset)
+            await session.flush()
+        linked = await session.scalar(select(QuizAudioLink).where(QuizAudioLink.quiz_id == quiz.id, QuizAudioLink.role == role))
+        if linked is None:
+            session.add(QuizAudioLink(quiz_id=quiz.id, audio_asset_id=asset.id, role=role))
+    await session.flush()
+    # A legacy peer may still carry only a JSON URL. Reconcile every matching
+    # quiz before reachability is evaluated, so a shared answer is never
+    # mistaken for an orphan merely because it was not deleted first.
+    assets_by_key = {
+        asset.asset_key: asset
+        for asset in (await session.execute(select(QuizAudioAsset))).scalars()
+    }
+    for peer in (await session.execute(select(Quiz))).scalars():
+        peer_qd = peer.quiz_data or {}
+        for role, field in (("sentence", "audio_url"), ("answer", "answer_audio_url")):
+            raw = peer_qd.get(field)
+            key = Path(urlparse(str(raw)).path).stem if raw else ""
+            asset = assets_by_key.get(key)
+            if asset is None:
+                continue
+            linked = await session.scalar(select(QuizAudioLink).where(QuizAudioLink.quiz_id == peer.id, QuizAudioLink.role == role))
+            if linked is None:
+                session.add(QuizAudioLink(quiz_id=peer.id, audio_asset_id=asset.id, role=role))
+    await session.flush()
+    links = list((await session.execute(select(QuizAudioLink).where(QuizAudioLink.quiz_id == quiz.id))).scalars())
+    assets = [await session.get(QuizAudioAsset, link.audio_asset_id) for link in links]
+    await session.execute(delete(QuizAudioLink).where(QuizAudioLink.quiz_id == quiz.id))
+    await session.flush()
+    orphan_keys: list[str] = []
+    retained_keys: list[str] = []
+    for asset in assets:
+        if asset is None:
+            continue
+        still_linked = await session.scalar(select(QuizAudioLink.id).where(QuizAudioLink.audio_asset_id == asset.id).limit(1))
+        if still_linked is None:
+            orphan_keys.append(asset.asset_key)
+            await session.delete(asset)
+        else:
+            retained_keys.append(asset.asset_key)
     language = quiz.language
     await _reset_cloze_source_exploration(session, quiz)
     await session.delete(quiz)
     await invalidate_quiz_generation_state(session, user_id, language)
     await session.commit()
-    return True
+    from .quiz_audio_assets import delete_audio_asset_objects
+    deleted_keys = await delete_audio_asset_objects(orphan_keys)
+    return {"deleted": deleted_keys, "retained": retained_keys}
 
 
 async def reset_quiz_queue(session: AsyncSession, user_id: uuid.UUID) -> int:

@@ -826,6 +826,8 @@ class QuizDeleteOut(BaseModel):
     id: uuid.UUID
     status: Literal["archived", "deleted"]
     queue_kind: str
+    audio_deleted: list[str] = Field(default_factory=list)
+    audio_retained: list[str] = Field(default_factory=list)
 
 
 class QuizGenerationListOut(BaseModel):

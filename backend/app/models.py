@@ -428,6 +428,35 @@ class Quiz(Base):
     source_kind: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
+class QuizAudioAsset(Base):
+    """A durable TTS object; answer assets may be shared by many quizzes."""
+
+    __tablename__ = "quiz_audio_assets"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    asset_key: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String, nullable=False)  # sentence | answer
+    storage_key: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    pending_delete_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class QuizAudioLink(Base):
+    """The authoritative quiz-to-audio pointer (never a denormalized count)."""
+
+    __tablename__ = "quiz_audio_links"
+    __table_args__ = (
+        UniqueConstraint("quiz_id", "role", name="uq_quiz_audio_links_quiz_role"),
+        Index("idx_quiz_audio_links_asset", "audio_asset_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    quiz_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("quizzes.id", ondelete="CASCADE"), nullable=False)
+    audio_asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("quiz_audio_assets.id", ondelete="CASCADE"), nullable=False)
+    role: Mapped[str] = mapped_column(String, nullable=False)  # sentence | answer
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class QuizAttempt(Base):
     """Immutable, idempotent record of one scored learner submission."""
 

@@ -706,10 +706,13 @@ async def delete_quiz_item(
     session: AsyncSession = Depends(get_session),
 ) -> QuizDeleteOut:
     if permanent:
-        ok = await crud.delete_quiz_permanent(session, quiz_id, user.id)
-        if not ok:
+        cleanup = await crud.delete_quiz_permanent(session, quiz_id, user.id)
+        if cleanup is None:
             raise HTTPException(status_code=404, detail="Quiz not found")
-        return QuizDeleteOut(id=quiz_id, status="deleted", queue_kind="archived")
+        return QuizDeleteOut(
+            id=quiz_id, status="deleted", queue_kind="archived",
+            audio_deleted=cleanup["deleted"], audio_retained=cleanup["retained"],
+        )
     quiz = await crud.archive_quiz(session, quiz_id, user.id)
     if quiz is None:
         raise HTTPException(status_code=404, detail="Quiz not found")
