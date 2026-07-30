@@ -238,6 +238,64 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
     await _load();
   }
 
+  Future<void> _permanentlyDeleteSelected() async {
+    if (_selectedIds.isEmpty) return;
+    final ids = List<String>.from(_selectedIds);
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('선택 문제 완전 삭제'),
+            content: Text(
+              '${ids.length}개 문제를 영구 삭제할까요? 이 작업은 되돌릴 수 없습니다.\n'
+              '다른 문제가 참조하지 않는 음성 파일도 함께 삭제됩니다.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('취소'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('완전 삭제'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed) return;
+
+    try {
+      final cleanup = await Future.wait(
+        ids.map((id) => apiClient.deleteQuizItem(id, permanent: true)),
+      );
+      if (!mounted) return;
+      final audioDeleted = cleanup.fold<int>(
+        0,
+        (total, item) => total + ((item['audio_deleted'] as List?)?.length ?? 0),
+      );
+      final audioRetained = cleanup.fold<int>(
+        0,
+        (total, item) => total + ((item['audio_retained'] as List?)?.length ?? 0),
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${ids.length}개 문제를 삭제했습니다.'
+            '${audioDeleted > 0 ? ' 미사용 음성 $audioDeleted개도 삭제했습니다.' : ''}'
+            '${audioRetained > 0 ? ' 공유 음성 $audioRetained개는 유지했습니다.' : ''}',
+          ),
+        ),
+      );
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('문제 삭제에 실패했습니다: $e')),
+      );
+    }
+  }
+
   String _date(dynamic raw) {
     final value = DateTime.tryParse(raw?.toString() ?? '')?.toLocal();
     return value == null ? '생성일 미상' : DateFormat('MM.dd HH:mm').format(value);
@@ -422,10 +480,21 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
                 Text(allSelected ? '전체 해제' : '현재 페이지 전체 선택'),
                 const Spacer(),
                 if (_selectedIds.isNotEmpty)
-                  TextButton.icon(
-                    onPressed: _deleteSelected,
-                    icon: const Icon(Icons.archive_outlined),
-                    label: Text('${_selectedIds.length}개 보관'),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextButton.icon(
+                        onPressed: _deleteSelected,
+                        icon: const Icon(Icons.archive_outlined),
+                        label: Text('${_selectedIds.length}개 보관'),
+                      ),
+                      TextButton.icon(
+                        onPressed: _permanentlyDeleteSelected,
+                        style: TextButton.styleFrom(foregroundColor: Colors.red),
+                        icon: const Icon(Icons.delete_forever_outlined),
+                        label: const Text('완전 삭제'),
+                      ),
+                    ],
                   ),
               ],
             ),
