@@ -241,47 +241,90 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
   Future<void> _permanentlyDeleteSelected() async {
     if (_selectedIds.isEmpty) return;
     final ids = List<String>.from(_selectedIds);
+    final previewFuture = apiClient.previewQuizDeletion(ids);
     final confirmed = await showDialog<bool>(
           context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('선택 문제 완전 삭제'),
-            content: Text(
-              '${ids.length}개 문제를 영구 삭제할까요? 이 작업은 되돌릴 수 없습니다.\n'
-              '다른 문제가 참조하지 않는 음성 파일도 함께 삭제됩니다.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('취소'),
-              ),
-              FilledButton(
-                style: FilledButton.styleFrom(backgroundColor: Colors.red),
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('완전 삭제'),
-              ),
-            ],
+          builder: (context) => FutureBuilder<Map<String, dynamic>>(
+            future: previewFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const AlertDialog(
+                  title: Text('삭제 정보 계산 중'),
+                  content: Row(
+                    children: [
+                      SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
+                      SizedBox(width: 12),
+                      Expanded(child: Text('연결된 음성 파일을 확인하고 있습니다…')),
+                    ],
+                  ),
+                );
+              }
+              if (snapshot.hasError || snapshot.data == null) {
+                return AlertDialog(
+                  title: const Text('삭제 정보를 불러오지 못했습니다'),
+                  content: Text('${snapshot.error ?? '잠시 후 다시 시도해 주세요.'}'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('닫기'),
+                    ),
+                  ],
+                );
+              }
+              final preview = snapshot.data!;
+              final deletable = preview['audio_to_delete_count'] as int? ?? 0;
+              final retained = preview['audio_retained_count'] as int? ?? 0;
+              return AlertDialog(
+                title: const Text('선택 문제 완전 삭제'),
+                content: Text(
+                  '${preview['quiz_count'] ?? ids.length}개 문제를 영구 삭제할까요? 이 작업은 되돌릴 수 없습니다.\n\n'
+                  '삭제될 미사용 음성: $deletable개\n'
+                  '다른 문제에서 계속 쓰는 공유 음성: $retained개',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('취소'),
+                  ),
+                  FilledButton(
+                    style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text('완전 삭제'),
+                  ),
+                ],
+              );
+            },
           ),
         ) ??
         false;
     if (!confirmed) return;
 
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const AlertDialog(
+        title: Text('문제 삭제 중'),
+        content: Row(
+          children: [
+            SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
+            SizedBox(width: 12),
+            Expanded(child: Text('문제와 더 이상 쓰이지 않는 음성을 정리하고 있습니다…')),
+          ],
+        ),
+      ),
+    );
     try {
-      final cleanup = await Future.wait(
-        ids.map((id) => apiClient.deleteQuizItem(id, permanent: true)),
-      );
+      final cleanup = await apiClient.deleteQuizItemsPermanently(ids);
       if (!mounted) return;
-      final audioDeleted = cleanup.fold<int>(
-        0,
-        (total, item) => total + ((item['audio_deleted'] as List?)?.length ?? 0),
-      );
-      final audioRetained = cleanup.fold<int>(
-        0,
-        (total, item) => total + ((item['audio_retained'] as List?)?.length ?? 0),
-      );
+      Navigator.of(context, rootNavigator: true).pop();
+      final deletedQuizCount = cleanup['deleted_quiz_count'] as int? ?? 0;
+      final audioDeleted = cleanup['audio_deleted_count'] as int? ?? 0;
+      final audioRetained = cleanup['audio_retained_count'] as int? ?? 0;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '${ids.length}개 문제를 삭제했습니다.'
+            '$deletedQuizCount개 문제를 삭제했습니다.'
             '${audioDeleted > 0 ? ' 미사용 음성 $audioDeleted개도 삭제했습니다.' : ''}'
             '${audioRetained > 0 ? ' 공유 음성 $audioRetained개는 유지했습니다.' : ''}',
           ),
@@ -290,6 +333,7 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
       await _load();
     } catch (e) {
       if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('문제 삭제에 실패했습니다: $e')),
       );

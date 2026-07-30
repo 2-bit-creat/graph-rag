@@ -4226,49 +4226,117 @@ async def sync_quiz_audio_links(session: AsyncSession, quizzes: list[Quiz]) -> N
     never used as a reference count.  This function is called when a quiz is
     created/backfilled and again defensively before a permanent deletion.
     """
+    if not quizzes:
+        return
+    expected: list[tuple[Quiz, str, str]] = []
     for quiz in quizzes:
         qd = quiz.quiz_data or {}
         for role, field in (("sentence", "audio_url"), ("answer", "answer_audio_url")):
             raw = qd.get(field)
             asset_key = Path(urlparse(str(raw)).path).stem if raw else ""
-            if not asset_key:
-                continue
-            asset = await session.scalar(
-                select(QuizAudioAsset).where(QuizAudioAsset.asset_key == asset_key)
-            )
-            if asset is None:
-                asset = QuizAudioAsset(
-                    asset_key=asset_key,
-                    kind=role,
-                    storage_key=f"quiz-audio/{asset_key}.mp3",
-                )
-                session.add(asset)
-                await session.flush()
-            link = await session.scalar(
-                select(QuizAudioLink).where(
-                    QuizAudioLink.quiz_id == quiz.id,
-                    QuizAudioLink.role == role,
-                )
-            )
-            if link is None:
-                session.add(QuizAudioLink(quiz_id=quiz.id, audio_asset_id=asset.id, role=role))
-            elif link.audio_asset_id != asset.id:
-                link.audio_asset_id = asset.id
+            if asset_key:
+                expected.append((quiz, role, asset_key))
+    if not expected:
+        return
+
+    # Batch the reconciliation. The prior per-card scalar lookups made a
+    # 50-card delete spend most of its time on remote database round trips.
+    assets_by_key = {
+        asset.asset_key: asset
+        for asset in (await session.execute(select(QuizAudioAsset))).scalars()
+    }
+    for _, role, asset_key in expected:
+        if asset_key in assets_by_key:
+            continue
+        asset = QuizAudioAsset(
+            id=uuid.uuid4(),
+            asset_key=asset_key,
+            kind=role,
+            storage_key=f"quiz-audio/{asset_key}.mp3",
+        )
+        session.add(asset)
+        assets_by_key[asset_key] = asset
+
+    quiz_ids = [quiz.id for quiz in quizzes]
+    links_by_quiz_role = {
+        (link.quiz_id, link.role): link
+        for link in (await session.execute(
+            select(QuizAudioLink).where(QuizAudioLink.quiz_id.in_(quiz_ids))
+        )).scalars()
+    }
+    for quiz, role, asset_key in expected:
+        asset = assets_by_key[asset_key]
+        link = links_by_quiz_role.get((quiz.id, role))
+        if link is None:
+            session.add(QuizAudioLink(quiz_id=quiz.id, audio_asset_id=asset.id, role=role))
+        elif link.audio_asset_id != asset.id:
+            link.audio_asset_id = asset.id
     await session.flush()
 
 
+def _quiz_audio_asset_keys(quiz: Quiz) -> set[str]:
+    data = quiz.quiz_data or {}
+    keys: set[str] = set()
+    for field in ("audio_url", "answer_audio_url"):
+        raw = data.get(field)
+        key = Path(urlparse(str(raw)).path).stem if raw else ""
+        if key:
+            keys.add(key)
+    return keys
+
+
+async def preview_quiz_audio_cleanup(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    quiz_ids: Sequence[uuid.UUID],
+) -> dict[str, int]:
+    """Return exact unique-asset cleanup counts for a proposed batch delete.
+
+    It deliberately reads every quiz URL, including legacy cards that predate
+    QuizAudioLink, so the confirmation UI never promises to delete a shared
+    clip. The selected set is considered as one operation.
+    """
+    selected_ids = set(quiz_ids)
+    quizzes = list((await session.execute(
+        select(Quiz).where(Quiz.user_id == user_id)
+    )).scalars())
+    existing_selected = {quiz.id for quiz in quizzes if quiz.id in selected_ids}
+    users_by_key: dict[str, set[uuid.UUID]] = {}
+    selected_keys: set[str] = set()
+    for quiz in quizzes:
+        keys = _quiz_audio_asset_keys(quiz)
+        for key in keys:
+            users_by_key.setdefault(key, set()).add(quiz.id)
+        if quiz.id in existing_selected:
+            selected_keys.update(keys)
+    deletable = sum(
+        1 for key in selected_keys
+        if not (users_by_key.get(key, set()) - existing_selected)
+    )
+    return {
+        "quiz_count": len(existing_selected),
+        "audio_to_delete_count": deletable,
+        "audio_retained_count": len(selected_keys) - deletable,
+    }
+
+
 async def delete_quiz_permanent(
-    session: AsyncSession, quiz_id: uuid.UUID, user_id: uuid.UUID
+    session: AsyncSession,
+    quiz_id: uuid.UUID,
+    user_id: uuid.UUID,
+    *,
+    audio_links_reconciled: bool = False,
 ) -> dict | None:
     quiz = await get_quiz(session, quiz_id, user_id)
     if quiz is None:
         return None
-    # Reconcile URL-only legacy rows into authoritative links before deletion.
-    await sync_quiz_audio_links(session, [quiz])
-    # A legacy peer may still carry only a JSON URL. Reconcile every matching
-    # quiz before reachability is evaluated, so a shared answer is never
-    # mistaken for an orphan merely because it was not deleted first.
-    await sync_quiz_audio_links(session, list((await session.execute(select(Quiz))).scalars()))
+    if not audio_links_reconciled:
+        # Reconcile URL-only legacy rows into authoritative links before deletion.
+        # A legacy peer may still carry only a JSON URL, so every matching quiz
+        # is linked before reachability is evaluated.
+        await sync_quiz_audio_links(session, list((await session.execute(
+            select(Quiz).where(Quiz.user_id == user_id)
+        )).scalars()))
     links = list((await session.execute(select(QuizAudioLink).where(QuizAudioLink.quiz_id == quiz.id))).scalars())
     assets = [await session.get(QuizAudioAsset, link.audio_asset_id) for link in links]
     await session.execute(delete(QuizAudioLink).where(QuizAudioLink.quiz_id == quiz.id))
@@ -4292,6 +4360,58 @@ async def delete_quiz_permanent(
     from .quiz_audio_assets import delete_audio_asset_objects
     deleted_keys = await delete_audio_asset_objects(orphan_keys)
     return {"deleted": deleted_keys, "retained": retained_keys}
+
+
+async def delete_quizzes_permanent_batch(
+    session: AsyncSession, quiz_ids: Sequence[uuid.UUID], user_id: uuid.UUID
+) -> dict:
+    """Delete a selected set in one DB transaction and one asset reachability pass."""
+    selected_ids = list(dict.fromkeys(quiz_ids))
+    quizzes = list((await session.execute(
+        select(Quiz).where(Quiz.user_id == user_id, Quiz.id.in_(selected_ids))
+    )).scalars())
+    if not quizzes:
+        return {"deleted": [], "retained": [], "quiz_count": 0}
+
+    all_quizzes = list((await session.execute(
+        select(Quiz).where(Quiz.user_id == user_id)
+    )).scalars())
+    await sync_quiz_audio_links(session, all_quizzes)
+    ids = [quiz.id for quiz in quizzes]
+    links = list((await session.execute(
+        select(QuizAudioLink).where(QuizAudioLink.quiz_id.in_(ids))
+    )).scalars())
+    asset_ids = {link.audio_asset_id for link in links}
+    assets = {
+        asset.id: asset
+        for asset in (await session.execute(
+            select(QuizAudioAsset).where(QuizAudioAsset.id.in_(asset_ids))
+        )).scalars()
+    } if asset_ids else {}
+
+    await session.execute(delete(QuizAudioLink).where(QuizAudioLink.quiz_id.in_(ids)))
+    await session.flush()
+    remaining_asset_ids = set((await session.execute(
+        select(QuizAudioLink.audio_asset_id).where(QuizAudioLink.audio_asset_id.in_(asset_ids))
+    )).scalars()) if asset_ids else set()
+    orphan_ids = asset_ids - remaining_asset_ids
+    orphan_keys = [assets[asset_id].asset_key for asset_id in orphan_ids if asset_id in assets]
+    retained_keys = [assets[asset_id].asset_key for asset_id in remaining_asset_ids if asset_id in assets]
+    if orphan_ids:
+        await session.execute(delete(QuizAudioAsset).where(QuizAudioAsset.id.in_(orphan_ids)))
+
+    for quiz in quizzes:
+        await _reset_cloze_source_exploration(session, quiz)
+    for language in {quiz.language for quiz in quizzes if quiz.language}:
+        await invalidate_quiz_generation_state(session, user_id, language)
+    await session.execute(delete(Quiz).where(Quiz.id.in_(ids), Quiz.user_id == user_id))
+    await session.commit()
+    from .quiz_audio_assets import delete_audio_asset_objects
+    return {
+        "deleted": await delete_audio_asset_objects(orphan_keys),
+        "retained": retained_keys,
+        "quiz_count": len(quizzes),
+    }
 
 
 async def reset_quiz_queue(session: AsyncSession, user_id: uuid.UUID) -> int:

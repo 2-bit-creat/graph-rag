@@ -568,6 +568,24 @@ class ApiClient {
     }
   }
 
+  Future<Map<String, dynamic>> previewQuizDeletion(List<String> quizIds) async {
+    try {
+      final resp = await _dio.post('/quiz/delete-preview', data: {'quiz_ids': quizIds});
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '문제 삭제 정보 확인');
+    }
+  }
+
+  Future<Map<String, dynamic>> deleteQuizItemsPermanently(List<String> quizIds) async {
+    try {
+      final resp = await _dio.post('/quiz/delete-permanent', data: {'quiz_ids': quizIds});
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '문제 일괄 삭제');
+    }
+  }
+
   Future<Map<String, dynamic>> updateQuizLevel(int level) async {
     return updateQuizProfileSettings(level: level);
   }

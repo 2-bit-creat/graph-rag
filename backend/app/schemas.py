@@ -830,6 +830,22 @@ class QuizDeleteOut(BaseModel):
     audio_retained: list[str] = Field(default_factory=list)
 
 
+class QuizDeletePreviewRequest(BaseModel):
+    quiz_ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
+
+
+class QuizDeletePreviewOut(BaseModel):
+    quiz_count: int
+    audio_to_delete_count: int
+    audio_retained_count: int
+
+
+class QuizBatchDeleteOut(BaseModel):
+    deleted_quiz_count: int
+    audio_deleted_count: int
+    audio_retained_count: int
+
+
 class QuizGenerationListOut(BaseModel):
     items: list[QuizQueueItemOut]
     total: int

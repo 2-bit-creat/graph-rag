@@ -62,6 +62,9 @@ from ..schemas import (
     ProfileSettingsUpdateRequest,
     QueueCounts,
     QuizDeleteOut,
+    QuizDeletePreviewOut,
+    QuizDeletePreviewRequest,
+    QuizBatchDeleteOut,
     QuizGenerateOut,
     QuizGenerateRequest,
     QuizGenerationListOut,
@@ -697,6 +700,32 @@ async def reset_quiz_queue(
 ) -> dict:
     archived = await crud.reset_quiz_queue(session, user.id)
     return {"status": "reset", "archived": archived}
+
+
+@router.post("/delete-preview", response_model=QuizDeletePreviewOut)
+async def preview_quiz_delete(
+    payload: QuizDeletePreviewRequest,
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> QuizDeletePreviewOut:
+    return QuizDeletePreviewOut(
+        **await crud.preview_quiz_audio_cleanup(session, user.id, payload.quiz_ids)
+    )
+
+
+@router.post("/delete-permanent", response_model=QuizBatchDeleteOut)
+async def delete_quizzes_permanent(
+    payload: QuizDeletePreviewRequest,
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> QuizBatchDeleteOut:
+    preview = await crud.preview_quiz_audio_cleanup(session, user.id, payload.quiz_ids)
+    cleanup = await crud.delete_quizzes_permanent_batch(session, payload.quiz_ids, user.id)
+    return QuizBatchDeleteOut(
+        deleted_quiz_count=cleanup["quiz_count"],
+        audio_deleted_count=len(cleanup["deleted"]),
+        audio_retained_count=preview["audio_retained_count"],
+    )
 
 
 @router.delete("/{quiz_id}", response_model=QuizDeleteOut)
