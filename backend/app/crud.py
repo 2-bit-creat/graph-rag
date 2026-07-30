@@ -95,6 +95,15 @@ def build_node_out(
         type=node.type,
         description=node.description,
         occurred_at=getattr(node, "occurred_at", None),
+        recorded_at=getattr(node, "recorded_at", None),
+        event_start_at=getattr(node, "event_start_at", None),
+        event_end_at=getattr(node, "event_end_at", None),
+        temporal_precision=getattr(node, "temporal_precision", "unknown") or "unknown",
+        temporal_confidence=float(getattr(node, "temporal_confidence", 0.0) or 0.0),
+        temporal_source_text=getattr(node, "temporal_source_text", None),
+        temporal_anchor_at=getattr(node, "temporal_anchor_at", None),
+        event_status=getattr(node, "event_status", "happened") or "happened",
+        event_timezone=getattr(node, "event_timezone", None),
         entry_created_at=entry_created_at,
         created_at=node.created_at,
         has_name_embedding=node.name_embedding is not None,
@@ -547,36 +556,92 @@ async def find_statements_by_time_window(
     *,
     limit: int = 12,
     tz_name: str = "Asia/Seoul",
+    event_statuses: Sequence[str] | None = ("happened",),
 ) -> list[Node]:
-    """Statement nodes whose event or source-entry date falls in [start, end] (KST dates)."""
+    """Statements whose event interval intersects [start, end] in user time.
+
+    Legacy rows retain the source-entry/occurred_at fallback; new rows use the
+    explicit event-time columns and can exclude plans/cancelled events.
+    """
     entry_local_date = func.date(func.timezone(tz_name, JournalEntry.created_at))
     node_local_date = func.date(func.timezone(tz_name, Node.created_at))
 
+    event_date = func.date(func.timezone(tz_name, Node.event_start_at))
+    date_filter = or_(
+        and_(Node.event_start_at.is_not(None), event_date >= start, event_date <= end),
+        and_(
+            Node.event_start_at.is_(None),
+            Node.occurred_at.is_not(None),
+            Node.occurred_at >= start,
+            Node.occurred_at <= end,
+        ),
+        and_(
+            Node.event_start_at.is_(None),
+            Node.occurred_at.is_(None),
+            entry_local_date >= start,
+            entry_local_date <= end,
+        ),
+    )
+    filters = [
+        Node.user_id == user_id,
+        Node.type == "Statement",
+        Node.deleted_at.is_(None),
+        date_filter,
+    ]
+    if event_statuses:
+        filters.append(or_(Node.event_status.in_(list(event_statuses)), Node.event_status.is_(None)))
     stmt = (
         select(Node)
         .outerjoin(JournalGraphLink, JournalGraphLink.node_id == Node.id)
         .outerjoin(JournalEntry, JournalEntry.id == JournalGraphLink.journal_entry_id)
-        .where(
-            Node.user_id == user_id,
-            Node.type == "Statement",
-            Node.deleted_at.is_(None),
-            or_(
-                and_(
-                    Node.occurred_at.is_not(None),
-                    Node.occurred_at >= start,
-                    Node.occurred_at <= end,
-                ),
-                and_(
-                    Node.occurred_at.is_(None),
-                    entry_local_date >= start,
-                    entry_local_date <= end,
-                ),
-            ),
-        )
-        .order_by(func.coalesce(Node.occurred_at, node_local_date).desc())
+        .where(*filters)
+        .order_by(func.coalesce(event_date, Node.occurred_at, node_local_date).desc())
         .limit(limit)
     )
     return list((await session.execute(stmt)).scalars().unique().all())
+
+
+async def find_statements_lexical(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    terms: Sequence[str],
+    *,
+    limit: int = 12,
+    start: date | None = None,
+    end: date | None = None,
+    event_statuses: Sequence[str] | None = ("happened",),
+) -> list[Node]:
+    """Portable sparse candidate generator for planner-selected exact terms.
+
+    PostgreSQL can later replace this with a weighted tsvector index without
+    changing the planner contract. ``ILIKE`` also keeps SQLite test fixtures
+    representative of the production path.
+    """
+    clean = [term.strip() for term in terms if term and term.strip()]
+    if not clean:
+        return []
+    filters = [
+        Node.user_id == user_id,
+        Node.type == "Statement",
+        Node.deleted_at.is_(None),
+        or_(*[or_(Node.name.ilike(f"%{term}%"), Node.description.ilike(f"%{term}%")) for term in clean]),
+    ]
+    if start is not None and end is not None:
+        filters.append(
+            func.coalesce(func.date(Node.event_start_at), Node.occurred_at, func.date(Node.created_at)) >= start
+        )
+        filters.append(
+            func.coalesce(func.date(Node.event_start_at), Node.occurred_at, func.date(Node.created_at)) <= end
+        )
+    if event_statuses:
+        filters.append(or_(Node.event_status.in_(list(event_statuses)), Node.event_status.is_(None)))
+    result = await session.execute(
+        select(Node)
+        .where(*filters)
+        .order_by(func.coalesce(Node.event_start_at, Node.created_at).desc())
+        .limit(limit)
+    )
+    return list(result.scalars().unique().all())
 
 
 async def find_statements_by_speaker(
@@ -864,12 +929,24 @@ async def _get_or_create_node(
     user_id: uuid.UUID | None = None,
     importance_delta: int = 0,
     occurred_at: date | None = None,
+    claim_key: str | None = None,
+    recorded_at: datetime | None = None,
+    event_start_at: datetime | None = None,
+    event_end_at: datetime | None = None,
+    temporal_precision: str = "unknown",
+    temporal_confidence: float = 0.0,
+    temporal_source_text: str | None = None,
+    temporal_anchor_at: datetime | None = None,
+    event_status: str = "happened",
+    event_timezone: str | None = None,
 ) -> Node:
     name = normalize_node_name(name)
     type_ = normalize_entity_type(type_)
 
+    # Statements are event claims, not globally-deduplicated concepts.  A
+    # repeated title on a different journal entry must create a separate memory.
     filters = [
-        Node.name == name,
+        (Node.claim_key == claim_key) if type_ == "Statement" and claim_key else Node.name == name,
         func.lower(Node.type) == type_group_key(type_),
         Node.deleted_at.is_(None),  # never match soft-deleted nodes
     ]
@@ -894,6 +971,20 @@ async def _get_or_create_node(
              if normalize_node_name(candidate.name).lower() == name.lower()),
             None,
         )
+    if node is None and type_ == "Statement" and claim_key:
+        # The legacy table-level (user_id, name, type) uniqueness constraint is
+        # still present on deployed databases. Preserve a clean title unless it
+        # collides, then make only the storage label unique; claim_key remains
+        # the true identity used by retrieval and persistence.
+        title_taken = await session.execute(
+            select(Node.id).where(
+                Node.user_id == user_id,
+                Node.name == name,
+                func.lower(Node.type) == type_group_key(type_),
+            ).limit(1)
+        )
+        if title_taken.scalar_one_or_none() is not None:
+            name = f"{name} · {claim_key[:8]}"
     if node is None:
         node = Node(
             name=name,
@@ -902,6 +993,16 @@ async def _get_or_create_node(
             user_id=user_id,
             importance_score=importance_delta,
             occurred_at=occurred_at,
+            claim_key=claim_key,
+            recorded_at=recorded_at,
+            event_start_at=event_start_at,
+            event_end_at=event_end_at,
+            temporal_precision=temporal_precision,
+            temporal_confidence=temporal_confidence,
+            temporal_source_text=temporal_source_text,
+            temporal_anchor_at=temporal_anchor_at,
+            event_status=event_status,
+            event_timezone=event_timezone,
         )
         session.add(node)
         await session.flush()
@@ -916,6 +1017,23 @@ async def _get_or_create_node(
         # Backfill only — never overwrite an already-recorded occurrence date.
         if occurred_at and not node.occurred_at:
             node.occurred_at = occurred_at
+        if claim_key and not node.claim_key:
+            node.claim_key = claim_key
+        if type_ == "Statement" and claim_key:
+            # A reviewed draft may be applied again after the user corrects its
+            # date. Claim identity stays stable while its temporal annotation is
+            # intentionally updated.
+            node.recorded_at = recorded_at or node.recorded_at
+            node.event_start_at = event_start_at or node.event_start_at
+            node.event_end_at = event_end_at or node.event_end_at
+            node.temporal_precision = temporal_precision or node.temporal_precision
+            node.temporal_confidence = temporal_confidence
+            node.temporal_source_text = temporal_source_text
+            node.temporal_anchor_at = temporal_anchor_at or node.temporal_anchor_at
+            node.event_status = event_status or node.event_status
+            node.event_timezone = event_timezone or node.event_timezone
+            if event_start_at is not None:
+                node.occurred_at = event_start_at.date()
     return node
 
 

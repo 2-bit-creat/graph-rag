@@ -473,7 +473,32 @@ class ChatSessionController extends ChangeNotifier {
         role: 'assistant',
         content: answer,
         referencedNodeIds: referenced,
+        meta: resp['retrieval_meta'] == null
+            ? null
+            : {'retrieval': Map<String, dynamic>.from(resp['retrieval_meta'] as Map)},
       ));
+      final cardRaw = resp['learning_card'];
+      if (cardRaw is Map && (cardRaw['prompt']?.toString().trim().isNotEmpty ?? false)) {
+        final card = Map<String, dynamic>.from(cardRaw);
+        final prompt = card['prompt'].toString();
+        _messages.add(GraphChatMessage(
+          role: 'assistant',
+          kind: 'learning_card',
+          content: prompt,
+          referencedNodeIds: [if (card['source_node_id'] != null) card['source_node_id'].toString()],
+          meta: card,
+        ));
+        // Persist the optional practice prompt separately from the factual
+        // answer so it remains recoverable in the room history.
+        unawaited(apiClient.appendChatEvent(
+          _activeId!,
+          role: 'assistant',
+          kind: 'learning_card',
+          content: prompt,
+          referencedNodeIds: [if (card['source_node_id'] != null) card['source_node_id'].toString()],
+          meta: card,
+        ));
+      }
       if (referenced.isNotEmpty) onReferencedNodes?.call(referenced.toSet());
       unawaited(loadSessions()); // refresh preview + reorder sidebar
     } catch (e) {

@@ -37,6 +37,15 @@ class NodeOut(BaseModel):
     context_type: str | None = None   # Statement nodes only
     content: str | None = None        # Statement nodes only — pure body text
     occurred_at: date | None = None   # Statement nodes — when the event happened
+    recorded_at: datetime | None = None
+    event_start_at: datetime | None = None
+    event_end_at: datetime | None = None
+    temporal_precision: str = "unknown"
+    temporal_confidence: float = 0.0
+    temporal_source_text: str | None = None
+    temporal_anchor_at: datetime | None = None
+    event_status: str = "happened"
+    event_timezone: str | None = None
     entry_created_at: datetime | None = None  # Source journal entry writing time
     created_at: datetime
     updated_at: datetime | None = None
@@ -1018,6 +1027,9 @@ class GraphChatResponse(BaseModel):
     user_message_id: str
     assistant_message_id: str
     created_at: str | None = None
+    retrieval_status: str = "ok"
+    retrieval_meta: dict | None = None
+    learning_card: dict | None = None
 
 
 class ChatEventRequest(BaseModel):

@@ -59,7 +59,13 @@ class ContextPackage:
 
     @property
     def occurred_at(self) -> date:
-        return self.statement.occurred_at or self.statement.created_at.date()
+        # occurred_at is the KST/local-day projection written with event_start_at;
+        # prefer it over a driver-returned UTC timestamp to avoid midnight drift.
+        return self.statement.occurred_at or (
+            self.statement.event_start_at.date()
+            if self.statement.event_start_at is not None
+            else self.statement.created_at.date()
+        )
 
 
 @dataclass

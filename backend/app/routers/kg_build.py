@@ -43,6 +43,7 @@ from ..journal_pipeline import transcribe_audio
 from ..models import JournalEntry, JournalGraphLink, Node, SpeakerProfile, User
 from ..speaker_diarization import SpeakerSegment, diarize_audio
 from ..storage import save_audio_workfile
+from ..temporal import resolve_event_temporal
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/kg", tags=["kg-build"])
@@ -124,6 +125,10 @@ class KgClaimIn(BaseModel):
     title: str = ""          # short node label (5-7 words); falls back to truncated statement
     statement: str           # full 1-2 sentence content; stored in node description
     concepts: list[ConceptIn] = Field(default_factory=list)
+    event_time_text: str | None = None
+    temporal_precision: Literal["exact", "day", "range", "month", "relative", "unknown"] = "unknown"
+    temporal_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    event_status: Literal["happened", "planned", "cancelled", "hypothetical", "unknown"] = "happened"
 
 
 class KgCommitRequest(BaseModel):
@@ -131,6 +136,10 @@ class KgCommitRequest(BaseModel):
     context_type: str  # e.g. 'diary', 'meeting', 'book'
     original_text: str = ""
     journal_entry_id: _uuid.UUID | None = None  # optional link for transcript provenance
+
+
+class TemporalBackfillRequest(BaseModel):
+    dry_run: bool = True
 
 
 # Allowed statement head-node types. Person and Source are distinct identity
@@ -215,6 +224,38 @@ def _parse_stmt_description(description: str | None) -> tuple[str, str]:
         return parts[0].strip() or "미분류", parts[1].strip() if len(parts) > 1 else ""
 
 
+def _claim_key(entry_id: _uuid.UUID | None, index: int, statement: str) -> str:
+    """Stable identity for an event claim; display title is deliberately excluded."""
+    namespace = entry_id or _uuid.UUID("00000000-0000-0000-0000-000000000000")
+    return str(_uuid.uuid5(namespace, f"{index}:{statement.strip()}"))
+
+
+def _claim_temporal_values(claim: Any, recorded_at: datetime) -> dict[str, Any]:
+    """Resolve relative times server-side, regardless of whether claim is a dict or model."""
+    get = claim.get if isinstance(claim, dict) else lambda key, default=None: getattr(claim, key, default)
+    values = resolve_event_temporal(
+        statement=(get("statement", "") or "").strip(),
+        entry_at=recorded_at,
+        tz_name=get_settings().chat_timezone,
+        event_time_text=get("event_time_text"),
+        event_status=get("event_status"),
+        claimed_precision=get("temporal_precision"),
+        claimed_confidence=get("temporal_confidence"),
+    )
+    return {
+        "occurred_at": values.occurred_at,
+        "recorded_at": recorded_at,
+        "event_start_at": values.start_at,
+        "event_end_at": values.end_at,
+        "temporal_precision": values.precision,
+        "temporal_confidence": values.confidence,
+        "temporal_source_text": values.source_text,
+        "temporal_anchor_at": values.anchor_at,
+        "event_status": values.status,
+        "event_timezone": values.timezone,
+    }
+
+
 class KgCommitOut(BaseModel):
     ok: bool
     claims_saved: int
@@ -288,6 +329,10 @@ Return ONLY valid JSON in this exact shape (no markdown, no commentary):
       "speaker": "화자명 또는 출처명",
       "title": "핵심 내용을 담은 5-7단어 제목 (written in {native_label})",
       "statement": "정제된 핵심 진술 (1-2문장 전체 내용, written in {native_label})",
+      "event_time_text": "사건 시점을 가리키는 원문 표현; 없으면 null",
+      "temporal_precision": "exact | day | range | month | relative | unknown",
+      "temporal_confidence": 0.0,
+      "event_status": "happened | planned | cancelled | hypothetical | unknown",
       "concepts": [{{"name": "개념1", "importance": 4, "kind": "concept"}}, {{"name": "제니", "importance": 3, "kind": "person"}}],
       "speaker_matched": false,
       "concepts_matched": [false, false]
@@ -309,6 +354,15 @@ Return ONLY valid JSON in this exact shape (no markdown, no commentary):
 {speaker_rule}
 - title: 5–7 {native_label} words capturing the essence of this claim. Used as the graph node label.
 - statement: 1–2 clean {native_label} sentences (remove filler, preserve full meaning).
+- event_time_text: copy only the phrase that states when this event happened
+  (for example "어제", "지난주 월요일", "tomorrow"). Never invent a date.
+- temporal_precision: use "relative" for expressions relative to the entry,
+  "day" for one calendar day, "range" for a period, "month" for a month,
+  and "unknown" when no timing is stated.
+- temporal_confidence: 1.0 for an explicit unambiguous expression, lower only
+  when the text itself is ambiguous. The server, not you, resolves relative dates.
+- event_status: distinguish completed events (happened) from plans, cancellation,
+  and hypothetical/counterfactual statements.
 - concepts: 1–5 concrete nouns per claim — NEVER an empty array. Every claim has
   at least one concept: for emotional/reflective claims, extract the TARGET or
   CAUSE of the feeling (e.g. "면접이 생각나 기분이 안 좋았다" → concepts: 면접;
@@ -412,6 +466,16 @@ _EXTRACTION_RESPONSE_FORMAT: dict = {
                             "speaker": {"type": "string"},
                             "title": {"type": "string"},
                             "statement": {"type": "string"},
+                            "event_time_text": {"type": ["string", "null"]},
+                            "temporal_precision": {
+                                "type": "string",
+                                "enum": ["exact", "day", "range", "month", "relative", "unknown"],
+                            },
+                            "temporal_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                            "event_status": {
+                                "type": "string",
+                                "enum": ["happened", "planned", "cancelled", "hypothetical", "unknown"],
+                            },
                             "concepts": {
                                 "type": "array",
                                 "minItems": 1,
@@ -444,6 +508,10 @@ _EXTRACTION_RESPONSE_FORMAT: dict = {
                             "speaker",
                             "title",
                             "statement",
+                            "event_time_text",
+                            "temporal_precision",
+                            "temporal_confidence",
+                            "event_status",
                             "concepts",
                             "speaker_matched",
                             "concepts_matched",
@@ -844,13 +912,13 @@ async def kg_commit(
     edge_ids: set[str] = set()
     statement_node_ids: set[str] = set()
 
-    occurred_at = _date.today()
+    recorded_at = datetime.now(timezone.utc)
     if body.journal_entry_id is not None:
         source_entry = await crud.get_journal_entry(session, body.journal_entry_id, user.id)
         if source_entry is not None and source_entry.created_at:
-            occurred_at = source_entry.created_at.date()
+            recorded_at = source_entry.created_at
 
-    for claim in body.claims:
+    for claim_index, claim in enumerate(body.claims):
         speaker_name = (claim.speaker or "").strip()
         statement_text = (claim.statement or "").strip()
         if not speaker_name or not statement_text:
@@ -868,13 +936,15 @@ async def kg_commit(
         # description = JSON {"context_type": ..., "content": ...}
         title = (claim.title or "").strip() or statement_text[:40]
         stmt_description = _make_stmt_description(body.context_type, statement_text)
+        temporal = _claim_temporal_values(claim, recorded_at)
         stmt_node = await crud._get_or_create_node(
             session,
             name=title,
             type_="Statement",
             description=stmt_description,
             user_id=user.id,
-            occurred_at=occurred_at,
+            claim_key=_claim_key(body.journal_entry_id, claim_index, statement_text),
+            **temporal,
         )
         node_ids.add(str(stmt_node.id))
         statement_node_ids.add(str(stmt_node.id))
@@ -1399,7 +1469,8 @@ async def _persist_claims(
     user_id: _uuid.UUID,
     claims: list[dict],
     context_type: str,
-    occurred_at: _date | None = None,
+    recorded_at: datetime | None = None,
+    entry_id: _uuid.UUID | None = None,
 ) -> tuple[set[str], set[str], set[str]]:
     """Persist claims as (Person|Source)-SPOKE_OR_PUBLISHED->(Statement)-CONTEXT->(Concept).
 
@@ -1408,14 +1479,15 @@ async def _persist_claims(
     Returns (node_ids, edge_ids, statement_node_ids) as string sets. Shared by
     /kg/commit and the
     journal-entry graph builder. NEVER creates Vocab nodes (architecture rule #1).
-    ``occurred_at`` stamps new Statement nodes with the source entry's date so
-    the graph can answer "언제…?" queries (see [[temporal.py]]).
+    Event time is resolved per claim against ``recorded_at``.  Relative language
+    such as "yesterday" never inherits the source entry date blindly.
     """
     node_ids: set[str] = set()
     edge_ids: set[str] = set()
     statement_node_ids: set[str] = set()
 
-    for claim in claims:
+    recorded_at = recorded_at or datetime.now(timezone.utc)
+    for claim_index, claim in enumerate(claims):
         speaker_name = (claim.get("speaker") or "").strip()
         statement_text = (claim.get("statement") or "").strip()
         if not speaker_name or not statement_text:
@@ -1428,10 +1500,12 @@ async def _persist_claims(
 
         title = (claim.get("title") or "").strip() or statement_text[:40]
         stmt_description = _make_stmt_description(context_type, statement_text)
+        temporal = _claim_temporal_values(claim, recorded_at)
         stmt_node = await crud._get_or_create_node(
             session, name=title, type_="Statement",
             description=stmt_description, user_id=user_id,
-            occurred_at=occurred_at,
+            claim_key=_claim_key(entry_id, claim_index, statement_text),
+            **temporal,
         )
         node_ids.add(str(stmt_node.id))
         statement_node_ids.add(str(stmt_node.id))
@@ -1618,6 +1692,10 @@ async def extract_statement_graph_draft(
             "speaker_type": speaker_type,
             "title": (c.get("title") or "").strip(),
             "statement": statement,
+            "event_time_text": c.get("event_time_text"),
+            "temporal_precision": c.get("temporal_precision") or "unknown",
+            "temporal_confidence": c.get("temporal_confidence") or 0.0,
+            "event_status": c.get("event_status") or "happened",
             "concepts": c.get("concepts") or [],
         })
 
@@ -1685,10 +1763,16 @@ async def persist_entry_claims(
         for c in claims:
             c.setdefault("speaker_type", "Source")
 
-    entry_date = entry.created_at.date() if entry is not None and entry.created_at else None
+    entry_recorded_at = entry.created_at if entry is not None and entry.created_at else datetime.now(timezone.utc)
     node_ids, edge_ids, statement_node_ids = await _persist_claims(
-        session, user_id, claims, context_type, occurred_at=entry_date
+        session,
+        user_id,
+        claims,
+        context_type,
+        recorded_at=entry_recorded_at,
+        entry_id=entry_id,
     )
+
     await _link_confirmed_voices_to_nodes(session, user_id, entry_id)
     await session.commit()
 
@@ -1721,6 +1805,23 @@ async def persist_entry_claims(
         "context_type": context_type,
         "statement_node_ids": sorted(statement_node_ids),
     }
+
+
+@router.post("/temporal-backfill")
+async def temporal_backfill(
+    body: TemporalBackfillRequest,
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Preview or apply deterministic event-time repairs for the caller's graph."""
+    from ..temporal_backfill import backfill_statement_event_times
+
+    return await backfill_statement_event_times(
+        session,
+        user.id,
+        timezone_name=get_settings().chat_timezone,
+        dry_run=body.dry_run,
+    )
 
 
 async def build_statement_graph_from_entry(

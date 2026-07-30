@@ -387,6 +387,33 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_alias_embeddings_embedding ON node_alias_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50)",
     "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS occurred_at DATE",
     "CREATE INDEX IF NOT EXISTS idx_nodes_user_occurred ON nodes (user_id, occurred_at)",
+    # Event-time model for temporal GraphRAG.  All statements keep their source
+    # recording time separately from the time described by their text.
+    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS recorded_at TIMESTAMPTZ",
+    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS event_start_at TIMESTAMPTZ",
+    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS event_end_at TIMESTAMPTZ",
+    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS temporal_precision TEXT NOT NULL DEFAULT 'unknown'",
+    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS temporal_confidence DOUBLE PRECISION NOT NULL DEFAULT 0",
+    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS temporal_source_text TEXT",
+    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS temporal_anchor_at TIMESTAMPTZ",
+    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS event_status TEXT NOT NULL DEFAULT 'happened'",
+    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS event_timezone TEXT",
+    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS claim_key TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_nodes_user_event_start ON nodes (user_id, event_start_at)",
+    "CREATE INDEX IF NOT EXISTS idx_nodes_user_event_status ON nodes (user_id, event_status)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_statement_claim_key ON nodes (user_id, claim_key) WHERE type = 'Statement' AND claim_key IS NOT NULL",
+    """
+    CREATE TABLE IF NOT EXISTS temporal_backfill_audits (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        node_id UUID NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+        before JSONB NOT NULL,
+        after JSONB NOT NULL,
+        run_key TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_temporal_backfill_audits_user_created ON temporal_backfill_audits (user_id, created_at DESC)",
     # Backfill occurred_at for Statement nodes created before this column was
     # populated at write time — derives the date from the earliest linked
     # journal entry. Idempotent (only touches NULL rows); safe to re-run.

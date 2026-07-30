@@ -203,9 +203,24 @@ class Node(Base):
         nullable=True,
     )
     name_embedding: Mapped[list | None] = mapped_column(Vector(1536), nullable=True)
-    # When the described event happened (Statement nodes only). Extracted from diary
-    # text relative to the entry's writing date; NULL for legacy / undated claims.
+    # Legacy day-level projection of event_start_at.  Kept for mobile/API
+    # compatibility while the richer temporal fields below roll out.
     occurred_at: Mapped[date | None] = mapped_column(Date, nullable=True, default=None)
+    # A Statement has two clocks: when it was recorded and when the described
+    # event happened.  This prevents a July 30 entry saying "yesterday" from
+    # being retrieved as a July 30 event.
+    recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    event_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    event_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    temporal_precision: Mapped[str] = mapped_column(String, nullable=False, default="unknown")
+    temporal_confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    temporal_source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    temporal_anchor_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    event_status: Mapped[str] = mapped_column(String, nullable=False, default="happened")
+    event_timezone: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Stable per-entry claim identifier.  Statement titles are display text, not
+    # identity: identical titles on different days must remain distinct events.
+    claim_key: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -563,6 +578,20 @@ class QuizGenerationRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class TemporalBackfillAudit(Base):
+    """Append-only audit trail for deterministic event-time backfills."""
+
+    __tablename__ = "temporal_backfill_audits"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False)
+    before: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    after: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    run_key: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class QuizLearningMaterial(Base):

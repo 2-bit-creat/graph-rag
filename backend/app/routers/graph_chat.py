@@ -232,6 +232,11 @@ async def send_message(
                 "role": "assistant",
                 "content": result.answer,
                 "referenced_node_ids": result.referenced_node_ids,
+                "meta": {
+                    "retrieval_status": result.retrieval_status,
+                    "retrieval": result.retrieval_meta,
+                    "learning_card": result.learning_card,
+                },
             },
         ],
     )
@@ -251,6 +256,9 @@ async def send_message(
         user_message_id=str(user_msg.id),
         assistant_message_id=str(assistant_msg.id),
         created_at=_iso(assistant_msg.created_at),
+        retrieval_status=result.retrieval_status,
+        retrieval_meta=result.retrieval_meta,
+        learning_card=result.learning_card,
     )
 
 

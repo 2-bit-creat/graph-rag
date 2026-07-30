@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timedelta
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 # Relative expressions — checked in order (longer phrases first).
@@ -12,6 +13,7 @@ _RELATIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"그제"), "day_before_yesterday"),
     (re.compile(r"어제"), "yesterday"),
     (re.compile(r"오늘"), "today"),
+    (re.compile(r"내일"), "tomorrow"),
     (re.compile(r"이번\s*주"), "this_week"),
     (re.compile(r"지난\s*주|저번\s*주|지난주|저번주"), "last_week"),
     (re.compile(r"이번\s*달|이번\s*월"), "this_month"),
@@ -26,6 +28,7 @@ _EN_RELATIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"day\s+before\s+yesterday", re.I), "day_before_yesterday"),
     (re.compile(r"\byesterday\b", re.I), "yesterday"),
     (re.compile(r"\btoday\b", re.I), "today"),
+    (re.compile(r"\btomorrow\b", re.I), "tomorrow"),
     (re.compile(r"this\s+week", re.I), "this_week"),
     (re.compile(r"last\s+week", re.I), "last_week"),
     (re.compile(r"this\s+month", re.I), "this_month"),
@@ -113,6 +116,9 @@ def _resolve_relative(kind: str, today: date) -> tuple[date, date]:
         return today, today
     if kind == "yesterday":
         d = today - timedelta(days=1)
+        return d, d
+    if kind == "tomorrow":
+        d = today + timedelta(days=1)
         return d, d
     if kind == "day_before_yesterday":
         d = today - timedelta(days=2)
@@ -253,3 +259,85 @@ def format_time_window_label(
     if start == end:
         return f"요청 기간: {start.isoformat()}{tag}"
     return f"요청 기간: {start.isoformat()} ~ {end.isoformat()}{tag}"
+
+
+@dataclass(frozen=True)
+class EventTemporal:
+    """Normalised event-time metadata persisted with a Statement claim."""
+
+    start_at: datetime | None
+    end_at: datetime | None
+    occurred_at: date | None
+    precision: str
+    confidence: float
+    source_text: str | None
+    anchor_at: datetime
+    timezone: str
+    status: str
+
+
+_EVENT_STATUSES = frozenset({"happened", "planned", "cancelled", "hypothetical", "unknown"})
+
+
+def resolve_event_temporal(
+    *,
+    statement: str,
+    entry_at: datetime,
+    tz_name: str,
+    event_time_text: str | None = None,
+    event_status: str | None = None,
+    claimed_precision: str | None = None,
+    claimed_confidence: float | None = None,
+) -> EventTemporal:
+    """Resolve a claim's event time against its source-entry clock.
+
+    The extraction model may identify the relevant phrase, but relative dates are
+    always recomputed here; a model must never decide what "yesterday" means.
+    If no event time is present we retain the recording day as an explicitly
+    lower-confidence fallback rather than silently pretending it was extracted.
+    """
+    tz = ZoneInfo(tz_name)
+    anchor = entry_at if entry_at.tzinfo is not None else entry_at.replace(tzinfo=UTC)
+    anchor = anchor.astimezone(tz)
+    source = (event_time_text or "").strip() or None
+    window = parse_time_window(source or statement, tz, anchor)
+    status = (event_status or "happened").strip().lower()
+    if status not in _EVENT_STATUSES:
+        status = "unknown"
+
+    if window is None:
+        local_day = anchor.date()
+        start = datetime(local_day.year, local_day.month, local_day.day, tzinfo=tz)
+        return EventTemporal(
+            start_at=start,
+            end_at=start + timedelta(days=1),
+            occurred_at=local_day,
+            precision="recorded_date",
+            confidence=0.6,
+            source_text=None,
+            anchor_at=anchor,
+            timezone=tz_name,
+            status=status,
+        )
+
+    start_day, end_day = window
+    start = datetime(start_day.year, start_day.month, start_day.day, tzinfo=tz)
+    end = datetime(end_day.year, end_day.month, end_day.day, tzinfo=tz) + timedelta(days=1)
+    exact = start_day == end_day
+    precision = "day" if exact else "range"
+    if claimed_precision in {"exact", "day", "range", "month", "relative"}:
+        precision = claimed_precision
+    confidence = 1.0
+    if claimed_confidence is not None:
+        confidence = max(0.0, min(1.0, float(claimed_confidence)))
+    return EventTemporal(
+        start_at=start,
+        end_at=end,
+        occurred_at=start_day,
+        precision=precision,
+        confidence=confidence,
+        source_text=source,
+        anchor_at=anchor,
+        timezone=tz_name,
+        status=status,
+    )

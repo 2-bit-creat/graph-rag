@@ -24,12 +24,14 @@ from .crud import (
     _identity_nodes_self_first,
     backfill_alias_embeddings,
     find_identities_by_alias_embedding,
+    find_statements_lexical,
     find_similar_nodes_with_distance,
     find_statements_by_speaker,
     find_statements_by_time_window,
     user_has_alias_embeddings,
 )
 from .graph_retrieval import RankedContext, build_ranked_context
+from .query_planner import PlannedQuery, create_search_plan
 from .models import Node, User
 from .name_match import scan_identity_mentions
 from .rag import _get_client, embed_text, ensure_statement_embeddings
@@ -44,6 +46,9 @@ _backfill_checked: set[uuid.UUID] = set()
 class GraphChatResult:
     answer: str
     referenced_node_ids: list[str] = field(default_factory=list)
+    retrieval_status: str = "ok"
+    retrieval_meta: dict[str, Any] = field(default_factory=dict)
+    learning_card: dict[str, Any] | None = None
 
 
 async def _create_chat_completion(*, messages: list[dict[str, str]], settings: Any):
@@ -299,10 +304,18 @@ async def graph_chat_answer(
     now = datetime.now(tz)
     native_language = getattr(user, "native_language", None) or "korean"
 
-    time_window = parse_time_window(message, tz, now)
+    planned: PlannedQuery = await create_search_plan(message, now=now, tz=tz, client=_get_client())
+    plan = planned.plan
+    # Defence in depth for persisted/test plans and future planner providers:
+    # an empty allow-list must retain the SearchPlan default, never exclude
+    # every event after temporal SQL has found them.
+    allowed_event_statuses = plan.event_status or ["happened"]
+    time_window = None
+    if plan.time is not None and plan.time.start is not None and plan.time.end is not None:
+        time_window = (plan.time.start, plan.time.end)
     time_window_label: str | None = None
     temporal_seeds: list[Node] = []
-    if time_window is not None:
+    if time_window is not None and "temporal_sql" in plan.retrievers:
         start, end = time_window
         temporal_seeds = await find_statements_by_time_window(
             session,
@@ -311,12 +324,14 @@ async def graph_chat_answer(
             end,
             limit=settings.graph_chat_temporal_seed_limit,
             tz_name=settings.chat_timezone,
+            event_statuses=allowed_event_statuses,
         )
         time_window_label = format_time_window_label(
             start, end, message, tz, now
         )
 
-    if user.id not in _backfill_checked:
+    needs_dense = "dense" in plan.retrievers
+    if needs_dense and user.id not in _backfill_checked:
         try:
             await ensure_statement_embeddings(session, user.id)
             if not await user_has_alias_embeddings(session, user.id):
@@ -336,13 +351,17 @@ async def graph_chat_answer(
     # stripped from the text that gets embedded so the remaining vector is a
     # sharper topic-only query (질의 분해), and both searches share that one
     # embedding call.
-    speaker_matches, residual_message = await _scan_speaker_matches(
-        session, user.id, message, native_language=native_language
-    )
+    if "entity_exact" in plan.retrievers:
+        speaker_matches, residual_message = await _scan_speaker_matches(
+            session, user.id, message, native_language=native_language
+        )
+    else:
+        speaker_matches, residual_message = [], message
 
     query_vec: list[float] | None = None
     speaker_seeds: list[Node] = []
-    if speaker_matches:
+    topic_query = " ".join(plan.topics).strip() or residual_message
+    if speaker_matches and needs_dense:
         try:
             query_vec = await embed_text(residual_message)
         except Exception as exc:  # noqa: BLE001
@@ -350,23 +369,53 @@ async def graph_chat_answer(
                 "graph_chat: residual embedding failed for user %s: %s", user.id, exc
             )
             query_vec = None
+    if speaker_matches:
         speaker_seeds = await _retrieve_speaker_seeds(
             session, user.id, speaker_matches, query_vec=query_vec
         )
 
-    embedding_seeds, query_vec = await _retrieve_seeds(
-        session, user.id, residual_message, query_vec=query_vec
-    )
+    embedding_seeds: list[Node] = []
+    if needs_dense:
+        embedding_seeds, query_vec = await _retrieve_seeds(
+            session, user.id, topic_query, query_vec=query_vec
+        )
+
+    lexical_seeds: list[Node] = []
+    if "lexical" in plan.retrievers and plan.topics:
+        lexical_seeds = await find_statements_lexical(
+            session,
+            user.id,
+            plan.topics,
+            limit=plan.result_limit,
+            start=time_window[0] if time_window and plan.time and plan.time.constraint == "hard" else None,
+            end=time_window[1] if time_window and plan.time and plan.time.constraint == "hard" else None,
+            event_statuses=allowed_event_statuses,
+        )
 
     seen: set[uuid.UUID] = set()
     seeds: list[Node] = []
-    for node in temporal_seeds + speaker_seeds + embedding_seeds:
+    seed_candidates = temporal_seeds + lexical_seeds + speaker_seeds + embedding_seeds
+    # A user-specified hard period is a candidate-generation constraint, not
+    # merely an RRF penalty. Keep only matching Statement seeds; graph expansion
+    # receives the same window for identity paths.
+    if time_window is not None and plan.time and plan.time.constraint == "hard":
+        start, end = time_window
+        seed_candidates = [
+            node for node in seed_candidates
+            if node.type != "Statement"
+            or (
+                (node.event_status or "happened") in allowed_event_statuses
+                and start <= (node.occurred_at or (node.event_start_at.date() if node.event_start_at else node.created_at.date())) <= end
+            )
+        ]
+    for node in seed_candidates:
         if node.id in seen:
             continue
         seen.add(node.id)
         seeds.append(node)
 
     referenced_node_ids = [str(n.id) for n in seeds]
+    ranked = RankedContext(text="")
     try:
         ranked = await _build_context(
             session,
@@ -401,7 +450,41 @@ async def graph_chat_answer(
     resp = await _create_chat_completion(messages=messages, settings=settings)
     answer = (resp.choices[0].message.content or "").strip()
 
+    learning_card = None
+    if plan.learning.enabled and plan.learning.mode == "optional_followup" and ranked.packages:
+        target = getattr(user, "target_language", "english") or "english"
+        learning_card = {
+            "type": "memory_recall",
+            "target_language": target,
+            "source_node_id": str(ranked.packages[0].statement.id),
+            "prompt": f"이 기억을 {target}로 한 문장으로 말해볼래?",
+        }
+    retrieval_meta = {
+        "answer_intent": plan.answer_intent,
+        "retrievers": plan.retrievers,
+        "time": (
+            {"start": time_window[0].isoformat(), "end": time_window[1].isoformat(), "constraint": plan.time.constraint}
+            if time_window and plan.time else None
+        ),
+        "planner_status": planned.status,
+        "event_status": allowed_event_statuses,
+        "candidate_counts": {
+            "temporal_sql": len(temporal_seeds),
+            "lexical": len(lexical_seeds),
+            "entity": len(speaker_seeds),
+            "dense": len(embedding_seeds),
+            "after_hard_filters": len(seeds),
+            "context_packages": len(ranked.packages),
+        },
+        "referenced_count": len(referenced_node_ids),
+    }
+    if settings.debug_enabled:
+        retrieval_meta["planner_raw"] = planned.raw_plan
+        retrieval_meta["planner_error"] = planned.error
     return GraphChatResult(
         answer=answer,
         referenced_node_ids=referenced_node_ids,
+        retrieval_status=planned.status,
+        retrieval_meta=retrieval_meta,
+        learning_card=learning_card,
     )
