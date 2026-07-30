@@ -27,7 +27,7 @@ from .config import get_settings
 from .level_guidelines import cefr_label, get_level_band
 from .models import Quiz, User
 from .pipeline_trace import PipelineTracer
-from .quiz_audio_engine import resolve_quiz_tts_text, synthesize_quiz_audio
+from .quiz_audio_engine import synthesize_quiz_audio_assets
 from .quiz_generator import (
     _LANG_DISPLAY_NAMES,
     _default_question_ko,
@@ -1329,17 +1329,18 @@ async def generate_quiz_bundle(
             generation_key=generation_key,
         )
         if spec["quiz_type"] == "cloze":
-            tts_text = resolve_quiz_tts_text(
+            audio_url, answer_audio_url, tts_error = await synthesize_quiz_audio_assets(
+                quiz.id,
                 spec["quiz_type"],
                 {"sentence_en": spec["sentence_en"], "quiz_data": spec["quiz_data"]},
-            )
-            audio_url, tts_error = await synthesize_quiz_audio(
-                quiz.id,
-                tts_text,
                 language=language,
             )
             if audio_url:
-                quiz.quiz_data = {**(quiz.quiz_data or {}), "audio_url": audio_url}
+                quiz.quiz_data = {
+                    **(quiz.quiz_data or {}),
+                    "audio_url": audio_url,
+                    **({"answer_audio_url": answer_audio_url} if answer_audio_url else {}),
+                }
                 await session.commit()
                 await session.refresh(quiz)
             elif tts_error:

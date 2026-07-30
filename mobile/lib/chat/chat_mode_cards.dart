@@ -573,6 +573,8 @@ class _WordQuizCardState extends State<WordQuizCard> {
     final answered = effectiveResult != null;
     final audioUrl =
         widget.quiz['audio_url']?.toString() ?? qd['audio_url']?.toString();
+    final answerAudioUrl = widget.quiz['answer_audio_url']?.toString() ??
+        qd['answer_audio_url']?.toString();
 
     Widget card;
     switch (type) {
@@ -601,6 +603,7 @@ class _WordQuizCardState extends State<WordQuizCard> {
           key: widget.clozeCardKey,
           quizData: qd,
           audioUrl: audioUrl,
+          answerAudioUrl: answerAudioUrl,
           audioButtonKey: _audioKey,
           onSubmit: _gradeCloze,
           onSolved: () => setState(() => _solved = true),

@@ -136,10 +136,16 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
       }
     });
 
-    // Submitting exposes the answer, so play the audio now (whether right or
-    // wrong). Before answering the speaker button is hidden entirely, so this
-    // is the earliest point audio should ever be heard.
-    unawaited(_audioKey.currentState?.play(showError: false));
+    // Cloze owns its answer-reveal transition and plays the prepared sequence
+    // itself. Other quiz cards keep the existing sentence playback behavior.
+    if (widget.quizType != 'cloze') {
+      unawaited(
+        (correct
+                ? _audioKey.currentState?.playCorrectSequence(showError: false)
+                : _audioKey.currentState?.play(showError: false)) ??
+            Future<void>.value(),
+      );
+    }
   }
 
   void _goNext() {
@@ -232,6 +238,8 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
     }
     final audioUrl = item['audio_url']?.toString() ??
         quizData['audio_url']?.toString();
+    final answerAudioUrl = item['answer_audio_url']?.toString() ??
+        quizData['answer_audio_url']?.toString();
     final level = item['difficulty_level'];
     final questionKo =
         (item['question_native'] ?? item['question_ko'])?.toString() ?? '';
@@ -303,7 +311,12 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
                         children: [
                           AppSurfaceCard(
                             key: ValueKey(item['id']),
-                            child: _buildQuizBody(quizData, audioUrl, questionKo: questionKo),
+                            child: _buildQuizBody(
+                              quizData,
+                              audioUrl,
+                              answerAudioUrl: answerAudioUrl,
+                              questionKo: questionKo,
+                            ),
                           ),
                           if (_answered && _lastCorrect != null) ...[
                             const SizedBox(height: 12),
@@ -418,7 +431,12 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
     );
   }
 
-  Widget _buildQuizBody(Map<String, dynamic> quizData, String? audioUrl, {String? questionKo}) {
+  Widget _buildQuizBody(
+    Map<String, dynamic> quizData,
+    String? audioUrl, {
+    String? answerAudioUrl,
+    String? questionKo,
+  }) {
     final enabled = !_answered;
     switch (widget.quizType) {
       case 'cloze':
@@ -426,6 +444,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
           key: _clozeKey,
           quizData: quizData,
           audioUrl: audioUrl,
+          answerAudioUrl: answerAudioUrl,
           audioButtonKey: _audioKey,
           onSubmit: _submitCloze,
           // The next button remains hidden after a wrong first attempt until

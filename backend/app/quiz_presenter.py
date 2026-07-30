@@ -104,6 +104,8 @@ def quiz_queue_item_dict(
         "question_native": quiz.question_native,
         "sentence_target": quiz.sentence_target,
         "quiz_data": quiz.quiz_data if isinstance(quiz.quiz_data, dict) else None,
+        "audio_url": (quiz.quiz_data or {}).get("audio_url"),
+        "answer_audio_url": (quiz.quiz_data or {}).get("answer_audio_url"),
         "next_review_at": quiz.next_review_at,
         "streak": quiz.repetitions,
         "times_correct": quiz.times_correct,

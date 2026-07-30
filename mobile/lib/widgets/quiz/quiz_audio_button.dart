@@ -16,12 +16,21 @@ class QuizAudioButton extends StatefulWidget {
   const QuizAudioButton({
     super.key,
     this.audioUrl,
+    this.answerAudioUrl,
     this.autoPlayOnLoad = false,
+    this.preload = false,
     this.iconSize = 28,
   });
 
+  /// The complete target-language sentence.
   final String? audioUrl;
+
+  /// The cloze answer phrase, played before [audioUrl] after a correct answer.
+  final String? answerAudioUrl;
   final bool autoPlayOnLoad;
+
+  /// Fetches the clips while the learner reads the question.
+  final bool preload;
   final double iconSize;
 
   @override
@@ -30,25 +39,30 @@ class QuizAudioButton extends StatefulWidget {
 
 class QuizAudioButtonState extends State<QuizAudioButton> {
   final AudioPlayer _player = AudioPlayer();
-  final Dio _dio = Dio();
   bool _playing = false;
   bool _loading = false;
-  String? _loadedUrl;
-  String? _cachedFilePath;
   StreamSubscription<void>? _completeSub;
+  Completer<void>? _completion;
+  int _playSequence = 0;
+
+  // Shared across cards. Native stores each URL once in the temporary cache;
+  // web warms the browser HTTP cache before the answer event occurs.
+  static final Dio _cacheDio = Dio();
+  static final Map<String, Future<String>> _nativeCacheLoads = {};
+  static final Map<String, Future<void>> _webWarmups = {};
 
   static const _loadTimeout = Duration(seconds: 15);
-  // Safari can leave an autoplay request pending when a correct answer came
-  // from a text-input callback rather than a direct audio-button gesture.
-  // Bound that call so the speaker never remains stuck buffering forever.
   static const _webPlayStartTimeout = Duration(seconds: 8);
 
   @override
   void initState() {
     super.initState();
     _completeSub = _player.onPlayerComplete.listen((_) {
+      _completion?.complete();
+      _completion = null;
       if (mounted) setState(() => _playing = false);
     });
+    if (widget.preload) unawaited(prepare());
     if (widget.autoPlayOnLoad) {
       WidgetsBinding.instance.addPostFrameCallback((_) => play());
     }
@@ -57,58 +71,84 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
   @override
   void didUpdateWidget(covariant QuizAudioButton oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.audioUrl != widget.audioUrl) {
-      _loadedUrl = null;
-      _cachedFilePath = null;
-      if (widget.autoPlayOnLoad) {
-        play();
-      }
+    if (oldWidget.audioUrl != widget.audioUrl ||
+        oldWidget.answerAudioUrl != widget.answerAudioUrl) {
+      if (widget.preload) unawaited(prepare());
+      if (widget.autoPlayOnLoad) play();
     }
   }
 
   Future<void> play({bool showError = true}) async {
     final resolved = resolveMediaUrl(widget.audioUrl);
-    if (resolved == null) {
-      if (showError && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr('quizAudio.noAudioFile'))),
-        );
-      }
-      return;
-    }
+    if (resolved == null) return _showMissing(showError);
+    _completion = null;
+    await _playResolved(resolved, ++_playSequence, showError: showError);
+  }
 
-    setState(() => _loading = true);
+  /// Correct-answer feedback: exact answer → short pause → natural sentence.
+  /// The clips have already been fetched by [prepare], so no TTS/network call
+  /// lies on the feedback path in normal use.
+  Future<void> playCorrectSequence({bool showError = true}) async {
+    final answer = resolveMediaUrl(widget.answerAudioUrl);
+    final sentence = resolveMediaUrl(widget.audioUrl);
+    if (answer == null || sentence == null) return play(showError: showError);
+
+    final sequence = ++_playSequence;
+    final completion = Completer<void>();
+    _completion = completion;
+    await _playResolved(answer, sequence, showError: showError);
+    try {
+      await completion.future.timeout(const Duration(seconds: 12));
+      if (sequence != _playSequence) return;
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+      if (sequence != _playSequence) return;
+      _completion = null;
+      await _playResolved(sentence, sequence, showError: showError);
+    } on TimeoutException {
+      if (sequence == _playSequence) {
+        await _playResolved(sentence, sequence, showError: showError);
+      }
+    }
+  }
+
+  Future<void> prepare() async {
+    final urls = [widget.audioUrl, widget.answerAudioUrl]
+        .map(resolveMediaUrl)
+        .whereType<String>();
+    await Future.wait(urls.map(_warmResolved));
+  }
+
+  Future<void> _playResolved(
+    String resolved,
+    int sequence, {
+    required bool showError,
+  }) async {
+    if (mounted) setState(() => _loading = true);
     try {
       await _player.stop();
-      setState(() => _playing = true);
+      if (sequence != _playSequence) return;
+      if (mounted) setState(() => _playing = true);
       if (kIsWeb) {
-        // On web, dart:io File/getTemporaryDirectory is unavailable — play from URL directly.
         await _player
             .play(UrlSource(resolved))
             .timeout(_webPlayStartTimeout);
       } else {
-        if (_loadedUrl != resolved || _cachedFilePath == null) {
-          _cachedFilePath = await _downloadToCache(resolved);
-          _loadedUrl = resolved;
-        }
-        await _player.play(DeviceFileSource(_cachedFilePath!));
+        final path = await _nativeCachedPath(resolved);
+        if (sequence != _playSequence) return;
+        await _player.play(DeviceFileSource(path));
       }
     } on MissingPluginException {
       if (mounted) setState(() => _playing = false);
       if (showError && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(tr('quizAudio.pluginNotRegistered')),
-          ),
+          SnackBar(content: Text(tr('quizAudio.pluginNotRegistered'))),
         );
       }
     } on TimeoutException {
       if (mounted) setState(() => _playing = false);
       if (showError && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(tr('quizAudio.connectionFailed', {'url': resolved})),
-          ),
+          SnackBar(content: Text(tr('quizAudio.connectionFailed', {'url': resolved}))),
         );
       }
     } catch (e) {
@@ -123,8 +163,38 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
     }
   }
 
-  Future<String> _downloadToCache(String resolved) async {
-    final resp = await _dio.get<List<int>>(
+  void _showMissing(bool showError) {
+    if (showError && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr('quizAudio.noAudioFile'))),
+      );
+    }
+  }
+
+  static Future<void> _warmResolved(String resolved) {
+    if (kIsWeb) {
+      return _webWarmups.putIfAbsent(resolved, () async {
+        await _cacheDio.get<List<int>>(
+          resolved,
+          options: Options(
+            responseType: ResponseType.bytes,
+            followRedirects: true,
+          ),
+        ).timeout(_loadTimeout);
+      });
+    }
+    return _nativeCachedPath(resolved).then((_) {});
+  }
+
+  static Future<String> _nativeCachedPath(String resolved) {
+    return _nativeCacheLoads.putIfAbsent(
+      resolved,
+      () => _downloadToCache(resolved),
+    );
+  }
+
+  static Future<String> _downloadToCache(String resolved) async {
+    final resp = await _cacheDio.get<List<int>>(
       resolved,
       options: Options(
         responseType: ResponseType.bytes,
@@ -132,13 +202,9 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
       ),
     ).timeout(_loadTimeout);
     final bytes = resp.data;
-    if (bytes == null || bytes.isEmpty) {
-      throw Exception('empty audio response');
-    }
+    if (bytes == null || bytes.isEmpty) throw Exception('empty audio response');
     final dir = await getTemporaryDirectory();
-    final file = File(
-      '${dir.path}/quiz_audio_${resolved.hashCode.abs()}.mp3',
-    );
+    final file = File('${dir.path}/quiz_audio_${resolved.hashCode.abs()}.mp3');
     await file.writeAsBytes(Uint8List.fromList(bytes), flush: true);
     return file.path;
   }
@@ -147,7 +213,6 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
   void dispose() {
     _completeSub?.cancel();
     _player.dispose();
-    _dio.close();
     super.dispose();
   }
 
@@ -155,7 +220,6 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
   Widget build(BuildContext context) {
     final available = widget.audioUrl != null && widget.audioUrl!.isNotEmpty;
     final colorScheme = Theme.of(context).colorScheme;
-
     return Material(
       color: available
           ? colorScheme.primaryContainer.withValues(alpha: 0.45)

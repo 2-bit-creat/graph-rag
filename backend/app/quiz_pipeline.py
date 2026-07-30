@@ -19,7 +19,7 @@ from .quiz_generator import (
     validate_quiz_payload,
 )
 from .quiz_graph_selector import select_quiz_subgraph, select_quiz_subgraph_from_graph
-from .quiz_audio_engine import resolve_quiz_tts_text, synthesize_quiz_audio
+from .quiz_audio_engine import resolve_quiz_tts_text, synthesize_quiz_audio_assets
 from .quiz_settings import quiz_selection_settings
 from .quiz_types import validate_quiz_type
 
@@ -152,11 +152,14 @@ async def _run_vocab_node_quiz_pipeline(
         debug_run_dir=tracer.debug_dir_relative,
     )
 
-    tts_text = resolve_quiz_tts_text(quiz_type, validated)
-    audio_url, tts_error = await synthesize_quiz_audio(quiz.id, tts_text, language="english")
+    audio_url, answer_audio_url, tts_error = await synthesize_quiz_audio_assets(
+        quiz.id, quiz_type, validated, language="english"
+    )
     if audio_url:
         qd = dict(validated["quiz_data"])
         qd["audio_url"] = audio_url
+        if answer_audio_url:
+            qd["answer_audio_url"] = answer_audio_url
         quiz.quiz_data = qd
 
     trace_data = tracer._persist()
@@ -527,15 +530,20 @@ async def run_quiz_generate_pipeline(
             "raw_sentence_en": validated.get("sentence_en"),
         },
     )
-    audio_url, tts_error = await synthesize_quiz_audio(quiz.id, tts_text, language=lang)
+    audio_url, answer_audio_url, tts_error = await synthesize_quiz_audio_assets(
+        quiz.id, quiz_type, validated, language=lang
+    )
     if audio_url:
         qd = dict(validated["quiz_data"])
         qd["audio_url"] = audio_url
+        if answer_audio_url:
+            qd["answer_audio_url"] = answer_audio_url
         quiz.quiz_data = qd
     tracer.finish_step(
         step,
         output={
             "audio_url": audio_url,
+            "answer_audio_url": answer_audio_url,
             "available": audio_url is not None,
             "tts_text": tts_text,
         },

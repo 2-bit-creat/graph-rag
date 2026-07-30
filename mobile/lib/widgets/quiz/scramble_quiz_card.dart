@@ -171,6 +171,7 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
                 child: QuizAudioButton(
                   key: widget.audioButtonKey,
                   audioUrl: widget.audioUrl,
+                  preload: true,
                 ),
               ),
             ),

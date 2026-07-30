@@ -620,6 +620,7 @@ class QuizItemOut(BaseModel):
     sentence_target: str | None = None
     quiz_data: dict | None = None
     audio_url: str | None = None
+    answer_audio_url: str | None = None
     associated_entry_id: uuid.UUID | None = None
 
 
@@ -708,6 +709,8 @@ class QuizQueueItemOut(BaseModel):
     question_native: str | None = None
     sentence_target: str | None = None
     quiz_data: dict | None = None
+    audio_url: str | None = None
+    answer_audio_url: str | None = None
     next_review_at: datetime | None = None
     streak: int = 0
     times_correct: int = 0

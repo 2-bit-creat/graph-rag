@@ -11,6 +11,7 @@ class ClozeQuizCard extends StatefulWidget {
     required this.onSubmit,
     required this.onSolved,
     this.audioUrl,
+    this.answerAudioUrl,
     this.audioButtonKey,
     this.externalInput = false,
     this.externalResult,
@@ -24,6 +25,7 @@ class ClozeQuizCard extends StatefulWidget {
   final Future<bool> Function(String answer) onSubmit;
   final VoidCallback onSolved;
   final String? audioUrl;
+  final String? answerAudioUrl;
   final GlobalKey<QuizAudioButtonState>? audioButtonKey;
   final bool externalInput;
   final Map<String, dynamic>? externalResult;
@@ -117,7 +119,7 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
     // exists before asking it to play.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      widget.audioButtonKey?.currentState?.play(showError: false);
+      widget.audioButtonKey?.currentState?.playCorrectSequence(showError: false);
     });
   }
 
@@ -592,8 +594,8 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
               if (_showAudio) ...[
                 const SizedBox(width: 8),
                 QuizAudioButton(
-                  key: widget.audioButtonKey,
                   audioUrl: widget.audioUrl,
+                  answerAudioUrl: widget.answerAudioUrl,
                   iconSize: 18,
                 ),
               ],
@@ -629,6 +631,16 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // Exists before the answer panel, so both clips download while the
+        // learner works. The visible speaker buttons below remain sentence-only.
+        Offstage(
+          child: QuizAudioButton(
+            key: widget.audioButtonKey,
+            audioUrl: widget.audioUrl,
+            answerAudioUrl: widget.answerAudioUrl,
+            preload: true,
+          ),
+        ),
         _buildClozeSentence(
           prompt,
           blank,
@@ -695,8 +707,8 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
               ),
               if (_showAudio)
                 QuizAudioButton(
-                  key: widget.audioButtonKey,
                   audioUrl: widget.audioUrl,
+                  answerAudioUrl: widget.answerAudioUrl,
                   iconSize: 18,
                 ),
             ],

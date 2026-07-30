@@ -108,6 +108,11 @@ def _quiz_audio_url(quiz) -> str | None:
     return qd.get("audio_url")
 
 
+def _quiz_answer_audio_url(quiz) -> str | None:
+    qd = quiz.quiz_data if isinstance(quiz.quiz_data, dict) else {}
+    return qd.get("answer_audio_url")
+
+
 def _quiz_out(quiz) -> QuizItemOut:
     return QuizItemOut(
         id=quiz.id,
@@ -120,6 +125,7 @@ def _quiz_out(quiz) -> QuizItemOut:
         sentence_target=quiz.sentence_target,
         quiz_data=quiz.quiz_data,
         audio_url=_quiz_audio_url(quiz),
+        answer_audio_url=_quiz_answer_audio_url(quiz),
         associated_entry_id=quiz.associated_entry_id,
         track=quiz.track,
         batch_id=quiz.batch_id,

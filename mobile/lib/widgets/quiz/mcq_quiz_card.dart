@@ -154,6 +154,7 @@ class _McqQuizCardState extends State<McqQuizCard> {
                 child: QuizAudioButton(
                   key: widget.audioButtonKey,
                   audioUrl: widget.audioUrl,
+                  preload: true,
                   iconSize: 24,
                 ),
               ),
