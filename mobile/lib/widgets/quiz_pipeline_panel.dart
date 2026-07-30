@@ -187,10 +187,24 @@ class _QuizPipelinePanelState extends State<QuizPipelinePanel> {
     if (!ok) return false;
 
     try {
-      await apiClient.deleteQuizItem(quizId, permanent: true);
+      final cleanup = await apiClient.deleteQuizItem(quizId, permanent: true);
       if (!mounted) return true;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('문제를 삭제했습니다')),
+      );
+      final audioDeleted = (cleanup['audio_deleted'] as List?)?.length ?? 0;
+      final audioRetained = (cleanup['audio_retained'] as List?)?.length ?? 0;
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            audioDeleted > 0
+                ? '문제를 삭제하고, 사용되지 않는 음성 $audioDeleted개도 삭제했습니다.'
+                : audioRetained > 0
+                    ? '문제를 삭제했습니다. 공유 음성은 다른 문제에서 계속 사용합니다.'
+                    : '문제를 삭제했습니다.',
+          ),
+        ),
       );
       if (widget.onQuizDeleted != null) {
         await widget.onQuizDeleted!(quizId);
