@@ -1156,21 +1156,21 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   }
 
   void _highlightNodes(Set<String> nodeIds) {
-    final usePeekThrough = MediaQuery.sizeOf(context).width < 700;
     _chatPeekTimer?.cancel();
     setState(() {
       _glowIds = nodeIds;
       _glowSeq++;
-      if (usePeekThrough) _chatPeekThrough = true;
+      // Referenced-node cards are a graph-navigation affordance on desktop as
+      // well as mobile. The old width gate made the canvas invisible behind
+      // the chat on normal web/desktop layouts.
+      _chatPeekThrough = true;
     });
     _canvasKey.currentState?.focusOnNodes(nodeIds);
-    if (usePeekThrough) {
-      // Let the user see the graph pan and glow, then restore the chat
-      // automatically so the interaction never needs a second tap.
-      _chatPeekTimer = Timer(const Duration(milliseconds: 1600), () {
-        if (mounted) setState(() => _chatPeekThrough = false);
-      });
-    }
+    // Let the user see the graph pan and glow, then restore the chat
+    // automatically so the interaction never needs a second tap.
+    _chatPeekTimer = Timer(const Duration(milliseconds: 1600), () {
+      if (mounted) setState(() => _chatPeekThrough = false);
+    });
   }
 
   void _syncSelection(Map<String, dynamic> graph) {

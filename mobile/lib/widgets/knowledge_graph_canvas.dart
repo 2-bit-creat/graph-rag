@@ -1989,7 +1989,10 @@ class OntologyLegendBar extends StatelessWidget {
           ),
           ...entityTypes.map((et) {
             final name = et['name']?.toString() ?? '';
-            final color = typeColors[name] ?? parseHexColor('#64748b');
+            // The Identity chip may be synthesized from Person-only data.
+            // Resolve through the semantic palette instead of falling back to
+            // gray when no literal `Identity` key exists in [typeColors].
+            final color = colorForType(name, typeColors);
             return _LegendChip(
               label: name,
               color: color,
