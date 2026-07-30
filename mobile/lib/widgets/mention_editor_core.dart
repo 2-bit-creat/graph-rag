@@ -12,6 +12,18 @@ import '../utils/graph_layout.dart' show isSpeakerLikeType, isStatementHeadType;
 // 추출 품질이 급격히 떨어지는 지점 이전으로 캡 (백엔드 JournalTextEntryRequest와 동일).
 const kMaxJournalTextChars = 4000;
 
+/// One familiar link color keeps mentions calm and readable, like Slack, while
+/// speaker-specific colors remain available in pickers and graph views.
+const kMentionLinkColor = Color(0xFF1264A3);
+
+/// A single space separates words in a name; extra or trailing whitespace does
+/// not make a different speaker. `르브론 제임스` is preserved, while `나  ` is
+/// normalized to `나`.
+String normalizeMentionName(String value) =>
+    value.trim().replaceAll(RegExp(r'\s+'), ' ');
+
+String _mentionNameKey(String value) => normalizeMentionName(value).toLowerCase();
+
 /// '나' 배지 고정 색 — 화자 확인 칩의 확정(초록) 톤과 맞춘다.
 const kSelfMentionColor = Color(0xFF2E7D32);
 
@@ -214,15 +226,16 @@ class MentionStyledController extends TextEditingController {
           style: style?.copyWith(color: segColor),
         ));
       }
-      final c = colorOf(h.name);
+      const c = kMentionLinkColor;
       spans.add(TextSpan(
         text: full.substring(h.start, h.end),
         style: style?.copyWith(
-          color: Colors.white,
-          fontWeight: FontWeight.w700,
+          color: c,
+          fontWeight: FontWeight.w600,
+          letterSpacing: -0.1,
         ),
       ));
-      segColor = Color.lerp(c, Colors.black, 0.2);
+      segColor = null;
       idx = h.end;
     }
     if (idx < full.length) {
@@ -262,9 +275,9 @@ class MentionHighlightPainter extends CustomPainter {
   final ScrollController scroll;
 
   // Confirmed mentions are drawn as compact chips, not selection highlights.
-  static const _radius = Radius.circular(12);
-  static const _hPad = 6.0;
-  static const _vInset = 2.0;
+  static const _radius = Radius.circular(7);
+  static const _hPad = 5.0;
+  static const _vInset = 3.0;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -286,7 +299,12 @@ class MentionHighlightPainter extends CustomPainter {
     final lines = painter.computeLineMetrics();
     if (lines.isEmpty) return;
     for (final hit in hits) {
-      final paint = Paint()..color = colorOf(hit.name);
+      final color = colorOf(hit.name);
+      final fill = Paint()..color = color.withValues(alpha: 0.16);
+      final border = Paint()
+        ..color = color.withValues(alpha: 0.30)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1;
       final boxes = painter.getBoxesForSelection(
         TextSelection(baseOffset: hit.start, extentOffset: hit.end),
       );
@@ -324,7 +342,9 @@ class MentionHighlightPainter extends CustomPainter {
           span[1] + _hPad,
           bottom - _vInset,
         );
-        canvas.drawRRect(RRect.fromRectAndRadius(rect, _radius), paint);
+        final chip = RRect.fromRectAndRadius(rect, _radius);
+        canvas.drawRRect(chip, fill);
+        canvas.drawRRect(chip, border);
       });
     }
   }
@@ -416,6 +436,9 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
 
   // ── @팝업 상태 (텍스트/커서가 바뀔 때만 갱신, 키 입력으로 커서만 이동) ──────
   ({int at, String partial})? _mentionCtx;
+  // Selecting a popup row writes a completed "@name " token. Its trailing
+  // separator must start the message body, not immediately reopen the picker.
+  ({int at, String token})? _completedMention;
   List<SpeakerOption> _popupOptions = const [];
   bool _popupCanCreate = false;
   static const _maxVisibleMentionRows = 5;
@@ -442,8 +465,12 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
   Color colorFor(String name) => colorForSpeaker(name, _badges);
 
   void _ensureBadge(String name) {
-    if (name.trim().isEmpty) return;
-    if (!_badges.contains(name)) _badges.add(name);
+    final normalized = normalizeMentionName(name);
+    if (normalized.isEmpty) return;
+    if (!_badges.any(
+        (badge) => _mentionNameKey(badge) == _mentionNameKey(normalized))) {
+      _badges.add(normalized);
+    }
   }
 
   void _onTextChanged() {
@@ -463,13 +490,16 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
 
     final prevPartial = _mentionCtx?.partial;
     _mentionCtx = _computeMentionContext();
+    if (_mentionCtx != null && _isCompletedMentionContext(_mentionCtx!)) {
+      _mentionCtx = null;
+    }
     _popupOptions = _mentionCtx == null
         ? const <SpeakerOption>[]
         : _computeMentionOptions(_mentionCtx!.partial);
     _popupCanCreate = _mentionCtx != null &&
         _mentionCtx!.partial.isNotEmpty &&
         ![..._badges, ..._graphSpeakers.map((option) => option.name)].any(
-          (name) => name.toLowerCase() == _mentionCtx!.partial.toLowerCase(),
+          (name) => _mentionNameKey(name) == _mentionNameKey(_mentionCtx!.partial),
         );
     final showPopup =
         _mentionCtx != null && (_popupOptions.isNotEmpty || _popupCanCreate);
@@ -496,7 +526,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
         if (raw is! Map) continue;
         final type = raw['type']?.toString();
         if (!isStatementHeadType(type)) continue;
-        final name = raw['name']?.toString().trim() ?? '';
+        final name = normalizeMentionName(raw['name']?.toString() ?? '');
         if (name.isEmpty || name == '나' || !seen.add(name)) continue;
         out.add(SpeakerOption(name, isSource: !isSpeakerLikeType(type)));
       }
@@ -542,6 +572,17 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     if (at < 0) return null;
     if (at > 0 && !RegExp(r'\s').hasMatch(upto[at - 1])) return null;
     final partial = upto.substring(at + 1);
+    // A confirmed mention is followed by one separator before its message.
+    // Detect it from the text itself (not ephemeral popup state), so rebuilds
+    // can never reopen autocomplete over a selected speaker.
+    for (final name in matchableNames()) {
+      final tokenEnd = at + 1 + name.length;
+      if (upto.length > tokenEnd &&
+          upto.substring(at + 1, tokenEnd) == name &&
+          RegExp(r'\s').hasMatch(upto[tokenEnd])) {
+        return null;
+      }
+    }
     // Speaker names may contain spaces (for example "김 철수"). Keep the
     // autocomplete context alive while the user is typing the full name;
     // only a newline ends a mention because it starts a new dialogue line.
@@ -549,10 +590,26 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     return (at: at, partial: partial);
   }
 
+  bool _isCompletedMentionContext(({int at, String partial}) context) {
+    final completed = _completedMention;
+    if (completed == null) return false;
+    final selection = _controller.selection;
+    final end = completed.at + completed.token.length;
+    final stillSameToken =
+        context.at == completed.at &&
+        _controller.text.length >= end &&
+        _controller.text.substring(completed.at, end) == completed.token;
+    if (!stillSameToken || !selection.isValid || selection.start < end) {
+      _completedMention = null;
+      return false;
+    }
+    return true;
+  }
+
   /// 팝업 후보: 기존 화자를 먼저 보여 주고, 입력하면 접두 일치 → 포함
   /// 일치 순으로 정렬한다. 화면에는 최대 다섯 줄만 렌더링한다.
   List<SpeakerOption> _computeMentionOptions(String partial) {
-    final q = partial.toLowerCase();
+    final q = _mentionNameKey(partial);
     final seen = <String>{};
     final candidates = <SpeakerOption>[];
     for (final name in _badges) {
@@ -563,12 +620,13 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     }
 
     final matches = candidates
-        .where((option) => q.isEmpty || option.name.toLowerCase().contains(q))
+        .where((option) =>
+            q.isEmpty || _mentionNameKey(option.name).contains(q))
         .toList();
     matches.sort((a, b) {
       int rank(SpeakerOption option) {
         if (q.isEmpty) return _badges.contains(option.name) ? 0 : 1;
-        return option.name.toLowerCase().startsWith(q) ? 0 : 1;
+        return _mentionNameKey(option.name).startsWith(q) ? 0 : 1;
       }
 
       final rankComparison = rank(a).compareTo(rank(b));
@@ -589,21 +647,52 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
   void _applyMention(String name) {
     final ctx = _mentionCtx;
     if (ctx == null) return;
-    _ensureBadge(name);
+    final normalized = normalizeMentionName(name);
+    if (normalized.isEmpty) return;
+    _ensureBadge(normalized);
     final text = _controller.text;
     final sel = _controller.selection;
     final replaced =
-        '${text.substring(0, ctx.at)}@$name ${text.substring(sel.start)}';
+        '${text.substring(0, ctx.at)}@$normalized ${text.substring(sel.start)}';
+    _completedMention = (at: ctx.at, token: '@$normalized ');
     _controller.value = TextEditingValue(
       text: replaced,
-      selection: TextSelection.collapsed(offset: ctx.at + name.length + 2),
+      selection: TextSelection.collapsed(offset: ctx.at + normalized.length + 2),
     );
     _focusNode.requestFocus();
+  }
+
+  /// One backspace on a just-selected token reopens it as an editable query,
+  /// instead of making the user delete the name character by character.
+  bool _reopenCompletedMention() {
+    final completed = _completedMention;
+    final selection = _controller.selection;
+    if (completed == null || !selection.isValid || !selection.isCollapsed) {
+      return false;
+    }
+    final end = completed.at + completed.token.length;
+    if (selection.start != end || _controller.text.length < end) return false;
+    if (_controller.text.substring(completed.at, end) != completed.token) {
+      _completedMention = null;
+      return false;
+    }
+    final editable = completed.token.trimRight();
+    final updated = _controller.text.replaceRange(completed.at, end, editable);
+    _completedMention = null;
+    _controller.value = TextEditingValue(
+      text: updated,
+      selection: TextSelection.collapsed(offset: completed.at + editable.length),
+    );
+    return true;
   }
 
   /// ↑↓로 후보 이동, Enter로 현재 고른 후보(또는 새 화자)를 확정.
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey == LogicalKeyboardKey.backspace &&
+        _reopenCompletedMention()) {
+      return KeyEventResult.handled;
+    }
     final ctx = _mentionCtx;
     if (ctx == null) return KeyEventResult.ignored;
     final total = _popupOptions.length + (_popupCanCreate ? 1 : 0);
@@ -682,8 +771,17 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               child: Row(
                 children: [
-                  Icon(icon, size: 18, color: iconColor),
-                  const SizedBox(width: 10),
+                  Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: iconColor.withValues(alpha: 0.14),
+                      shape: BoxShape.circle,
+                    ),
+                    alignment: Alignment.center,
+                    child: Icon(icon, size: 16, color: iconColor),
+                  ),
+                  const SizedBox(width: 11),
                   Expanded(
                     child: Text(
                       label,
@@ -840,47 +938,26 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
                 ),
               );
             },
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: Padding(
-                      padding: contentPadding is EdgeInsets
-                          ? contentPadding
-                          : _contentPadding,
-                      child: SizedBox.expand(
-                        child: CustomPaint(
-                          painter: MentionHighlightPainter(
-                            text: _controller.text,
-                            textStyle: textStyle,
-                            strutStyle: strutStyle,
-                            hits: findCurrentMentions(),
-                            colorOf: colorFor,
-                            scroll: _scroll,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                Focus(
-                  onKeyEvent: _onKey,
-                  child: TextField(
-                    controller: _controller,
-                    focusNode: _focusNode,
-                    scrollController: _scroll,
-                    enabled: widget.enabled,
-                    style: textStyle,
-                    strutStyle: strutStyle,
-                    maxLines: widget.maxLines,
-                    minLines: widget.minLines,
-                    maxLength: kMaxJournalTextChars,
-                    maxLengthEnforcement: MaxLengthEnforcement.none,
-                    decoration: decoration,
-                    onSubmitted: widget.onSubmitted,
-                  ),
-                ),
-              ],
+            // Do not paint a second text layer behind the field. It cannot
+            // share Flutter's final glyph layout and was the source of the
+            // detached, block-shaped highlight. Slack-style mentions here are
+            // inline rich-text links rendered by the TextEditingController.
+            child: Focus(
+              onKeyEvent: _onKey,
+              child: TextField(
+                controller: _controller,
+                focusNode: _focusNode,
+                scrollController: _scroll,
+                enabled: widget.enabled,
+                style: textStyle,
+                strutStyle: strutStyle,
+                maxLines: widget.maxLines,
+                minLines: widget.minLines,
+                maxLength: kMaxJournalTextChars,
+                maxLengthEnforcement: MaxLengthEnforcement.none,
+                decoration: decoration,
+                onSubmitted: widget.onSubmitted,
+              ),
             ),
           ),
         );

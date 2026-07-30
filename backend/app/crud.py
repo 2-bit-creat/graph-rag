@@ -1,4 +1,5 @@
 import json
+import re
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
@@ -46,6 +47,11 @@ from .graph_schema import (
     contains_relation,
 )
 from .schemas import NodeOut, StagedEdge, StagedNode
+
+
+def normalize_node_name(name: str | None) -> str:
+    """Keep one meaningful word separator, but never whitespace-only variants."""
+    return re.sub(r"\s+", " ", (name or "").strip())
 
 
 def is_bidirectional_voice_link(
@@ -859,7 +865,7 @@ async def _get_or_create_node(
     importance_delta: int = 0,
     occurred_at: date | None = None,
 ) -> Node:
-    name = (name or "").strip()
+    name = normalize_node_name(name)
     type_ = normalize_entity_type(type_)
 
     filters = [
@@ -874,6 +880,20 @@ async def _get_or_create_node(
 
     result = await session.execute(select(Node).where(*filters))
     node = result.scalar_one_or_none()
+    if node is None and user_id is not None and is_identity_type(type_):
+        # Reuse identities saved before whitespace canonicalization.
+        legacy = await session.execute(
+            select(Node).where(
+                Node.user_id == user_id,
+                func.lower(Node.type) == type_group_key(type_),
+                Node.deleted_at.is_(None),
+            )
+        )
+        node = next(
+            (candidate for candidate in legacy.scalars()
+             if normalize_node_name(candidate.name).lower() == name.lower()),
+            None,
+        )
     if node is None:
         node = Node(
             name=name,
@@ -2309,7 +2329,7 @@ async def update_node(
     if node is None:
         return None
     if name is not None:
-        node.name = name.strip()
+        node.name = normalize_node_name(name)
     if type_ is not None:
         node.type = normalize_entity_type(type_)
     if description is not None:
@@ -2864,7 +2884,7 @@ async def list_person_nodes(
     for node in result.scalars().all():
         if not is_identity_type(node.type):
             continue
-        name_key = (node.name or "").strip().lower()
+        name_key = normalize_node_name(node.name).lower()
         if not name_key:
             continue
         category = "person" if is_person_like_type(node.type) else type_group_key(node.type)
@@ -2893,14 +2913,14 @@ async def find_person_node_by_exact_name(
     match here means the user picked/typed that same node, not a same-name
     coincidence.
     """
-    key = name.strip().lower()
+    key = normalize_node_name(name).lower()
     if not key:
         return None
     excluded = exclude_node_ids or set()
     for node in await list_person_nodes(session, user_id, limit=500):
         if node.id in excluded:
             continue
-        if (node.name or "").strip().lower() == key:
+        if normalize_node_name(node.name).lower() == key:
             return node
     return None
 
@@ -2917,7 +2937,7 @@ async def find_person_node_by_exact_name(
 
 
 def _norm_surface(name: str | None) -> str:
-    return (name or "").strip().lower()
+    return normalize_node_name(name).lower()
 
 
 def node_alias_keys(node: Node) -> list[str]:
@@ -3231,13 +3251,21 @@ async def get_or_create_speaker_node(
     node_type: str | None = None,
 ) -> Node:
     """Find an existing node by name or create one with an open-domain type."""
-    name = name.strip()
+    name = normalize_node_name(name)
     if not name:
         raise ValueError("name is required")
     result = await session.execute(
-        select(Node).where(Node.user_id == user_id, Node.name == name)
+        select(Node).where(
+            Node.user_id == user_id,
+            Node.deleted_at.is_(None),
+        )
     )
-    existing = list(result.scalars().all())
+    # A legacy name with repeated spaces is still the same speaker. Intentional
+    # single spaces in multi-word names remain part of the normalized value.
+    existing = [
+        node for node in result.scalars().all()
+        if normalize_node_name(node.name).lower() == name.lower()
+    ]
     if existing:
         speaker_type = normalize_entity_type(NODE_SPEAKER)
         person_type = normalize_entity_type("Person")
