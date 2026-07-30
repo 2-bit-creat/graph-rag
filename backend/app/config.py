@@ -115,9 +115,11 @@ class Settings(BaseSettings):
     free_tier_quiz_limit: int = 3
     free_tier_review_days: int = 7
 
-    # Statement-bank expression extraction during KG build (LLM cost). Off while
-    # the app is focused on composition-only learning; flip on to re-enable.
-    expression_extraction_enabled: bool = False
+    # Statement-bank extraction is the language-learning path: one background
+    # analysis prepares the composition drill and its reusable expressions for
+    # every configured target language. It can still be disabled explicitly by
+    # deployments that do not offer learning features.
+    expression_extraction_enabled: bool = True
 
     # Graph chat: cosine-distance cutoff for retrieving Statement/Concept nodes.
     # Looser than the 0.35 identity-matching threshold — sentence-level similarity.
