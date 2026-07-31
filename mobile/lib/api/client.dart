@@ -483,7 +483,6 @@ class ApiClient {
   Future<Map<String, dynamic>> listQuizQueueItems({
     required String queueKind,
     String? quizType,
-    String? track,
     int limit = 50,
     int offset = 0,
     String order = 'desc',
@@ -492,7 +491,6 @@ class ApiClient {
       final resp = await _dio.get('/quiz/queue/items', queryParameters: {
         'queue_kind': queueKind,
         if (quizType != null) 'quiz_type': quizType,
-        if (track != null) 'track': track,
         'limit': limit,
         'offset': offset,
         'order': order,
@@ -507,7 +505,6 @@ class ApiClient {
     Set<String> queueKinds = const {},
     Set<String> quizTypes = const {},
     Set<String> languages = const {},
-    Set<String> tracks = const {},
     bool includeArchived = false,
     String sort = 'created_desc',
     int limit = 50,
@@ -517,7 +514,6 @@ class ApiClient {
       if (queueKinds.isNotEmpty) 'queue_kinds': queueKinds.toList(),
       if (quizTypes.isNotEmpty) 'quiz_types': quizTypes.toList(),
       if (languages.isNotEmpty) 'languages': languages.toList(),
-      if (tracks.isNotEmpty) 'tracks': tracks.toList(),
       'include_archived': includeArchived,
       'sort': sort,
       'limit': limit,
@@ -671,6 +667,18 @@ class ApiClient {
       return Map<String, dynamic>.from(resp.data as Map);
     } on DioException catch (e) {
       throw _friendlyError(e, '학습 문제 조회');
+    }
+  }
+
+  /// Rebuild an edited Statement's quizzes and expressions. The old ones were
+  /// already archived by the edit itself, so this only starts the new set.
+  Future<Map<String, dynamic>> regenerateNodeQuizzes(String nodeId) async {
+    try {
+      final resp =
+          await _dio.post('/graph/nodes/$nodeId/regenerate-quizzes');
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '문제 재생성');
     }
   }
 

@@ -168,9 +168,11 @@ _MIGRATIONS = [
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS track TEXT NOT NULL DEFAULT 'daily'",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS batch_id UUID",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS source_kind TEXT",
-    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE",
     "CREATE INDEX IF NOT EXISTS idx_quizzes_user_track_batch ON quizzes (user_id, track, batch_id)",
-    "CREATE INDEX IF NOT EXISTS idx_nodes_user_pinned ON nodes (user_id, is_pinned)",
+    # 2026-07-31 핀 기능 제거. 진술 노드가 만들어질 때 백엔드가 학습 자료까지
+    # 모두 생성하므로 "공부하고 싶은 노드를 핀으로 우선 생성"할 이유가 없다.
+    "DROP INDEX IF EXISTS idx_nodes_user_pinned",
+    "ALTER TABLE nodes DROP COLUMN IF EXISTS is_pinned",
     """
     CREATE TABLE IF NOT EXISTS quiz_source_explorations (
         id UUID PRIMARY KEY,

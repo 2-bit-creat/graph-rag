@@ -88,36 +88,6 @@ async def _schedule_statement_learning(
     )
 
 
-@router.patch("/nodes/{node_id}/pin", response_model=NodeOut)
-async def set_node_pin(
-    node_id: uuid.UUID,
-    pinned: bool = Query(...),
-    user: User = Depends(request_user_dep),
-    session: AsyncSession = Depends(get_session),
-) -> NodeOut:
-    """Pin/unpin a Statement for an isolated priority mini-batch."""
-    node = await session.get(Node, node_id)
-    if node is None or node.user_id != user.id:
-        raise HTTPException(status_code=404, detail="node not found")
-    if node.type.lower() != "statement":
-        raise HTTPException(status_code=400, detail="only Statement nodes can be pinned")
-    node.is_pinned = pinned
-    await session.commit()
-    generated: dict | None = None
-    if pinned:
-        from ..quiz_batch import create_pinned_batch
-        language = (crud.get_effective_target_languages(user) or ["english"])[0]
-        generated = await create_pinned_batch(
-            session, user, node_id=node_id, language=language
-        )
-    out = await crud.get_node_out(session, node_id, user.id)
-    assert out is not None
-    if generated is not None:
-        out.generated_quiz_ids = generated["quiz_ids"]
-        out.generated_language = generated["language"]
-    return out
-
-
 # 2026-07-06 정책 변경: 확정 그래프도 지식그래프 화면에서 사후 수정(이름·타입·설명,
 # 병합, 엣지 추가) 가능. 일기 provenance는 편집 시 그대로 유지되고 병합 시 대상
 # 노드로 승계된다. 초기 "확정 후 불변" 게이트(_graph_locked_error)는 제거됨 —
@@ -468,20 +438,23 @@ async def read_node_study_quizzes(
         lang = (str(language).strip().lower() if language else "english")
         grouped[kind].append(quiz_id_str)
         by_language[kind].setdefault(lang, []).append(quiz_id_str)
-    material_status: dict[str, str] = {}
-    if not grouped["cloze"] and not grouped["composition"]:
-        from ..models import QuizLearningMaterial
-        languages = crud.get_effective_target_languages(user)
-        material_rows = (
-            await session.scalars(
-                select(QuizLearningMaterial).where(
-                    QuizLearningMaterial.user_id == user.id,
-                    QuizLearningMaterial.node_id == node_id,
-                    QuizLearningMaterial.language.in_(languages),
-                )
+    from ..models import QuizLearningMaterial
+
+    languages = crud.get_effective_target_languages(user)
+    material_rows = (
+        await session.scalars(
+            select(QuizLearningMaterial).where(
+                QuizLearningMaterial.user_id == user.id,
+                QuizLearningMaterial.node_id == node_id,
+                QuizLearningMaterial.language.in_(languages),
             )
-        ).all()
-        material_status = {row.language: row.status for row in material_rows}
+        )
+    ).all()
+    material_status = {row.language: row.status for row in material_rows}
+    # A Statement edited after generation is left archived-and-empty on purpose;
+    # only the learner's 재생성 press rebuilds it, so auto-analysis stays off here.
+    needs_regeneration = any(row.status == "stale" for row in material_rows)
+    if not grouped["cloze"] and not grouped["composition"] and not needs_regeneration:
         if any(material_status.get(language) not in {"ready", "analyzing"} for language in languages):
             await _schedule_statement_learning(
                 background, session, user, node_id, priority=100
@@ -489,6 +462,7 @@ async def read_node_study_quizzes(
     return {
         "node_id": str(node_id),
         "material_status": material_status,
+        "needs_regeneration": needs_regeneration,
         "word": {
             "count": len(grouped["cloze"]),
             "quiz_ids": grouped["cloze"],
@@ -499,6 +473,56 @@ async def read_node_study_quizzes(
             "quiz_ids": grouped["composition"],
             "by_language": by_language["composition"],
         },
+    }
+
+
+@router.post("/nodes/{node_id}/regenerate-quizzes")
+async def regenerate_node_quizzes(
+    node_id: uuid.UUID,
+    background: BackgroundTasks,
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Rebuild a Statement's learning material after its content was edited."""
+    node = await session.get(Node, node_id)
+    if node is None or node.user_id != user.id:
+        raise HTTPException(status_code=404, detail="node not found")
+    if node.type.lower() != "statement":
+        raise HTTPException(
+            status_code=400, detail="only Statement nodes have study quizzes"
+        )
+    from ..quiz_bundle import BundleSeedError
+    from ..quiz_materials import archive_edited_statement_materials
+
+    # An edit archives eagerly, but running this again is harmless and repairs
+    # material left behind by an edit that failed to archive at the time.
+    try:
+        archived = await archive_edited_statement_materials(
+            session, user, node_id=node_id
+        )
+    except BundleSeedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # An explicit rebuild always goes through a generation run so the learner
+    # gets the complete set (composition + expression clozes), not just the
+    # analysis half that the auto-generation-off path would produce.
+    from ..quiz_generation_runs import create_generation_run, process_generation_run
+
+    run, created = await create_generation_run(
+        session,
+        user,
+        node_ids=[node_id],
+        languages=crud.get_effective_target_languages(user),
+        idempotency_key=f"regenerate:{node_id}:{uuid.uuid4()}",
+        source="manual",
+    )
+    if created:
+        background.add_task(process_generation_run, run.id)
+    return {
+        "node_id": str(node_id),
+        "status": "scheduled",
+        "run_id": str(run.id),
+        "archived_quiz_count": archived["archived_quiz_count"],
     }
 
 
@@ -652,8 +676,6 @@ async def edit_node(
 
     session: AsyncSession = Depends(get_session),
 
-    background: BackgroundTasks = None,
-
 ) -> NodeOut:
 
     existing = await session.get(Node, node_id)
@@ -674,13 +696,20 @@ async def edit_node(
         raise HTTPException(status_code=404, detail="node not found")
 
     changed = before != (node.name, node.type, node.description)
+    # 2026-07-31 편집은 재생성을 자동으로 시작하지 않는다. 기존 문제·표현을 즉시
+    # 보관으로 내리고, 새로 만들지 여부는 학습자가 재생성 버튼으로 결정한다.
     if (
-        background is not None
-        and changed
+        changed
         and node.type == "Statement"
         and len((node.description or node.name or "").strip()) >= 6
     ):
-        await _schedule_statement_learning(background, session, user, node.id)
+        from ..quiz_bundle import BundleSeedError
+        from ..quiz_materials import archive_edited_statement_materials
+
+        try:
+            await archive_edited_statement_materials(session, user, node_id=node.id)
+        except BundleSeedError:
+            pass
 
     out = await crud.get_node_out(session, node_id, user.id)
     if out is None:

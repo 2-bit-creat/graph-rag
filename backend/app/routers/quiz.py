@@ -230,7 +230,6 @@ async def _backfill_cloze_audio_background(quiz_ids: list[uuid.UUID]) -> None:
 async def list_queue_items(
     queue_kind: Literal["new", "review"] = Query(...),
     quiz_type: Literal["cloze", "composition"] | None = None,
-    track: Literal["daily", "pinned"] | None = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user: User = Depends(request_user_dep),
@@ -241,7 +240,6 @@ async def list_queue_items(
         user.id,
         queue_kind,
         quiz_type=quiz_type,
-        track=track,
         limit=limit,
         offset=offset,
     )
@@ -267,7 +265,6 @@ async def list_admin_quiz_items(
     queue_kinds: list[Literal["new", "review"]] | None = Query(None),
     quiz_types: list[Literal["cloze", "composition"]] | None = Query(None),
     languages: list[str] | None = Query(None),
-    tracks: list[Literal["daily", "pinned"]] | None = Query(None),
     include_archived: bool = False,
     sort: Literal["created_desc", "created_asc", "studied_desc"] = "created_desc",
     limit: int = Query(50, ge=1, le=200),
@@ -288,8 +285,6 @@ async def list_admin_quiz_items(
         filters.append(Quiz.quiz_type.in_(quiz_types))
     if languages:
         filters.append(func.lower(Quiz.language).in_([v.lower() for v in languages]))
-    if tracks:
-        filters.append(Quiz.track.in_(tracks))
     ordering = {
         "created_desc": Quiz.created_at.desc(),
         "created_asc": Quiz.created_at.asc(),

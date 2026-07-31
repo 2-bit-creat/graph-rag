@@ -106,11 +106,11 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   Map<String, dynamic>? _selectedEdge;
   Map<String, dynamic>? _selectedStudyQuizzes;
   bool _selectedStudyLoading = false;
+  bool _selectedRegenerating = false;
   final _canvasKey = GlobalKey<KnowledgeGraphCanvasState>();
   // 화자 숨김(Speaker-to-Color) 모드: head 노드를 물리에서 제거하고
   // Statement를 화자색으로 인코딩 — 슈퍼노드(성게) 뭉침 해소용.
   bool _hideHeads = false;
-  bool _pinning = false;
 
   // ── 그래프 대화 (전역 chatSession 컨트롤러 구독) ─────────────────────────
   final _chatInputController = TextEditingController();
@@ -751,6 +751,14 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           if (!silent) _loading = false;
           _syncSelection(graph);
         });
+        // 진술을 수정하면 기존 문제·표현이 즉시 보관으로 넘어간다. 카드의
+        // 문제 수와 재생성 버튼이 그 결과를 바로 반영하도록 다시 읽는다.
+        final selectedId = _selectedNodeId;
+        if (selectedId != null &&
+            _selectedNode != null &&
+            isStatementNode(_selectedNode!)) {
+          unawaited(_loadSelectedStudyQuizzes(selectedId));
+        }
         // Auto-open inspector for the initial node from timeline navigation
         if (_selectedNode != null && widget.initialNodeId != null) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1209,6 +1217,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       _selectedEdgeId = null;
       _selectedStudyQuizzes = null;
       _selectedStudyLoading = isStatement;
+      _selectedRegenerating = false;
     });
     _canvasKey.currentState?.centerOnNode(node['id'].toString());
 
@@ -1243,6 +1252,28 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     }
   }
 
+  /// 수정된 진술의 문제·표현을 새로 만든다. 생성은 서버 백그라운드에서 돌기
+  /// 때문에 새 문제가 붙을 때까지 카드 상태를 짧게 폴링해 준다.
+  Future<void> _regenerateSelectedQuizzes(String nodeId) async {
+    if (_selectedRegenerating) return;
+    setState(() => _selectedRegenerating = true);
+    try {
+      await apiClient.regenerateNodeQuizzes(nodeId);
+      for (var attempt = 0; attempt < 20; attempt++) {
+        await Future<void>.delayed(const Duration(seconds: 3));
+        if (!mounted || _selectedNodeId != nodeId) return;
+        await _loadSelectedStudyQuizzes(nodeId);
+        final data = _selectedStudyQuizzes;
+        final done = data != null && data['needs_regeneration'] != true;
+        if (done) break;
+      }
+    } catch (e) {
+      if (mounted) chatSession.errors.value = e.toString();
+    } finally {
+      if (mounted) setState(() => _selectedRegenerating = false);
+    }
+  }
+
   Future<void> _selectEdge(Map<String, dynamic>? edge,
       {bool showSheet = false}) async {
     setState(() {
@@ -1252,6 +1283,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       _selectedNodeId = null;
       _selectedStudyQuizzes = null;
       _selectedStudyLoading = false;
+      _selectedRegenerating = false;
     });
     if (edge != null && showSheet && mounted) {
       await _showInspectorSheet();
@@ -1314,62 +1346,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     // user returns to the graph exactly where they were exploring.
   }
 
-  /// Pin/unpin the selected Statement from the compact bottom card. Pinning
-  /// generates an isolated mini-batch immediately server-side; when it comes
-  /// back non-empty this jumps straight into the same inline quiz mode the
-  /// "단어 퀴즈" chat button uses, seeded with exactly those generated items
-  /// instead of the learner having to go find them in the queue.
-  /* Legacy pin-to-generate path is intentionally disabled. Study now starts
-     only from the existing quiz counts in a Statement's detail panel.
-  Future<void> _togglePin(Map<String, dynamic> node) async {
-    if (_pinning) return;
-    final nodeId = node['id'].toString();
-    final nextPinned = node['is_pinned'] != true;
-    setState(() => _pinning = true);
-    try {
-      final result = await apiClient.setNodePinned(nodeId, nextPinned);
-      if (!mounted) return;
-      setState(() {
-        node['is_pinned'] = result['is_pinned'] ?? nextPinned;
-        if (_selectedNode != null &&
-            _selectedNode!['id'].toString() == nodeId) {
-          _selectedNode = {..._selectedNode!, 'is_pinned': node['is_pinned']};
-        }
-      });
-      if (nextPinned) {
-        final quizIds =
-            (result['generated_quiz_ids'] as Map?)?.cast<String, dynamic>();
-        final language = result['generated_language']?.toString();
-        final clozeIds = ((quizIds?['cloze'] as List?) ?? [])
-            .map((e) => e.toString())
-            .toList();
-        final compositionIds = ((quizIds?['composition'] as List?) ?? [])
-            .map((e) => e.toString())
-            .toList();
-        if (clozeIds.isNotEmpty) {
-          _ensureChatVisible();
-          await chatSession.startQuiz('cloze',
-              language: language, quizIds: clozeIds);
-        } else if (compositionIds.isNotEmpty) {
-          _ensureChatVisible();
-          await chatSession.startQuiz('composition',
-              language: language, quizIds: compositionIds);
-        } else {
-          chatSession.errors.value = tr('graph.pinEmpty');
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        chatSession.errors.value = e.toString();
-      }
-    } finally {
-      if (mounted) setState(() => _pinning = false);
-    }
-  }
-
   /// 숨김 모드에서는 head 타입 칩(Person/Speaker/Source)이 필터해도 빈
   /// 화면만 나오므로 범례 바에서 제외한다.
-  */
   List<Map<String, dynamic>> _legendEntityTypes(
     List<Map<String, dynamic>> entityTypes,
   ) {
@@ -1456,6 +1434,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       _selectedEdgeId = null;
       _selectedStudyQuizzes = null;
       _selectedStudyLoading = false;
+      _selectedRegenerating = false;
       _glowIds = const {};
       _glowSeq++;
     });
@@ -1670,6 +1649,12 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
                     typeColors: typeColors,
                     studyQuizzes: _selectedStudyQuizzes,
                     studyLoading: _selectedStudyLoading,
+                    regenerating: _selectedRegenerating,
+                    onRegenerate: () {
+                      final nodeId = _selectedNodeId;
+                      if (nodeId == null) return;
+                      unawaited(_regenerateSelectedQuizzes(nodeId));
+                    },
                     onStudyQuizzes: (quizType, quizIds, language) async {
                       if (quizType == 'composition') {
                         _activateInputMode();
@@ -2190,6 +2175,8 @@ class _SelectionInfoCard extends StatelessWidget {
     required this.typeColors,
     required this.studyQuizzes,
     required this.studyLoading,
+    required this.regenerating,
+    required this.onRegenerate,
     required this.onStudyQuizzes,
     required this.onDetail,
     required this.onClose,
@@ -2202,6 +2189,8 @@ class _SelectionInfoCard extends StatelessWidget {
   final Map<String, Color> typeColors;
   final Map<String, dynamic>? studyQuizzes;
   final bool studyLoading;
+  final bool regenerating;
+  final VoidCallback onRegenerate;
   final Future<void> Function(
     String quizType,
     List<String> quizIds,
@@ -2323,12 +2312,31 @@ class _SelectionInfoCard extends StatelessWidget {
       );
     }
 
+    // 진술을 수정하면 기존 문제·표현은 보관으로 넘어가고 이 버튼만 열린다.
+    // 수정된 적이 없으면(=재생성할 이유가 없으면) 비활성이다.
+    final needsRegeneration = studyQuizzes?['needs_regeneration'] == true;
     return Wrap(
       spacing: 8,
       runSpacing: 6,
       children: [
         button('cloze', word, '단어 퀴즈'),
         button('composition', composition, '작문 퀴즈'),
+        OutlinedButton.icon(
+          onPressed:
+              (!needsRegeneration || regenerating) ? null : onRegenerate,
+          style: OutlinedButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          ),
+          icon: regenerating
+              ? const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.autorenew_rounded, size: 16),
+          label: Text(regenerating ? '재생성 중' : '문제 재생성'),
+        ),
       ],
     );
   }

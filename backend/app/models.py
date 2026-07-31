@@ -192,7 +192,6 @@ class Node(Base):
     # Cumulative LLM-assigned importance (1-5 per mention, summed across mentions).
     # Recurring concepts naturally outweigh one-off mentions — see _get_or_create_node.
     importance_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Canonical "self" / diary-owner node. Exactly one per user (enforced by a
     # partial unique index). The diary "나" and any conversation speaker the user
     # confirms as themselves all resolve to this node, regardless of its name.
@@ -421,8 +420,8 @@ class Quiz(Base):
     )
     pipeline_trace: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     debug_run_dir: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # ``daily`` and ``pinned`` are isolated learning tracks. A batch id makes
-    # daily progress immutable and prevents pinned drills from counting toward it.
+    # ``daily`` is the only learning track. A batch id makes daily progress
+    # immutable so a later refill cannot rewrite an already-studied day.
     track: Mapped[str] = mapped_column(String, nullable=False, default="daily")
     batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     source_kind: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -500,7 +499,7 @@ class QuizAttempt(Base):
 
 
 class QuizBatch(Base):
-    """Immutable generation unit for the daily and pinned learning tracks."""
+    """Immutable generation unit for the daily learning track."""
 
     __tablename__ = "quiz_batches"
     __table_args__ = (

@@ -44,14 +44,10 @@ async def _node(session: AsyncSession, user_id: uuid.UUID, node_id: uuid.UUID) -
     )
 
 
-async def get_or_mark_material(
-    session: AsyncSession,
-    user: User,
-    *,
-    node_id: uuid.UUID,
-    language: str,
-    priority: int = 0,
-) -> QuizLearningMaterial:
+async def statement_fingerprint(
+    session: AsyncSession, user: User, node_id: uuid.UUID
+) -> str:
+    """Hash of a Statement's current content — the identity its material tracks."""
     node = await _node(session, user.id, node_id)
     if node is None:
         raise BundleSeedError("Statement node not found")
@@ -62,8 +58,128 @@ async def get_or_mark_material(
     content = str((source or {}).get("content_ko") or "").strip()
     if len(content) < 6:
         raise BundleSeedError("Statement is too short to analyse")
+    return source_hash(content)
+
+
+async def _supersede_material(
+    session: AsyncSession,
+    user: User,
+    row: QuizLearningMaterial,
+    *,
+    node_id: uuid.UUID,
+    language: str,
+    fingerprint: str,
+    priority: int = 0,
+) -> int:
+    """Archive everything generated from an older version of this Statement.
+
+    The old cards and expressions describe content that no longer exists.  Quiz
+    rows are retained as archived history, but their learning targets must never
+    be mixed into the replacement analysis.  Returns the archived quiz count.
+    """
+    stale_quizzes = (
+        await session.scalars(
+            select(Quiz).where(
+                Quiz.user_id == user.id,
+                Quiz.language == language,
+                Quiz.quiz_type.in_(("cloze", "composition")),
+                Quiz.queue_kind != "archived",
+                Quiz.source_nodes.any(node_id),
+            )
+        )
+    ).all()
+    for quiz in stale_quizzes:
+        quiz.queue_kind = "archived"
+        quiz.generation_key = None
+        quiz.batch_id = None
+    from .node_expression_store import delete_node_language_expressions
+
+    await delete_node_language_expressions(user.id, str(node_id), language)
+    row.source_hash = fingerprint
+    # ``stale`` is the "edited, archived, awaiting an explicit rebuild" state the
+    # graph surface turns into an enabled 재생성 button.
+    row.status = "stale"
+    row.priority = max(row.priority, priority)
+    row.composition_count = 0
+    row.expression_count = 0
+    row.expansion_count = 0
+    row.result = None
+    row.error = None
+    await session.execute(
+        update(QuizSourceExploration)
+        .where(
+            QuizSourceExploration.user_id == user.id,
+            QuizSourceExploration.node_id == node_id,
+            QuizSourceExploration.language == language,
+        )
+        .values(
+            status="unexplored",
+            composition_count=0,
+            word_count=0,
+            expression_count=0,
+            cloze_status="available",
+            cloze_generator_version=None,
+        )
+    )
+    return len(stale_quizzes)
+
+
+async def archive_edited_statement_materials(
+    session: AsyncSession,
+    user: User,
+    *,
+    node_id: uuid.UUID,
+    languages: list[str] | None = None,
+) -> dict:
+    """Retire a Statement's learning material right after its content changed.
+
+    Editing the source invalidates every quiz and expression derived from it, so
+    they are archived immediately instead of lingering until someone happens to
+    request a regeneration.  Rebuilding is a separate, explicit action.
+    """
+    fingerprint = await statement_fingerprint(session, user, node_id)
+    targets = [
+        str(language).lower()
+        for language in (languages or crud.get_effective_target_languages(user))
+    ]
+    rows = (
+        await session.scalars(
+            select(QuizLearningMaterial).where(
+                QuizLearningMaterial.user_id == user.id,
+                QuizLearningMaterial.node_id == node_id,
+                QuizLearningMaterial.language.in_(targets),
+            )
+        )
+    ).all()
+    archived = 0
+    stale_languages: list[str] = []
+    for row in rows:
+        if row.source_hash == fingerprint:
+            continue
+        archived += await _supersede_material(
+            session,
+            user,
+            row,
+            node_id=node_id,
+            language=row.language,
+            fingerprint=fingerprint,
+        )
+        stale_languages.append(row.language)
+    if stale_languages:
+        await session.commit()
+    return {"archived_quiz_count": archived, "languages": stale_languages}
+
+
+async def get_or_mark_material(
+    session: AsyncSession,
+    user: User,
+    *,
+    node_id: uuid.UUID,
+    language: str,
+    priority: int = 0,
+) -> QuizLearningMaterial:
+    fingerprint = await statement_fingerprint(session, user, node_id)
     language = language.lower()
-    fingerprint = source_hash(content)
     row = await session.scalar(
         select(QuizLearningMaterial).where(
             QuizLearningMaterial.user_id == user.id,
@@ -83,50 +199,14 @@ async def get_or_mark_material(
         session.add(row)
         await session.flush()
     elif row.source_hash != fingerprint:
-        # The old cards and expressions describe content that no longer exists.
-        # Retain quiz rows as archived history, but never mix their learning
-        # targets into the replacement analysis.
-        stale_quizzes = (
-            await session.scalars(
-                select(Quiz).where(
-                    Quiz.user_id == user.id,
-                    Quiz.language == language,
-                    Quiz.quiz_type.in_(("cloze", "composition")),
-                    Quiz.queue_kind != "archived",
-                    Quiz.source_nodes.any(node_id),
-                )
-            )
-        ).all()
-        for quiz in stale_quizzes:
-            quiz.queue_kind = "archived"
-            quiz.generation_key = None
-            quiz.batch_id = None
-        from .node_expression_store import delete_node_language_expressions
-
-        await delete_node_language_expressions(user.id, str(node_id), language)
-        row.source_hash = fingerprint
-        row.status = "stale"
-        row.priority = max(row.priority, priority)
-        row.composition_count = 0
-        row.expression_count = 0
-        row.expansion_count = 0
-        row.result = None
-        row.error = None
-        await session.execute(
-            update(QuizSourceExploration)
-            .where(
-                QuizSourceExploration.user_id == user.id,
-                QuizSourceExploration.node_id == node_id,
-                QuizSourceExploration.language == language,
-            )
-            .values(
-                status="unexplored",
-                composition_count=0,
-                word_count=0,
-                expression_count=0,
-                cloze_status="available",
-                cloze_generator_version=None,
-            )
+        await _supersede_material(
+            session,
+            user,
+            row,
+            node_id=node_id,
+            language=language,
+            fingerprint=fingerprint,
+            priority=priority,
         )
     elif priority > row.priority:
         row.priority = priority

@@ -122,7 +122,6 @@ def build_node_out(
         deleted_context=getattr(node, "deleted_context", None),
         importance_score=getattr(node, "importance_score", 0) or 0,
         is_self=getattr(node, "is_self", False) or False,
-        is_pinned=getattr(node, "is_pinned", False) or False,
         source_entry_id=source_entry_id,
         source_transcript_ko=source_transcript_ko,
         source_transcript_clean_ko=source_transcript_clean_ko,
@@ -3982,7 +3981,6 @@ async def list_quiz_queue_items(
     queue_kind: str,
     *,
     quiz_type: str | None = None,
-    track: str | None = None,
     limit: int = 50,
     offset: int = 0,
     order: str = "desc",
@@ -4004,8 +4002,6 @@ async def list_quiz_queue_items(
 
     if quiz_type is not None:
         filters.append(Quiz.quiz_type == quiz_type)
-    if track is not None:
-        filters.append(Quiz.track == track)
 
     count_q = select(func.count()).select_from(Quiz).where(*filters)
     total = int((await session.execute(count_q)).scalar_one())

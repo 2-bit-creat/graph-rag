@@ -1,7 +1,7 @@
 """Configuration-driven quiz batch filling.
 
-Daily batches are immutable containers for the normal learning track. Pinned
-drills use the same primitives but are always stored under a separate track.
+Daily batches are immutable containers for the learning track: a batch id makes
+a day's progress reproducible and keeps later refills from rewriting history.
 """
 
 from __future__ import annotations
@@ -392,51 +392,3 @@ async def create_extra_daily_batch(
     return await fill_daily_batch(session, user, language=language, sequence=sequence)
 
 
-async def create_pinned_batch(
-    session: AsyncSession,
-    user: User,
-    *,
-    node_id: uuid.UUID,
-    language: str,
-) -> dict:
-    """Create an isolated mini-batch for one pinned Statement node."""
-    async with _lock_for(user.id):
-        result = await session.execute(
-            select(func.max(QuizBatch.sequence)).where(
-                QuizBatch.user_id == user.id,
-                QuizBatch.batch_date == date.today(),
-                QuizBatch.track == "pinned",
-                QuizBatch.language == language,
-            )
-        )
-        sequence = int(result.scalar() or -1) + 1
-        batch = await _get_or_create_batch(
-            session, user, language=language, track="pinned", sequence=sequence
-        )
-        created = {
-            "cloze": 0,
-            "composition": 0,
-            "batch_id": str(batch.id),
-            "language": language,
-            "quiz_ids": {"cloze": [], "composition": []},
-        }
-        try:
-            _, composition, _ = await ensure_learning_material(
-                session, user, node_id=node_id, language=language, priority=100
-            )
-            clozes, _ = await materialize_node_expressions(
-                session, user, node_id=node_id, language=language,
-                limit=3, direct_node=True, queue_missing=3,
-            )
-            for quiz in composition + clozes:
-                await _stamp(session, quiz, batch, "pinned")
-                if quiz.quiz_type == "cloze":
-                    created["cloze"] += 1
-                    created["quiz_ids"]["cloze"].append(str(quiz.id))
-                elif quiz.quiz_type == "composition":
-                    created["composition"] += 1
-                    created["quiz_ids"]["composition"].append(str(quiz.id))
-        except BundleSeedError:
-            pass
-        await session.commit()
-        return created

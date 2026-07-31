@@ -66,7 +66,6 @@ class NodeOut(BaseModel):
     deleted_context: dict | None = None
     importance_score: int = 0
     is_self: bool = False
-    is_pinned: bool = False
     source_entry_id: uuid.UUID | None = None
     source_transcript_ko: str | None = None
     source_transcript_clean_ko: str | None = None

@@ -20,7 +20,6 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
   final _queueKinds = <String>{};
   final _types = <String>{};
   final _languages = <String>{};
-  final _tracks = <String>{};
   final _selectedIds = <String>{};
 
   List<Map<String, dynamic>> _items = [];
@@ -66,7 +65,6 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
           queueKinds: _queueKinds,
           quizTypes: _types,
           languages: _languages,
-          tracks: _tracks,
           includeArchived: _includeArchived,
           sort: _sort,
           limit: _pageSize,
@@ -355,7 +353,6 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
   Widget build(BuildContext context) {
     const queueOptions = {'new': '새로 배울 문제', 'review': '복습 대상 문제'};
     const typeOptions = {'cloze': '단어', 'composition': '작문'};
-    const trackOptions = {'daily': 'Daily', 'pinned': 'Pinned'};
     final languageOptions = {
       for (final language in _targetLanguages)
         language: _languageLabels[language] ?? language,
@@ -459,13 +456,6 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
                           selected: _types,
                           options: typeOptions,
                           icon: Icons.quiz_outlined,
-                        ),
-                        const SizedBox(width: 6),
-                        _filterButton(
-                          label: '트랙',
-                          selected: _tracks,
-                          options: trackOptions,
-                          icon: Icons.route_outlined,
                         ),
                         const SizedBox(width: 6),
                         FilterChip(
