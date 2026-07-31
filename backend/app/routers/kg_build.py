@@ -1004,17 +1004,6 @@ async def kg_commit(
     except Exception:
         logger.warning("kg_commit: embedding backfill failed", exc_info=True)
 
-    # ── Enqueue expression extraction for newly committed Statement nodes ──────
-    try:
-        from ..extraction_queue import enqueue_bulk
-        from ..crud import get_effective_target_languages, get_all_statement_nodes
-
-        langs = get_effective_target_languages(user)
-        all_stmts = await get_all_statement_nodes(session, user.id)
-        await enqueue_bulk(user.id, all_stmts, langs)
-    except Exception as _eq_exc:
-        logger.warning("kg_commit: failed to enqueue expression extraction: %s", _eq_exc)
-
     if getattr(user, "auto_generate_quizzes", False) and statement_node_ids:
         from ..quiz_generation_runs import (
             create_generation_run,
@@ -1033,6 +1022,19 @@ async def kg_commit(
         )
         if created:
             background_tasks.add_task(process_generation_run, run.id)
+    else:
+        # When auto generation is off, prepare reusable material without creating
+        # the full quiz set. Auto mode uses the single generation run above and
+        # must not enqueue a second competing analysis.
+        try:
+            from ..extraction_queue import enqueue_bulk
+            from ..crud import get_effective_target_languages, get_all_statement_nodes
+
+            langs = get_effective_target_languages(user)
+            all_stmts = await get_all_statement_nodes(session, user.id)
+            await enqueue_bulk(user.id, all_stmts, langs)
+        except Exception as _eq_exc:
+            logger.warning("kg_commit: failed to enqueue material analysis: %s", _eq_exc)
 
     return KgCommitOut(
         ok=True,

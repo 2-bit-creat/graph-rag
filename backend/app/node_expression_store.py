@@ -523,6 +523,38 @@ async def delete_node_all_expressions(
     return await asyncio.to_thread(_delete)
 
 
+async def delete_node_language_expressions(
+    user_id: uuid.UUID,
+    node_id: str,
+    language: str,
+) -> int:
+    """Delete one Statement's expressions for one target language.
+
+    A Statement edit invalidates only the edited node/language material. Other
+    languages and other Statement origins remain reusable.
+    """
+    language = (language or "").strip().lower()
+
+    def _delete() -> int:
+        store = _read_store_sync(user_id)
+        lang_map = store.get("expressions", {}).get(node_id, {})
+        items = lang_map.pop(language, [])
+        count = len(items) if isinstance(items, list) else 0
+        done = store.get("extraction_done", {})
+        if node_id in done:
+            done[node_id] = [value for value in done[node_id] if value != language]
+        if not any(isinstance(value, list) and value for value in lang_map.values()):
+            node_name = lang_map.get("node_name")
+            if node_name:
+                store["expressions"][node_id] = {"node_name": node_name}
+            else:
+                store["expressions"].pop(node_id, None)
+        _write_store_sync(user_id, store)
+        return count
+
+    return await asyncio.to_thread(_delete)
+
+
 async def prune_expressions_not_in(
     user_id: uuid.UUID,
     valid_node_ids: set[str],

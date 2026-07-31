@@ -4452,6 +4452,18 @@ async def reset_quiz_queue(session: AsyncSession, user_id: uuid.UUID) -> int:
         .where(QuizGenerationState.user_id == user_id)
         .values(status="available")
     )
+    await session.execute(
+        update(QuizLearningMaterial)
+        .where(QuizLearningMaterial.user_id == user_id)
+        .values(
+            status="pending",
+            composition_count=0,
+            expression_count=0,
+            expansion_count=0,
+            result=None,
+            error=None,
+        )
+    )
     # The Statement bank is generated from the same exploration run. Keeping
     # it would mix old prompt output into a clean regeneration test. Manual
     # vocabularies use a different store and remain untouched.
@@ -4475,6 +4487,22 @@ async def _reset_cloze_source_exploration(session: AsyncSession, quiz: Quiz) -> 
         )
         .values(cloze_status="available", cloze_generator_version=None)
     )
+    expression = str(
+        (quiz.quiz_data or {}).get("canonical_form")
+        or (quiz.quiz_data or {}).get("blank")
+        or ""
+    ).strip()
+    if expression:
+        from .node_expression_store import set_expression_quiz_status
+
+        for node_id in quiz.source_nodes:
+            await set_expression_quiz_status(
+                quiz.user_id,
+                str(node_id),
+                quiz.language.lower(),
+                [expression],
+                "available",
+            )
 
 
 async def invalidate_quiz_generation_state(

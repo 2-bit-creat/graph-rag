@@ -53,6 +53,41 @@ router = APIRouter(prefix="/graph", tags=["graph"])
 v1_router = APIRouter(prefix="/api/v1/graphs", tags=["graph"])
 
 
+async def _schedule_statement_learning(
+    background: BackgroundTasks,
+    session: AsyncSession,
+    user: User,
+    node_id: uuid.UUID,
+    *,
+    priority: int = 0,
+) -> None:
+    languages = crud.get_effective_target_languages(user)
+    if getattr(user, "auto_generate_quizzes", False):
+        from ..quiz_generation_runs import create_generation_run, process_generation_run
+
+        run, created = await create_generation_run(
+            session,
+            user,
+            node_ids=[node_id],
+            languages=languages,
+            idempotency_key=f"auto:graph:{node_id}:{uuid.uuid4()}",
+            source="auto",
+        )
+        if created:
+            background.add_task(process_generation_run, run.id)
+        return
+
+    from ..quiz_materials import analyse_material_background
+
+    background.add_task(
+        analyse_material_background,
+        user.id,
+        node_id,
+        languages,
+        priority=priority,
+    )
+
+
 @router.patch("/nodes/{node_id}/pin", response_model=NodeOut)
 async def set_node_pin(
     node_id: uuid.UUID,
@@ -436,7 +471,6 @@ async def read_node_study_quizzes(
     material_status: dict[str, str] = {}
     if not grouped["cloze"] and not grouped["composition"]:
         from ..models import QuizLearningMaterial
-        from ..quiz_materials import analyse_material_background
         languages = crud.get_effective_target_languages(user)
         material_rows = (
             await session.scalars(
@@ -449,7 +483,9 @@ async def read_node_study_quizzes(
         ).all()
         material_status = {row.language: row.status for row in material_rows}
         if any(material_status.get(language) not in {"ready", "analyzing"} for language in languages):
-            background.add_task(analyse_material_background, user.id, node_id, languages, priority=100)
+            await _schedule_statement_learning(
+                background, session, user, node_id, priority=100
+            )
     return {
         "node_id": str(node_id),
         "material_status": material_status,
@@ -597,9 +633,7 @@ async def add_node(
     await crud.index_identity_alias(session, user.id, node, name)
     await session.commit()
     if node.type == "Statement" and len((node.description or node.name or "").strip()) >= 6:
-        from ..quiz_materials import analyse_material_background
-        languages = crud.get_effective_target_languages(user)
-        background.add_task(analyse_material_background, user.id, node.id, languages)
+        await _schedule_statement_learning(background, session, user, node.id)
     out = await crud.get_node_out(session, node.id, user.id)
     if out is None:
         raise HTTPException(status_code=404, detail="node not found")
@@ -622,6 +656,13 @@ async def edit_node(
 
 ) -> NodeOut:
 
+    existing = await session.get(Node, node_id)
+    before = (
+        existing.name,
+        existing.type,
+        existing.description,
+    ) if existing is not None else None
+
     node = await crud.update_node(
 
         session, node_id, payload.name, payload.type, payload.description
@@ -632,18 +673,14 @@ async def edit_node(
 
         raise HTTPException(status_code=404, detail="node not found")
 
+    changed = before != (node.name, node.type, node.description)
     if (
         background is not None
+        and changed
         and node.type == "Statement"
         and len((node.description or node.name or "").strip()) >= 6
     ):
-        from ..quiz_materials import analyse_material_background
-        background.add_task(
-            analyse_material_background,
-            user.id,
-            node.id,
-            crud.get_effective_target_languages(user),
-        )
+        await _schedule_statement_learning(background, session, user, node.id)
 
     out = await crud.get_node_out(session, node_id, user.id)
     if out is None:

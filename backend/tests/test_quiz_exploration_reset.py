@@ -5,7 +5,12 @@ import json
 import pytest
 
 from app import crud, json_doc_store, node_expression_store
-from app.models import Node, QuizGenerationState, QuizSourceExploration
+from app.models import (
+    Node,
+    QuizGenerationState,
+    QuizLearningMaterial,
+    QuizSourceExploration,
+)
 from app.quiz_batch import _source_state
 from app.quiz_bundle import CLOZE_GENERATOR_VERSION
 
@@ -128,7 +133,18 @@ async def test_full_queue_reset_clears_invisible_unavailable_sources(
         status="exhausted",
         source_count=1,
     )
-    db_session.add_all([exploration, state])
+    material = QuizLearningMaterial(
+        user_id=iso_user.id,
+        node_id=node.id,
+        language="german",
+        source_hash="old-hash",
+        status="ready",
+        composition_count=2,
+        expression_count=3,
+        expansion_count=1,
+        result={"old": True},
+    )
+    db_session.add_all([exploration, state, material])
     await db_session.commit()
     await node_expression_store.save_node_expressions(
         iso_user.id,
@@ -143,11 +159,17 @@ async def test_full_queue_reset_clears_invisible_unavailable_sources(
     archived_count = await crud.reset_quiz_queue(db_session, iso_user.id)
     await db_session.refresh(exploration)
     await db_session.refresh(state)
+    await db_session.refresh(material)
 
     assert archived_count == 0
     assert exploration.cloze_status == "available"
     assert exploration.cloze_generator_version is None
     assert state.status == "available"
+    assert material.status == "pending"
+    assert material.composition_count == 0
+    assert material.expression_count == 0
+    assert material.expansion_count == 0
+    assert material.result is None
     assert await node_expression_store.get_node_expressions(
         iso_user.id, str(node.id), "german"
     ) == []

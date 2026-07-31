@@ -162,7 +162,7 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
             content: Text(
               'Statement ${_selectedNodes.length}개 × Target 언어 '
               '${_selectedLanguages.length}개 = 총 $combinationCount개 조합을 '
-              '생성합니다.\n\n각 조합에서 Cloze와 작문 문제를 함께 만들며, '
+              '생성합니다.\n\n각 조합에서 단어 문제와 작문 문제를 함께 만들며, '
               '기존 활성 문제는 생성 이력으로 보관됩니다.',
             ),
             actions: [
@@ -362,9 +362,9 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
             tint: AppColors.hubQuiz,
             child: SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
-              title: const Text('새 Statement 자동 생성'),
+              title: const Text('Statement 자동 문제 생성'),
               subtitle: const Text(
-                'ON 이후 확정되는 새 Statement만 모든 활성 Target 언어로 생성합니다.',
+                '새로 확정되거나 내용이 변경된 Statement를 모든 활성 Target 언어로 한 번에 분석·생성합니다.',
               ),
               value: _autoGenerate,
               onChanged: _savingAuto ? null : _setAutoGenerate,
@@ -478,7 +478,7 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
       subtitle: status == 'failed'
           ? Text(item['error']?.toString() ?? '생성 실패')
           : Text(
-              'Cloze ${counts['cloze'] ?? 0} · 작문 ${counts['composition'] ?? 0}',
+              '단어 문제 ${counts['cloze'] ?? 0}개 · 작문 문제 ${counts['composition'] ?? 0}개',
             ),
       trailing: quizIds.isEmpty
           ? null
@@ -547,7 +547,7 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
                     visualDensity: VisualDensity.compact,
                     label: Text(
                       '${_languageLabels[language] ?? language} · '
-                      'C ${counts['cloze'] ?? 0} / 작문 ${counts['composition'] ?? 0}',
+                      '단어 ${counts['cloze'] ?? 0}개 · 작문 ${counts['composition'] ?? 0}개',
                       style: const TextStyle(fontSize: 11),
                     ),
                   );

@@ -423,21 +423,42 @@ async def _mark_graph_failed(
 
 
 async def enqueue_entry_expression_extraction(
-    session: AsyncSession, user_id: uuid.UUID
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    node_ids: list[str] | None = None,
+    idempotency_key: str | None = None,
 ) -> None:
-    """Enqueue language-expression extraction for the user's committed Statement nodes.
+    """Schedule one post-commit learning operation.
 
     Runs only AFTER the graph is committed (one-shot build or HITL apply), so the
     expensive per-node LLM extraction targets confirmed content — never a draft.
+    Auto mode completes analysis and every quiz type in one generation run.
     """
     try:
         from .models import User as _User
         from .crud import get_effective_target_languages, get_all_statement_nodes
-        from .extraction_queue import enqueue_bulk
 
         user = await session.get(_User, user_id)
         if user is not None:
             langs = get_effective_target_languages(user)
+            if getattr(user, "auto_generate_quizzes", False) and node_ids:
+                from .quiz_generation_runs import create_generation_run, process_generation_run
+
+                run, created = await create_generation_run(
+                    session,
+                    user,
+                    node_ids=[uuid.UUID(value) for value in node_ids],
+                    languages=langs,
+                    idempotency_key=idempotency_key or f"auto:pipeline:{uuid.uuid4()}",
+                    source="auto",
+                )
+                if created:
+                    await process_generation_run(run.id)
+                return
+
+            from .extraction_queue import enqueue_bulk
+
             all_stmts = await get_all_statement_nodes(session, user_id)
             await enqueue_bulk(user_id, all_stmts, langs)
     except Exception as _eq_exc:
@@ -554,8 +575,14 @@ async def run_graph_ingest_pipeline(
                     pipeline_trace=trace,
                 )
 
-            # Enqueue expression extraction for newly added Statement nodes.
-            await enqueue_entry_expression_extraction(session, user_id)
+            # Auto mode completes analysis + composition + word cards as one
+            # visible exploration. Non-auto mode only prepares reusable material.
+            await enqueue_entry_expression_extraction(
+                session,
+                user_id,
+                node_ids=list(summary.get("statement_node_ids") or []),
+                idempotency_key=f"auto:pipeline:{entry_id}",
+            )
 
             return summary
         except Exception as exc:

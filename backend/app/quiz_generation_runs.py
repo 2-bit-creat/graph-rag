@@ -14,7 +14,7 @@ from .db import async_session_factory
 from .models import Node, Quiz, QuizGenerationRun, User
 from .quiz_batch import _record_exploration
 from .quiz_bundle import BundleSeedError
-from .quiz_materials import ensure_learning_material, materialize_node_expressions
+from .quiz_materials import generate_complete_learning_set
 
 logger = logging.getLogger(__name__)
 
@@ -180,20 +180,16 @@ async def process_generation_run(run_id: uuid.UUID) -> None:
             node_id = uuid.UUID(str(item["node_id"]))
             language = str(item["language"]).lower()
             try:
-                _, composition, trace = await ensure_learning_material(
-                    session, user, node_id=node_id, language=language,
-                    priority=100 if run.source == "manual" else 0,
-                    force=run.source == "manual",
-                )
-                clozes, _ = await materialize_node_expressions(
+                material, created, _ = await generate_complete_learning_set(
                     session,
                     user,
                     node_id=node_id,
                     language=language,
+                    priority=100 if run.source == "manual" else 0,
+                    force_analysis=run.source == "manual",
                     limit=8,
                     direct_node=run.source == "manual",
                 )
-                created = composition + clozes
                 counts = {
                     "cloze": sum(q.quiz_type == "cloze" for q in created),
                     "composition": sum(q.quiz_type == "composition" for q in created),
@@ -211,7 +207,7 @@ async def process_generation_run(run_id: uuid.UUID) -> None:
                     language,
                     counts["composition"],
                     counts["cloze"],
-                    _expression_count(trace),
+                    material.expression_count,
                     True,
                 )
                 await session.commit()

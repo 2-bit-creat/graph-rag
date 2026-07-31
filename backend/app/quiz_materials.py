@@ -13,12 +13,12 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import crud
 from .db import async_session_factory
-from .models import Node, Quiz, QuizLearningMaterial, User
+from .models import Node, Quiz, QuizLearningMaterial, QuizSourceExploration, User
 from .quiz_bundle import BundleSeedError, generate_quiz_bundle, materialize_expression_clozes
 from .quiz_policies import (
     GENERATION_POLICY_VERSION,
@@ -83,10 +83,51 @@ async def get_or_mark_material(
         session.add(row)
         await session.flush()
     elif row.source_hash != fingerprint:
+        # The old cards and expressions describe content that no longer exists.
+        # Retain quiz rows as archived history, but never mix their learning
+        # targets into the replacement analysis.
+        stale_quizzes = (
+            await session.scalars(
+                select(Quiz).where(
+                    Quiz.user_id == user.id,
+                    Quiz.language == language,
+                    Quiz.quiz_type.in_(("cloze", "composition")),
+                    Quiz.queue_kind != "archived",
+                    Quiz.source_nodes.any(node_id),
+                )
+            )
+        ).all()
+        for quiz in stale_quizzes:
+            quiz.queue_kind = "archived"
+            quiz.generation_key = None
+            quiz.batch_id = None
+        from .node_expression_store import delete_node_language_expressions
+
+        await delete_node_language_expressions(user.id, str(node_id), language)
         row.source_hash = fingerprint
         row.status = "stale"
         row.priority = max(row.priority, priority)
+        row.composition_count = 0
+        row.expression_count = 0
+        row.expansion_count = 0
+        row.result = None
         row.error = None
+        await session.execute(
+            update(QuizSourceExploration)
+            .where(
+                QuizSourceExploration.user_id == user.id,
+                QuizSourceExploration.node_id == node_id,
+                QuizSourceExploration.language == language,
+            )
+            .values(
+                status="unexplored",
+                composition_count=0,
+                word_count=0,
+                expression_count=0,
+                cloze_status="available",
+                cloze_generator_version=None,
+            )
+        )
     elif priority > row.priority:
         row.priority = priority
     return row
@@ -209,6 +250,46 @@ async def materialize_node_expressions(
         )
         await session.commit()
     return created, trace
+
+
+async def generate_complete_learning_set(
+    session: AsyncSession,
+    user: User,
+    *,
+    node_id: uuid.UUID,
+    language: str,
+    priority: int = 0,
+    force_analysis: bool = False,
+    direct_node: bool = False,
+    limit: int = 8,
+) -> tuple[QuizLearningMaterial, list[Quiz], dict]:
+    """Complete one visible exploration for one Statement × language pair.
+
+    Analysis may use multiple model calls for quality, but callers get one
+    operation that finishes composition creation, expression extraction and
+    expression-based cloze creation.
+    """
+    row, composition, trace = await ensure_learning_material(
+        session,
+        user,
+        node_id=node_id,
+        language=language,
+        priority=priority,
+        force=force_analysis,
+    )
+    clozes, cloze_trace = await materialize_node_expressions(
+        session,
+        user,
+        node_id=node_id,
+        language=language,
+        limit=limit,
+        direct_node=direct_node,
+        queue_missing=limit,
+    )
+    return row, composition + clozes, {
+        "analysis": trace,
+        "materialization": cloze_trace,
+    }
 
 
 async def analyse_material_background(
