@@ -65,9 +65,29 @@ async def test_speaker_exact_match_seeds_statement_even_with_orthogonal_embeddin
         captured_embed_calls.append(text)
         return _unit_vec(hot=1)  # orthogonal to stmt's hot=500
 
+    plan_response = json.dumps(
+        {
+            "answer_intent": "entity_recall",
+            "time": None,
+            "entities": [],
+            "topics": ["성장성 모형"],
+            "event_status": ["happened"],
+            "retrievers": ["entity_exact", "dense"],
+            "fusion": "rrf",
+            "rerank": False,
+            "result_limit": 12,
+            "learning": {"enabled": False, "mode": "none"},
+        }
+    )
+
     async def fake_create(**kwargs):
+        # The planner call requests a JSON-schema response; the final answer
+        # synthesis call does not — differentiate so the planner actually
+        # produces a usable plan instead of falling back (which drops
+        # entity_exact and breaks the exact-match seeding under test).
+        content = plan_response if kwargs.get("response_format") else "ok"
         return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
         )
 
     client = SimpleNamespace()

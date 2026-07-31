@@ -75,9 +75,9 @@ async def test_card_is_saved_without_a_subjective_qa_call(
     monkeypatch.setattr(node_expression_store, "save_node_expressions", capture_expressions)
 
     async def no_audio(*args, **kwargs):
-        return None, None
+        return None, None, None
 
-    monkeypatch.setattr(quiz_bundle, "synthesize_quiz_audio", no_audio)
+    monkeypatch.setattr(quiz_bundle, "synthesize_quiz_audio_assets", no_audio)
 
     created, _ = await quiz_bundle.generate_quiz_bundle(
         db_session,
@@ -341,9 +341,9 @@ async def test_multiple_segments_and_inflected_surface_answers_are_created(
     )
 
     async def no_audio(*args, **kwargs):
-        return None, None
+        return None, None, None
 
-    monkeypatch.setattr(quiz_bundle, "synthesize_quiz_audio", no_audio)
+    monkeypatch.setattr(quiz_bundle, "synthesize_quiz_audio_assets", no_audio)
     created, _ = await quiz_bundle.generate_quiz_bundle(
         db_session, iso_user, language="english", seed_node_ids={str(node.id)}
     )
