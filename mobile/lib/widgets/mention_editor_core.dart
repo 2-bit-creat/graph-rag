@@ -586,6 +586,14 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     );
   }
 
+  /// True when the caret sits at the very end of the text — the "still typing"
+  /// case, and the only one where following it with a scroll is welcome.
+  bool get caretAtEnd {
+    final selection = _controller.selection;
+    if (!selection.isValid) return true;
+    return selection.isCollapsed && selection.baseOffset >= _controller.text.length;
+  }
+
   /// "@무언가" tokens the user typed but never confirmed as a speaker.
   List<String> unconfirmedMentions() => unregisteredMentionTokens(
         _controller.text,

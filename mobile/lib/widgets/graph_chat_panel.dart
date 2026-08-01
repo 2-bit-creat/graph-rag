@@ -512,18 +512,18 @@ class _InputBarState extends State<_InputBar> {
   AudioRecordController? _recorder;
   bool _journalSaving = false;
 
-  /// A four-line docked box is fine for a sentence and hostile for a pasted
-  /// transcript — caret placement inside a scrolled box is unreliable and the
-  /// text is barely readable. Past this length the composer offers a full-screen
-  /// editor instead.
+  /// Past this length the composer also offers a full-screen editor — useful for
+  /// a pasted transcript, but never forced: the docked box itself has to work.
   static const _longDraftChars = 200;
   bool _longDraft = false;
-
-  /// Auto-open the full editor once per draft, not on every keystroke past the
-  /// threshold — reopening it after the user deliberately came back would be
-  /// its own kind of unusable.
-  bool _autoExpanded = false;
   bool _expanding = false;
+
+  /// Roughly six lines. The composer grows to here and then scrolls, so the
+  /// mic/attach/send controls stay reachable.
+  static const _journalComposerMaxHeight = 132.0;
+
+  /// Owns the journal composer's scrolling instead of the TextField.
+  final _journalScroll = ScrollController();
 
   @override
   void initState() {
@@ -547,6 +547,7 @@ class _InputBarState extends State<_InputBar> {
   @override
   void dispose() {
     chatSession.composerRestore.removeListener(_onComposerRestore);
+    _journalScroll.dispose();
     _ownedFocusNode?.dispose();
     _recorder?.dispose();
     super.dispose();
@@ -699,20 +700,24 @@ class _InputBarState extends State<_InputBar> {
     setState(() => _longDraft = edited.length >= _longDraftChars);
   }
 
-  /// A long draft pasted into the docked pill is unusable there — four lines of
-  /// a scrolled viewport where the caret cannot be placed. Hand it straight to
-  /// the full editor rather than leaving the user to discover a small icon.
   void _onJournalTextChanged(String text) {
     final long = text.length >= _longDraftChars;
     if (long != _longDraft) setState(() => _longDraft = long);
-    if (!long) {
-      _autoExpanded = false;
-      return;
-    }
-    if (_autoExpanded || _expanding) return;
-    _autoExpanded = true;
+    _followCaretWhileTyping();
+  }
+
+  /// The field no longer scrolls itself, so typing past the cap would run off
+  /// the bottom. Follow the caret only when it sits at the very end — i.e. while
+  /// the user is actually typing there. Editing higher up must never yank the
+  /// view, which is the whole point of the change.
+  void _followCaretWhileTyping() {
+    final field = _mentionFieldKey.currentState;
+    if (field == null) return;
+    if (!field.caretAtEnd) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _openFullEditor();
+      if (!mounted || !_journalScroll.hasClients) return;
+      final max = _journalScroll.position.maxScrollExtent;
+      if (_journalScroll.offset < max) _journalScroll.jumpTo(max);
     });
   }
 
@@ -850,29 +855,43 @@ class _InputBarState extends State<_InputBar> {
           ],
           Expanded(
             child: journalMode
-                ? MentionAutocompleteField(
-                    key: _mentionFieldKey,
-                    focusNode: _focusNode,
-                    minLines: 1,
-                    // Keep the docked composer compact on phones. Longer
-                    // journal text remains scrollable inside the field so the
-                    // mic/attach/send controls stay easy to reach.
-                    maxLines: 4,
-                    showCounter: false,
-                    // Docked at the bottom of the screen — open upward so the
-                    // popup never renders off-screen below the viewport.
-                    openUpward: true,
-                    enabled: canType && !recording,
-                    onChanged: _onJournalTextChanged,
-                    decoration: InputDecoration(
-                      hintText: widget.hint,
-                      hintStyle:
-                          TextStyle(color: shell.mutedText, fontSize: 13.5),
-                      isDense: true,
-                      filled: false,
-                      border: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.sm, vertical: 8),
+                // The composer still grows to a cap and then scrolls — what
+                // changed is WHO owns the scrolling. A TextField with a capped
+                // maxLines owns an internal viewport, and on Flutter web that
+                // viewport's offset is not the one the hidden DOM input uses to
+                // resolve a tap: once the text is scrolled, tapping resolves
+                // against the unscrolled DOM text and the caret lands back where
+                // it was. Handing the scrolling to an ordinary ScrollView and
+                // letting the field grow freely inside it (maxLines: null) keeps
+                // the same capped, scrollable box while leaving exactly one
+                // scroll offset in play, so a tap lands where it was made.
+                ? ConstrainedBox(
+                    constraints:
+                        const BoxConstraints(maxHeight: _journalComposerMaxHeight),
+                    child: SingleChildScrollView(
+                      controller: _journalScroll,
+                      child: MentionAutocompleteField(
+                        key: _mentionFieldKey,
+                        focusNode: _focusNode,
+                        minLines: 1,
+                        maxLines: null,
+                        showCounter: false,
+                        // Docked at the bottom of the screen — open upward so
+                        // the popup never renders off-screen below the viewport.
+                        openUpward: true,
+                        enabled: canType && !recording,
+                        onChanged: _onJournalTextChanged,
+                        decoration: InputDecoration(
+                          hintText: widget.hint,
+                          hintStyle:
+                              TextStyle(color: shell.mutedText, fontSize: 13.5),
+                          isDense: true,
+                          filled: false,
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: AppSpacing.sm, vertical: 8),
+                        ),
+                      ),
                     ),
                   )
                 : Focus(
