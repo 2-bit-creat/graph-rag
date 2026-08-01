@@ -233,10 +233,12 @@ String labeledTextFromMentionField(MentionAutocompleteFieldState field) {
   return toLabeledLines([MapEntry('나', text)]);
 }
 
-/// @멘션 부분(배지)의 흰 글자만 그려주는 컨트롤러 — 배지의 색 배경 자체는
-/// [MentionHighlightPainter]가 실제 글자 상자(getBoxesForSelection) 기준으로
-/// 따로 그린다. TextStyle.background로 직접 칠하면 굵기가 다른 런(run)끼리
-/// 글자 상자 높이가 미묘하게 달라 배경이 삐뚤빼뚤해지므로 이 방식을 쓴다.
+/// Colors the "@배지" runs of the text.
+///
+/// Color is the ONLY thing this may change. Anything that alters a glyph's
+/// advance — weight, letter spacing, font — desynchronizes the canvas text from
+/// the hidden DOM input that resolves taps into caret positions, and taps then
+/// land on the wrong character. See the note in [buildTextSpan].
 class MentionStyledController extends TextEditingController {
   MentionStyledController({
     required this.mentionsOf,
@@ -266,14 +268,20 @@ class MentionStyledController extends TextEditingController {
           style: style?.copyWith(color: segColor),
         ));
       }
-      const c = kMentionLinkColor;
+      // COLOR ONLY. Nothing here may change a glyph's advance width.
+      //
+      // Flutter syncs a single flat style to the hidden DOM input that the
+      // browser uses to resolve a tap into a text offset — fontFamily, fontSize,
+      // fontWeight, letterSpacing, wordSpacing, lineHeight, all taken from the
+      // field's ONE base style (EditableText._getTextInputStyle). Per-run
+      // styling cannot be represented there. Making mentions bolder and tighter
+      // therefore laid them out narrower on the canvas than in the DOM, so every
+      // character after a mention sat at a different x in the two — and taps
+      // landed on the wrong character. Every line of a pasted dialogue starts
+      // with "@이름:", which is why placing the caret was worst near the left.
       spans.add(TextSpan(
         text: full.substring(h.start, h.end),
-        style: style?.copyWith(
-          color: c,
-          fontWeight: FontWeight.w600,
-          letterSpacing: -0.1,
-        ),
+        style: style?.copyWith(color: kMentionLinkColor),
       ));
       segColor = null;
       idx = h.end;
@@ -285,123 +293,6 @@ class MentionStyledController extends TextEditingController {
       ));
     }
     return TextSpan(style: style, children: spans);
-  }
-}
-
-/// @멘션 배지의 둥근 색 배경을 텍스트 필드 뒤에 그리는 페인터.
-///
-/// TextField와 완전히 동일한 style·strutStyle·폭으로 다시 레이아웃한 뒤
-/// [TextPainter.getBoxesForSelection]으로 얻은 실제 글자 상자를 그대로
-/// 사용한다 — Flutter의 텍스트 선택(드래그 하이라이트) 배경과 같은 방식이라
-/// 줄바꿈·굵기와 무관하게 항상 매끈하고 높이가 일정하다.
-class MentionHighlightPainter extends CustomPainter {
-  MentionHighlightPainter({
-    required this.text,
-    required this.textStyle,
-    required this.strutStyle,
-    required this.hits,
-    required this.colorOf,
-    required this.scroll,
-  }) : super(repaint: scroll);
-
-  final String text;
-  final TextStyle textStyle;
-  final StrutStyle strutStyle;
-  final List<MentionHit> hits;
-  final Color Function(String name) colorOf;
-  // TextField의 내부 스크롤 위치. 텍스트가 위로 스크롤된 만큼 하이라이트도
-  // 위로 옮겨 그린다(= 캔버스를 -offset만큼 이동). Listenable로 넘겨
-  // 스크롤 시 자동 repaint 되게 한다.
-  final ScrollController scroll;
-
-  // Confirmed mentions are drawn as compact chips, not selection highlights.
-  static const _radius = Radius.circular(7);
-  static const _hPad = 5.0;
-  static const _vInset = 3.0;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (hits.isEmpty) return;
-    // 스크롤로 화면 밖으로 나간 배지가 패딩 영역을 침범하지 않도록 클립한다.
-    canvas.clipRect(Offset.zero & size);
-    final scrollOffset = scroll.hasClients ? scroll.offset : 0.0;
-    canvas.translate(0, -scrollOffset);
-    final painter = TextPainter(
-      text: TextSpan(text: text, style: textStyle),
-      textDirection: TextDirection.ltr,
-      strutStyle: strutStyle,
-    )..layout(maxWidth: size.width);
-    // getBoxesForSelection의 top/bottom을 격자 스냅·박스 중심 등으로 어림잡던
-    // 이전 방식은 strut 계산과 미세하게 어긋나 글자가 계속 하이라이트 위쪽에
-    // 붙어 보였다. computeLineMetrics()는 실제로 렌더링될 줄의 baseline·
-    // ascent·descent를 그대로 알려주므로(런별 굵기 차이도 이미 한 줄 기준으로
-    // 반영됨) 이걸 그대로 상자 경계로 쓰면 항상 실제 글자와 일치한다.
-    final lines = painter.computeLineMetrics();
-    if (lines.isEmpty) return;
-    for (final hit in hits) {
-      final color = colorOf(hit.name);
-      final fill = Paint()..color = color.withValues(alpha: 0.16);
-      final border = Paint()
-        ..color = color.withValues(alpha: 0.30)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1;
-      final boxes = painter.getBoxesForSelection(
-        TextSelection(baseOffset: hit.start, extentOffset: hit.end),
-      );
-      if (boxes.isEmpty) continue;
-      // "@" + 이름처럼 스크립트가 섞이면 Skia가 런 경계에서 박스를 여러 개로
-      // 쪼개 돌려준다. 각각 따로 둥글리면 이어붙는 자리에서 모서리끼리 만나
-      // 가운데가 파인 것처럼 보이므로, 같은 줄의 박스는 하나로 합쳐 통짜
-      // 사각형 하나만 그린다.
-      final byLine = <int, List<double>>{}; // lineIndex -> [left, right]
-      for (final box in boxes) {
-        final centerY = (box.top + box.bottom) / 2;
-        var lineIndex = lines.length - 1;
-        for (var i = 0; i < lines.length; i++) {
-          final line = lines[i];
-          if (centerY <= line.baseline + line.descent) {
-            lineIndex = i;
-            break;
-          }
-        }
-        final span = byLine[lineIndex];
-        if (span == null) {
-          byLine[lineIndex] = [box.left, box.right];
-        } else {
-          if (box.left < span[0]) span[0] = box.left;
-          if (box.right > span[1]) span[1] = box.right;
-        }
-      }
-      byLine.forEach((lineIndex, span) {
-        final line = lines[lineIndex];
-        final top = line.baseline - line.ascent;
-        final bottom = line.baseline + line.descent;
-        final rect = Rect.fromLTRB(
-          span[0] - _hPad,
-          top + _vInset,
-          span[1] + _hPad,
-          bottom - _vInset,
-        );
-        final chip = RRect.fromRectAndRadius(rect, _radius);
-        canvas.drawRRect(chip, fill);
-        canvas.drawRRect(chip, border);
-      });
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant MentionHighlightPainter oldDelegate) {
-    if (oldDelegate.text != text || oldDelegate.hits.length != hits.length) {
-      return true;
-    }
-    for (var i = 0; i < hits.length; i++) {
-      final a = oldDelegate.hits[i];
-      final b = hits[i];
-      if (a.start != b.start || a.end != b.end || a.name != b.name) {
-        return true;
-      }
-    }
-    return false;
   }
 }
 
@@ -940,19 +831,14 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // height·leadingDistribution을 명시해 줄 상자를 고정 — 화자 배지(bold)와
-    // 본문(regular)의 폰트 메트릭 차이로 하이라이트 배경 높이가 들쭉날쭉해지는
-    // 문제 방지. StrutStyle.forceStrutHeight로 실제 렌더링에도 강제 적용.
+    // Plain style, no strut override and no custom leading distribution. Those
+    // existed to keep MentionHighlightPainter's chip backgrounds from wobbling,
+    // and that painter is gone — while the overrides kept moving the canvas
+    // baseline away from the plain line box the hidden DOM input uses to resolve
+    // taps, costing vertical accuracy on a multi-line draft for nothing.
     final textStyle =
-        (theme.textTheme.bodyLarge ?? const TextStyle(fontSize: 16)).copyWith(
-      height: 1.5,
-      leadingDistribution: TextLeadingDistribution.even,
-    );
-    final strutStyle = StrutStyle(
-      fontSize: textStyle.fontSize,
-      height: textStyle.height,
-      forceStrutHeight: true,
-    );
+        (theme.textTheme.bodyLarge ?? const TextStyle(fontSize: 16))
+            .copyWith(height: 1.5);
     final ctx = _mentionCtx;
     final baseDecoration = widget.decoration ?? const InputDecoration();
     final contentPadding =
@@ -1086,7 +972,6 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
                 scrollController: _scroll,
                 enabled: widget.enabled,
                 style: textStyle,
-                strutStyle: strutStyle,
                 maxLines: widget.maxLines,
                 minLines: widget.minLines,
                 maxLength: kMaxJournalTextChars,

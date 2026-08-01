@@ -63,6 +63,63 @@ ScrollableState _innerScrollable(WidgetTester tester) {
 }
 
 void main() {
+  // Flutter syncs ONE flat style to the hidden DOM input the browser uses to
+  // turn a tap into a caret position (EditableText._getTextInputStyle sends
+  // fontFamily/fontSize/fontWeight/letterSpacing/wordSpacing/lineHeight from the
+  // field's base style). Per-run styling cannot be represented there, so any run
+  // whose glyphs advance differently from the base style shifts every character
+  // after it out of sync with the DOM — and the caret lands on the wrong one.
+  testWidgets('mention runs differ from the base style in color only',
+      (tester) async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    const base = TextStyle(
+      fontSize: 16,
+      fontWeight: FontWeight.w400,
+      letterSpacing: 0,
+      wordSpacing: 0,
+      fontFamily: 'Roboto',
+    );
+    final controller = MentionStyledController(
+      mentionsOf: (t) => findMentions(t, const ['나', '부부장님']),
+      colorOf: (_) => const Color(0xFF1264A3),
+    )..text = _longDraft;
+
+    final span = controller.buildTextSpan(
+      context: tester.element(find.byType(SizedBox)),
+      style: base,
+      withComposing: false,
+    );
+
+    final runs = <TextSpan>[];
+    void walk(InlineSpan s) {
+      if (s is TextSpan) {
+        if (s.text != null) runs.add(s);
+        for (final child in s.children ?? const <InlineSpan>[]) {
+          walk(child);
+        }
+      }
+    }
+
+    walk(span);
+    expect(runs, isNotEmpty);
+    for (final run in runs) {
+      final style = run.style;
+      if (style == null) continue;
+      expect(style.fontSize, base.fontSize, reason: 'run "${run.text}"');
+      expect(style.fontWeight, base.fontWeight, reason: 'run "${run.text}"');
+      expect(style.letterSpacing, base.letterSpacing,
+          reason: 'run "${run.text}"');
+      expect(style.wordSpacing, base.wordSpacing, reason: 'run "${run.text}"');
+      expect(style.fontFamily, base.fontFamily, reason: 'run "${run.text}"');
+    }
+    // The whole point of the controller still has to work.
+    expect(runs.any((r) => r.style?.color == const Color(0xFF1264A3)), isTrue,
+        reason: 'mentions must still be colored');
+    expect(runs.map((r) => r.text).join(), _longDraft,
+        reason: 'the runs must reconstruct the text exactly, or every offset '
+            'after a gap would be wrong');
+  });
+
   testWidgets('the field itself never scrolls; the box around it does',
       (tester) async {
     final key = GlobalKey<MentionAutocompleteFieldState>();
