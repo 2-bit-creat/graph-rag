@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.db import migration_checksum, validate_migration_sql
+from app.db import migration_checksum, split_sql_statements, validate_migration_sql
 
 
 @pytest.mark.parametrize(
@@ -35,3 +35,32 @@ def test_unsafe_migrations_are_rejected(sql: str) -> None:
 def test_migration_checksum_is_stable_and_content_sensitive() -> None:
     assert migration_checksum("CREATE TABLE a (id INT)") == migration_checksum("CREATE TABLE a (id INT)")
     assert migration_checksum("CREATE TABLE a (id INT)") != migration_checksum("CREATE TABLE a (id BIGINT)")
+
+
+def test_split_sql_statements_separates_multiple_commands() -> None:
+    sql = """
+    ALTER TABLE nodes ADD COLUMN IF NOT EXISTS a TEXT;
+    ALTER TABLE nodes ADD COLUMN IF NOT EXISTS b TEXT DEFAULT 'x';
+    CREATE INDEX IF NOT EXISTS idx_nodes_a ON nodes (a);
+    """
+    assert split_sql_statements(sql) == [
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS a TEXT",
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS b TEXT DEFAULT 'x'",
+        "CREATE INDEX IF NOT EXISTS idx_nodes_a ON nodes (a)",
+    ]
+
+
+def test_split_sql_statements_ignores_semicolons_inside_quotes_and_dollar_blocks() -> None:
+    sql = """
+    ALTER TABLE nodes ADD COLUMN IF NOT EXISTS note TEXT DEFAULT 'a;b';
+    DO $$
+    BEGIN
+        IF EXISTS (SELECT 1) THEN
+            RAISE NOTICE 'semi;colon';
+        END IF;
+    END $$;
+    """
+    statements = split_sql_statements(sql)
+    assert len(statements) == 2
+    assert statements[0] == "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS note TEXT DEFAULT 'a;b'"
+    assert statements[1].startswith("DO $$") and statements[1].endswith("END $$")

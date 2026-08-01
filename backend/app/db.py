@@ -627,6 +627,69 @@ def validate_migration_sql(sql: str) -> None:
         raise ValueError("automatic migrations must start with CREATE TABLE or CREATE INDEX")
 
 
+def split_sql_statements(sql: str) -> list[str]:
+    """Split a migration file into individually-executable statements.
+
+    asyncpg (with DB_DISABLE_PREPARED_CACHE, which every deploy runs with)
+    prepares each exec_driver_sql call as a single statement — Postgres
+    rejects a prepared statement containing more than one command
+    ("cannot insert multiple commands into a prepared statement"). A naive
+    split on ";" would also break any DO $$ ... $$ block, since those can
+    contain semicolons of their own, so quote/dollar-quote state is tracked.
+    """
+    statements: list[str] = []
+    buf: list[str] = []
+    in_single_quote = False
+    dollar_tag: str | None = None
+    i = 0
+    n = len(sql)
+    while i < n:
+        ch = sql[i]
+        if dollar_tag is not None:
+            if sql.startswith(dollar_tag, i):
+                buf.append(dollar_tag)
+                i += len(dollar_tag)
+                dollar_tag = None
+                continue
+            buf.append(ch)
+            i += 1
+            continue
+        if in_single_quote:
+            buf.append(ch)
+            if ch == "'":
+                in_single_quote = False
+            i += 1
+            continue
+        if ch == "'":
+            in_single_quote = True
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == "$":
+            j = i + 1
+            while j < n and (sql[j].isalnum() or sql[j] == "_"):
+                j += 1
+            if j < n and sql[j] == "$":
+                tag = sql[i : j + 1]
+                dollar_tag = tag
+                buf.append(tag)
+                i = j + 1
+                continue
+        if ch == ";":
+            statement = "".join(buf).strip()
+            if statement:
+                statements.append(statement)
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    tail = "".join(buf).strip()
+    if tail:
+        statements.append(tail)
+    return statements
+
+
 def versioned_migration_files() -> list[Path]:
     if not _VERSIONED_MIGRATIONS_DIR.exists():
         return []
@@ -723,7 +786,8 @@ async def run_deployment_migrations(*, git_sha: str) -> dict[str, object]:
                 continue
             validate_migration_sql(sql)
             started = datetime.now(UTC)
-            await conn.exec_driver_sql(sql)
+            for statement in split_sql_statements(sql):
+                await conn.exec_driver_sql(statement)
             elapsed = int((datetime.now(UTC) - started).total_seconds() * 1000)
             await conn.execute(
                 text(
