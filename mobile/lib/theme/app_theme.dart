@@ -228,6 +228,12 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
     brightness: brightness,
     colorScheme: scheme,
     scaffoldBackgroundColor: scheme.surface,
+    // Naming the family is what carries it to the hidden DOM input a text field
+    // is measured against on web: EditableText sends `_style.fontFamily` on, and
+    // a null family reached the engine as the literal string "null", leaving the
+    // element to measure Korean in whatever the system font was while CanvasKit
+    // painted something else. See the notes in pubspec.yaml and web/index.html.
+    fontFamily: 'Pretendard',
     textTheme: textTheme,
     appBarTheme: AppBarTheme(
       elevation: 0,

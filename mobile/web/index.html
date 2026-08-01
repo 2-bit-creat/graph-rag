@@ -51,6 +51,37 @@
     while the bottom is still under the keyboard, and any inset we measure is
     computed against a viewport that has silently moved.
   -->
+  <!--
+    The SAME font files pubspec.yaml bundles for CanvasKit.
+
+    Flutter web puts a transparent DOM <textarea> over each text field and the
+    browser — not Flutter — decides which character a tap landed on, using that
+    element's own text layout. So the element has to measure text with exactly
+    the font the canvas paints with, or the caret goes to the wrong character.
+    Declaring the identical files here is what makes the two agree; the browser
+    fetches each URL once and serves both uses from cache.
+
+    Keep this in sync with the `fonts:` block in pubspec.yaml.
+  -->
+  <link rel="preload" as="font" type="font/woff2" crossorigin
+        href="assets/fonts/Pretendard-Regular.woff2">
+  <style>
+    @font-face {
+      font-family: 'Pretendard';
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: url('assets/fonts/Pretendard-Regular.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Pretendard';
+      font-style: normal;
+      font-weight: 700;
+      font-display: swap;
+      src: url('assets/fonts/Pretendard-Bold.woff2') format('woff2');
+    }
+  </style>
+
   <style>
     html, body {
       margin: 0;
@@ -62,6 +93,17 @@
     }
     body { position: fixed; top: 0; left: 0; right: 0; bottom: 0; }
   </style>
+  <script>
+    // A CSS @font-face is only fetched once something uses it, and the hidden
+    // input that measures taps is not created until a field is focused. Without
+    // this the browser would measure the first taps in a fallback font — the
+    // exact mismatch the bundling is meant to remove — and only get it right
+    // once the font happened to arrive. Ask for it up front instead.
+    if (document.fonts && document.fonts.load) {
+      document.fonts.load('400 14px Pretendard');
+      document.fonts.load('700 14px Pretendard');
+    }
+  </script>
   <script>
     // Belt to the CSS brace: if Safari scrolls the layout viewport anyway, put
     // it straight back. Cheap, and only fires while the keyboard animates.

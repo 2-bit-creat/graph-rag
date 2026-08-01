@@ -34,3 +34,23 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # Bundled so the CANVAS and the hidden DOM input agree on glyph widths.
+  #
+  # On web the browser resolves a tap against a transparent DOM <textarea> laid
+  # over the field and Flutter takes its selectionStart as the caret offset
+  # (engine text_editing.dart listens to 'selectionchange'). With no fontFamily
+  # set, the engine sent `font: ... "null", -apple-system, sans-serif` to that
+  # element, so it measured Korean in the iOS system font while CanvasKit painted
+  # it in a downloaded Noto fallback — different advances, different line
+  # wrapping, and taps landing on the wrong character.
+  #
+  # web/index.html declares @font-face over these SAME files so both sides load
+  # one identical font. Keep the two declarations in sync.
+  fonts:
+    - family: Pretendard
+      fonts:
+        - asset: fonts/Pretendard-Regular.woff2
+          weight: 400
+        - asset: fonts/Pretendard-Bold.woff2
+          weight: 700
