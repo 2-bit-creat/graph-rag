@@ -212,6 +212,7 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
             onGraphFallback: _openGraphReview,
             onDismiss: _dismiss,
             onCancel: _cancelLive,
+            errorDetail: journalTask.errorDetail,
           );
         },
       );
@@ -261,6 +262,7 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
       onGraphFallback: _openGraphReview,
       onDismiss: null,
       onCancel: null,
+      errorDetail: journalTraceError(_staticEntry),
     );
   }
 }
@@ -310,6 +312,7 @@ class _CardBody extends StatelessWidget {
     required this.onGraphFallback,
     required this.onDismiss,
     required this.onCancel,
+    this.errorDetail,
   });
 
   final String entryId;
@@ -340,6 +343,9 @@ class _CardBody extends StatelessWidget {
 
   /// Abandon a live pipeline that is waiting on the user. Null for static cards.
   final VoidCallback? onCancel;
+
+  /// The server's own explanation for [ComposePhase.error], when there is one.
+  final String? errorDetail;
 
   static List<String> get _steps => [
     tr('progressCard.stepTranscribe'),
@@ -482,6 +488,28 @@ class _CardBody extends StatelessWidget {
                 color: Colors.red.shade300,
               ),
             ),
+            // The reason, verbatim. "그래프 생성 실패" alone told the user nothing
+            // about whether to retry, fix a speaker, or wait.
+            if ((errorDetail ?? '').isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: BoxDecoration(
+                  color: context.shell.subtleSurface,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: SelectableText(
+                  errorDetail!,
+                  style: TextStyle(
+                    fontSize: 11,
+                    height: 1.35,
+                    color: context.shell.mutedText,
+                  ),
+                ),
+              ),
+            ],
           ],
         ],
       ),

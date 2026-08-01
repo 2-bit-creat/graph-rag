@@ -78,10 +78,17 @@ def _llm_client() -> AsyncOpenAI:
     settings = get_settings()
     # Bound the request so a hung OpenAI call fails fast (→ graph_failed) rather
     # than buffering for the SDK default (600s × retries).
+    #
+    # No retries: extraction runs inside the request (FastAPI BackgroundTasks are
+    # awaited by Mangum before the Lambda response returns), so the whole call
+    # must fit the 120s function timeout. One retry at the 90s timeout needs 180s
+    # — the function is killed first, which skips `_mark_graph_failed` entirely
+    # and strands the entry in 'graph_processing' with the client polling forever.
+    # A single bounded attempt always leaves room to record the failure.
     return AsyncOpenAI(
         api_key=settings.openai_api_key,
         timeout=settings.openai_timeout_sec,
-        max_retries=1,
+        max_retries=0,
     )
 
 
@@ -584,6 +591,23 @@ def _parse_llm_json(raw: str) -> Any:
     return json.loads(cleaned)
 
 
+def _require_complete_completion(choice: Any) -> None:
+    """Fail with the real reason when the model stopped short of valid JSON.
+
+    A response cut off at the token limit still parses as "text", so json.loads
+    raises a JSONDecodeError about some byte offset — which then reaches the user
+    as an unexplained graph failure. The finish_reason says exactly what happened.
+    """
+    reason = getattr(choice, "finish_reason", None)
+    if reason == "length":
+        raise ValueError(
+            "LLM response hit the token limit before finishing the JSON — "
+            "the entry is too long or too dense to extract in one call"
+        )
+    if reason == "content_filter":
+        raise ValueError("LLM refused the content (content_filter)")
+
+
 # ─── Person-mention enrichment (draft review) ─────────────────────────────────
 
 def _existing_nodes_hint(all_nodes: list[Node]) -> list[str]:
@@ -894,6 +918,7 @@ async def kg_extract(
             temperature=0.2,
             response_format=_EXTRACTION_RESPONSE_FORMAT,
         )
+        _require_complete_completion(resp.choices[0])
         raw = resp.choices[0].message.content or "{}"
         result = _parse_llm_json(raw)
 
@@ -1724,6 +1749,7 @@ async def extract_statement_graph_draft(
         temperature=0.2,
         response_format=_EXTRACTION_RESPONSE_FORMAT,
     )
+    _require_complete_completion(resp.choices[0])
     raw = resp.choices[0].message.content or "{}"
     result = _parse_llm_json(raw)
     await _verify_concept_matches(result, session, user_id)

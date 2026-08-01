@@ -23,8 +23,12 @@ class JournalTaskController extends ChangeNotifier {
   bool _speakerReviewOverride = false;
   String? _lastStatusKey;
   String? _sourceText;
+  String? _errorDetail;
 
   String? get entryId => _entryId;
+
+  /// What actually went wrong, straight from the server, for [ComposePhase.error].
+  String? get errorDetail => _errorDetail;
 
   /// Text the user actually typed for the live entry, so abandoning it can put
   /// the draft back in the composer instead of losing it.
@@ -127,6 +131,7 @@ class JournalTaskController extends ChangeNotifier {
     _entryId = null;
     _entry = null;
     _sourceText = sourceText;
+    _errorDetail = null;
     _graphBuildStarted = false;
     _speakersAcknowledged = false;
     _speakerReviewOverride = false;
@@ -146,6 +151,7 @@ class JournalTaskController extends ChangeNotifier {
       if (serial != _workSerial) rethrow;
       _phase = ComposePhase.error;
       _stageLabel = tr('journal.stageFailed');
+      _errorDetail = e.toString().replaceFirst('Exception: ', '');
       notifyListeners();
       rethrow;
     }
@@ -207,6 +213,13 @@ class JournalTaskController extends ChangeNotifier {
       _speakersAcknowledged = true;
     }
     _recomputePhase();
+    if (_phase == ComposePhase.error) {
+      // A server-side failure records its reason on the entry's trace; a
+      // client-side one was captured at the call site. Either way, show it.
+      _errorDetail ??= journalTraceError(entry);
+    } else {
+      _errorDetail = null;
+    }
 
     final statusKey =
         '${entry['status']}/${entry['graph_status']}/${_phase.name}/$_speakersAcknowledged';
@@ -252,11 +265,15 @@ class JournalTaskController extends ChangeNotifier {
 
     try {
       await apiClient.buildGraph(id, force: force);
-    } catch (_) {
+    } catch (e) {
       if (serial != _workSerial || _entryId != id) return;
       _graphBuildStarted = false;
       _phase = ComposePhase.error;
       _stageLabel = tr('journal.stageGraphFailed');
+      // Keep what the server actually said. Discarding it left every cause —
+      // an unconfirmed speaker, an already-committed graph, a timeout, an
+      // extraction error — looking like the same unexplained "그래프 생성 실패".
+      _errorDetail = e.toString().replaceFirst('Exception: ', '');
       notifyListeners();
       return;
     }
@@ -339,6 +356,7 @@ class JournalTaskController extends ChangeNotifier {
     _entryId = null;
     _entry = null;
     _sourceText = null;
+    _errorDetail = null;
     _phase = ComposePhase.composing;
     _stageLabel = '';
     _graphBuildStarted = false;

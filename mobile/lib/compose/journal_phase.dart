@@ -78,6 +78,24 @@ bool isGraphReviewPending(Map<String, dynamic>? entry) {
   );
 }
 
+/// The server's own reason for a failed step, recorded in `pipeline_trace`.
+///
+/// `_mark_graph_failed` persists `str(exc)` on the step that blew up, and the
+/// entry payload carries the trace — so the cause of a `graph_failed` entry is
+/// already on the client and only needed reading.
+String? journalTraceError(Map<String, dynamic>? entry) {
+  final trace = entry?['pipeline_trace'];
+  if (trace is! Map) return null;
+  final steps = trace['steps'];
+  if (steps is! List) return null;
+  for (final raw in steps.reversed) {
+    if (raw is! Map) continue;
+    final error = raw['error']?.toString().trim();
+    if (error != null && error.isNotEmpty && error != 'null') return error;
+  }
+  return null;
+}
+
 bool hasSpeakerScript(Map<String, dynamic>? entry) {
   final segments = entry?['transcript_segments'] as List<dynamic>? ?? [];
   if (segments.isNotEmpty) return true;
