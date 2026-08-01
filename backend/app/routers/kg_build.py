@@ -22,6 +22,7 @@ from collections import deque
 from datetime import date as _date, datetime, timezone, timedelta
 from functools import lru_cache
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from openai import AsyncOpenAI
@@ -43,7 +44,7 @@ from ..journal_pipeline import transcribe_audio
 from ..models import JournalEntry, JournalGraphLink, Node, SpeakerProfile, User
 from ..speaker_diarization import SpeakerSegment, diarize_audio
 from ..storage import save_audio_workfile
-from ..temporal import resolve_event_temporal
+from ..temporal import EVENT_STATUSES, resolve_event_temporal
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/kg", tags=["kg-build"])
@@ -129,6 +130,10 @@ class KgClaimIn(BaseModel):
     temporal_precision: Literal["exact", "day", "range", "month", "relative", "unknown"] = "unknown"
     temporal_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     event_status: Literal["happened", "planned", "cancelled", "hypothetical", "unknown"] = "happened"
+    # Reviewer-confirmed event day. Nothing in the text can tell us when an entry
+    # written in plain past tense actually happened ("어제 정리한 대화를 오늘 씀"),
+    # so the reviewer's answer outranks every inference when it is present.
+    event_date_override: _date | None = None
 
 
 class KgCommitRequest(BaseModel):
@@ -230,9 +235,46 @@ def _claim_key(entry_id: _uuid.UUID | None, index: int, statement: str) -> str:
     return str(_uuid.uuid5(namespace, f"{index}:{statement.strip()}"))
 
 
+def _parse_override_date(raw: Any) -> _date | None:
+    """Coerce a reviewer-supplied event day from a model field or JSON string."""
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, _date) and not isinstance(raw, datetime):
+        return raw
+    if isinstance(raw, datetime):
+        return raw.date()
+    try:
+        return _date.fromisoformat(str(raw).strip()[:10])
+    except ValueError:
+        return None
+
+
 def _claim_temporal_values(claim: Any, recorded_at: datetime) -> dict[str, Any]:
     """Resolve relative times server-side, regardless of whether claim is a dict or model."""
     get = claim.get if isinstance(claim, dict) else lambda key, default=None: getattr(claim, key, default)
+
+    # A reviewer-confirmed day is ground truth: text written in plain past tense
+    # carries no signal about when it happened, so no amount of parsing can
+    # recover it. Skip resolution entirely rather than let it overwrite them.
+    override = _parse_override_date(get("event_date_override"))
+    if override is not None:
+        tz = ZoneInfo(get_settings().chat_timezone)
+        start = datetime(override.year, override.month, override.day, tzinfo=tz)
+        anchor = recorded_at if recorded_at.tzinfo is not None else recorded_at.replace(tzinfo=timezone.utc)
+        status = (get("event_status") or "happened").strip().lower()
+        return {
+            "occurred_at": override,
+            "recorded_at": recorded_at,
+            "event_start_at": start,
+            "event_end_at": start + timedelta(days=1),
+            "temporal_precision": "user_set",
+            "temporal_confidence": 1.0,
+            "temporal_source_text": None,
+            "temporal_anchor_at": anchor.astimezone(tz),
+            "event_status": status if status in EVENT_STATUSES else "happened",
+            "event_timezone": get_settings().chat_timezone,
+        }
+
     values = resolve_event_temporal(
         statement=(get("statement", "") or "").strip(),
         entry_at=recorded_at,
@@ -1704,6 +1746,19 @@ async def extract_statement_graph_draft(
     if not claims:
         raise ValueError("LLM produced no statements")
 
+    # Resolve each claim's event time now, with the same function commit uses, so
+    # the review UI can show the date it is about to store instead of leaving the
+    # user to discover it afterwards. Display-only: commit re-resolves from the
+    # same inputs (or from the reviewer's event_date_override, which wins).
+    draft_recorded_at = entry.created_at or datetime.now(timezone.utc)
+    for c in claims:
+        resolved = _claim_temporal_values(c, draft_recorded_at)
+        occurred = resolved["occurred_at"]
+        c["resolved_event_date"] = occurred.isoformat() if occurred else None
+        c["resolved_precision"] = resolved["temporal_precision"]
+        c["resolved_confidence"] = resolved["temporal_confidence"]
+    recorded_date = draft_recorded_at.astimezone(ZoneInfo(settings.chat_timezone)).date()
+
     # Remap raw diarization labels (Speaker_1) to confirmed identities (제니 / self /
     # an external Source like 기업은행) so the statement and the voice link
     # converge on one node — never split. The head type follows the confirmed
@@ -1733,6 +1788,10 @@ async def extract_statement_graph_draft(
         "person_candidates": person_candidates,
         "speaker_count": len(speakers) if speakers else 1,
         "is_diary": is_diary,
+        # The entry's own recording day, in the app timezone. The review UI offers
+        # "그날/전날" relative to this rather than to the device clock, so a draft
+        # reviewed the next morning still counts back from when it was written.
+        "recorded_date": recorded_date.isoformat(),
         # Surfaced to the pipeline flow trace (see run_entry_graph_draft) so the
         # "그래프 드래프트" node shows the actual system_prompt/input the LLM used.
         "system_prompt": system_prompt,

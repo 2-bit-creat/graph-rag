@@ -276,7 +276,7 @@ class EventTemporal:
     status: str
 
 
-_EVENT_STATUSES = frozenset({"happened", "planned", "cancelled", "hypothetical", "unknown"})
+EVENT_STATUSES = frozenset({"happened", "planned", "cancelled", "hypothetical", "unknown"})
 
 
 def resolve_event_temporal(
@@ -302,7 +302,7 @@ def resolve_event_temporal(
     source = (event_time_text or "").strip() or None
     window = parse_time_window(source or statement, tz, anchor)
     status = (event_status or "happened").strip().lower()
-    if status not in _EVENT_STATUSES:
+    if status not in EVENT_STATUSES:
         status = "unknown"
 
     if window is None:

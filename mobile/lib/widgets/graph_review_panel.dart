@@ -161,6 +161,14 @@ class _ClaimDraft {
     required this.title,
     required this.statement,
     required this.concepts,
+    this.speakerType = 'Person',
+    this.eventTimeText,
+    this.temporalPrecision = 'unknown',
+    this.temporalConfidence = 0.0,
+    this.eventStatus = 'happened',
+    this.suggestedDate,
+    this.resolvedPrecision = 'unknown',
+    this.resolvedConfidence = 0.0,
   });
 
   final TextEditingController speaker;
@@ -168,12 +176,45 @@ class _ClaimDraft {
   final TextEditingController statement;
   final List<_ConceptDraft> concepts;
 
+  /// Extraction metadata that must survive the review round-trip untouched —
+  /// the server re-resolves event time from these at commit, so dropping them
+  /// silently discarded every timing the text actually stated.
+  final String speakerType;
+  final String? eventTimeText;
+  final String temporalPrecision;
+  final double temporalConfidence;
+  final String eventStatus;
+
+  /// What the server resolved this claim's event day to, for display. Null only
+  /// if resolution failed entirely.
+  final DateTime? suggestedDate;
+  final String resolvedPrecision;
+  final double resolvedConfidence;
+
+  /// Reviewer's answer to "when did this happen", overriding inference. Null
+  /// means "the suggestion is right", which is the overwhelmingly common case.
+  DateTime? dateOverride;
+
+  DateTime? get effectiveDate => dateOverride ?? suggestedDate;
+
+  /// A date nobody can infer from the text — it fell back to the recording day.
+  /// Worth asking about; an explicitly stated date is not.
+  bool get isGuessedDate =>
+      dateOverride == null && resolvedPrecision == 'recorded_date';
+
   /// Swipe-review state (Feature B). Approval is review progress only — commit
   /// still sends every remaining claim. `dismissKey` is regenerated on undo so a
   /// restored card never reuses a dismissed Dismissible's key (which crashes).
   bool approved = false;
   bool expanded = false;
   Key dismissKey = UniqueKey();
+
+  static DateTime? _parseDate(dynamic raw) {
+    final s = (raw ?? '').toString().trim();
+    if (s.isEmpty) return null;
+    final d = DateTime.tryParse(s.length > 10 ? s.substring(0, 10) : s);
+    return d == null ? null : DateTime(d.year, d.month, d.day);
+  }
 
   factory _ClaimDraft.fromMap(Map<String, dynamic> m) => _ClaimDraft(
         speaker: TextEditingController(text: (m['speaker'] ?? '').toString()),
@@ -183,13 +224,32 @@ class _ClaimDraft {
             .map(_ConceptDraft.fromRaw)
             .where((c) => c.name.isNotEmpty)
             .toList(),
+        speakerType: (m['speaker_type'] ?? 'Person').toString(),
+        eventTimeText: (m['event_time_text'] as String?)?.trim().isEmpty ?? true
+            ? null
+            : (m['event_time_text'] as String).trim(),
+        temporalPrecision: (m['temporal_precision'] ?? 'unknown').toString(),
+        temporalConfidence:
+            double.tryParse(m['temporal_confidence']?.toString() ?? '') ?? 0.0,
+        eventStatus: (m['event_status'] ?? 'happened').toString(),
+        suggestedDate: _parseDate(m['resolved_event_date']),
+        resolvedPrecision: (m['resolved_precision'] ?? 'unknown').toString(),
+        resolvedConfidence:
+            double.tryParse(m['resolved_confidence']?.toString() ?? '') ?? 0.0,
       );
 
   Map<String, dynamic> toMap() => {
         'speaker': speaker.text.trim(),
+        'speaker_type': speakerType,
         'title': title.text.trim(),
         'statement': statement.text.trim(),
         'concepts': concepts.map((c) => c.toMap()).toList(),
+        if (eventTimeText != null) 'event_time_text': eventTimeText,
+        'temporal_precision': temporalPrecision,
+        'temporal_confidence': temporalConfidence,
+        'event_status': eventStatus,
+        if (dateOverride != null)
+          'event_date_override': _isoDay(dateOverride!),
       };
 
   void dispose() {
@@ -199,11 +259,33 @@ class _ClaimDraft {
   }
 }
 
+String _isoDay(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+/// "7월 2일 (목)" — the same date vocabulary the timeline day headers use.
+String _dayLabel(DateTime d) => tr('timeline.dayPanelDateLabel', {
+      'month': d.month,
+      'day': d.day,
+      'weekday': [
+        tr('timeline.weekdayMon'),
+        tr('timeline.weekdayTue'),
+        tr('timeline.weekdayWed'),
+        tr('timeline.weekdayThu'),
+        tr('timeline.weekdayFri'),
+        tr('timeline.weekdaySat'),
+        tr('timeline.weekdaySun'),
+      ][d.weekday - 1],
+    });
+
 class _GraphReviewPanelState extends State<GraphReviewPanel> {
   late List<_ClaimDraft> _claims;
   late String _contextType;
   late List<_PersonCandidate> _personCandidates;
   bool _submitting = false;
+
+  /// The entry's own recording day — the anchor for the "그날/전날" shortcuts, so
+  /// a draft reviewed the next morning still counts back from when it was written.
+  late DateTime _recordedDate;
 
   @override
   void initState() {
@@ -218,6 +300,184 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
         .map(_PersonCandidate.fromRaw)
         .where((p) => p.id.isNotEmpty)
         .toList();
+    final now = DateTime.now();
+    _recordedDate = _ClaimDraft._parseDate(widget.staging['recorded_date']) ??
+        DateTime(now.year, now.month, now.day);
+  }
+
+  // ── Event date ─────────────────────────────────────────────────────────────
+
+  /// The one date shared by every claim, or null when they differ. Claims almost
+  /// always share a day, which is what makes a single bulk control the right
+  /// default rather than a per-claim chore.
+  DateTime? get _commonDate {
+    if (_claims.isEmpty) return null;
+    final first = _claims.first.effectiveDate;
+    if (first == null) return null;
+    for (final c in _claims) {
+      final d = c.effectiveDate;
+      if (d == null || !_sameDay(d, first)) return null;
+    }
+    return first;
+  }
+
+  /// True when nothing in the text said when this happened, so every claim just
+  /// inherited the recording day. This is the case worth a confirmation nudge.
+  bool get _dateIsGuessed =>
+      _claims.isNotEmpty && _claims.every((c) => c.isGuessedDate);
+
+  static bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  void _setAllDates(DateTime day) => setState(() {
+        for (final c in _claims) {
+          c.dateOverride = day;
+        }
+      });
+
+  Future<void> _pickDate({_ClaimDraft? claim}) async {
+    final initial = claim?.effectiveDate ?? _commonDate ?? _recordedDate;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      // Journals are written about the past; a year back covers backfilling old
+      // notes, and today caps it since a diary entry cannot describe the future.
+      firstDate: DateTime(_recordedDate.year - 1),
+      lastDate: _recordedDate,
+      helpText: tr('reviewDate.pickerHelp'),
+    );
+    if (picked == null || !mounted) return;
+    final day = DateTime(picked.year, picked.month, picked.day);
+    if (claim == null) {
+      _setAllDates(day);
+    } else {
+      setState(() => claim.dateOverride = day);
+    }
+  }
+
+  /// Bulk date control. A single answer covers the whole entry because thoughts
+  /// and conversations recorded together virtually always belong to one day;
+  /// per-claim chips handle the exceptions.
+  Widget _dateHeader(BuildContext context, {required bool chatStyle}) {
+    if (_claims.isEmpty) return const SizedBox.shrink();
+    final common = _commonDate;
+    final guessed = _dateIsGuessed;
+    final tone = guessed ? AppColors.accentWarm : AppColors.hubGraph;
+    final label = common == null
+        ? tr('reviewDate.mixedDates')
+        : _dayLabel(common);
+    final yesterday = _recordedDate.subtract(const Duration(days: 1));
+
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: chatStyle ? 10 : AppSpacing.md,
+        vertical: chatStyle ? 8 : AppSpacing.sm,
+      ),
+      decoration: BoxDecoration(
+        color: tone.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: tone.withValues(alpha: 0.32)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.event_outlined, size: chatStyle ? 14 : 16, color: tone),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  guessed
+                      ? tr('reviewDate.questionGuessed')
+                      : tr('reviewDate.questionKnown'),
+                  style: TextStyle(
+                    fontSize: chatStyle ? 11.5 : 13,
+                    fontWeight: FontWeight.w600,
+                    color: tone,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _dateChoiceChip(
+                context,
+                label: label,
+                selected: true,
+                onTap: () => _pickDate(),
+                tone: tone,
+                icon: Icons.edit_calendar_outlined,
+              ),
+              if (common == null || !_sameDay(common, _recordedDate))
+                _dateChoiceChip(
+                  context,
+                  label: tr('reviewDate.thatDay'),
+                  selected: false,
+                  onTap: () => _setAllDates(_recordedDate),
+                  tone: tone,
+                ),
+              if (common == null || !_sameDay(common, yesterday))
+                _dateChoiceChip(
+                  context,
+                  label: tr('reviewDate.dayBefore'),
+                  selected: false,
+                  onTap: () => _setAllDates(yesterday),
+                  tone: tone,
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _dateChoiceChip(
+    BuildContext context, {
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+    required Color tone,
+    IconData? icon,
+  }) {
+    return Material(
+      color: selected ? tone.withValues(alpha: 0.20) : Colors.transparent,
+      borderRadius: BorderRadius.circular(7),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(7),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(
+              color: tone.withValues(alpha: selected ? 0.55 : 0.28),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 13, color: tone),
+                const SizedBox(width: 4),
+              ],
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  color: tone,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   /// Deleted claims held for undo — their TextEditingControllers must stay alive
@@ -411,6 +671,8 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
               ],
             ),
           ),
+          const SizedBox(height: AppSpacing.sm),
+          _dateHeader(context, chatStyle: false),
           const SizedBox(height: AppSpacing.md),
           for (var i = 0; i < _claims.length; i++) ...[
             _swipeableClaim(context, i, chatStyle: false),
@@ -518,6 +780,8 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
           _SpeakerLockBanner(onReopen: _handleReopenSpeakers),
           const SizedBox(height: 8),
         ],
+        _dateHeader(context, chatStyle: true),
+        const SizedBox(height: 10),
         ConstrainedBox(
           constraints: BoxConstraints(maxHeight: widget.maxBodyHeight),
           child: ListView.separated(
@@ -573,6 +837,8 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
             personCandidates: _personCandidates,
             chatStyle: chatStyle,
             approved: claim.approved,
+            onEditDate: () => _pickDate(claim: claim),
+            sharesCommonDate: _commonDate != null,
             onDelete: () => _deleteClaimWithUndo(i),
             onConceptsChanged: () => setState(() {}),
             onToggleApproved: () => setState(() {
@@ -751,6 +1017,8 @@ class _ClaimCard extends StatelessWidget {
     required this.chatStyle,
     required this.onDelete,
     required this.onConceptsChanged,
+    required this.onEditDate,
+    this.sharesCommonDate = true,
     this.approved = false,
     this.onToggleApproved,
     this.onReopenSpeakers,
@@ -762,9 +1030,57 @@ class _ClaimCard extends StatelessWidget {
   final bool chatStyle;
   final VoidCallback onDelete;
   final VoidCallback onConceptsChanged;
+
+  /// Opens the picker for this claim alone, leaving the rest of the entry alone.
+  final VoidCallback onEditDate;
+
+  /// False when this claim's day differs from the rest of the entry.
+  final bool sharesCommonDate;
   final bool approved;
   final VoidCallback? onToggleApproved;
   final VoidCallback? onReopenSpeakers;
+
+  /// Per-claim date. Present on every editable card so an exception can actually
+  /// be made, but muted while it agrees with the entry's shared day — it only
+  /// takes on colour when this claim breaks from the rest.
+  Widget _dateChip(BuildContext context) {
+    final date = claim.effectiveDate;
+    if (date == null) return const SizedBox.shrink();
+    final tone =
+        sharesCommonDate ? context.shell.mutedText : AppColors.hubGraph;
+    return Padding(
+      padding: EdgeInsets.only(bottom: chatStyle ? 6 : AppSpacing.xs),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Material(
+          color: tone.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(6),
+          child: InkWell(
+            onTap: onEditDate,
+            borderRadius: BorderRadius.circular(6),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.event_outlined, size: 12, color: tone),
+                  const SizedBox(width: 4),
+                  Text(
+                    _dayLabel(date),
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w600,
+                      color: tone,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   List<EntityPersonCandidate> get _entityCandidates => personCandidates
       .map((p) => EntityPersonCandidate(id: p.id, name: p.name, isSelf: p.isSelf))
@@ -1070,6 +1386,7 @@ class _ClaimCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 6),
+          _dateChip(context),
           TextField(
             controller: claim.statement,
             minLines: 1,
@@ -1336,6 +1653,7 @@ class _ClaimCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
+          _dateChip(context),
           TextField(
             controller: claim.statement,
             minLines: 1,
