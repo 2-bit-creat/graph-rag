@@ -60,6 +60,10 @@ class ChatSessionController extends ChangeNotifier {
   /// Transient errors for the UI to surface as a SnackBar (screen owns context).
   final ValueNotifier<String?> errors = ValueNotifier<String?>(null);
 
+  /// Text to push back into the journal composer — set when an in-flight entry
+  /// is abandoned so the user's original draft is never lost.
+  final ValueNotifier<String?> composerRestore = ValueNotifier<String?>(null);
+
   List<Map<String, dynamic>> get sessions => List.unmodifiable(_sessions);
   String? get activeId => _activeId;
   List<GraphChatMessage> get messages => List.unmodifiable(_messages);
@@ -283,9 +287,42 @@ class ChatSessionController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Free the journal pipeline for a new save.
+  ///
+  /// Only real backend work blocks — a pipeline merely *parked on a user gate*
+  /// (화자 확인 / 그래프 검토) is set aside instead, because refusing there is
+  /// what left the user with no way forward: neither finishing nor abandoning
+  /// the entry was possible, and every later save was rejected. The parked
+  /// entry keeps its progress card in the feed and stays resumable from it.
+  bool _claimJournalPipeline() {
+    if (journalTask.systemProcessing) {
+      errors.value = tr('chat.journalAlreadyProcessing');
+      return false;
+    }
+    if (journalTask.needsInput) {
+      journalTask.release(force: true);
+      errors.value = tr('chat.journalParkedNotice');
+    }
+    return true;
+  }
+
+  /// Set the live entry aside without deleting it — the feed card keeps it
+  /// resumable. [restoreDraft] puts its original text back in the composer.
+  void abandonJournal({bool restoreDraft = false}) {
+    final draft = journalTask.sourceText;
+    journalTask.release(force: true);
+    if (restoreDraft && draft != null && draft.trim().isNotEmpty) {
+      composerRestore.value = draft;
+      if (_mode != ChatMode.journal) {
+        _mode = ChatMode.journal;
+      }
+    }
+    notifyListeners();
+  }
+
   /// 일기 쓰기 모드 진입 — 대화창에 모드 경계 표시.
   void enterJournalMode() {
-    if (journalTask.isBusy) {
+    if (journalTask.systemProcessing) {
       errors.value = tr('chat.journalBusyEnterMode');
       return;
     }
@@ -352,14 +389,12 @@ class ChatSessionController extends ChangeNotifier {
   /// Persist user echo + journal_progress card and hand work to [journalTask].
   Future<void> saveJournalText(String labeledText,
       {String? displayText}) async {
-    if (journalTask.isBusy) {
-      errors.value = tr('chat.journalAlreadyProcessing');
-      return;
-    }
+    if (!_claimJournalPipeline()) return;
     await _ensureSession();
     try {
       _appendJournalSubmit(displayText ?? labeledText);
-      final entry = await journalTask.submitText(labeledText);
+      final entry =
+          await journalTask.submitText(labeledText, sourceText: displayText);
       final id = entry['id']?.toString();
       if (id == null || id.isEmpty) {
         errors.value = tr('chat.journalSaveFailed');
@@ -378,10 +413,7 @@ class ChatSessionController extends ChangeNotifier {
     required String filename,
     String mimeType = 'audio/wav',
   }) async {
-    if (journalTask.isBusy) {
-      errors.value = tr('chat.journalAlreadyProcessing');
-      return;
-    }
+    if (!_claimJournalPipeline()) return;
     await _ensureSession();
     try {
       _appendJournalSubmit(filename);
@@ -845,10 +877,7 @@ class ChatSessionController extends ChangeNotifier {
 
   /// Hand the confirmed draft to the inline journal pipeline (same card as chat save).
   Future<void> saveDistillAsJournal() async {
-    if (journalTask.isBusy) {
-      errors.value = tr('chat.journalAlreadyProcessing');
-      return;
-    }
+    if (!_claimJournalPipeline()) return;
     final selfLabel = selfSpeakerLabel;
     final included = _distillSentences
         .where((s) => s['included'] == true)

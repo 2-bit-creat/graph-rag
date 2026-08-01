@@ -412,7 +412,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
                   mode: chatSession.mode,
                   messages: chatSession.messages,
                   busy: chatSession.busy,
-                  journalBusy: journalTask.isBusy,
+                  journalBusy: journalTask.systemProcessing,
                 ),
           onSuggestionPrompt: _sendSuggestion,
         ),
@@ -849,9 +849,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     }
     switch (action) {
       case 'journal':
-        // One journal at a time: block only a NEW journal while one is busy.
-        // Quiz/distill modes stay reachable during background processing.
-        if (journalTask.isBusy) {
+        // One journal at a time, but only while the backend is actually
+        // working. An entry parked on a review gate is set aside by
+        // enterJournalMode instead of blocking — see _claimJournalPipeline.
+        if (journalTask.systemProcessing) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(tr('kg.journalBusySnackbar')),

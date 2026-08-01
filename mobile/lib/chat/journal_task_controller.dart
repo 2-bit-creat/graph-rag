@@ -22,8 +22,13 @@ class JournalTaskController extends ChangeNotifier {
   bool _speakersAcknowledged = false;
   bool _speakerReviewOverride = false;
   String? _lastStatusKey;
+  String? _sourceText;
 
   String? get entryId => _entryId;
+
+  /// Text the user actually typed for the live entry, so abandoning it can put
+  /// the draft back in the composer instead of losing it.
+  String? get sourceText => _sourceText;
   Map<String, dynamic>? get entry => _entry;
   ComposePhase get phase => _phase;
   String get stageLabel => _stageLabel;
@@ -69,6 +74,7 @@ class JournalTaskController extends ChangeNotifier {
     String paragraphText, {
     String? attributionKind,
     String? attributionName,
+    String? sourceText,
   }) {
     return _runWork(
       tr('journal.stageTranscribing'),
@@ -77,6 +83,7 @@ class JournalTaskController extends ChangeNotifier {
         attributionKind: attributionKind,
         attributionName: attributionName,
       ),
+      sourceText: sourceText ?? paragraphText,
     );
   }
 
@@ -111,13 +118,15 @@ class JournalTaskController extends ChangeNotifier {
 
   Future<Map<String, dynamic>> _runWork(
     String label,
-    Future<Map<String, dynamic>> Function() work,
-  ) async {
+    Future<Map<String, dynamic>> Function() work, {
+    String? sourceText,
+  }) async {
     final serial = ++_workSerial;
     _pollTimer?.cancel();
     _pollTimer = null;
     _entryId = null;
     _entry = null;
+    _sourceText = sourceText;
     _graphBuildStarted = false;
     _speakersAcknowledged = false;
     _speakerReviewOverride = false;
@@ -311,13 +320,25 @@ class JournalTaskController extends ChangeNotifier {
     }
   }
 
-  void dismiss() {
-    if (_phase != ComposePhase.done && _phase != ComposePhase.error) return;
+  /// Stop tracking the current entry and free the pipeline for new work.
+  ///
+  /// Nothing is deleted server-side: the entry stays in 일기함 with whatever it
+  /// had reached, and its chat card falls back to the static (resumable)
+  /// rendering. Without [force] this only applies to terminal phases; with it,
+  /// a pipeline parked on a user gate (화자 확인 / 그래프 검토) can be set aside
+  /// too — otherwise a half-finished entry deadlocks every later save.
+  void release({bool force = false}) {
+    if (!force &&
+        _phase != ComposePhase.done &&
+        _phase != ComposePhase.error) {
+      return;
+    }
     _workSerial++;
     _pollTimer?.cancel();
     _pollTimer = null;
     _entryId = null;
     _entry = null;
+    _sourceText = null;
     _phase = ComposePhase.composing;
     _stageLabel = '';
     _graphBuildStarted = false;
@@ -326,6 +347,8 @@ class JournalTaskController extends ChangeNotifier {
     _lastStatusKey = null;
     notifyListeners();
   }
+
+  void dismiss() => release();
 
   @override
   void dispose() {

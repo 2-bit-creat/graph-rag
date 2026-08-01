@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/client.dart';
 import '../app_navigator.dart';
+import '../chat/chat_session_controller.dart';
 import '../chat/journal_task_controller.dart';
 import '../compose/journal_phase.dart';
 import '../l10n/app_strings.dart';
@@ -31,10 +32,30 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
 
   bool get _isLive => journalTask.entryId == widget.entryId;
 
+  bool _wasLive = false;
+
   @override
   void initState() {
     super.initState();
+    _wasLive = _isLive;
     if (!_isLive) _loadStatic();
+    journalTask.addListener(_onLiveOwnershipChanged);
+  }
+
+  @override
+  void dispose() {
+    journalTask.removeListener(_onLiveOwnershipChanged);
+    super.dispose();
+  }
+
+  /// The pipeline can hand this entry back at any time — the user parks it, or a
+  /// new save claims the pipeline. The card then has to render from a fetched
+  /// snapshot, which it does not have yet.
+  void _onLiveOwnershipChanged() {
+    final live = _isLive;
+    if (live == _wasLive) return;
+    _wasLive = live;
+    if (!live && mounted) _loadStatic();
   }
 
   @override
@@ -127,6 +148,38 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
     if (_isLive) journalTask.dismiss();
   }
 
+  /// Escape hatch for a pipeline stuck on a review gate — the case that used to
+  /// have no answer at all: a wrong speaker split could neither be finished nor
+  /// abandoned, and every later save was refused as "이미 처리 중".
+  Future<void> _cancelLive() async {
+    if (!_isLive) return;
+    final hasDraft = (journalTask.sourceText ?? '').trim().isNotEmpty;
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('progressCard.cancelTitle')),
+        content: Text(tr('progressCard.cancelBody')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(tr('common.cancel')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'park'),
+            child: Text(tr('progressCard.cancelPark')),
+          ),
+          if (hasDraft)
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, 'rewrite'),
+              child: Text(tr('progressCard.cancelRewrite')),
+            ),
+        ],
+      ),
+    );
+    if (choice == null) return;
+    chatSession.abandonJournal(restoreDraft: choice == 'rewrite');
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLive) {
@@ -158,6 +211,7 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
             onSpeakerFallback: _openSpeakerConfirm,
             onGraphFallback: _openGraphReview,
             onDismiss: _dismiss,
+            onCancel: _cancelLive,
           );
         },
       );
@@ -206,6 +260,7 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
       onSpeakerFallback: _openSpeakerConfirm,
       onGraphFallback: _openGraphReview,
       onDismiss: null,
+      onCancel: null,
     );
   }
 }
@@ -254,6 +309,7 @@ class _CardBody extends StatelessWidget {
     required this.onSpeakerFallback,
     required this.onGraphFallback,
     required this.onDismiss,
+    required this.onCancel,
   });
 
   final String entryId;
@@ -281,6 +337,9 @@ class _CardBody extends StatelessWidget {
   final VoidCallback onGraphFallback;
 
   final VoidCallback? onDismiss;
+
+  /// Abandon a live pipeline that is waiting on the user. Null for static cards.
+  final VoidCallback? onCancel;
 
   static List<String> get _steps => [
     tr('progressCard.stepTranscribe'),
@@ -326,6 +385,10 @@ class _CardBody extends StatelessWidget {
     final showDismiss =
         onDismiss != null &&
         (phase == ComposePhase.done || phase == ComposePhase.error);
+    // Every live pipeline gets a way out. A gate waiting on the user is exactly
+    // where a mistaken submit (wrong speakers) has to be undoable.
+    final showCancel =
+        !showDismiss && onCancel != null && phase == ComposePhase.needsInput;
 
     return _Shell(
       child: Column(
@@ -346,13 +409,18 @@ class _CardBody extends StatelessWidget {
                   ),
                 ),
               ),
-              if (showDismiss)
-                InkWell(
-                  onTap: onDismiss,
-                  child: Padding(
-                    padding: const EdgeInsets.all(2),
-                    child: Icon(Icons.close_rounded,
-                        size: 16, color: context.shell.primaryText),
+              if (showDismiss || showCancel)
+                Tooltip(
+                  message: showCancel
+                      ? tr('progressCard.cancelTooltip')
+                      : tr('common.close'),
+                  child: InkWell(
+                    onTap: showCancel ? onCancel : onDismiss,
+                    child: Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: Icon(Icons.close_rounded,
+                          size: 16, color: context.shell.primaryText),
+                    ),
                   ),
                 ),
             ],

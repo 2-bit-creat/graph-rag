@@ -237,7 +237,17 @@ const Map<String, String> _ko = {
       '@화자로 작성한 뒤 저장하면, 받아쓰기 → 화자 확인 → 그래프 검토 순으로 '
       '아래에서 진행 상황을 확인할 수 있어요.',
   'chat.journalAlreadyProcessing': '이미 일기 처리가 진행 중이에요. 완료된 뒤 다시 저장해 주세요.',
+  'chat.journalParkedNotice': '검토 중이던 일기는 보류했어요 — 위 카드에서 이어서 마무리할 수 있어요.',
   'chat.journalSaveFailed': '일기 저장에 실패했어요.',
+  'chat.unconfirmedSpeakerTitle': '확정되지 않은 화자가 있어요',
+  'chat.unconfirmedSpeakerBody':
+      '{names} 은(는) 아직 화자로 확정되지 않았어요. 이대로 저장하면 앞 화자의 말로 합쳐집니다.\n\n'
+      '화자로 쓰려면 "@이름:" 형식으로 줄을 시작하거나, @를 입력한 뒤 목록에서 골라 주세요.',
+  'chat.unconfirmedSpeakerFix': '돌아가서 고치기',
+  'chat.unconfirmedSpeakerSaveAnyway': '그대로 저장',
+  'chat.expandEditorTooltip': '크게 편집',
+  'chat.expandEditorTitle': '일기 편집',
+  'chat.expandEditorHint': '@화자로 구분해서 자유롭게 쓰세요',
   'chat.noRecordingData': '녹음 데이터가 없어요.',
   'chat.journalProcessing': '일기 처리 중…',
   'chat.wrongAnswerHint': '오답이에요. 힌트를 참고하거나 정답 보기를 눌러 확인해 보세요.',
@@ -931,6 +941,12 @@ const Map<String, String> _ko = {
   'progressCard.loadFailed': '일기 상태를 불러오지 못했어요.',
   'progressCard.graphConfirmedSnackbar': '지식그래프 확정 완료',
   'progressCard.defaultLabel': '일기 처리',
+  'progressCard.cancelTooltip': '이 일기 중단',
+  'progressCard.cancelTitle': '이 일기를 중단할까요?',
+  'progressCard.cancelBody': '일기는 그대로 남아 있어요. 나중에 이 카드에서 이어서 검토할 수 있고, '
+      '지금 다시 쓰면 원래 쓴 내용이 입력창으로 돌아옵니다.',
+  'progressCard.cancelPark': '나중에 이어서',
+  'progressCard.cancelRewrite': '처음부터 다시 쓰기',
   'progressCard.stepTranscribe': '받아쓰기',
   'progressCard.stepSpeakerConfirm': '화자 확인',
   'progressCard.stepGraphBuild': '그래프 생성',
@@ -1257,7 +1273,20 @@ const Map<String, String> _en = {
       'through transcription → speaker check → graph review.',
   'chat.journalAlreadyProcessing':
       'A journal entry is already processing. Please save again once it finishes.',
+  'chat.journalParkedNotice':
+      'The entry you were reviewing was set aside — finish it later from its card above.',
   'chat.journalSaveFailed': 'Failed to save the journal.',
+  'chat.unconfirmedSpeakerTitle': 'Unconfirmed speakers',
+  'chat.unconfirmedSpeakerBody':
+      '{names} are not confirmed speakers yet. Saving as-is merges them into the '
+      'previous speaker\'s text.\n\n'
+      'To use them as speakers, start the line with "@name:" or type @ and pick '
+      'from the list.',
+  'chat.unconfirmedSpeakerFix': 'Go back and fix',
+  'chat.unconfirmedSpeakerSaveAnyway': 'Save as-is',
+  'chat.expandEditorTooltip': 'Expand editor',
+  'chat.expandEditorTitle': 'Edit journal',
+  'chat.expandEditorHint': 'Write freely, separating speakers with @',
   'chat.noRecordingData': 'No recording data.',
   'chat.journalProcessing': 'Processing journal…',
   'chat.wrongAnswerHint':
@@ -2019,6 +2048,13 @@ const Map<String, String> _en = {
   'progressCard.loadFailed': "Couldn't load the entry status.",
   'progressCard.graphConfirmedSnackbar': 'Knowledge graph confirmed',
   'progressCard.defaultLabel': 'Processing journal entry',
+  'progressCard.cancelTooltip': 'Stop this entry',
+  'progressCard.cancelTitle': 'Stop working on this entry?',
+  'progressCard.cancelBody':
+      'The entry is kept. You can pick the review back up from this card later, '
+      'or rewrite now and get your original text back in the composer.',
+  'progressCard.cancelPark': 'Finish later',
+  'progressCard.cancelRewrite': 'Rewrite from scratch',
   'progressCard.stepTranscribe': 'Transcribe',
   'progressCard.stepSpeakerConfirm': 'Confirm speakers',
   'progressCard.stepGraphBuild': 'Build graph',

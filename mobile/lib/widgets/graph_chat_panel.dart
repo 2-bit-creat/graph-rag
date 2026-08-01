@@ -512,8 +512,35 @@ class _InputBarState extends State<_InputBar> {
   AudioRecordController? _recorder;
   bool _journalSaving = false;
 
+  /// A four-line docked box is fine for a sentence and hostile for a pasted
+  /// transcript — caret placement inside a scrolled box is unreliable and the
+  /// text is barely readable. Past this length the composer offers a full-screen
+  /// editor instead.
+  static const _longDraftChars = 200;
+  bool _longDraft = false;
+
+  @override
+  void initState() {
+    super.initState();
+    chatSession.composerRestore.addListener(_onComposerRestore);
+  }
+
+  /// An abandoned journal hands its original text back here, so cancelling a
+  /// mis-submitted entry never costs the user the draft they typed.
+  void _onComposerRestore() {
+    final text = chatSession.composerRestore.value;
+    if (text == null) return;
+    chatSession.composerRestore.value = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _mentionFieldKey.currentState?.setText(text);
+      _focusNode.requestFocus();
+    });
+  }
+
   @override
   void dispose() {
+    chatSession.composerRestore.removeListener(_onComposerRestore);
     _ownedFocusNode?.dispose();
     _recorder?.dispose();
     super.dispose();
@@ -613,6 +640,33 @@ class _InputBarState extends State<_InputBar> {
       );
       return;
     }
+    // A speaker only counts once it has been confirmed from the @ popup (or
+    // recognized from an "@이름:" line). Anything else that looks like a mention
+    // would be swallowed into the previous speaker's block, which is how a
+    // multi-speaker paste silently became a single "나" entry.
+    final unconfirmed = field.unconfirmedMentions();
+    if (unconfirmed.isNotEmpty) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(tr('chat.unconfirmedSpeakerTitle')),
+          content: Text(tr('chat.unconfirmedSpeakerBody', {
+            'names': unconfirmed.map((n) => '@$n').join(', '),
+          })),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(tr('chat.unconfirmedSpeakerFix')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(tr('chat.unconfirmedSpeakerSaveAnyway')),
+            ),
+          ],
+        ),
+      );
+      if (proceed != true) return;
+    }
     final labeled = labeledTextFromMentionField(field);
     setState(() => _journalSaving = true);
     try {
@@ -620,6 +674,21 @@ class _InputBarState extends State<_InputBar> {
     } finally {
       if (mounted) setState(() => _journalSaving = false);
     }
+  }
+
+  /// Full-screen journal editor — same field, room to actually navigate a long
+  /// draft. Returns the edited text into the docked composer.
+  Future<void> _openFullEditor() async {
+    final field = _mentionFieldKey.currentState;
+    if (field == null) return;
+    final edited = await showDialog<String>(
+      context: context,
+      useSafeArea: true,
+      builder: (ctx) => _FullJournalEditor(initialText: field.text),
+    );
+    if (edited == null || !mounted) return;
+    _mentionFieldKey.currentState?.setText(edited);
+    setState(() => _longDraft = edited.length >= _longDraftChars);
   }
 
   Future<void> _toggleMic() async {
@@ -747,6 +816,12 @@ class _InputBarState extends State<_InputBar> {
               icon: Icons.attach_file_rounded,
               onTap: _journalSaving || recording ? null : _pickFile,
             ),
+            if (_longDraft)
+              _CompactIconButton(
+                tooltip: tr('chat.expandEditorTooltip'),
+                icon: Icons.open_in_full_rounded,
+                onTap: _journalSaving ? null : _openFullEditor,
+              ),
           ],
           Expanded(
             child: journalMode
@@ -763,6 +838,12 @@ class _InputBarState extends State<_InputBar> {
                     // popup never renders off-screen below the viewport.
                     openUpward: true,
                     enabled: canType && !recording,
+                    onChanged: (text) {
+                      final long = text.length >= _longDraftChars;
+                      if (long != _longDraft) {
+                        setState(() => _longDraft = long);
+                      }
+                    },
                     decoration: InputDecoration(
                       hintText: widget.hint,
                       hintStyle:
@@ -814,6 +895,71 @@ class _InputBarState extends State<_InputBar> {
                 widget.onSend(widget.controller.text);
               }
             },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Full-screen journal draft editor. Same [MentionAutocompleteField] rules as
+/// the docked composer — the point is only the room: long pasted transcripts
+/// need a caret you can actually place, which a four-line scrolled box cannot
+/// give. Returns the edited text, or null when cancelled.
+class _FullJournalEditor extends StatefulWidget {
+  const _FullJournalEditor({required this.initialText});
+
+  final String initialText;
+
+  @override
+  State<_FullJournalEditor> createState() => _FullJournalEditorState();
+}
+
+class _FullJournalEditorState extends State<_FullJournalEditor> {
+  final _fieldKey = GlobalKey<MentionAutocompleteFieldState>();
+
+  @override
+  Widget build(BuildContext context) {
+    final shell = context.shell;
+    return Dialog.fullscreen(
+      backgroundColor: shell.barBackground,
+      child: Column(
+        children: [
+          AppBar(
+            backgroundColor: shell.barBackground,
+            leading: IconButton(
+              icon: const Icon(Icons.close_rounded),
+              tooltip: tr('common.cancel'),
+              onPressed: () => Navigator.pop(context),
+            ),
+            title: Text(tr('chat.expandEditorTitle')),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(
+                  context,
+                  _fieldKey.currentState?.text ?? widget.initialText,
+                ),
+                child: Text(tr('common.confirm')),
+              ),
+            ],
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+              child: MentionAutocompleteField(
+                key: _fieldKey,
+                initialText: widget.initialText,
+                minLines: 20,
+                maxLines: null,
+                decoration: InputDecoration(
+                  hintText: tr('chat.expandEditorHint'),
+                  border: InputBorder.none,
+                  filled: false,
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ),
           ),
         ],
       ),

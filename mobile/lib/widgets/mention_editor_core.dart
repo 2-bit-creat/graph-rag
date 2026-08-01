@@ -76,6 +76,45 @@ final _bracketLineRe = RegExp(r'^\s*\[([^\]]+)\]\s*[:：]\s*(.+)$');
 final _bareLineRe =
     RegExp(r'^\s*([A-Za-z가-힣][A-Za-z가-힣 ._\-]{0,11}?)\s*[:：]\s*(.+)$');
 
+/// "@이름: 발화" — the shape people actually paste back into journal mode after
+/// composing elsewhere. Without this, the pasted @names were never registered as
+/// badges, [findMentions] matched nothing, and the whole multi-speaker text was
+/// silently attributed to "나".
+final _atLineRe =
+    RegExp(r'^\s*@([A-Za-z가-힣][A-Za-z0-9가-힣 ._\-]{0,19}?)\s*[:：]\s*(.+)$');
+
+/// Speakers named by "@이름:" lines, in order of first appearance.
+List<String> atMentionLineSpeakers(String text) {
+  if (!text.contains('@')) return const <String>[];
+  final seen = <String>{};
+  final out = <String>[];
+  for (final line in text.split('\n')) {
+    final m = _atLineRe.firstMatch(line);
+    if (m == null) continue;
+    final name = normalizeMentionName(m.group(1)!);
+    if (name.isEmpty || !seen.add(name.toLowerCase())) continue;
+    out.add(name);
+  }
+  return out;
+}
+
+/// "@무언가" tokens that are not (yet) registered speakers. Used to warn before
+/// a save silently drops them into the previous speaker's text.
+List<String> unregisteredMentionTokens(String text, List<String> knownNames) {
+  if (!text.contains('@')) return const <String>[];
+  final known = knownNames.map((n) => n.toLowerCase()).toSet();
+  final seen = <String>{};
+  final out = <String>[];
+  for (final m in RegExp(r'(?:^|\s)@([^\s:：,.!?]{1,20})').allMatches(text)) {
+    final name = normalizeMentionName(m.group(1)!);
+    if (name.isEmpty) continue;
+    final key = name.toLowerCase();
+    if (known.contains(key) || !seen.add(key)) continue;
+    out.add(name);
+  }
+  return out;
+}
+
 ParsedDialogue? parseDialogueLines(String text) {
   final rawLines =
       text.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
@@ -390,7 +429,9 @@ class MentionAutocompleteField extends StatefulWidget {
   });
 
   final int minLines;
-  final int maxLines;
+
+  /// Null grows without a cap — used by the full-screen journal editor.
+  final int? maxLines;
   final InputDecoration? decoration;
   final FocusNode? focusNode;
   final ValueChanged<String>? onSubmitted;
@@ -427,6 +468,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
   static const _popupWidth = 240.0;
 
   bool _lastDirty = false;
+  String _lastText = '';
 
   /// 이 글에서 실제 배지로 인정되는 이름들(등장 순서 = 색 순서). '나'는 항상 첫째.
   final List<String> _badges = ['나'];
@@ -474,21 +516,37 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
   }
 
   void _onTextChanged() {
-    widget.onChanged?.call(_controller.text);
-    final dirty = _controller.text.trim().isNotEmpty;
-    if (dirty != _lastDirty) {
-      _lastDirty = dirty;
-      widget.onDirtyChanged?.call(dirty);
-    }
-    // "[이름]: …" 형식 붙여넣기 → 화자를 배지로 자동 등록.
-    final legacy = parseDialogueLines(_controller.text);
-    if (legacy != null) {
-      for (final name in legacy.speakers) {
+    // The controller also notifies on pure caret moves. Rebuilding the TextField
+    // in that same frame is what made a tap high up in a long, scrolled entry
+    // snap the view back to the old caret instead of placing it where the user
+    // tapped — so a selection-only change must stay a no-op unless the mention
+    // popup's own state actually changed.
+    final text = _controller.text;
+    final textChanged = text != _lastText;
+    _lastText = text;
+
+    if (textChanged) {
+      widget.onChanged?.call(text);
+      final dirty = text.trim().isNotEmpty;
+      if (dirty != _lastDirty) {
+        _lastDirty = dirty;
+        widget.onDirtyChanged?.call(dirty);
+      }
+      // "[이름]: …" / "@이름: …" 붙여넣기 → 화자를 배지로 자동 등록.
+      for (final name in atMentionLineSpeakers(text)) {
         _ensureBadge(name);
+      }
+      final legacy = parseDialogueLines(text);
+      if (legacy != null) {
+        for (final name in legacy.speakers) {
+          _ensureBadge(name);
+        }
       }
     }
 
-    final prevPartial = _mentionCtx?.partial;
+    final prevCtx = _mentionCtx;
+    final prevOptions = _popupOptions;
+    final prevCanCreate = _popupCanCreate;
     _mentionCtx = _computeMentionContext();
     if (_mentionCtx != null && _isCompletedMentionContext(_mentionCtx!)) {
       _mentionCtx = null;
@@ -503,7 +561,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
         );
     final showPopup =
         _mentionCtx != null && (_popupOptions.isNotEmpty || _popupCanCreate);
-    if (_mentionCtx?.partial != prevPartial) {
+    if (_mentionCtx?.partial != prevCtx?.partial) {
       _optionCursor = 0;
     }
     if (showPopup) {
@@ -512,9 +570,27 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
       _popupController.hide();
     }
 
-    // 팝업·하이라이트·미리보기가 커서 위치에 반응해야 하므로 매 변경 리빌드.
-    if (mounted) setState(() {});
+    final popupChanged = _mentionCtx?.at != prevCtx?.at ||
+        _mentionCtx?.partial != prevCtx?.partial ||
+        _popupCanCreate != prevCanCreate ||
+        _popupOptions.length != prevOptions.length;
+    if (mounted && (textChanged || popupChanged)) setState(() {});
   }
+
+  /// Replace the whole draft (e.g. restoring an abandoned entry's original text)
+  /// and put the caret at the end.
+  void setText(String value) {
+    _controller.value = TextEditingValue(
+      text: value,
+      selection: TextSelection.collapsed(offset: value.length),
+    );
+  }
+
+  /// "@무언가" tokens the user typed but never confirmed as a speaker.
+  List<String> unconfirmedMentions() => unregisteredMentionTokens(
+        _controller.text,
+        [..._badges, ..._graphSpeakers.map((o) => o.name)],
+      );
 
   Future<void> _loadGraphSpeakers() async {
     try {
@@ -548,6 +624,14 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     );
     _controller.text = widget.initialText;
     _controller.addListener(_onTextChanged);
+    // Seed badges from any restored draft — the assignment above predates the
+    // listener, so nothing would have registered its speakers. The popup is not
+    // touched here: its OverlayPortal is not mounted yet.
+    for (final name in atMentionLineSpeakers(widget.initialText)) {
+      _ensureBadge(name);
+    }
+    _lastText = widget.initialText;
+    _lastDirty = widget.initialText.trim().isNotEmpty;
     unawaited(_loadGraphSpeakers());
   }
 
