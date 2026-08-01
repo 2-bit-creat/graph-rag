@@ -559,12 +559,20 @@ async def find_statements_by_time_window(
     *,
     limit: int = 12,
     tz_name: str = "Asia/Seoul",
-    event_statuses: Sequence[str] | None = ("happened",),
+    event_statuses: Sequence[str] | None = None,
 ) -> list[Node]:
     """Statements whose event interval intersects [start, end] in user time.
 
     Legacy rows retain the source-entry/occurred_at fallback; new rows use the
-    explicit event-time columns and can exclude plans/cancelled events.
+    explicit event-time columns.
+
+    ``event_statuses`` defaults to no filter. Status describes what the
+    statement's content is about (a plan, a cancellation), not whether the
+    statement belongs to the day — a meeting spent discussing next steps is
+    still something that happened that day, and filtering it out left "어제 뭐
+    했지?" with nothing to say. Genuinely future events are already excluded
+    here by their event date, which resolve_event_temporal puts in the future.
+    Pass an explicit list only when the caller is asking about a status.
     """
     entry_local_date = func.date(func.timezone(tz_name, JournalEntry.created_at))
     node_local_date = func.date(func.timezone(tz_name, Node.created_at))
@@ -612,9 +620,13 @@ async def find_statements_lexical(
     limit: int = 12,
     start: date | None = None,
     end: date | None = None,
-    event_statuses: Sequence[str] | None = ("happened",),
+    event_statuses: Sequence[str] | None = None,
 ) -> list[Node]:
     """Portable sparse candidate generator for planner-selected exact terms.
+
+    ``event_statuses`` defaults to no filter, for the same reason as
+    ``find_statements_by_time_window``: a term match is a term match whether or
+    not the sentence around it describes a plan.
 
     PostgreSQL can later replace this with a weighted tsvector index without
     changing the planner contract. ``ILIKE`` also keeps SQLite test fixtures

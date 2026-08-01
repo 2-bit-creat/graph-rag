@@ -299,9 +299,46 @@ def _identity_label(node: Node, self_label: str = "나") -> str:
 # Extra LLM-facing context labels not already in NativePack (which only covers
 # the fields graph_chat's persona prompt explicitly warns about).
 _EXTRA_LABELS: dict[str, dict[str, str]] = {
-    "korean": {"statement": "진술", "concepts": "연관 개념", "known_entities": "알고 있는 대상"},
-    "english": {"statement": "Statement", "concepts": "Related concepts", "known_entities": "Known entities"},
+    "korean": {
+        "statement": "진술",
+        "concepts": "연관 개념",
+        "known_entities": "알고 있는 대상",
+        "status": "성격",
+    },
+    "english": {
+        "statement": "Statement",
+        "concepts": "Related concepts",
+        "known_entities": "Known entities",
+        "status": "Nature",
+    },
 }
+
+# What a statement's content is about, when it is not a completed event. These
+# are stated in the context rather than used to drop the statement from recall:
+# a day's record legitimately contains plans and speculation, and the answer
+# just has to describe them as such instead of reporting them as done.
+# "happened" is deliberately absent — it is the unmarked case and saying so on
+# every package would only dilute the ones that matter.
+_EVENT_STATUS_LABELS: dict[str, dict[str, str]] = {
+    "korean": {
+        "planned": "계획·예정 (아직 실행되지 않음)",
+        "cancelled": "취소됨 (실행되지 않음)",
+        "hypothetical": "가정·가능성 (실제로 일어난 일이 아님)",
+        "unknown": "실행 여부 불명",
+    },
+    "english": {
+        "planned": "planned / intended (not yet done)",
+        "cancelled": "cancelled (did not take place)",
+        "hypothetical": "hypothetical (did not actually happen)",
+        "unknown": "unclear whether it took place",
+    },
+}
+
+
+def event_status_label(status: str | None, native_language: str) -> str | None:
+    """Human-readable modality for a non-completed event, or None if completed."""
+    table = _EVENT_STATUS_LABELS.get(native_language, _EVENT_STATUS_LABELS["korean"])
+    return table.get((status or "happened").strip().lower())
 
 
 def _format_package(index: int, pkg: ContextPackage, native_language: str = "korean") -> str:
@@ -315,6 +352,11 @@ def _format_package(index: int, pkg: ContextPackage, native_language: str = "kor
         lines.append(f"- {pack.speaker_label}: {_identity_label(pkg.speaker, pack.self_label)}{suffix}")
     lines.append(f"- {pack.datetime_label}: {pkg.occurred_at.isoformat()}")
     lines.append(f'- {extra["statement"]}: "{statement_content(pkg.statement)}"')
+    status_label = event_status_label(
+        getattr(pkg.statement, "event_status", None), native_language
+    )
+    if status_label:
+        lines.append(f"- {extra['status']}: {status_label}")
     if pkg.concepts:
         lines.append(f"- {extra['concepts']}: {', '.join(c.name for c in pkg.concepts)}")
     if pkg.mentions:

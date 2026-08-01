@@ -306,10 +306,11 @@ async def graph_chat_answer(
 
     planned: PlannedQuery = await create_search_plan(message, now=now, tz=tz, client=_get_client())
     plan = planned.plan
-    # Defence in depth for persisted/test plans and future planner providers:
-    # an empty allow-list must retain the SearchPlan default, never exclude
-    # every event after temporal SQL has found them.
-    allowed_event_statuses = plan.event_status or ["happened"]
+    # Empty means "any status" — the planner only fills this when the question is
+    # about a status. Statements are included on their event date and their
+    # status is described in the context, not used to hide them
+    # (see SearchPlan._keep_empty_event_status).
+    allowed_event_statuses = list(plan.event_status)
     time_window = None
     if plan.time is not None and plan.time.start is not None and plan.time.end is not None:
         time_window = (plan.time.start, plan.time.end)
@@ -404,7 +405,10 @@ async def graph_chat_answer(
             node for node in seed_candidates
             if node.type != "Statement"
             or (
-                (node.event_status or "happened") in allowed_event_statuses
+                (
+                    not allowed_event_statuses
+                    or (node.event_status or "happened") in allowed_event_statuses
+                )
                 and start <= (node.occurred_at or (node.event_start_at.date() if node.event_start_at else node.created_at.date())) <= end
             )
         ]

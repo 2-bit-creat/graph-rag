@@ -403,8 +403,17 @@ Return ONLY valid JSON in this exact shape (no markdown, no commentary):
   and "unknown" when no timing is stated.
 - temporal_confidence: 1.0 for an explicit unambiguous expression, lower only
   when the text itself is ambiguous. The server, not you, resolves relative dates.
-- event_status: distinguish completed events (happened) from plans, cancellation,
-  and hypothetical/counterfactual statements.
+- event_status: whether the action the claim describes ALREADY TOOK PLACE.
+  Default to "happened" and depart from it only when the text clearly demands it.
+  Saying, thinking, worrying, realising, proposing, deciding and discussing are
+  themselves completed acts: "체크리스트를 열어두는 방향을 고민해 봤습니다" and
+  "깊게 고려하지 못했네요" are both "happened" — the thinking happened, even
+  though its subject is a future change. Use "planned" only for an action still
+  ahead of the speaker ("내일 보고서를 쓸 예정이다"), "cancelled" only when the
+  text says it was called off, "hypothetical" only for an explicitly
+  counterfactual or conditional case ("만약 …했다면"), and "unknown" only when
+  the text genuinely does not reveal whether it occurred. When in doubt about a
+  reflective or conversational claim, choose "happened".
 - concepts: 1–5 concrete nouns per claim — NEVER an empty array. Every claim has
   at least one concept: for emotional/reflective claims, extract the TARGET or
   CAUSE of the feeling (e.g. "면접이 생각나 기분이 안 좋았다" → concepts: 면접;

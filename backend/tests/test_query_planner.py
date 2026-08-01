@@ -49,20 +49,34 @@ async def test_planner_failure_returns_bounded_safe_fallback(monkeypatch):
     assert planned.plan.result_limit <= 20
 
 
-def test_empty_event_status_keeps_completed_event_default():
-    """A required-but-empty LLM array must not erase temporal candidates."""
-    plan = query_planner.SearchPlan.model_validate(
-        {
-            "answer_intent": "episodic_recall",
-            "time": None,
-            "entities": [],
-            "topics": [],
-            "event_status": [],
-            "retrievers": ["temporal_sql"],
-            "fusion": "none",
-            "rerank": False,
-            "result_limit": 12,
-            "learning": {"enabled": False, "mode": "none"},
-        }
-    )
-    assert plan.event_status == ["happened"]
+def _plan(**overrides):
+    payload = {
+        "answer_intent": "episodic_recall",
+        "time": None,
+        "entities": [],
+        "topics": [],
+        "event_status": [],
+        "retrievers": ["temporal_sql"],
+        "fusion": "none",
+        "rerank": False,
+        "result_limit": 12,
+        "learning": {"enabled": False, "mode": "none"},
+    }
+    payload.update(overrides)
+    return query_planner.SearchPlan.model_validate(payload)
+
+
+def test_empty_event_status_means_any_status():
+    """Recall must not be narrowed to completed events by default.
+
+    The extractor labels a claim by what its content is about, so a day spent
+    discussing plans is full of "planned" statements. Filtering those out left
+    "어제 뭐 했지?" answering "no record" about a day that plainly had one.
+    """
+    assert _plan(event_status=[]).event_status == []
+    assert query_planner.SearchPlan().event_status == []
+
+
+def test_explicit_event_status_still_filters():
+    """A question actually about status keeps its filter."""
+    assert _plan(event_status=["cancelled"]).event_status == ["cancelled"]

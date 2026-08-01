@@ -53,8 +53,9 @@ class SearchPlan(BaseModel):
     time: PlanTime | None = None
     entities: list[PlanEntity] = Field(default_factory=list, max_length=4)
     topics: list[str] = Field(default_factory=list, max_length=6)
+    # Empty means "any status" — see _keep_empty_event_status.
     event_status: list[Literal["happened", "planned", "cancelled", "hypothetical", "unknown"]] = Field(
-        default_factory=lambda: ["happened"], max_length=5
+        default_factory=list, max_length=5
     )
     retrievers: list[Retriever] = Field(default_factory=lambda: ["dense", "graph"], max_length=6)
     fusion: Literal["none", "weighted", "rrf"] = "rrf"
@@ -69,16 +70,23 @@ class SearchPlan(BaseModel):
 
     @field_validator("event_status", mode="before")
     @classmethod
-    def _default_empty_event_status(cls, value):
-        """Keep the DSL's default semantics when a model emits ``[]``.
+    def _keep_empty_event_status(cls, value):
+        """Empty (or omitted) means every status is allowed.
 
-        Structured-output models often fill every required array with an empty
-        list. For event recall that must not mean "allow no event at all";
-        omitting the field and supplying an empty field both mean the safe
-        default of completed events only. Explicit non-empty lists still let
-        the planner request planned/cancelled/hypothetical events.
+        This used to default to ``["happened"]``, on the theory that recall
+        should describe completed events only. In practice it deleted honest
+        answers: the extractor labels a statement by what its *content* is about,
+        so a meeting spent planning next steps becomes "planned" and vanished
+        from "어제 뭐 했지?" even though the meeting itself plainly happened.
+
+        What that default was protecting against — a future plan surfacing as a
+        past event — is handled by the event date instead, which
+        resolve_event_temporal puts in the future for "내일 …". So the window
+        decides what is in scope, and status is carried into the answer context
+        (see graph_retrieval._format_package) to be described rather than hidden.
+        A non-empty list still filters, for questions actually about a status.
         """
-        return ["happened"] if not value else value
+        return list(value or [])
 
 
 def _strictify_schema(schema: dict) -> dict:
@@ -117,6 +125,9 @@ Choose only retrievers needed for the question:
 - learning_state only for an explicit learning/review request
 Use hard time constraints only when the user explicitly asks for a period. A date supplied
 by the system as LOCKED_TIME is authoritative: include it unchanged and never widen or move it.
+Leave event_status empty unless the question is itself about an event's status ("what got
+cancelled?", "what am I planning?"). "What did I do yesterday" is NOT such a question — a day's
+record includes the plans and ideas discussed that day, so an empty list is correct there.
 Keep result_limit at most 20. Set learning optional_followup only when an episodic memory answer
 could naturally offer a short target-language practice card; never turn the main answer into a quiz."""
 

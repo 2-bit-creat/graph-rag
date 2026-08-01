@@ -266,3 +266,120 @@ async def test_backfill_never_recomputes_a_user_confirmed_day(db_session, iso_us
 
     assert node.occurred_at.isoformat() == "2026-07-28"
     assert node.temporal_precision == "user_set"
+
+
+# ─── Status must describe a memory, never hide it ─────────────────────────────
+# A day spent discussing next steps is full of claims the extractor labels
+# "planned" — the plan is in the future, but the discussion happened. Recall
+# used to filter to event_status="happened" and answered "no record" for a day
+# that plainly had one.
+
+
+@pytest.mark.asyncio
+async def test_planned_statement_is_recalled_for_its_own_day(db_session, iso_user):
+    node = await crud._get_or_create_node(
+        db_session,
+        name="투자 특화 영역 체크리스트 고도화",
+        type_="Statement",
+        description='{"content":"체크리스트를 열어두는 방향을 고민해 봤습니다."}',
+        user_id=iso_user.id,
+        claim_key="planned-recall",
+        occurred_at=date(2026, 7, 31),
+        event_start_at=datetime.fromisoformat("2026-07-31T00:00:00+09:00"),
+        event_end_at=datetime.fromisoformat("2026-08-01T00:00:00+09:00"),
+        temporal_precision="user_set",
+        temporal_confidence=1.0,
+        event_status="planned",
+    )
+    await db_session.commit()
+
+    found = await crud.find_statements_by_time_window(
+        db_session, iso_user.id, date(2026, 7, 31), date(2026, 7, 31), tz_name="Asia/Seoul"
+    )
+    assert node.id in [item.id for item in found]
+
+
+@pytest.mark.asyncio
+async def test_explicit_status_filter_still_narrows(db_session, iso_user):
+    """Asking about a status is a real question and must still filter."""
+    await crud._get_or_create_node(
+        db_session,
+        name="취소되지 않은 계획",
+        type_="Statement",
+        description='{"content":"계획을 세웠다."}',
+        user_id=iso_user.id,
+        claim_key="status-filter-planned",
+        occurred_at=date(2026, 7, 31),
+        event_start_at=datetime.fromisoformat("2026-07-31T00:00:00+09:00"),
+        temporal_precision="user_set",
+        event_status="planned",
+    )
+    cancelled = await crud._get_or_create_node(
+        db_session,
+        name="취소된 일정",
+        type_="Statement",
+        description='{"content":"회의가 취소됐다."}',
+        user_id=iso_user.id,
+        claim_key="status-filter-cancelled",
+        occurred_at=date(2026, 7, 31),
+        event_start_at=datetime.fromisoformat("2026-07-31T00:00:00+09:00"),
+        temporal_precision="user_set",
+        event_status="cancelled",
+    )
+    await db_session.commit()
+
+    found = await crud.find_statements_by_time_window(
+        db_session,
+        iso_user.id,
+        date(2026, 7, 31),
+        date(2026, 7, 31),
+        tz_name="Asia/Seoul",
+        event_statuses=("cancelled",),
+    )
+    assert [item.id for item in found] == [cancelled.id]
+
+
+@pytest.mark.asyncio
+async def test_a_genuinely_future_plan_stays_out_of_yesterday(db_session, iso_user):
+    """The event date, not the status, is what keeps tomorrow out of yesterday."""
+    value = resolve_event_temporal(
+        statement="내일 보고서를 작성할 예정이다.",
+        entry_at=datetime.fromisoformat("2026-07-31T10:15:00+09:00"),
+        tz_name="Asia/Seoul",
+        event_time_text="내일",
+        event_status="planned",
+        claimed_precision="relative",
+        claimed_confidence=1.0,
+    )
+    assert value.occurred_at.isoformat() == "2026-08-01"
+
+    node = await crud._get_or_create_node(
+        db_session,
+        name="내일 보고서 작성 예정",
+        type_="Statement",
+        description='{"content":"내일 보고서를 작성할 예정이다."}',
+        user_id=iso_user.id,
+        claim_key="future-plan",
+        occurred_at=value.occurred_at,
+        event_start_at=value.start_at,
+        event_end_at=value.end_at,
+        temporal_precision=value.precision,
+        event_status=value.status,
+    )
+    await db_session.commit()
+
+    found = await crud.find_statements_by_time_window(
+        db_session, iso_user.id, date(2026, 7, 31), date(2026, 7, 31), tz_name="Asia/Seoul"
+    )
+    assert node.id not in [item.id for item in found]
+
+
+def test_non_completed_status_is_labelled_for_the_answering_model():
+    """Included, but described — so a plan is never reported as done."""
+    from app.graph_retrieval import event_status_label
+
+    assert event_status_label("happened", "korean") is None
+    assert event_status_label(None, "korean") is None
+    assert "계획" in event_status_label("planned", "korean")
+    assert "취소" in event_status_label("cancelled", "korean")
+    assert "planned" in event_status_label("planned", "english")
