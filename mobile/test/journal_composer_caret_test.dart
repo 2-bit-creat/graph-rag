@@ -22,8 +22,20 @@ const _longDraft =
     '@나: 그러면 1안과 2안을 비교하는 방향으로 보고서를 작성하겠습니다.\n'
     '@부부장님: 그렇게 가면 방어 논리도 깔끔해지겠네.\n';
 
-Widget _composer(GlobalKey<MentionAutocompleteFieldState> key,
-    ScrollController outer) {
+Widget _composer(
+  GlobalKey<MentionAutocompleteFieldState> key,
+  ScrollController outer, {
+  FocusNode? focusNode,
+  bool blockShowOnScreen = true,
+}) {
+  final field = MentionAutocompleteField(
+    key: key,
+    focusNode: focusNode,
+    minLines: 1,
+    maxLines: null,
+    showCounter: false,
+    initialText: _longDraft,
+  );
   return MaterialApp(
     home: Scaffold(
       body: Align(
@@ -32,13 +44,9 @@ Widget _composer(GlobalKey<MentionAutocompleteFieldState> key,
           constraints: const BoxConstraints(maxHeight: _maxHeight),
           child: SingleChildScrollView(
             controller: outer,
-            child: MentionAutocompleteField(
-              key: key,
-              minLines: 1,
-              maxLines: null,
-              showCounter: false,
-              initialText: _longDraft,
-            ),
+            child: blockShowOnScreen
+                ? BlockShowOnScreen(child: field)
+                : field,
           ),
         ),
       ),
@@ -112,5 +120,58 @@ void main() {
         reason: 'the caret must land in the first line that was tapped');
     expect(outer.offset, 0,
         reason: 'the view must not snap back to where the caret used to be');
+  });
+
+  // The actual reported failure. EditableText schedules a caret reveal every
+  // time the field gains focus (editable_text.dart `_handleFocusChanged`), and
+  // that reveal walks up the render tree until some ancestor scrolls. Focus is
+  // granted a frame before the tap's new selection arrives from the DOM on web,
+  // so the reveal sees the OLD caret and scrolls back to it — the tap looks
+  // ignored no matter where the scrolling lives.
+  group('focus gain does not drag the view back to the old caret', () {
+    Future<double> offsetAfterFocusGain(
+      WidgetTester tester, {
+      required bool blockShowOnScreen,
+    }) async {
+      final key = GlobalKey<MentionAutocompleteFieldState>();
+      final outer = ScrollController();
+      final focus = FocusNode();
+      addTearDown(outer.dispose);
+      addTearDown(focus.dispose);
+
+      await tester.pumpWidget(_composer(key, outer,
+          focusNode: focus, blockShowOnScreen: blockShowOnScreen));
+      await tester.pumpAndSettle();
+
+      // Caret parked at the end of a long draft, field not focused.
+      key.currentState!.setText(_longDraft);
+      await tester.pumpAndSettle();
+
+      // The user scrolls up to look at earlier text.
+      outer.jumpTo(0);
+      await tester.pumpAndSettle();
+      expect(outer.offset, 0);
+
+      // The field takes focus while the selection is still the old one.
+      focus.requestFocus();
+      await tester.pumpAndSettle();
+      return outer.offset;
+    }
+
+    testWidgets('unblocked, the reveal scrolls the ancestor (the bug)',
+        (tester) async {
+      final offset =
+          await offsetAfterFocusGain(tester, blockShowOnScreen: false);
+      expect(offset, greaterThan(0),
+          reason: 'this documents the failure the fix removes; if this ever '
+              'reads 0, EditableText changed and the fix may be unnecessary');
+    });
+
+    testWidgets('blocked, the view stays where the user left it',
+        (tester) async {
+      final offset =
+          await offsetAfterFocusGain(tester, blockShowOnScreen: true);
+      expect(offset, 0);
+    });
   });
 }

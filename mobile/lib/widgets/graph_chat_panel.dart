@@ -855,41 +855,39 @@ class _InputBarState extends State<_InputBar> {
           ],
           Expanded(
             child: journalMode
-                // The composer still grows to a cap and then scrolls — what
-                // changed is WHO owns the scrolling. A TextField with a capped
-                // maxLines owns an internal viewport, and on Flutter web that
-                // viewport's offset is not the one the hidden DOM input uses to
-                // resolve a tap: once the text is scrolled, tapping resolves
-                // against the unscrolled DOM text and the caret lands back where
-                // it was. Handing the scrolling to an ordinary ScrollView and
-                // letting the field grow freely inside it (maxLines: null) keeps
-                // the same capped, scrollable box while leaving exactly one
-                // scroll offset in play, so a tap lands where it was made.
+                // Grows to a cap, then scrolls — ordinary composer behavior.
+                // Two things make tap-to-place-caret actually work here:
+                // the field owns no scroll viewport of its own (maxLines: null,
+                // this ScrollView does the scrolling), and BlockShowOnScreen
+                // stops EditableText's "reveal the caret" request from walking
+                // up into that ScrollView on every focus gain.
                 ? ConstrainedBox(
-                    constraints:
-                        const BoxConstraints(maxHeight: _journalComposerMaxHeight),
+                    constraints: const BoxConstraints(
+                        maxHeight: _journalComposerMaxHeight),
                     child: SingleChildScrollView(
                       controller: _journalScroll,
-                      child: MentionAutocompleteField(
-                        key: _mentionFieldKey,
-                        focusNode: _focusNode,
-                        minLines: 1,
-                        maxLines: null,
-                        showCounter: false,
-                        // Docked at the bottom of the screen — open upward so
-                        // the popup never renders off-screen below the viewport.
-                        openUpward: true,
-                        enabled: canType && !recording,
-                        onChanged: _onJournalTextChanged,
-                        decoration: InputDecoration(
-                          hintText: widget.hint,
-                          hintStyle:
-                              TextStyle(color: shell.mutedText, fontSize: 13.5),
-                          isDense: true,
-                          filled: false,
-                          border: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: AppSpacing.sm, vertical: 8),
+                      child: BlockShowOnScreen(
+                        child: MentionAutocompleteField(
+                          key: _mentionFieldKey,
+                          focusNode: _focusNode,
+                          minLines: 1,
+                          maxLines: null,
+                          showCounter: false,
+                          // Docked at the bottom — open the popup upward so it
+                          // never renders off-screen below the viewport.
+                          openUpward: true,
+                          enabled: canType && !recording,
+                          onChanged: _onJournalTextChanged,
+                          decoration: InputDecoration(
+                            hintText: widget.hint,
+                            hintStyle: TextStyle(
+                                color: shell.mutedText, fontSize: 13.5),
+                            isDense: true,
+                            filled: false,
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: AppSpacing.sm, vertical: 8),
+                          ),
                         ),
                       ),
                     ),
@@ -956,6 +954,24 @@ class _FullJournalEditor extends StatefulWidget {
 
 class _FullJournalEditorState extends State<_FullJournalEditor> {
   final _fieldKey = GlobalKey<MentionAutocompleteFieldState>();
+  final _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  /// Caret reveal is blocked here too, so follow it explicitly — but only while
+  /// the user is typing at the end, never while they edit further up.
+  void _onChanged(String _) {
+    if (!(_fieldKey.currentState?.caretAtEnd ?? false)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      final max = _scroll.position.maxScrollExtent;
+      if (_scroll.offset < max) _scroll.jumpTo(max);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -991,18 +1007,22 @@ class _FullJournalEditorState extends State<_FullJournalEditor> {
           // caret-restoring viewport for the tap to fight.
           Expanded(
             child: SingleChildScrollView(
+              controller: _scroll,
               padding: const EdgeInsets.symmetric(
                   horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-              child: MentionAutocompleteField(
-                key: _fieldKey,
-                initialText: widget.initialText,
-                minLines: 20,
-                maxLines: null,
-                decoration: InputDecoration(
-                  hintText: tr('chat.expandEditorHint'),
-                  border: InputBorder.none,
-                  filled: false,
-                  contentPadding: EdgeInsets.zero,
+              child: BlockShowOnScreen(
+                child: MentionAutocompleteField(
+                  key: _fieldKey,
+                  initialText: widget.initialText,
+                  onChanged: _onChanged,
+                  minLines: 20,
+                  maxLines: null,
+                  decoration: InputDecoration(
+                    hintText: tr('chat.expandEditorHint'),
+                    border: InputBorder.none,
+                    filled: false,
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
               ),
             ),

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderProxyBox;
 import 'package:flutter/services.dart'
     show KeyDownEvent, LogicalKeyboardKey, MaxLengthEnforcement;
 
@@ -401,6 +402,44 @@ class MentionHighlightPainter extends CustomPainter {
       }
     }
     return false;
+  }
+}
+
+/// Stops `showOnScreen` from travelling out of its subtree.
+///
+/// This is what makes tap-to-place-caret work in a scrollable composer.
+/// `EditableText` calls `_scheduleShowCaretOnScreen()` whenever the field gains
+/// focus (editable_text.dart, `_handleFocusChanged`) and whenever the keyboard
+/// inset grows — and that ends in
+/// `renderEditable.showOnScreen(rect: caretRect)`, which [RenderObject.showOnScreen]
+/// forwards to `parent?.showOnScreen(...)` all the way up until some scrollable
+/// obeys it.
+///
+/// On web the tap's new selection arrives from the hidden DOM input a frame
+/// AFTER focus is granted, so the post-frame reveal still sees the OLD caret and
+/// scrolls back to it — the tap looks ignored. Moving the scrolling somewhere
+/// else does not help: the request simply follows it to whichever ancestor
+/// scrolls. Cutting the chain here is the only thing that does.
+///
+/// Deliberate caret-following (typing at the end of the draft) is done by the
+/// composer instead, where it can be limited to the cases the user wants.
+class BlockShowOnScreen extends SingleChildRenderObjectWidget {
+  const BlockShowOnScreen({super.key, required Widget super.child});
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderBlockShowOnScreen();
+}
+
+class _RenderBlockShowOnScreen extends RenderProxyBox {
+  @override
+  void showOnScreen({
+    RenderObject? descendant,
+    Rect? rect,
+    Duration duration = Duration.zero,
+    Curve curve = Curves.ease,
+  }) {
+    // Swallow it. Do not call super — that is the propagation being stopped.
   }
 }
 
