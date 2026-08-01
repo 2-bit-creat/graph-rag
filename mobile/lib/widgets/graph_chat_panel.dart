@@ -519,6 +519,12 @@ class _InputBarState extends State<_InputBar> {
   static const _longDraftChars = 200;
   bool _longDraft = false;
 
+  /// Auto-open the full editor once per draft, not on every keystroke past the
+  /// threshold — reopening it after the user deliberately came back would be
+  /// its own kind of unusable.
+  bool _autoExpanded = false;
+  bool _expanding = false;
+
   @override
   void initState() {
     super.initState();
@@ -680,15 +686,34 @@ class _InputBarState extends State<_InputBar> {
   /// draft. Returns the edited text into the docked composer.
   Future<void> _openFullEditor() async {
     final field = _mentionFieldKey.currentState;
-    if (field == null) return;
+    if (field == null || _expanding) return;
+    _expanding = true;
     final edited = await showDialog<String>(
       context: context,
       useSafeArea: true,
       builder: (ctx) => _FullJournalEditor(initialText: field.text),
     );
+    _expanding = false;
     if (edited == null || !mounted) return;
     _mentionFieldKey.currentState?.setText(edited);
     setState(() => _longDraft = edited.length >= _longDraftChars);
+  }
+
+  /// A long draft pasted into the docked pill is unusable there — four lines of
+  /// a scrolled viewport where the caret cannot be placed. Hand it straight to
+  /// the full editor rather than leaving the user to discover a small icon.
+  void _onJournalTextChanged(String text) {
+    final long = text.length >= _longDraftChars;
+    if (long != _longDraft) setState(() => _longDraft = long);
+    if (!long) {
+      _autoExpanded = false;
+      return;
+    }
+    if (_autoExpanded || _expanding) return;
+    _autoExpanded = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _openFullEditor();
+    });
   }
 
   Future<void> _toggleMic() async {
@@ -838,12 +863,7 @@ class _InputBarState extends State<_InputBar> {
                     // popup never renders off-screen below the viewport.
                     openUpward: true,
                     enabled: canType && !recording,
-                    onChanged: (text) {
-                      final long = text.length >= _longDraftChars;
-                      if (long != _longDraft) {
-                        setState(() => _longDraft = long);
-                      }
-                    },
+                    onChanged: _onJournalTextChanged,
                     decoration: InputDecoration(
                       hintText: widget.hint,
                       hintStyle:
@@ -943,8 +963,15 @@ class _FullJournalEditorState extends State<_FullJournalEditor> {
               ),
             ],
           ),
+          // The field must NEVER scroll internally. EditableText only owns a
+          // scroll viewport when its height is capped, and that viewport is what
+          // yanks the view back to the old caret whenever anything rebuilds —
+          // making it impossible to tap a spot higher up in a long draft. With
+          // maxLines: null inside a scroll view the field grows to its full
+          // content height and the PAGE scrolls instead, so there is no
+          // caret-restoring viewport for the tap to fight.
           Expanded(
-            child: Padding(
+            child: SingleChildScrollView(
               padding: const EdgeInsets.symmetric(
                   horizontal: AppSpacing.md, vertical: AppSpacing.sm),
               child: MentionAutocompleteField(

@@ -918,12 +918,17 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final geometry = _caretMenuGeometry(
-          fieldWidth: constraints.maxWidth,
-          textStyle: textStyle,
-          contentPadding:
-              contentPadding is EdgeInsets ? contentPadding : _contentPadding,
-        );
+        // Only the popup needs caret geometry, and computing it lays out the
+        // whole text-before-caret with a fresh TextPainter. On a long pasted
+        // draft that is a full text layout every single build — pure waste
+        // whenever the popup is closed, which is nearly always.
+        final geometry = ctx == null
+            ? (dx: 0.0, belowY: 0.0, aboveY: 0.0)
+            : _caretMenuGeometry(
+                fieldWidth: constraints.maxWidth,
+                textStyle: textStyle,
+                contentPadding: contentPadding,
+              );
         final maxLeft = constraints.maxWidth > _popupWidth + 16
             ? constraints.maxWidth - _popupWidth - 8
             : 8.0;
