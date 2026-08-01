@@ -927,26 +927,33 @@ class _InputBarState extends State<_InputBar> {
                     controller: _chatScroll,
                     child: Focus(
                       onKeyEvent: _onKey,
-                      child: TextField(
-                        controller: widget.controller,
-                        focusNode: _focusNode,
-                        enabled: canType,
-                        minLines: 1,
-                        maxLines: null,
-                        keyboardType: TextInputType.multiline,
-                        style:
+                      // Scale baked into the style + no scaling below: the
+                      // canvas and the hidden DOM input that resolves taps have
+                      // to work from one font size.
+                      child: NoTextScaling(
+                        child: TextField(
+                          controller: widget.controller,
+                          focusNode: _focusNode,
+                          enabled: canType,
+                          minLines: 1,
+                          maxLines: null,
+                          keyboardType: TextInputType.multiline,
+                          style: textScaleBakedIn(
+                            context,
                             TextStyle(color: shell.primaryText, fontSize: 14),
-                        textInputAction: TextInputAction.send,
-                        onSubmitted: canType ? widget.onSend : null,
-                        decoration: InputDecoration(
-                          hintText: widget.hint,
-                          hintStyle:
-                              TextStyle(color: shell.mutedText, fontSize: 13.5),
-                          isDense: true,
-                          filled: false,
-                          border: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: AppSpacing.sm, vertical: 2),
+                          ),
+                          textInputAction: TextInputAction.send,
+                          onSubmitted: canType ? widget.onSend : null,
+                          decoration: InputDecoration(
+                            hintText: widget.hint,
+                            hintStyle: TextStyle(
+                                color: shell.mutedText, fontSize: 13.5),
+                            isDense: true,
+                            filled: false,
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: AppSpacing.sm, vertical: 2),
+                          ),
                         ),
                       ),
                     ),

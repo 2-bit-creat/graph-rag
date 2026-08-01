@@ -63,6 +63,41 @@ ScrollableState _innerScrollable(WidgetTester tester) {
 }
 
 void main() {
+  // EditableText paints with MediaQuery.textScalerOf but hands the hidden DOM
+  // input widget.style.fontSize untouched. At any scale but 1.0 the DOM measures
+  // text smaller than the canvas draws it, so the same touch distance covers
+  // more characters and the caret lands to the RIGHT of the press — further
+  // right the longer the line. The field has to send one number to both.
+  testWidgets('the painted size equals the size the DOM input is told',
+      (tester) async {
+    final key = GlobalKey<MentionAutocompleteFieldState>();
+    final outer = ScrollController();
+    addTearDown(outer.dispose);
+
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(textScaler: TextScaler.linear(1.3)),
+        child: _composer(key, outer),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final editable = tester.widget<EditableText>(find.byType(EditableText));
+    final editableContext = tester.element(find.byType(EditableText));
+
+    // The size handed to the DOM input is widget.style.fontSize verbatim...
+    final declared = editable.style.fontSize!;
+    // ...and it must already carry the 1.3 platform scale, so accessibility
+    // scaling is not silently thrown away.
+    expect(declared, closeTo(16 * 1.3, 0.001));
+
+    // Nothing may scale on top of it, or the canvas paints bigger than the
+    // number the DOM input was given.
+    expect(MediaQuery.textScalerOf(editableContext), TextScaler.noScaling);
+    expect(editable.textScaler ?? MediaQuery.textScalerOf(editableContext),
+        TextScaler.noScaling);
+  });
+
   // Flutter syncs ONE flat style to the hidden DOM input the browser uses to
   // turn a tap into a caret position (EditableText._getTextInputStyle sends
   // fontFamily/fontSize/fontWeight/letterSpacing/wordSpacing/lineHeight from the

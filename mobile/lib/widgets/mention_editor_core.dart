@@ -334,6 +334,40 @@ class _RenderBlockShowOnScreen extends RenderProxyBox {
   }
 }
 
+/// Bakes the platform text scale into [base] so the size the canvas paints and
+/// the size the tap-measuring DOM input is given are the same number.
+///
+/// `EditableText` paints with `MediaQuery.textScalerOf(context)` but hands the
+/// hidden DOM input `widget.style.fontSize` untouched (`_style` in
+/// editable_text.dart is the raw widget style). At any scale other than 1.0 the
+/// DOM therefore measures text SMALLER than the canvas draws it, so the same
+/// touch distance covers more characters and the caret lands to the right of
+/// where the user pressed — further right the longer the line.
+///
+/// Pair this with `textScaler: TextScaler.noScaling` on the field, or the scale
+/// gets applied twice. Accessibility scaling is preserved either way: the text
+/// really is bigger, it is just already bigger in the number both sides use.
+TextStyle textScaleBakedIn(BuildContext context, TextStyle base) {
+  final scaler = MediaQuery.textScalerOf(context);
+  final size = base.fontSize ?? 14.0;
+  return base.copyWith(fontSize: scaler.scale(size));
+}
+
+/// Stops descendants from applying the platform text scale a second time.
+///
+/// Use around a field whose style already went through [textScaleBakedIn].
+class NoTextScaling extends StatelessWidget {
+  const NoTextScaling({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+        child: child,
+      );
+}
+
 /// A multi-line text field the caret cannot drag around.
 ///
 /// Wrap ANY multi-line input in this and give the field `maxLines: null`. Two
@@ -876,9 +910,11 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     // and that painter is gone — while the overrides kept moving the canvas
     // baseline away from the plain line box the hidden DOM input uses to resolve
     // taps, costing vertical accuracy on a multi-line draft for nothing.
-    final textStyle =
-        (theme.textTheme.bodyLarge ?? const TextStyle(fontSize: 16))
-            .copyWith(height: 1.5);
+    final textStyle = textScaleBakedIn(
+      context,
+      (theme.textTheme.bodyLarge ?? const TextStyle(fontSize: 16))
+          .copyWith(height: 1.5),
+    );
     final ctx = _mentionCtx;
     final baseDecoration = widget.decoration ?? const InputDecoration();
     final contentPadding =
@@ -1006,18 +1042,23 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
             // inline rich-text links rendered by the TextEditingController.
             child: Focus(
               onKeyEvent: _onKey,
-              child: TextField(
-                controller: _controller,
-                focusNode: _focusNode,
-                scrollController: _scroll,
-                enabled: widget.enabled,
-                style: textStyle,
-                maxLines: widget.maxLines,
-                minLines: widget.minLines,
-                maxLength: kMaxJournalTextChars,
-                maxLengthEnforcement: MaxLengthEnforcement.none,
-                decoration: decoration,
-                onSubmitted: widget.onSubmitted,
+              // The scale is already inside textStyle.fontSize. Scaling again
+              // here would paint larger than the size the DOM input was told,
+              // which is the mismatch this is all about.
+              child: NoTextScaling(
+                child: TextField(
+                  controller: _controller,
+                  focusNode: _focusNode,
+                  scrollController: _scroll,
+                  enabled: widget.enabled,
+                  style: textStyle,
+                  maxLines: widget.maxLines,
+                  minLines: widget.minLines,
+                  maxLength: kMaxJournalTextChars,
+                  maxLengthEnforcement: MaxLengthEnforcement.none,
+                  decoration: decoration,
+                  onSubmitted: widget.onSubmitted,
+                ),
               ),
             ),
           ),
