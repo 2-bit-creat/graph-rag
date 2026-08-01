@@ -522,13 +522,42 @@ class _InputBarState extends State<_InputBar> {
   /// mic/attach/send controls stay reachable.
   static const _journalComposerMaxHeight = 132.0;
 
-  /// Owns the journal composer's scrolling instead of the TextField.
+  /// Roughly six lines at the plain composer's smaller font.
+  static const _chatComposerMaxHeight = 120.0;
+
+  /// These own the composers' scrolling instead of the TextFields.
   final _journalScroll = ScrollController();
+  final _chatScroll = ScrollController();
 
   @override
   void initState() {
     super.initState();
     chatSession.composerRestore.addListener(_onComposerRestore);
+    widget.controller.addListener(_onChatTextChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant _InputBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_onChatTextChanged);
+      widget.controller.addListener(_onChatTextChanged);
+    }
+  }
+
+  /// The plain composer no longer scrolls itself, so follow the caret while the
+  /// user types at the end — and only then, never while they edit further up.
+  void _onChatTextChanged() {
+    final selection = widget.controller.selection;
+    final atEnd = !selection.isValid ||
+        (selection.isCollapsed &&
+            selection.baseOffset >= widget.controller.text.length);
+    if (!atEnd) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_chatScroll.hasClients) return;
+      final max = _chatScroll.position.maxScrollExtent;
+      if (_chatScroll.offset < max) _chatScroll.jumpTo(max);
+    });
   }
 
   /// An abandoned journal hands its original text back here, so cancelling a
@@ -547,7 +576,9 @@ class _InputBarState extends State<_InputBar> {
   @override
   void dispose() {
     chatSession.composerRestore.removeListener(_onComposerRestore);
+    widget.controller.removeListener(_onChatTextChanged);
     _journalScroll.dispose();
+    _chatScroll.dispose();
     _ownedFocusNode?.dispose();
     _recorder?.dispose();
     super.dispose();
@@ -861,52 +892,20 @@ class _InputBarState extends State<_InputBar> {
                 // this ScrollView does the scrolling), and BlockShowOnScreen
                 // stops EditableText's "reveal the caret" request from walking
                 // up into that ScrollView on every focus gain.
-                ? ConstrainedBox(
-                    constraints: const BoxConstraints(
-                        maxHeight: _journalComposerMaxHeight),
-                    child: SingleChildScrollView(
-                      controller: _journalScroll,
-                      child: BlockShowOnScreen(
-                        child: MentionAutocompleteField(
-                          key: _mentionFieldKey,
-                          focusNode: _focusNode,
-                          minLines: 1,
-                          maxLines: null,
-                          showCounter: false,
-                          // Docked at the bottom — open the popup upward so it
-                          // never renders off-screen below the viewport.
-                          openUpward: true,
-                          enabled: canType && !recording,
-                          onChanged: _onJournalTextChanged,
-                          decoration: InputDecoration(
-                            hintText: widget.hint,
-                            hintStyle: TextStyle(
-                                color: shell.mutedText, fontSize: 13.5),
-                            isDense: true,
-                            filled: false,
-                            border: InputBorder.none,
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: AppSpacing.sm, vertical: 8),
-                          ),
-                        ),
-                      ),
-                    ),
-                  )
-                : Focus(
-                    onKeyEvent: _onKey,
-                    child: TextField(
-                      controller: widget.controller,
+                ? CaretStableField(
+                    maxHeight: _journalComposerMaxHeight,
+                    controller: _journalScroll,
+                    child: MentionAutocompleteField(
+                      key: _mentionFieldKey,
                       focusNode: _focusNode,
-                      enabled: canType,
                       minLines: 1,
-                      // Auto-grows with content up to ~6 lines, then scrolls —
-                      // the standard composer behavior; capped so it never
-                      // eats the feed.
-                      maxLines: 6,
-                      keyboardType: TextInputType.multiline,
-                      style: TextStyle(color: shell.primaryText, fontSize: 14),
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: canType ? widget.onSend : null,
+                      maxLines: null,
+                      showCounter: false,
+                      // Docked at the bottom — open the popup upward so it
+                      // never renders off-screen below the viewport.
+                      openUpward: true,
+                      enabled: canType && !recording,
+                      onChanged: _onJournalTextChanged,
                       decoration: InputDecoration(
                         hintText: widget.hint,
                         hintStyle:
@@ -915,7 +914,40 @@ class _InputBarState extends State<_InputBar> {
                         filled: false,
                         border: InputBorder.none,
                         contentPadding: const EdgeInsets.symmetric(
-                            horizontal: AppSpacing.sm, vertical: 2),
+                            horizontal: AppSpacing.sm, vertical: 8),
+                      ),
+                    ),
+                  )
+                // The plain chat composer needs this just as much as the journal
+                // one. Long text gets pasted here too — it is where "대화 → 일기
+                // 정리" starts — and while it kept maxLines: 6 every tap still
+                // yanked the view to the caret.
+                : CaretStableField(
+                    maxHeight: _chatComposerMaxHeight,
+                    controller: _chatScroll,
+                    child: Focus(
+                      onKeyEvent: _onKey,
+                      child: TextField(
+                        controller: widget.controller,
+                        focusNode: _focusNode,
+                        enabled: canType,
+                        minLines: 1,
+                        maxLines: null,
+                        keyboardType: TextInputType.multiline,
+                        style:
+                            TextStyle(color: shell.primaryText, fontSize: 14),
+                        textInputAction: TextInputAction.send,
+                        onSubmitted: canType ? widget.onSend : null,
+                        decoration: InputDecoration(
+                          hintText: widget.hint,
+                          hintStyle:
+                              TextStyle(color: shell.mutedText, fontSize: 13.5),
+                          isDense: true,
+                          filled: false,
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: AppSpacing.sm, vertical: 2),
+                        ),
                       ),
                     ),
                   ),

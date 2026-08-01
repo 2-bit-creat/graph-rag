@@ -5,6 +5,7 @@ import '../compose/compose_session_controller.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
+import '../widgets/mention_editor_core.dart' show CaretStableField;
 
 /// HITL review of a staged graph draft. The user edits/deletes the extracted
 /// claims, then confirms — committing them into immutable graph nodes. After
@@ -568,13 +569,16 @@ class _ClaimCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
-          TextField(
-            controller: claim.statement,
-            minLines: 1,
-            maxLines: 4,
-            decoration: InputDecoration(
-              labelText: tr('graphReview.statementLabel'),
-              isDense: true,
+          CaretStableField(
+            maxHeight: 96,
+            child: TextField(
+              controller: claim.statement,
+              minLines: 1,
+              maxLines: null,
+              decoration: InputDecoration(
+                labelText: tr('graphReview.statementLabel'),
+                isDense: true,
+              ),
             ),
           ),
           const SizedBox(height: AppSpacing.sm),

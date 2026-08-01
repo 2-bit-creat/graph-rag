@@ -334,6 +334,46 @@ class _RenderBlockShowOnScreen extends RenderProxyBox {
   }
 }
 
+/// A multi-line text field the caret cannot drag around.
+///
+/// Wrap ANY multi-line input in this and give the field `maxLines: null`. Two
+/// things have to be true together, and either one alone leaves the bug:
+///
+///  * `maxLines: null` — a capped maxLines gives the field its own scroll
+///    viewport, and `_scheduleShowCaretOnScreen` scrolls that viewport straight
+///    to the caret. Growing freely inside this box removes that viewport.
+///  * [BlockShowOnScreen] — the same routine then asks its ANCESTORS to reveal
+///    the caret instead, which would scroll this box exactly as before.
+///
+/// The box still looks and behaves like a normal composer: it grows to
+/// [maxHeight] and scrolls after that. It just does not move on its own.
+///
+/// Pass [controller] when the caller wants to follow the caret deliberately
+/// (e.g. while typing at the very end of the draft).
+class CaretStableField extends StatelessWidget {
+  const CaretStableField({
+    super.key,
+    required this.maxHeight,
+    required this.child,
+    this.controller,
+  });
+
+  final double maxHeight;
+  final ScrollController? controller;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      child: SingleChildScrollView(
+        controller: controller,
+        child: BlockShowOnScreen(child: child),
+      ),
+    );
+  }
+}
+
 /// @멘션 자동완성 텍스트 필드 — 컴포즈·채팅 바가 각자 스타일링할 수 있도록
 /// min/maxLines·decoration·focusNode 등을 파라미터화한다.
 ///

@@ -8,6 +8,7 @@ import '../theme/app_theme.dart';
 import 'app_ui.dart';
 import 'concept_link_sheet.dart';
 import 'entity_identity_sheet.dart';
+import 'mention_editor_core.dart' show CaretStableField;
 
 /// Inline or full-screen graph draft review — edit claims, then confirm.
 enum GraphReviewPresentation { full, chat }
@@ -1387,10 +1388,14 @@ class _ClaimCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           _dateChip(context),
-          TextField(
+          // Statement bodies are edited here and can run long, so they need the
+          // same treatment as the composers. See [CaretStableField].
+          CaretStableField(
+            maxHeight: 96,
+            child: TextField(
             controller: claim.statement,
             minLines: 1,
-            maxLines: 4,
+            maxLines: null,
             style: TextStyle(
               fontSize: 13,
               height: 1.45,
@@ -1415,6 +1420,7 @@ class _ClaimCard extends StatelessWidget {
                 borderSide: BorderSide(color: AppColors.hubGraph.withValues(alpha: 0.45)),
               ),
             ),
+          ),
           ),
           if (claim.concepts.isEmpty) ...[
             const SizedBox(height: 6),
@@ -1654,13 +1660,16 @@ class _ClaimCard extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.sm),
           _dateChip(context),
-          TextField(
-            controller: claim.statement,
-            minLines: 1,
-            maxLines: 4,
-            decoration: InputDecoration(
-              labelText: tr('graphReview.statementLabel'),
-              isDense: true,
+          CaretStableField(
+            maxHeight: 96,
+            child: TextField(
+              controller: claim.statement,
+              minLines: 1,
+              maxLines: null,
+              decoration: InputDecoration(
+                labelText: tr('graphReview.statementLabel'),
+                isDense: true,
+              ),
             ),
           ),
           const SizedBox(height: AppSpacing.sm),
