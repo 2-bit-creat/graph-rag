@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +12,34 @@ from app.db import async_session_factory, engine, init_db
 from app.dev_user import get_dev_user
 
 _db_initialized = False
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Refuse to run against a database that is not a throwaway test database.
+
+    These tests use the `dev_user` fixture — the real local account — and several
+    of them call `clear_user_knowledge_graph()` and COMMIT. Pointed at the dev
+    database, `pytest tests` therefore destroys the developer's knowledge graph:
+    nodes, edges, chunks, staged drafts, and every manual correction made in the
+    KG screen. Journal entries survive, so the graph can be rebuilt, but the
+    hand-made fixes cannot. This happened; the guard is why it will not again.
+
+    Point DATABASE_URL at a database whose name ends in `_test`, or set
+    ALLOW_TESTS_ON_DEV_DB=1 to accept the loss deliberately.
+    """
+    if os.environ.get("ALLOW_TESTS_ON_DEV_DB") == "1":
+        return
+    from app.config import get_settings
+
+    url = get_settings().database_url
+    db_name = url.rsplit("/", 1)[-1].split("?", 1)[0]
+    if db_name.endswith("_test") or db_name.endswith("_tests"):
+        return
+    raise pytest.UsageError(
+        f"Refusing to run the suite against database {db_name!r}: these tests "
+        "delete the dev user's knowledge graph and commit. Use a database whose "
+        "name ends in '_test', or set ALLOW_TESTS_ON_DEV_DB=1 to override."
+    )
 
 
 @pytest_asyncio.fixture
