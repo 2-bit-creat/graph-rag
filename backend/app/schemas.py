@@ -269,6 +269,10 @@ class NodeUpdate(BaseModel):
     name: str | None = None
     type: str | None = None
     description: str | None = None
+    # Statement nodes — correcting when the event happened after the fact. Text
+    # written in plain past tense never says which day it describes, so this
+    # stays editable long after the entry was committed.
+    occurred_at: date | None = None
 
 
 class EdgeUpdate(BaseModel):

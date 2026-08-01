@@ -7,6 +7,24 @@ import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart';
 
+/// "7월 2일 (목)" — the same date vocabulary the timeline and review panel use.
+String _inspectorDayLabel(DateTime d) => tr('timeline.dayPanelDateLabel', {
+      'month': d.month,
+      'day': d.day,
+      'weekday': [
+        tr('timeline.weekdayMon'),
+        tr('timeline.weekdayTue'),
+        tr('timeline.weekdayWed'),
+        tr('timeline.weekdayThu'),
+        tr('timeline.weekdayFri'),
+        tr('timeline.weekdaySat'),
+        tr('timeline.weekdaySun'),
+      ][d.weekday - 1],
+    });
+
+String _isoDay(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
 /// Right-side inspector for node / edge detail and editing.
 class GraphInspectorPanel extends StatefulWidget {
   const GraphInspectorPanel({
@@ -51,6 +69,18 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
   final _relationCtrl = TextEditingController();
   String? _type;
   bool _saving = false;
+
+  /// Event day currently shown for a Statement, and the value it was loaded
+  /// with. Only a real change is sent, so editing the text of a statement whose
+  /// date was inferred never silently promotes that guess to a confirmed date.
+  DateTime? _occurredAt;
+  DateTime? _loadedOccurredAt;
+
+  /// Advanced/diagnostic groups start collapsed — every control stays reachable,
+  /// but the panel opens on the fields that describe the node rather than on
+  /// embedding status and ids.
+  bool _showAdvanced = false;
+  bool _showDebug = false;
 
   @override
   void didUpdateWidget(covariant GraphInspectorPanel oldWidget) {
@@ -151,6 +181,113 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
   bool _isStatementNode(Map<String, dynamic>? node) =>
       (node?['type'] as String? ?? '').toLowerCase() == 'statement';
 
+  // ── Event date ─────────────────────────────────────────────────────────────
+
+  /// When the statement's event happened. Falls back to the source entry's
+  /// writing time, then node creation, mirroring how the server resolves it.
+  DateTime? _nodeEventDate(Map<String, dynamic> node) {
+    final raw = (node['occurred_at'] ??
+            node['entry_created_at'] ??
+            node['created_at'])
+        ?.toString();
+    if (raw == null || raw.isEmpty) return null;
+    final parsed = DateTime.tryParse(raw.length > 10 ? raw.substring(0, 10) : raw);
+    return parsed == null
+        ? null
+        : DateTime(parsed.year, parsed.month, parsed.day);
+  }
+
+  /// True while the stored day is only the day the entry was written — nothing
+  /// in the text said when it happened, so it is worth marking as unconfirmed.
+  bool _dateIsGuessed(Map<String, dynamic> node) =>
+      (node['temporal_precision']?.toString() ?? '') == 'recorded_date' &&
+      _occurredAt == _loadedOccurredAt;
+
+  bool _dateIsConfirmed(Map<String, dynamic> node) =>
+      (node['temporal_precision']?.toString() ?? '') == 'user_set';
+
+  Future<void> _pickEventDate() async {
+    final now = DateTime.now();
+    final initial = _occurredAt ?? DateTime(now.year, now.month, now.day);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(initial.year - 5),
+      lastDate: DateTime(now.year, now.month, now.day),
+      helpText: tr('reviewDate.pickerHelp'),
+    );
+    if (picked == null || !mounted) return;
+    setState(() =>
+        _occurredAt = DateTime(picked.year, picked.month, picked.day));
+  }
+
+  /// The date, stated plainly and editable in place — it is a primary fact
+  /// about a journal statement, not a diagnostic detail.
+  Widget _eventDateField(Map<String, dynamic> node, ThemeData theme) {
+    final date = _occurredAt;
+    if (date == null) return const SizedBox.shrink();
+    final guessed = _dateIsGuessed(node);
+    final dirty = _occurredAt != _loadedOccurredAt;
+    final tone = guessed
+        ? AppColors.accentWarm
+        : (dirty || _dateIsConfirmed(node))
+            ? AppColors.hubGraph
+            : theme.colorScheme.onSurfaceVariant;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: tone.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          onTap: _pickEventDate,
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: tone.withValues(alpha: 0.35)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.event_outlined, size: 17, color: tone),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _inspectorDayLabel(date),
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: tone,
+                        ),
+                      ),
+                      if (guessed || dirty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          dirty
+                              ? tr('inspector.eventDateUnsaved')
+                              : tr('inspector.eventDateGuessed'),
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: tone.withValues(alpha: 0.85),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Icon(Icons.edit_calendar_outlined, size: 16, color: tone),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _sourceTranscriptWidget(Map<String, dynamic> node) {
     final raw = node['source_transcript_ko'] as String? ?? '';
     final clean = node['source_transcript_clean_ko'] as String? ?? '';
@@ -184,6 +321,10 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         _descCtrl.text = node['description']?.toString() ?? '';
       }
       _type = _resolveEntityType(node['type']?.toString());
+      _occurredAt = _nodeEventDate(node);
+      _loadedOccurredAt = _occurredAt;
+      _showAdvanced = false;
+      _showDebug = false;
     }
     final edge = widget.selectedEdge;
     if (edge != null) {
@@ -220,7 +361,13 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         name: _nameCtrl.text.trim(),
         type: _type!,
         description: descToSave,
+        // Only when actually changed — otherwise saving a text edit would stamp
+        // an inferred date as user-confirmed without the user ever saying so.
+        occurredAt: (_occurredAt != null && _occurredAt != _loadedOccurredAt)
+            ? _isoDay(_occurredAt!)
+            : null,
       );
+      _loadedOccurredAt = _occurredAt;
       widget.onUpdated?.call();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -907,6 +1054,10 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
             isDense: true),
       ),
       const SizedBox(height: 10),
+      // When a statement happened is a primary fact in a journal, so it sits
+      // with the name rather than in the diagnostic footer it used to share
+      // with the node id.
+      if (_isStatementNode(node)) _eventDateField(node, theme),
       DropdownButtonFormField<String>(
         value: _selectedTypeValue(),
         decoration: InputDecoration(
@@ -917,7 +1068,6 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         onChanged: (v) => setState(() => _type = v),
       ),
       const SizedBox(height: 10),
-      ..._aliasSection(node, theme),
       if (_isStatementNode(node)) ...[
         Row(
           children: [
@@ -951,37 +1101,10 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         ),
       ),
       _sourceTranscriptWidget(node),
-      if (((node['importance_score'] as num?)?.toInt() ?? 0) > 0) ...[
-        const SizedBox(height: 12),
-        _ImportanceCard(score: (node['importance_score'] as num).toInt()),
-      ],
-      const SizedBox(height: 14),
-      _EmbeddingStatusCard(
-        node: node,
-        onUnlinkVoice: node['voice_embedding_registered'] == true
-            ? _unlinkNodeVoice
-            : null,
-      ),
       if (_isStatementNode(node)) ...[
         const SizedBox(height: 10),
         _NodeExpressionButton(
             nodeId: id, nodeName: node['name']?.toString() ?? ''),
-      ],
-      // 병합·전환: 잘못 추출된 노드를 사후 교정하는 허브. Concept는 정체성 전환/
-      // 정체성·개념 병합, 정체성은 다른 정체성에 병합(중복 제거). 병합 시 관계와
-      // 일기 연결(provenance)이 대상 노드로 승계되고 별칭으로 학습된다.
-      if (!_isStatementNode(node) && !_isChunkNode(node)) ...[
-        const SizedBox(height: 10),
-        OutlinedButton.icon(
-          onPressed: _saving ? null : () => _mergeOrConvert(node),
-          icon: const Icon(Icons.merge_type, size: 18),
-          label: Text(
-            canonicalEntityType(node['type']?.toString() ?? '').toLowerCase() ==
-                    'concept'
-                ? tr('inspector.mergeConvertButton')
-                : tr('inspector.mergeIntoOtherButton'),
-          ),
-        ),
       ],
       const SizedBox(height: 14),
       Row(
@@ -1022,33 +1145,106 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
             onTap: () => widget.onSelectEdge?.call(e),
           )),
       const SizedBox(height: 16),
-      Builder(builder: (context) {
-        final recorded = (node['occurred_at'] ??
-                node['entry_created_at'] ??
-                node['created_at'])
-            ?.toString()
-            .split('T')
-            .first;
-        if (recorded == null || recorded.isEmpty)
-          return const SizedBox.shrink();
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: Text(tr('inspector.recordedDate', {'date': recorded}),
-              style: TextStyle(fontSize: 11, color: context.mutedText)),
-        );
-      }),
-      Text(
-        'ID: ${id.substring(0, 8)}… · ${node['created_at']?.toString().split('T').first ?? ''}',
-        style: TextStyle(
-            fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
+
+      // Everything below is either rarely needed or purely diagnostic. It all
+      // stays available — just folded away so the panel opens on what the node
+      // actually says.
+      _disclosureHeader(
+        theme,
+        label: tr('inspector.advancedSection'),
+        expanded: _showAdvanced,
+        onTap: () => setState(() => _showAdvanced = !_showAdvanced),
       ),
+      if (_showAdvanced) ...[
+        const SizedBox(height: 10),
+        ..._aliasSection(node, theme),
+        if (((node['importance_score'] as num?)?.toInt() ?? 0) > 0) ...[
+          _ImportanceCard(score: (node['importance_score'] as num).toInt()),
+          const SizedBox(height: 12),
+        ],
+        _EmbeddingStatusCard(
+          node: node,
+          onUnlinkVoice: node['voice_embedding_registered'] == true
+              ? _unlinkNodeVoice
+              : null,
+        ),
+        // 병합·전환: 잘못 추출된 노드를 사후 교정하는 허브. Concept는 정체성 전환/
+        // 정체성·개념 병합, 정체성은 다른 정체성에 병합(중복 제거). 병합 시 관계와
+        // 일기 연결(provenance)이 대상 노드로 승계되고 별칭으로 학습된다.
+        if (!_isStatementNode(node) && !_isChunkNode(node)) ...[
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: _saving ? null : () => _mergeOrConvert(node),
+            icon: const Icon(Icons.merge_type, size: 18),
+            label: Text(
+              canonicalEntityType(node['type']?.toString() ?? '')
+                          .toLowerCase() ==
+                      'concept'
+                  ? tr('inspector.mergeConvertButton')
+                  : tr('inspector.mergeIntoOtherButton'),
+            ),
+          ),
+        ],
+      ],
+
       const SizedBox(height: 8),
-      Text(
-        tr('inspector.storedNodesNote'),
-        style: TextStyle(
-            fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
+      _disclosureHeader(
+        theme,
+        label: tr('inspector.debugSection'),
+        expanded: _showDebug,
+        onTap: () => setState(() => _showDebug = !_showDebug),
       ),
+      if (_showDebug) ...[
+        const SizedBox(height: 8),
+        Text(
+          'ID: ${id.substring(0, 8)}… · ${node['created_at']?.toString().split('T').first ?? ''}',
+          style: TextStyle(
+              fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          tr('inspector.storedNodesNote'),
+          style: TextStyle(
+              fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
+        ),
+      ],
     ];
+  }
+
+  /// Header for a collapsed group — a plain disclosure row rather than an
+  /// ExpansionTile, so it sits flush with the surrounding flat list.
+  Widget _disclosureHeader(
+    ThemeData theme, {
+    required String label,
+    required bool expanded,
+    required VoidCallback onTap,
+  }) {
+    final color = theme.colorScheme.onSurfaceVariant;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            Icon(
+              expanded ? Icons.expand_less : Icons.expand_more,
+              size: 18,
+              color: color,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   List<Widget> _edgeInspector(Map<String, dynamic> edge, ThemeData theme) {

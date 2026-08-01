@@ -665,34 +665,38 @@ async def add_node(
 
 
 @router.patch("/nodes/{node_id}", response_model=NodeOut)
-
 async def edit_node(
-
     node_id: uuid.UUID,
-
     payload: NodeUpdate,
-
     user: User = Depends(request_user_dep),
-
     session: AsyncSession = Depends(get_session),
-
 ) -> NodeOut:
-
     existing = await session.get(Node, node_id)
-    before = (
-        existing.name,
-        existing.type,
-        existing.description,
-    ) if existing is not None else None
+    # Ownership is checked before anything is written. The trailing get_node_out
+    # is user-scoped and would 404, but only after the mutation had committed.
+    if existing is None or existing.user_id != user.id:
+        raise HTTPException(status_code=404, detail="node not found")
+
+    before = (existing.name, existing.type, existing.description)
+
+    # An event-date correction is its own retained change (see
+    # apply_manual_event_date), independent of any text edit in the same PATCH.
+    if payload.occurred_at is not None:
+        from ..config import get_settings
+        from ..temporal_backfill import apply_manual_event_date
+
+        apply_manual_event_date(
+            session,
+            existing,
+            payload.occurred_at,
+            timezone_name=get_settings().chat_timezone,
+        )
+        await session.commit()
 
     node = await crud.update_node(
-
         session, node_id, payload.name, payload.type, payload.description
-
     )
-
     if node is None:
-
         raise HTTPException(status_code=404, detail="node not found")
 
     changed = before != (node.name, node.type, node.description)

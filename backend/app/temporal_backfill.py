@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .graph_retrieval import statement_content
 from .models import JournalEntry, JournalGraphLink, Node, TemporalBackfillAudit
 from .temporal import resolve_event_temporal
+
+# Set when a human states the event day. Nothing derivable from the text can
+# improve on it, so automatic passes must leave these rows alone.
+USER_SET_PRECISION = "user_set"
 
 
 def _snapshot(node: Node) -> dict:
@@ -54,6 +59,12 @@ async def backfill_statement_event_times(
         if node.id in seen:
             continue
         seen.add(node.id)
+        # A human already answered "when did this happen" for this statement.
+        # Re-deriving would discard that answer for a guess — the text it would
+        # re-read is exactly the text that lacked the information in the first
+        # place — so a confirmed day is never recomputed.
+        if node.temporal_precision == USER_SET_PRECISION:
+            continue
         value = resolve_event_temporal(
             statement=statement_content(node),
             entry_at=entry.created_at,
@@ -96,3 +107,46 @@ async def backfill_statement_event_times(
     if not dry_run:
         await session.commit()
     return {"run_key": run_key, "scanned": len(seen), "changed": changed, "review_node_ids": reviewed}
+
+
+def apply_manual_event_date(
+    session: AsyncSession,
+    node: Node,
+    day: date,
+    *,
+    timezone_name: str,
+) -> bool:
+    """Set a Statement's event day from a human correction, retaining the change.
+
+    Used when someone fixes a date from the graph inspector — the entry was
+    reviewed and committed already, and only now is it clear the writing
+    describes an earlier day. Returns False when the day is unchanged, so a
+    no-op edit does not manufacture an audit row.
+
+    Does not commit; the caller owns the transaction.
+    """
+    if node.occurred_at == day and node.temporal_precision == USER_SET_PRECISION:
+        return False
+
+    tz = ZoneInfo(timezone_name)
+    start = datetime(day.year, day.month, day.day, tzinfo=tz)
+    before = _snapshot(node)
+
+    node.occurred_at = day
+    node.event_start_at = start
+    node.event_end_at = start + timedelta(days=1)
+    node.temporal_precision = USER_SET_PRECISION
+    node.temporal_confidence = 1.0
+    # The stored phrase justified the *previous* date; keeping it would leave a
+    # "어제" pointing at a day the user just overruled.
+    node.temporal_source_text = None
+    node.event_timezone = timezone_name
+
+    session.add(TemporalBackfillAudit(
+        user_id=node.user_id,
+        node_id=node.id,
+        before=before,
+        after=_snapshot(node),
+        run_key="manual-edit",
+    ))
+    return True

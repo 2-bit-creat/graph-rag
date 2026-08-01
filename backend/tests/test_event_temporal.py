@@ -145,3 +145,124 @@ def test_override_preserves_non_default_event_status():
     )
     assert values["event_status"] == "cancelled"
     assert values["occurred_at"].isoformat() == "2026-07-25"
+
+
+# ─── Post-commit correction from the graph inspector ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_manual_event_date_overwrites_a_guessed_day_and_is_retained(
+    db_session, iso_user
+):
+    from sqlalchemy import select
+
+    from app.models import TemporalBackfillAudit
+    from app.temporal_backfill import apply_manual_event_date
+
+    node = await crud._get_or_create_node(
+        db_session,
+        name="친구 이직 소식",
+        type_="Statement",
+        description='{"content":"친구가 이직한대."}',
+        user_id=iso_user.id,
+        claim_key="manual-date-test",
+        occurred_at=date(2026, 7, 30),
+        recorded_at=datetime.fromisoformat("2026-07-30T10:15:00+09:00"),
+        temporal_precision="recorded_date",
+        temporal_confidence=0.6,
+        temporal_source_text=None,
+    )
+    await db_session.commit()
+
+    changed = apply_manual_event_date(
+        db_session, node, date(2026, 7, 28), timezone_name="Asia/Seoul"
+    )
+    await db_session.commit()
+
+    assert changed is True
+    assert node.occurred_at.isoformat() == "2026-07-28"
+    assert node.temporal_precision == "user_set"
+    assert node.temporal_confidence == 1.0
+    assert node.event_start_at.isoformat() == "2026-07-28T00:00:00+09:00"
+    assert node.event_end_at.isoformat() == "2026-07-29T00:00:00+09:00"
+
+    audits = (
+        await db_session.execute(
+            select(TemporalBackfillAudit).where(
+                TemporalBackfillAudit.node_id == node.id
+            )
+        )
+    ).scalars().all()
+    assert len(audits) == 1
+    assert audits[0].before["occurred_at"] == "2026-07-30"
+    assert audits[0].after["occurred_at"] == "2026-07-28"
+    assert audits[0].run_key == "manual-edit"
+
+
+@pytest.mark.asyncio
+async def test_setting_the_same_day_twice_adds_no_second_audit_row(
+    db_session, iso_user
+):
+    from app.temporal_backfill import apply_manual_event_date
+
+    node = await crud._get_or_create_node(
+        db_session,
+        name="반복 편집",
+        type_="Statement",
+        description='{"content":"같은 날짜를 다시 지정한다."}',
+        user_id=iso_user.id,
+        claim_key="manual-date-idempotent",
+        occurred_at=date(2026, 7, 30),
+        recorded_at=datetime.fromisoformat("2026-07-30T10:15:00+09:00"),
+        temporal_precision="recorded_date",
+        temporal_confidence=0.6,
+    )
+    await db_session.commit()
+
+    assert apply_manual_event_date(
+        db_session, node, date(2026, 7, 28), timezone_name="Asia/Seoul"
+    ) is True
+    await db_session.commit()
+    assert apply_manual_event_date(
+        db_session, node, date(2026, 7, 28), timezone_name="Asia/Seoul"
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_backfill_never_recomputes_a_user_confirmed_day(db_session, iso_user):
+    """The automatic pass would re-read the same text that lacked the date."""
+    from app.models import JournalEntry, JournalGraphLink
+    from app.temporal_backfill import backfill_statement_event_times
+
+    entry = JournalEntry(
+        user_id=iso_user.id,
+        transcript_native="친구가 이직한대.",
+        created_at=datetime.fromisoformat("2026-07-30T10:15:00+09:00"),
+    )
+    db_session.add(entry)
+    await db_session.flush()
+
+    node = await crud._get_or_create_node(
+        db_session,
+        name="사용자 확정 날짜",
+        type_="Statement",
+        description='{"content":"친구가 이직한대."}',
+        user_id=iso_user.id,
+        claim_key="user-set-guard",
+        occurred_at=date(2026, 7, 28),
+        recorded_at=entry.created_at,
+        temporal_precision="user_set",
+        temporal_confidence=1.0,
+    )
+    db_session.add(
+        JournalGraphLink(journal_entry_id=entry.id, node_id=node.id)
+    )
+    await db_session.commit()
+
+    await backfill_statement_event_times(
+        db_session, iso_user.id, timezone_name="Asia/Seoul"
+    )
+    await db_session.refresh(node)
+
+    assert node.occurred_at.isoformat() == "2026-07-28"
+    assert node.temporal_precision == "user_set"

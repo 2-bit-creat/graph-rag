@@ -1027,12 +1027,16 @@ class ApiClient {
     required String name,
     required String type,
     String? description,
+    // Statement nodes — "YYYY-MM-DD" when the event actually happened. Sent only
+    // when the user corrects it, so an unrelated text edit never restamps a date.
+    String? occurredAt,
   }) async {
     try {
       final resp = await _dio.patch('/graph/nodes/$nodeId', data: {
         'name': name,
         'type': type,
         if (description != null) 'description': description,
+        if (occurredAt != null) 'occurred_at': occurredAt,
       });
       return resp.data as Map<String, dynamic>;
     } on DioException catch (e) {
