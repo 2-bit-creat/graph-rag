@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 # Bump this whenever the cloze contract changes.  The batch service uses it to
 # retry sources that were exhausted by an older, broken prompt/normalizer.
-CLOZE_GENERATOR_VERSION = "cloze-contract-v10-concise-natural-predicate"
+CLOZE_GENERATOR_VERSION = "cloze-contract-v11-no-tautological-repetition"
 _BLANK_RUN_RE = re.compile(r"_{2,}")
 _ENGLISH_WORD_RE = re.compile(r"[A-Za-z]+(?:['-][A-Za-z]+)*")
 _HANGUL_RE = re.compile(r"[가-힣]")
@@ -499,6 +499,11 @@ def _build_plan_system_prompt(
         f"Vocabulary scope: {band.vocabulary}. Grammar scope: {band.grammar}. Teaching focus: {guide} "
         f"Target-language quality rubric: {localized_quality_rules(language)} "
         "Return one result for every segment_index and 1-3 expressions per segment. Never merge, drop, reorder, or rewrite source units. "
+        "Never stack a discourse frame or grammar pattern on top of a term that already carries the frame's own head noun — check the "
+        "finished canonical_form/surface_form for restated words before returning it. For example, the source noun '크레딧 이벤트' already "
+        "means 'credit event', so wrapping it in the frame 'in the event of ___' produces the tautology 'in the event of credit events'; "
+        "instead extract just 'credit event' as a domain_term, or if a frame is needed pick a synonym-free one such as 'when a credit event "
+        "occurs' or 'in case of a credit event'. "
         "Separate canonical_form (the reusable wordbook form) from surface_form (the naturally inflected realization). They are allowed and "
         "often expected to differ because of tense, person, case, word order, separable verbs, or grammar. surface_segments may contain "
         "multiple spans for discontinuous expressions. Never add a meaning-bearing modifier that the source does not contain. "
@@ -782,6 +787,29 @@ def _surface_answer_contract_reason(
     return None
 
 
+_REPETITION_STOPWORDS = frozenset({
+    "a", "an", "the", "of", "in", "on", "at", "to", "for", "and", "or", "with",
+    "by", "is", "are", "as", "that", "this", "its", "their",
+})
+
+
+def _has_tautological_repetition(text: str, *, language: str) -> bool:
+    """Flag a phrase that restates the same headword twice, e.g. a discourse
+    frame stacked on a term that already carries the frame's own head noun
+    ("in the event of credit events" repeats "event"). This is a mechanical
+    check, not a real reduplication idiom ("day by day"), so it only looks at
+    content words of 4+ letters."""
+    if language not in {"english", "german"}:
+        return False
+    words = [w.casefold() for w in re.findall(r"[A-Za-zÄÖÜäöüß]+", text)]
+    lemmas = [
+        w[:-1] if w.endswith("s") and len(w) > 4 else w
+        for w in words
+        if w not in _REPETITION_STOPWORDS and len(w) >= 4
+    ]
+    return len(lemmas) != len(set(lemmas))
+
+
 def _usable_expression_chunks(raw_chunks: Any, *, language: str) -> set[str]:
     """Keep learnable chunks only; proper names never become quiz answers.
 
@@ -812,6 +840,8 @@ def _usable_expression_chunks(raw_chunks: Any, *, language: str) -> set[str]:
         # German common nouns are capitalized by rule. Only reject a phrase
         # made entirely of title-cased tokens, a strong multi-word name signal.
         if language == "german" and len(words) > 1 and all(word[:1].isupper() for word in words):
+            continue
+        if _has_tautological_repetition(text, language=language):
             continue
         chunks.add(key)
     return chunks
