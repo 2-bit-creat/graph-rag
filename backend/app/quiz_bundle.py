@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 # Bump this whenever the cloze contract changes.  The batch service uses it to
 # retry sources that were exhausted by an older, broken prompt/normalizer.
-CLOZE_GENERATOR_VERSION = "cloze-contract-v9-entity-boundary"
+CLOZE_GENERATOR_VERSION = "cloze-contract-v10-concise-natural-predicate"
 _BLANK_RUN_RE = re.compile(r"_{2,}")
 _ENGLISH_WORD_RE = re.compile(r"[A-Za-z]+(?:['-][A-Za-z]+)*")
 _HANGUL_RE = re.compile(r"[가-힣]")
@@ -90,16 +90,30 @@ LANG_GUIDES: dict[str, str] = {
 # for idiomaticity and language-specific grammar.
 LOCALIZED_QUALITY_RULES: dict[str, str] = {
     "english": (
-        "Write idiomatic contemporary English. Keep names and surrounding context "
-        "outside the learnable answer; the answer must contain only the reusable expression."
+        "Write idiomatic contemporary English — restructure the sentence into a natural "
+        "English predicate rather than mirroring the native sentence's grammar. A Korean "
+        "definitional sentence ('X는 Y이다') that casts X as an abstract right/permission/"
+        "ability belonging to someone else must NOT become a literal English copula ('X is "
+        "Y'): use the natural predicate instead, e.g. 'X gives investors the right to ...', "
+        "never 'X is a legal right for investors to ...'. The same applies to any '이다' "
+        "sentence describing what X does, allows, or causes rather than what category X "
+        "belongs to. Keep names and surrounding context outside the learnable answer; the "
+        "answer must contain only the reusable expression."
     ),
     "german": (
-        "Formuliere idiomatisches, modernes Deutsch. Eigennamen und bloßer Kontext "
-        "dürfen nie Teil der Lernantwort sein; die Antwort enthält nur den wiederverwendbaren Ausdruck."
+        "Formuliere idiomatisches, modernes Deutsch — übernimm nicht wörtlich den Satzbau "
+        "der Ausgangssprache. Ein koreanischer Definitionssatz ('X는 Y이다'), der X als ein "
+        "abstraktes Recht einer anderen Partei beschreibt, darf nicht zu einer wörtlichen "
+        "Kopula ('X ist Y') werden; verwende stattdessen ein natürliches Prädikat (z. B. 'X "
+        "gibt Investoren das Recht, ...', nicht 'X ist ein Recht für Investoren, ...'). "
+        "Eigennamen und bloßer Kontext dürfen nie Teil der Lernantwort sein; die Antwort "
+        "enthält nur den wiederverwendbaren Ausdruck."
     ),
     "korean": (
-        "자연스러운 현대 한국어를 사용하세요. 고유명사와 단순 문맥은 학습 정답에 넣지 말고, "
-        "재사용 가능한 표현만 정답으로 만드세요."
+        "자연스러운 현대 한국어를 사용하세요. 원문 언어의 문장 구조를 그대로 옮기지 말고, "
+        "무언가를 부여하거나 허용하는 의미라면 'X는 Y이다' 식 계사 문장이 아니라 "
+        "'X는 Y에게 ~할 권리를 준다'처럼 자연스러운 서술어로 재구성하세요. "
+        "고유명사와 단순 문맥은 학습 정답에 넣지 말고, 재사용 가능한 표현만 정답으로 만드세요."
     ),
 }
 
@@ -512,7 +526,12 @@ def _build_cloze_system_prompt(
         "You create exactly one context-grounded cloze card for each supplied expression. "
         f"Native language: {native_label}. Target language: {target_label}. Learner level: {level}/100. "
         f"Teaching focus: {guide} Target-language quality rubric: {localized_quality_rules(language)} "
-        "Use the supplied source segment, reference answer, canonical form, surface form, meaning parts and grammar. Do not weaken or omit "
+        "Use the supplied source segment, reference answer, canonical form, surface form, meaning parts and grammar as the meaning source, "
+        "but do NOT simply copy the entire reference answer or source segment into sentence_target when it is longer than needed for this "
+        "one expression. The reference answer may be one long sentence shared by several expressions from the same statement; each cloze card "
+        "is a standalone vocabulary example and must carry only what surface_answer needs. Write a concise, self-contained natural sentence "
+        "(roughly 6-16 target-language words) that showcases surface_answer in its ordinary collocation. Only keep a longer sentence when the "
+        "expression is a discourse frame or grammar pattern whose meaning genuinely depends on the fuller clause. Do not weaken or omit "
         "meaning-bearing modifiers such as closer/more, again, still, barely, might, must or not, and never add one absent from the source. "
         "Korean '자세히' does not license English 'closer/more closely'; those require explicit '더 자세히'. canonical_form is a wordbook identity, "
         "NOT a literal substring requirement. Choose surface_answer as a natural inflected form for this sentence, but inflection may "
