@@ -148,21 +148,32 @@ async def trigger_reprocess(
 
 @router.delete("/statement-bank/expressions", tags=["vocabularies"])
 async def delete_statement_expression(
-    node_id: str,
     language: str,
     expression: str,
+    node_id: str | None = None,
     user: User = Depends(request_user_dep),
 ) -> dict:
-    """Delete a single expression from the statement bank.
+    """Delete an expression from the statement bank.
 
-    If all expressions for that node+language are removed, the extraction_done
-    flag is reset so the worker will re-extract on next trigger.
+    A merged card (see ``get_statement_bank_for_language``) can span several
+    origin Statement nodes. Passing ``node_id`` scopes the delete to that one
+    origin; omitting it (the "remove from vocab" action on a merged card)
+    removes the lemma from every origin so a surviving copy cannot bring it
+    back. If all expressions for a node+language are removed, that node's
+    extraction_done flag is reset so the worker will re-extract on next trigger.
     """
-    from ..node_expression_store import delete_node_expression
-    removed = await delete_node_expression(user.id, node_id, language, expression)
-    if not removed:
+    if node_id is not None:
+        from ..node_expression_store import delete_node_expression
+        removed = await delete_node_expression(user.id, node_id, language, expression)
+        if not removed:
+            raise HTTPException(status_code=404, detail="Expression not found")
+        return {"removed": expression, "node_id": node_id, "language": language}
+
+    from ..node_expression_store import delete_expression_all_origins
+    removed_count = await delete_expression_all_origins(user.id, language, expression)
+    if not removed_count:
         raise HTTPException(status_code=404, detail="Expression not found")
-    return {"removed": expression, "node_id": node_id, "language": language}
+    return {"removed": expression, "origins_removed": removed_count, "language": language}
 
 
 @router.delete("/statement-bank/language/{language}", tags=["vocabularies"])

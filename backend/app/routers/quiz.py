@@ -27,7 +27,7 @@ from ..level_guidelines import cefr_label, window_for_level
 from ..models import Quiz, QuizAttempt, QuizGenerationRun, QuizLearningMaterial, QuizPolicyDecision, User
 from ..pipeline_flow import build_quiz_only_flow_layout
 from ..quiz_bundle import BundleSeedError, generate_quiz_bundle
-from ..quiz_materials import ensure_learning_material, materialize_node_expressions
+from ..quiz_materials import ensure_learning_material, materialize_node_expressions, reset_node_materials
 from ..quiz_pipeline import (
     trace_quiz_queue_pick,
     trace_quiz_sm2_update,
@@ -574,6 +574,30 @@ async def materialize_learning_expressions(
         queue_missing=limit,
     )
     return {"status": "ok", "quiz_ids": [str(quiz.id) for quiz in created], "count": len(created)}
+
+
+@router.delete("/materials/{node_id}")
+async def reset_learning_material(
+    node_id: uuid.UUID,
+    language: str | None = Query(None),
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Archive every quiz + delete every expression this Statement produced.
+
+    Scoped to one ``language`` when given, otherwise every active target
+    language. The Statement itself is untouched — the next manual generation
+    (or auto-refill) starts this node over from a clean slate.
+    """
+    try:
+        result = await reset_node_materials(
+            session, user,
+            node_id=node_id,
+            languages=[language.lower()] if language else None,
+        )
+    except BundleSeedError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"node_id": str(node_id), **result}
 
 
 @router.get("/admin/policy-dashboard")

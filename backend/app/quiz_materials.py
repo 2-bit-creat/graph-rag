@@ -170,6 +170,75 @@ async def archive_edited_statement_materials(
     return {"archived_quiz_count": archived, "languages": stale_languages}
 
 
+async def reset_node_materials(
+    session: AsyncSession,
+    user: User,
+    *,
+    node_id: uuid.UUID,
+    languages: list[str] | None = None,
+) -> dict:
+    """Wipe every quiz + expression a Statement produced, for an explicit re-run.
+
+    Unlike :func:`archive_edited_statement_materials`, this always resets —
+    it does not check whether the source content changed. It is the
+    user-triggered "start over on this node" action: same statement, clean
+    slate, so the next manual generation re-extracts from scratch instead of
+    piling more near-duplicate expressions onto the existing wordbook.
+    """
+    node = await _node(session, user.id, node_id)
+    if node is None:
+        raise BundleSeedError("Statement node not found")
+    fingerprint = await statement_fingerprint(session, user, node_id)
+    targets = [
+        str(language).lower()
+        for language in (languages or crud.get_effective_target_languages(user))
+    ]
+    rows = {
+        row.language: row
+        for row in (
+            await session.scalars(
+                select(QuizLearningMaterial).where(
+                    QuizLearningMaterial.user_id == user.id,
+                    QuizLearningMaterial.node_id == node_id,
+                    QuizLearningMaterial.language.in_(targets),
+                )
+            )
+        ).all()
+    }
+    archived = 0
+    for language in targets:
+        row = rows.get(language)
+        if row is not None:
+            archived += await _supersede_material(
+                session, user, row, node_id=node_id, language=language, fingerprint=fingerprint,
+            )
+            row.status = "pending"
+            continue
+        # No material row yet (e.g. quizzes came from an older generation path) —
+        # archive whatever quizzes/expressions exist directly.
+        stale_quizzes = (
+            await session.scalars(
+                select(Quiz).where(
+                    Quiz.user_id == user.id,
+                    Quiz.language == language,
+                    Quiz.quiz_type.in_(("cloze", "composition")),
+                    Quiz.queue_kind != "archived",
+                    Quiz.source_nodes.any(node_id),
+                )
+            )
+        ).all()
+        for quiz in stale_quizzes:
+            quiz.queue_kind = "archived"
+            quiz.generation_key = None
+            quiz.batch_id = None
+        archived += len(stale_quizzes)
+        from .node_expression_store import delete_node_language_expressions
+
+        await delete_node_language_expressions(user.id, str(node_id), language)
+    await session.commit()
+    return {"archived_quiz_count": archived, "languages": targets}
+
+
 async def get_or_mark_material(
     session: AsyncSession,
     user: User,

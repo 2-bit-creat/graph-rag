@@ -375,6 +375,10 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
   }
 
   void _revealAnswer({bool fillField = false}) {
+    // Synchronous, inside this real tap — unlocks web autoplay before the
+    // actual play (dispatched a frame later, in _playAnswerAudioAfterBuild)
+    // would otherwise arrive too late for the browser to trust it.
+    widget.audioButtonKey?.currentState?.primeForAutoplay();
     final blank = _blank;
     setState(() {
       _answerRevealed = true;
@@ -396,6 +400,11 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
     if (_submitting || _solved) return;
     final text = _controller.text.trim();
     if (text.isEmpty) return;
+    // Grading below is a server round-trip; if it turns out correct, the
+    // answer clip plays only after that `await` returns, which is too late
+    // for web autoplay to trust as part of this tap. Unlock the player here,
+    // synchronously, in the one moment that still counts as the real tap.
+    widget.audioButtonKey?.currentState?.primeForAutoplay();
 
     if (_graded == null) {
       setState(() => _submitting = true);

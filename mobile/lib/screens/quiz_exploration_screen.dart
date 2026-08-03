@@ -495,6 +495,49 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
     );
   }
 
+  Future<void> _resetNode(Map<String, dynamic> node) async {
+    final id = node['node_id']?.toString() ?? '';
+    final name = node['node_name']?.toString() ?? '이름 없는 Statement';
+    if (id.isEmpty) return;
+    final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('노드 초기화'),
+            content: Text(
+              "'$name'에서 만들어진 단어/작문 퀴즈와 표현을 전부 삭제합니다.\n"
+              'Statement 자체는 그대로 남고, 다음 문제 생성부터 새로 시작합니다.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('취소'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('초기화'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!ok || !mounted) return;
+    try {
+      await apiClient.resetNodeQuizMaterial(id);
+      if (!mounted) return;
+      await _load(silent: true);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('초기화했습니다.')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('초기화 실패: $e')),
+        );
+      }
+    }
+  }
+
   Widget _buildNodeCard(Map<String, dynamic> node) {
     final id = node['node_id']?.toString() ?? '';
     final selected = _selectedNodes.contains(id);
@@ -511,52 +554,72 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
                 .primaryContainer
                 .withValues(alpha: 0.4)
             : null,
-        child: CheckboxListTile(
-          value: selected,
-          onChanged: (value) => setState(() {
-            if (value == true) {
-              _selectedNodes.add(id);
-            } else {
-              _selectedNodes.remove(id);
-            }
-          }),
-          title: Text(node['node_name']?.toString() ?? '이름 없는 Statement'),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if ((node['content_ko']?.toString() ?? '').isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(
-                  node['content_ko'].toString(),
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                children: stats.map((stat) {
-                  final counts = stat['generated_counts'] is Map
-                      ? Map<String, dynamic>.from(
-                          stat['generated_counts'] as Map,
-                        )
-                      : <String, dynamic>{};
-                  final language = stat['language']?.toString() ?? '';
-                  return Chip(
-                    visualDensity: VisualDensity.compact,
-                    label: Text(
-                      '${_languageLabels[language] ?? language} · '
-                      '단어 ${counts['cloze'] ?? 0}개 · 작문 ${counts['composition'] ?? 0}개',
-                      style: const TextStyle(fontSize: 11),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            CheckboxListTile(
+              value: selected,
+              onChanged: (value) => setState(() {
+                if (value == true) {
+                  _selectedNodes.add(id);
+                } else {
+                  _selectedNodes.remove(id);
+                }
+              }),
+              title: Text(node['node_name']?.toString() ?? '이름 없는 Statement'),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if ((node['content_ko']?.toString() ?? '').isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      node['content_ko'].toString(),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                  );
-                }).toList(),
+                  ],
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: stats.map((stat) {
+                      final counts = stat['generated_counts'] is Map
+                          ? Map<String, dynamic>.from(
+                              stat['generated_counts'] as Map,
+                            )
+                          : <String, dynamic>{};
+                      final language = stat['language']?.toString() ?? '';
+                      return Chip(
+                        visualDensity: VisualDensity.compact,
+                        label: Text(
+                          '${_languageLabels[language] ?? language} · '
+                          '단어 ${counts['cloze'] ?? 0}개 · 작문 ${counts['composition'] ?? 0}개',
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ],
               ),
-            ],
-          ),
-          controlAffinity: ListTileControlAffinity.leading,
-          isThreeLine: true,
+              controlAffinity: ListTileControlAffinity.leading,
+              isThreeLine: true,
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(0, 0, 8, 8),
+                child: TextButton.icon(
+                  onPressed: () => _resetNode(node),
+                  icon: const Icon(Icons.restart_alt_rounded, size: 16),
+                  label: const Text('이 노드 초기화'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Theme.of(context).colorScheme.error,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

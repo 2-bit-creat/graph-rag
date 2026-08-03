@@ -549,6 +549,27 @@ class ApiClient {
     }
   }
 
+  /// Archive every quiz + delete every expression one Statement node produced.
+  /// Scoped to [language] when given, otherwise every active target language.
+  /// The Statement itself is untouched — the next manual generation starts
+  /// this node over from a clean slate instead of piling more expressions on.
+  Future<Map<String, dynamic>> resetNodeQuizMaterial(
+    String nodeId, {
+    String? language,
+  }) async {
+    try {
+      final resp = await _dio.delete(
+        '/quiz/materials/$nodeId',
+        queryParameters: {
+          if (language != null && language.isNotEmpty) 'language': language,
+        },
+      );
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '노드 문제 초기화');
+    }
+  }
+
   Future<Map<String, dynamic>> deleteQuizItem(
     String quizId, {
     bool permanent = false,

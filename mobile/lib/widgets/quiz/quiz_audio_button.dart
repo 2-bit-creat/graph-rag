@@ -86,21 +86,25 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
   }
 
   /// Correct-answer feedback: exact answer → short pause → natural sentence.
-  /// The clips have already been fetched by [prepare], so no TTS/network call
-  /// lies on the feedback path in normal use.
+  /// Both clips are re-awaited from [prepare] first — normally an instant,
+  /// already-resolved cache hit, but on the rare occasion a card is answered
+  /// before its background preload finished, this keeps the network fetch
+  /// (which can take far longer than the deliberate pause below) from
+  /// silently stretching the gap between the two clips.
   Future<void> playCorrectSequence({bool showError = true}) async {
     final answer = resolveMediaUrl(widget.answerAudioUrl);
     final sentence = resolveMediaUrl(widget.audioUrl);
     if (answer == null || sentence == null) return play(showError: showError);
 
+    await prepare();
     final sequence = ++_playSequence;
     final completion = Completer<void>();
     _completion = completion;
     await _playResolved(answer, sequence, showError: showError);
     try {
-      await completion.future.timeout(const Duration(seconds: 12));
+      await completion.future.timeout(const Duration(seconds: 3));
       if (sequence != _playSequence) return;
-      await Future<void>.delayed(const Duration(milliseconds: 180));
+      await Future<void>.delayed(const Duration(milliseconds: 90));
       if (sequence != _playSequence) return;
       _completion = null;
       await _playResolved(sentence, sequence, showError: showError);
@@ -109,6 +113,38 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
         await _playResolved(sentence, sequence, showError: showError);
       }
     }
+  }
+
+  /// Unlocks this player for autoplay on browsers (notably iOS Safari) that
+  /// only allow programmatic playback started directly inside a user
+  /// gesture's call stack. The correct-answer clip normally plays after an
+  /// `await` for server grading — by the time it fires, the tap that
+  /// triggered it is no longer "live" as far as the browser is concerned, so
+  /// the browser silently drops the call. Playing (and immediately muting +
+  /// pausing) this exact player synchronously inside the real tap handler,
+  /// before that grading `await`, keeps it unlocked for the rest of the
+  /// session — the later programmatic play then goes through normally.
+  /// Call this from the very start of a genuine `onPressed`/`onTap` handler,
+  /// before any `await`. No-op outside the web target.
+  void primeForAutoplay() {
+    if (!kIsWeb) return;
+    final resolved =
+        resolveMediaUrl(widget.answerAudioUrl) ?? resolveMediaUrl(widget.audioUrl);
+    if (resolved == null) return;
+    unawaited(() async {
+      try {
+        await _player.setVolume(0);
+        await _player.play(UrlSource(resolved));
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+        await _player.pause();
+      } catch (_) {
+        // Best-effort only — a failed priming attempt must never surface as
+        // a user-visible error; the real playback still falls back to its
+        // own error handling later.
+      } finally {
+        await _player.setVolume(1);
+      }
+    }());
   }
 
   Future<void> prepare() async {
@@ -144,6 +180,10 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
           SnackBar(content: Text(tr('quizAudio.pluginNotRegistered'))),
         );
       }
+      // This clip will never fire onPlayerComplete — let playCorrectSequence
+      // move on to the next clip immediately instead of idling on its timeout.
+      _completion?.complete();
+      _completion = null;
     } on TimeoutException {
       if (mounted) setState(() => _playing = false);
       if (showError && mounted) {
@@ -151,6 +191,8 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
           SnackBar(content: Text(tr('quizAudio.connectionFailed', {'url': resolved}))),
         );
       }
+      _completion?.complete();
+      _completion = null;
     } catch (e) {
       if (showError && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -158,6 +200,8 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
         );
       }
       if (mounted) setState(() => _playing = false);
+      _completion?.complete();
+      _completion = null;
     } finally {
       if (mounted) setState(() => _loading = false);
     }
