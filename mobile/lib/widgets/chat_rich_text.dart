@@ -82,10 +82,10 @@ class _ProseBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     final inline = parseChatInlineParts(text);
     if (inline.isEmpty) {
-      return SelectableText(text, style: style, textAlign: textAlign);
+      return Text(text, style: style, textAlign: textAlign);
     }
 
-    return SelectableText.rich(
+    return Text.rich(
       TextSpan(
         children: [
           for (final part in inline)
@@ -268,7 +268,7 @@ class _CodeBlockState extends State<_CodeBlock> {
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            child: SelectableText(
+            child: Text(
               widget.code,
               style: TextStyle(
                 fontFamily: 'monospace',
@@ -322,7 +322,7 @@ class _DisplayMath extends StatelessWidget {
               color: (style.color ?? context.shell.primaryText)
                   .withValues(alpha: 0.98),
             ),
-            onErrorFallback: (err) => SelectableText(
+            onErrorFallback: (err) => Text(
               '\\[$normalized\\]',
               style: style.copyWith(
                 fontFamily: 'monospace',
