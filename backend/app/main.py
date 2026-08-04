@@ -1,12 +1,13 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .db import database_readiness, init_db
+from .db import database_readiness, init_db, is_transient_database_error
 from .routers import auth, debug, graph, graph_chat, graph_chat_distill, jobs, journal, kg_build, legal, ontology, quiz, tutor, vocabulary
 
 settings = get_settings()
@@ -83,6 +84,26 @@ if not settings.is_production:
         r"http://172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}(:\d+)?"
     )
 app.add_middleware(CORSMiddleware, **_cors_kwargs)
+
+
+@app.middleware("http")
+async def database_recovery_response(request: Request, call_next):
+    """Make a transient Postgres restart explicitly retryable for clients."""
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        if not is_transient_database_error(exc):
+            raise
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": {
+                    "code": "database_temporarily_unavailable",
+                    "message": "데이터베이스를 다시 연결하는 중입니다. 잠시 후 다시 시도해 주세요.",
+                }
+            },
+            headers={"Retry-After": "3"},
+        )
 
 app.include_router(auth.router)
 app.include_router(journal.router)

@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from app.db import migration_checksum, split_sql_statements, validate_migration_sql
+from app.db import (
+    is_transient_database_error,
+    migration_checksum,
+    split_sql_statements,
+    validate_migration_sql,
+)
 from app.models import Node
 
 
@@ -12,6 +17,14 @@ def test_node_writes_legacy_pin_column_as_false() -> None:
     assert column.nullable is False
     assert column.default is not None
     assert column.default.arg is False
+
+
+def test_database_recovery_error_is_retryable() -> None:
+    cause = RuntimeError("the database system is in recovery mode")
+    wrapped = RuntimeError("database request failed")
+    wrapped.__cause__ = cause
+    assert is_transient_database_error(wrapped)
+    assert not is_transient_database_error(RuntimeError("invalid input syntax"))
 
 
 @pytest.mark.parametrize(

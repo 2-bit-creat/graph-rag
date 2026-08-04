@@ -572,6 +572,33 @@ async def _wait_for_db(*, attempts: int = 12, delay_sec: float = 2.5) -> None:
     raise RuntimeError("Database connection failed after retries") from last_err
 
 
+def is_transient_database_error(exc: BaseException) -> bool:
+    """Whether an error means Postgres is temporarily unavailable.
+
+    A local Postgres restart exposes ``CannotConnectNowError: the database
+    system is in recovery mode`` through SQLAlchemy.  That is not a malformed
+    request, so callers should receive a retryable 503 rather than a raw 500.
+    Check the complete exception chain because SQLAlchemy wraps asyncpg errors.
+    """
+    needles = (
+        "database system is in recovery mode",
+        "cannot connect now",
+        "connection refused",
+        "connection is closed",
+        "connection reset",
+        "server closed the connection",
+        "too many connections",
+    )
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if any(needle in str(current).lower() for needle in needles):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 async def init_db() -> None:
     if not settings.run_db_migrations:
         # Nothing below this point changes anything once the schema and the
