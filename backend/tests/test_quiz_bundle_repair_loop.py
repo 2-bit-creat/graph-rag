@@ -24,7 +24,44 @@ class _Completions:
 
 
 @pytest.mark.asyncio
-async def test_card_is_saved_without_a_subjective_qa_call(
+async def test_full_translation_gate_repairs_omitted_management_control(monkeypatch) -> None:
+    """Regression for a card whose old Korean gloss omitted the first clause."""
+    completions = _Completions([
+        {
+            "sentence_ko": "M&A에는 경영권 인수와 지배구조 개편이 포함됩니다.",
+            "target_ko": "지배구조 개편",
+        }
+    ])
+    monkeypatch.setattr(
+        quiz_bundle,
+        "_client",
+        lambda: SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+    )
+    completed, rejected, _ = await quiz_bundle._complete_cloze_native_translations(
+        [{
+            "expression_id": "0:0",
+            "surface_answer": "restructuring governance",
+            "sentence_target": "M&As involve acquiring management control and restructuring governance.",
+            "sentence_ko": "M&A는 지배구조 개편을 포함합니다.",
+            "target_ko": "지배구조 개편",
+        }],
+        native_language="korean",
+        target_language="english",
+        model="test-model",
+        timeout=1,
+    )
+
+    assert rejected == []
+    assert completed[0]["sentence_ko"] == "M&A에는 경영권 인수와 지배구조 개편이 포함됩니다."
+    assert completed[0]["target_ko"] == "지배구조 개편"
+    payload = json.loads(completions.calls[0]["messages"][1]["content"])
+    assert payload["sentence_target"] == (
+        "M&As involve acquiring management control and restructuring governance."
+    )
+
+
+@pytest.mark.asyncio
+async def test_card_is_saved_after_independent_full_translation(
     db_session, iso_user, monkeypatch
 ) -> None:
     source = "두 보고서를 꼼꼼히 비교했다."
@@ -61,7 +98,11 @@ async def test_card_is_saved_without_a_subjective_qa_call(
             }
         ]
     }
-    completions = _Completions([plan, cloze])
+    translation = {
+        "sentence_ko": "두 보고서를 회의 전에 꼼꼼히 비교했습니다.",
+        "target_ko": "꼼꼼히 비교했습니다",
+    }
+    completions = _Completions([plan, cloze, translation])
     monkeypatch.setattr(
         quiz_bundle,
         "_client",
@@ -88,10 +129,11 @@ async def test_card_is_saved_without_a_subjective_qa_call(
 
     assert [quiz.quiz_type for quiz in created] == ["composition", "cloze"]
     assert [item["expression"] for item in saved] == ["carefully compared"]
-    assert len(completions.calls) == 2  # plan + cloze; no QA or repair call
+    assert len(completions.calls) == 3  # plan + cloze + independent translation
     assert completions.calls[0]["response_format"]["type"] == "json_schema"
     assert completions.calls[0]["response_format"]["json_schema"]["strict"] is True
     assert completions.calls[1]["response_format"]["type"] == "json_schema"
+    assert completions.calls[2]["response_format"]["json_schema"]["strict"] is True
     assert source in completions.calls[0]["messages"][1]["content"]
     assert "Return only the composition and cloze arrays" not in completions.calls[0]["messages"][0]["content"]
     cloze_payload = json.loads(completions.calls[1]["messages"][1]["content"])
@@ -333,7 +375,17 @@ async def test_multiple_segments_and_inflected_surface_answers_are_created(
             "question_ko": "빈칸을 완성하세요.",
         },
     ]}
-    completions = _Completions([plan, cloze])
+    translations = [
+        {
+            "sentence_ko": "회의 전에 보고서를 검토했습니다.",
+            "target_ko": "보고서를 검토했습니다",
+        },
+        {
+            "sentence_ko": "화면을 더 자세히 살펴봤습니다.",
+            "target_ko": "더 자세히 살펴봤습니다",
+        },
+    ]
+    completions = _Completions([plan, cloze, *translations])
     monkeypatch.setattr(
         quiz_bundle,
         "_client",
@@ -361,4 +413,4 @@ async def test_multiple_segments_and_inflected_surface_answers_are_created(
     )
     assert closer.quiz_data["surface_form"] == "took a closer look at"
     assert closer.quiz_data["meaning"] == "~을 더 자세히 살펴보다"
-    assert len(completions.calls) == 2
+    assert len(completions.calls) == 4

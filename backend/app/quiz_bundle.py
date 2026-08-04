@@ -3,8 +3,8 @@
 A Statement is split into stable native-language composition prompts. Per target
 language, one planning call creates reference realizations and extracts canonical
 expressions plus their inflected surface forms. A second call creates one cloze
-card per expression. Only mechanical payload validation follows; there is no
-subjective LLM quality gate or repair loop.
+card per expression.  Each card then receives an independent, fail-closed native
+translation pass based on its final target-language sentence.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 # Bump this whenever the cloze contract changes.  The batch service uses it to
 # retry sources that were exhausted by an older, broken prompt/normalizer.
-CLOZE_GENERATOR_VERSION = "cloze-contract-v11-no-tautological-repetition"
+CLOZE_GENERATOR_VERSION = "cloze-contract-v12-independent-full-translation"
 _BLANK_RUN_RE = re.compile(r"_{2,}")
 _ENGLISH_WORD_RE = re.compile(r"[A-Za-z]+(?:['-][A-Za-z]+)*")
 _HANGUL_RE = re.compile(r"[가-힣]")
@@ -337,6 +337,114 @@ _CLOZE_RESPONSE_FORMAT = {
         },
     },
 }
+
+
+# The cloze author often writes a good target sentence but summarizes it again
+# in ``sentence_ko``.  Structural validation cannot discover a missing clause
+# across languages (the reported "acquiring management control" case passed all
+# of the old checks), so derive the visible native sentence separately from the
+# final target sentence.  One request per card deliberately keeps this quality
+# boundary independent: a bad translation for one card cannot contaminate its
+# siblings or be silently copied from the source statement.
+_CLOZE_TRANSLATION_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "complete_cloze_native_translation",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["sentence_ko", "target_ko"],
+            "properties": {
+                "sentence_ko": {"type": "string"},
+                "target_ko": {"type": "string"},
+            },
+        },
+    },
+}
+
+
+def _build_cloze_translation_system_prompt(
+    native_label: str, target_label: str,
+) -> str:
+    return (
+        "You are the final translation-quality gate for a language-learning cloze card. "
+        f"Translate the supplied FINAL {target_label} sentence completely and naturally into {native_label}. "
+        "Do not summarize it, simplify it, or use the source note as a substitute. "
+        "Every proposition, predicate, object, coordination, negation, modality, comparison, "
+        "and time relation in the final target sentence must be present in sentence_ko. "
+        "For example, if the target says it involves both acquiring management control AND "
+        "restructuring governance, the translation must explicitly contain both meanings. "
+        "target_ko must be the exact contiguous native-language phrase translating surface_answer, "
+        "must occur verbatim inside sentence_ko, and must cover the complete surface_answer. "
+        "Never put blanks, underscores, markup, explanations, or extra facts in either field. "
+        "Return only the requested JSON."
+    )
+
+
+async def _complete_cloze_native_translations(
+    items: list[Any],
+    *,
+    native_language: str,
+    target_language: str,
+    model: str,
+    timeout: float,
+) -> tuple[list[dict[str, Any]], list[str], list[dict[str, Any]]]:
+    """Replace every model-authored gloss with an independent full translation.
+
+    This is intentionally fail-closed.  If a card cannot produce a structurally
+    usable native translation, it remains available for a later retry instead of
+    shipping a partial meaning to the learner.
+    """
+    system = _build_cloze_translation_system_prompt(
+        _lang_label(native_language), _lang_label(target_language)
+    )
+    completed: list[dict[str, Any]] = []
+    rejected: list[str] = []
+    usages: list[dict[str, Any]] = []
+    for index, raw_item in enumerate(items):
+        if not isinstance(raw_item, dict):
+            rejected.append(f"candidate {index}: cloze item is not an object")
+            continue
+        sentence_target = str(
+            raw_item.get("sentence_en") or raw_item.get("sentence_target") or ""
+        ).strip()
+        surface_answer = str(
+            raw_item.get("surface_answer") or raw_item.get("blank") or ""
+        ).strip()
+        if not sentence_target or not surface_answer:
+            rejected.append(f"candidate {index}: missing sentence_target or surface_answer")
+            continue
+        try:
+            response = await _client().chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": json.dumps({
+                        "sentence_target": sentence_target,
+                        "surface_answer": surface_answer,
+                    }, ensure_ascii=False)},
+                ],
+                temperature=0,
+                response_format=_CLOZE_TRANSLATION_RESPONSE_FORMAT,
+                timeout=timeout,
+            )
+            translated = json.loads(response.choices[0].message.content or "{}")
+        except Exception as exc:
+            logger.warning("Cloze translation gate failed for candidate %s: %s", index, exc)
+            rejected.append(f"candidate {index}: independent translation failed")
+            continue
+        sentence_ko = str(translated.get("sentence_ko") or "").strip()
+        target_ko = str(translated.get("target_ko") or "").strip()
+        if not sentence_ko or not target_ko or target_ko not in sentence_ko:
+            rejected.append(f"candidate {index}: independent translation lacks aligned target_ko")
+            continue
+        item = dict(raw_item)
+        item["sentence_ko"] = sentence_ko
+        item["target_ko"] = target_ko
+        completed.append(item)
+        usages.append(_usage_payload(response))
+    return completed, rejected, usages
 
 
 def _split_statement_units(text: str) -> list[str]:
@@ -1229,9 +1337,10 @@ async def generate_quiz_bundle(
             node_name=str(seed.get("node_name") or seed.get("content_ko") or ""),
         )
 
-    # Stage two generates one card per extracted expression. There is no repair
-    # call and no subjective LLM approval/rejection call after this point.
+    # Stage two generates one card per extracted expression.  The visible native
+    # meaning is rebuilt independently below, from the final target sentence.
     cloze_items: list[Any] = []
+    translation_rejections: list[str] = []
     if accepted_chunks and materialize_cloze:
         cloze_system = _build_cloze_system_prompt(
             native_label, target_label, level, lang_guide(language), language
@@ -1266,6 +1375,28 @@ async def generate_quiz_bundle(
             output={"returned_count": len(cloze_items), "response_keys": list(cloze_raw.keys()), "usage": _usage_payload(cloze_resp)},
             artifacts=[("cloze.json", cloze_raw, "application/json")],
         )
+        translation_step = tracer.begin_step(
+            "bundle_cloze_full_translation", "llm", phase="quiz_path",
+            input_data={"candidate_count": len(cloze_items), "mode": "one_request_per_card"},
+        )
+        translation_step.model = settings.openai_model
+        translation_step.system_prompt = _build_cloze_translation_system_prompt(
+            native_label, target_label
+        )
+        cloze_items, translation_rejections, translation_usage = (
+            await _complete_cloze_native_translations(
+                cloze_items,
+                native_language=native_language,
+                target_language=language,
+                model=settings.openai_model,
+                timeout=settings.openai_timeout_sec,
+            )
+        )
+        tracer.finish_step(translation_step, output={
+            "completed_count": len(cloze_items),
+            "rejections": translation_rejections,
+            "usage": translation_usage,
+        })
 
     cloze_candidates, structural_reasons = _prepare_cloze_candidates(
         cloze_items,
@@ -1308,7 +1439,8 @@ async def generate_quiz_bundle(
     tracer.finish_step(tracer_step, output={
         "accepted_count": len(cloze_candidates),
         "structural_rejections": structural_reasons,
-        "llm_quality_gate": "disabled",
+        "translation_rejections": translation_rejections,
+        "llm_quality_gate": "independent_full_sentence_translation",
     })
     if materialize_cloze and not any(q["quiz_type"] == "cloze" for q in to_create):
         logger.warning("Bundle produced no structurally renderable cloze: user=%s node=%s", user.id, seed_node_id)
@@ -1499,6 +1631,27 @@ async def materialize_expression_clozes(
         await set_expression_quiz_status(user.id, str(node_id), language, names, "available")
         raise
 
+    translation_step = tracer.begin_step(
+        "deferred_cloze_full_translation", "llm", phase="quiz_materialize",
+        input_data={"candidate_count": len(items), "mode": "one_request_per_card"},
+    )
+    translation_step.model = settings.openai_model
+    translation_step.system_prompt = _build_cloze_translation_system_prompt(
+        native_label, target_label
+    )
+    items, translation_rejections, translation_usage = await _complete_cloze_native_translations(
+        items,
+        native_language=native_language,
+        target_language=language,
+        model=settings.openai_model,
+        timeout=settings.openai_timeout_sec,
+    )
+    tracer.finish_step(translation_step, output={
+        "completed_count": len(items),
+        "rejections": translation_rejections,
+        "usage": translation_usage,
+    })
+
     source_meta = {"node_id": str(node_id), "bundle_id": str(bundle_id), "mode": "statement", "language": language, "materialized": True}
     candidates, reasons = _prepare_cloze_candidates(
         items,
@@ -1510,7 +1663,12 @@ async def materialize_expression_clozes(
     )
     chunks_by_id = {str(chunk["expression_id"]): chunk for chunk in chunks}
     trace_step = tracer.begin_step("deferred_cloze_validation", "policy", phase="quiz_materialize", input_data={"candidate_count": len(items)})
-    trace_step_output = {"accepted_count": len(candidates), "structural_rejections": reasons}
+    trace_step_output = {
+        "accepted_count": len(candidates),
+        "structural_rejections": reasons,
+        "translation_rejections": translation_rejections,
+        "llm_quality_gate": "independent_full_sentence_translation",
+    }
     tracer.finish_step(trace_step, output=trace_step_output)
     trace = tracer.finish(status="completed")
     created: list[Quiz] = []
