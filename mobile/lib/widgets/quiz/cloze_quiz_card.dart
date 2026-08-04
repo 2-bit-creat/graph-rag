@@ -148,9 +148,13 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
     final sizingLength = active && display.length > targetWord.length
         ? display.length
         : targetWord.length;
+    // WidgetSpan cannot shrink itself after RichText has chosen a line.  A
+    // large fixed slot could therefore exceed a narrow iPhone viewport by a
+    // fraction of a pixel (or more for a long word).  Cap each slot to a
+    // phone-safe width and scale only its inner label down when necessary.
     final width =
         ((sizingLength * (dense ? 8.0 : 9.5) + (dense ? 10.0 : 12.0)) * scale)
-            .clamp(dense ? 24.0 : 30.0, 180.0);
+            .clamp(dense ? 24.0 : 30.0, dense ? 104.0 : 124.0);
     final showHint = active && display.isEmpty && hintText != null;
     return InkWell(
       onTap: widget.externalInput ? null : () => _focusNode.requestFocus(),
@@ -178,9 +182,11 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
         ),
         child: display.isEmpty && !active
             ? null
-            : Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
+            : FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                   if (display.isNotEmpty)
                     Text(
                       display,
@@ -208,7 +214,8 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
                         color: scheme.primary,
                         height: (dense ? 14 : 16) * scale),
                   ],
-                ],
+                  ],
+                ),
               ),
       ),
     );

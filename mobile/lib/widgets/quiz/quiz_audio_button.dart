@@ -102,7 +102,10 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
     _completion = completion;
     await _playResolved(answer, sequence, showError: showError);
     try {
-      await completion.future.timeout(const Duration(seconds: 3));
+      // Never cut a correct answer off just because it is longer than a
+      // hard-coded three seconds.  Wait for the player's completion event;
+      // the watchdog only covers a genuinely broken browser/media stream.
+      await completion.future.timeout(const Duration(seconds: 15));
       if (sequence != _playSequence) return;
       await Future<void>.delayed(const Duration(milliseconds: 90));
       if (sequence != _playSequence) return;

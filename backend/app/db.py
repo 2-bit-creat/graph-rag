@@ -169,6 +169,9 @@ _MIGRATIONS = [
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS batch_id UUID",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS source_kind TEXT",
     "CREATE INDEX IF NOT EXISTS idx_quizzes_user_track_batch ON quizzes (user_id, track, batch_id)",
+    # Compatibility column for databases created after the pin feature was
+    # removed and older databases that still require a value on INSERT.
+    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE",
     # The pin feature is gone, but keep its database column for compatibility
     # with older production schemas that enforce it as NOT NULL.  Node writes
     # always supply False (see models.Node); no product behaviour uses it.
