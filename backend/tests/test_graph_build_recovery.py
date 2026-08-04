@@ -10,6 +10,7 @@ status (graph_ready or graph_failed).
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -18,6 +19,7 @@ from sqlalchemy import text
 from app import crud, pipeline_runner
 from app.db import async_session_factory
 from app.models import JournalEntry, SpeakerEntryAppearance, SpeakerProfile
+from app.routers.journal import _is_stale_graph_build
 from app.speaker_confirmation import confirm_speaker_identity
 
 
@@ -25,6 +27,13 @@ class _Resp:
     def __init__(self, content):
         self.choices = [type("C", (), {"message": type("M", (), {"content": content})})]
         self.usage = type("U", (), {"prompt_tokens": 10, "completion_tokens": 10})
+
+
+def test_stale_graph_build_detection() -> None:
+    now = datetime.now(UTC)
+    assert _is_stale_graph_build(None, now)
+    assert not _is_stale_graph_build(now - timedelta(minutes=4), now)
+    assert _is_stale_graph_build(now - timedelta(minutes=6), now)
 
 
 def _external_payload():

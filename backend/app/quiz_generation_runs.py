@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,43 @@ from .quiz_bundle import BundleSeedError
 from .quiz_materials import generate_complete_learning_set
 
 logger = logging.getLogger(__name__)
+_RUN_STALE_AFTER = timedelta(minutes=15)
+
+
+async def recover_stale_generation_runs(
+    session: AsyncSession, user_id: uuid.UUID, *, now: datetime | None = None
+) -> int:
+    """Make interrupted in-process generation runs retryable again.
+
+    Generation persists progress after every node/language pair.  If the worker
+    or Lambda is terminated, only the pair in flight stays ``running``.  Once a
+    run has made no progress for 15 minutes, mark unfinished pairs failed so the
+    existing retry endpoint can create a clean, scoped retry.
+    """
+    now = now or datetime.now(UTC)
+    cutoff = now - _RUN_STALE_AFTER
+    runs = (
+        await session.scalars(
+            select(QuizGenerationRun).where(
+                QuizGenerationRun.user_id == user_id,
+                QuizGenerationRun.status.in_(("queued", "running")),
+                QuizGenerationRun.updated_at < cutoff,
+            )
+        )
+    ).all()
+    for run in runs:
+        items = [dict(item) for item in (run.items or [])]
+        for item in items:
+            if item.get("status") in {"queued", "running"}:
+                item.update(status="failed", error="generation worker interrupted; retry this item")
+        run.items = items
+        run.completed_count = sum(item.get("status") == "completed" for item in items)
+        run.failed_count = sum(item.get("status") == "failed" for item in items)
+        run.status = "failed" if run.completed_count == 0 else "partial"
+        run.finished_at = now
+    if runs:
+        await session.commit()
+    return len(runs)
 
 
 def run_dict(run: QuizGenerationRun) -> dict:
@@ -259,6 +296,7 @@ async def list_generation_runs(
     limit: int = 20,
     offset: int = 0,
 ) -> tuple[list[QuizGenerationRun], int]:
+    await recover_stale_generation_runs(session, user_id)
     total = int(
         (
             await session.execute(

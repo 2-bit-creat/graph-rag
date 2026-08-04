@@ -9,6 +9,7 @@ from app.db import (
     validate_migration_sql,
 )
 from app.models import Node
+from app.quiz_generation_runs import _RUN_STALE_AFTER
 
 
 def test_node_writes_legacy_pin_column_as_false() -> None:
@@ -25,6 +26,10 @@ def test_database_recovery_error_is_retryable() -> None:
     wrapped.__cause__ = cause
     assert is_transient_database_error(wrapped)
     assert not is_transient_database_error(RuntimeError("invalid input syntax"))
+
+
+def test_generation_run_stale_window_is_longer_than_one_request() -> None:
+    assert _RUN_STALE_AFTER.total_seconds() == 15 * 60
 
 
 @pytest.mark.parametrize(

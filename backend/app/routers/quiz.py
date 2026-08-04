@@ -37,6 +37,7 @@ from ..quiz_generation_runs import (
     create_generation_run,
     list_generation_runs,
     process_generation_run,
+    recover_stale_generation_runs,
     run_dict,
 )
 from ..quiz_queue import build_session, count_queues, grade_answer, pick_quizzes_by_ids, record_quiz_result
@@ -483,6 +484,7 @@ async def get_generation_run(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(require_debug_enabled),
 ) -> QuizGenerationRunOut:
+    await recover_stale_generation_runs(session, user.id)
     run = await session.get(QuizGenerationRun, run_id)
     if run is None or run.user_id != user.id:
         raise HTTPException(status_code=404, detail="Generation run not found")
@@ -665,6 +667,7 @@ async def retry_generation_run(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(require_debug_enabled),
 ) -> QuizGenerationRunOut:
+    await recover_stale_generation_runs(session, user.id)
     previous = await session.get(QuizGenerationRun, run_id)
     if previous is None or previous.user_id != user.id:
         raise HTTPException(status_code=404, detail="Generation run not found")

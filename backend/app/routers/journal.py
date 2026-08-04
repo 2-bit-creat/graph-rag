@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,6 +41,17 @@ from ..schemas import (
 )
 
 router = APIRouter(prefix="/journal", tags=["journal"])
+
+_GRAPH_BUILD_STALE_AFTER = timedelta(minutes=5)
+
+
+def _is_stale_graph_build(requested_at: datetime | None, now: datetime) -> bool:
+    """A graph task cannot legitimately outlive its bounded LLM request."""
+    if requested_at is None:
+        return True
+    if requested_at.tzinfo is None:
+        requested_at = requested_at.replace(tzinfo=UTC)
+    return now - requested_at > _GRAPH_BUILD_STALE_AFTER
 
 
 def _schedule_graph_ingest(
@@ -406,11 +417,21 @@ async def build_entry_graph(
             },
         )
 
-    if entry.status == "graph_processing" and not force:
-        return GraphBuildOut(
-            entry_id=entry_id,
-            status="graph_processing",
-            message="GraphRAG draft already in progress",
+    if entry.status == "graph_processing":
+        now = datetime.now(UTC)
+        if not _is_stale_graph_build(entry.graph_build_requested_at, now):
+            return GraphBuildOut(
+                entry_id=entry_id,
+                status="graph_processing",
+                message="GraphRAG draft already in progress",
+            )
+        # The request/background worker was terminated before its failure path
+        # ran.  Mark the abandoned attempt terminal before accepting a retry so
+        # clients never poll an immortal spinner or overlap active work.
+        trace = entry.pipeline_trace if isinstance(entry.pipeline_trace, dict) else {}
+        trace = {**trace, "graph_status": "graph_failed", "graph_error": "stale graph build recovered"}
+        await crud.update_journal_entry(
+            session, entry, status="graph_failed", pipeline_trace=trace
         )
 
     await crud.update_journal_entry(
