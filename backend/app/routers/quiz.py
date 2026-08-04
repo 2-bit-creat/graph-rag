@@ -535,13 +535,29 @@ async def analyse_learning_material(
     row, composition, _ = await ensure_learning_material(
         session, user, node_id=node_id, language=language, priority=100
     )
+    # A learner explicitly selected this node, so complete the whole visible
+    # learning set now: composition prompts plus every immediately useful
+    # expression-based cloze (bounded to keep one request predictable).  The
+    # former analysis-only path made this look like a random single word quiz
+    # later when the refill worker happened to need one.
+    clozes, _ = await materialize_node_expressions(
+        session,
+        user,
+        node_id=node_id,
+        language=language,
+        limit=8,
+        direct_node=True,
+        queue_missing=8,
+    )
     return {
         "node_id": str(node_id),
         "language": language,
         "status": row.status,
         "composition_quiz_ids": [str(quiz.id) for quiz in composition],
+        "cloze_quiz_ids": [str(quiz.id) for quiz in clozes],
         "composition_count": row.composition_count,
         "expression_count": row.expression_count,
+        "cloze_count": len(clozes),
     }
 
 
