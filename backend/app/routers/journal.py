@@ -5,7 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import crud
-from ..db import get_session
+from ..db import get_session, is_transient_database_error
 from ..deps import request_user_dep
 from ..models import User
 from ..pipeline_runner import (
@@ -196,6 +196,15 @@ async def upload_journal(
             source_type=source_type,
         )
     except Exception as exc:
+        if is_transient_database_error(exc):
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "database_temporarily_unavailable",
+                    "message": "데이터베이스를 다시 연결하는 중입니다. 잠시 후 음성 업로드를 다시 시도해 주세요.",
+                },
+                headers={"Retry-After": "3"},
+            ) from exc
         raise HTTPException(status_code=500, detail=f"Processing failed: {exc}") from exc
 
     await session.refresh(entry)
