@@ -3,6 +3,15 @@ from __future__ import annotations
 import pytest
 
 from app.db import migration_checksum, split_sql_statements, validate_migration_sql
+from app.models import Node
+
+
+def test_node_writes_legacy_pin_column_as_false() -> None:
+    """Old production schemas require is_pinned even though pinning is retired."""
+    column = Node.__table__.c.is_pinned
+    assert column.nullable is False
+    assert column.default is not None
+    assert column.default.arg is False
 
 
 @pytest.mark.parametrize(

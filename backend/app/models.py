@@ -192,6 +192,11 @@ class Node(Base):
     # Cumulative LLM-assigned importance (1-5 per mention, summed across mentions).
     # Recurring concepts naturally outweigh one-off mentions — see _get_or_create_node.
     importance_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Kept as a write-compatible legacy column.  Older production databases
+    # still enforce ``nodes.is_pinned NOT NULL`` even though the pin feature and
+    # its UI were removed.  Supplying False on every INSERT lets those databases
+    # accept newly extracted nodes; the application never reads this value.
+    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Canonical "self" / diary-owner node. Exactly one per user (enforced by a
     # partial unique index). The diary "나" and any conversation speaker the user
     # confirms as themselves all resolve to this node, regardless of its name.

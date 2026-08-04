@@ -169,10 +169,10 @@ _MIGRATIONS = [
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS batch_id UUID",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS source_kind TEXT",
     "CREATE INDEX IF NOT EXISTS idx_quizzes_user_track_batch ON quizzes (user_id, track, batch_id)",
-    # 2026-07-31 핀 기능 제거. 진술 노드가 만들어질 때 백엔드가 학습 자료까지
-    # 모두 생성하므로 "공부하고 싶은 노드를 핀으로 우선 생성"할 이유가 없다.
+    # The pin feature is gone, but keep its database column for compatibility
+    # with older production schemas that enforce it as NOT NULL.  Node writes
+    # always supply False (see models.Node); no product behaviour uses it.
     "DROP INDEX IF EXISTS idx_nodes_user_pinned",
-    "ALTER TABLE nodes DROP COLUMN IF EXISTS is_pinned",
     """
     CREATE TABLE IF NOT EXISTS quiz_source_explorations (
         id UUID PRIMARY KEY,
