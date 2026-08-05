@@ -642,7 +642,7 @@ def validate_migration_sql(sql: str) -> None:
     Changes that can invalidate a rollback (or rewrite production data) must use
     the separately approved operational runbook, never a normal main push.
     """
-    normalized = " ".join(sql.upper().split())
+    normalized = " ".join(sql.upper().split()).rstrip(";")
     # ALTER TABLE is only allowed for ADD COLUMN / ADD CONSTRAINT, plus the one
     # expand-compatible default repair below. A default affects future writes
     # only and is safe to roll back.
