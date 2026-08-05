@@ -187,6 +187,42 @@ def _expression_count(trace: dict) -> int:
     )
 
 
+async def _persisted_pair_quiz_result(
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    node_id: uuid.UUID,
+    language: str,
+) -> tuple[dict[str, int], list[str]]:
+    """Read the durable result rather than trusting an intermediate return list.
+
+    A complete learning set commits several times (analysis, expressions, TTS).
+    The generation-run history must therefore describe the quizzes that really
+    survived for this node/language pair, not whichever subset one sub-step
+    happened to return.
+    """
+    quizzes = (
+        await session.scalars(
+            select(Quiz)
+            .where(
+                Quiz.user_id == user_id,
+                Quiz.language == language,
+                Quiz.quiz_type.in_(("cloze", "composition")),
+                Quiz.queue_kind != "archived",
+                Quiz.source_nodes.any(node_id),
+            )
+            .order_by(Quiz.created_at, Quiz.id)
+        )
+    ).all()
+    return (
+        {
+            "cloze": sum(quiz.quiz_type == "cloze" for quiz in quizzes),
+            "composition": sum(quiz.quiz_type == "composition" for quiz in quizzes),
+        },
+        [str(quiz.id) for quiz in quizzes],
+    )
+
+
 async def process_generation_run(run_id: uuid.UUID) -> None:
     """Background entry point; commits each pair independently."""
     async with async_session_factory() as session:
@@ -227,31 +263,42 @@ async def process_generation_run(run_id: uuid.UUID) -> None:
                     limit=8,
                     direct_node=run.source == "manual",
                 )
-                counts = {
-                    "cloze": sum(q.quiz_type == "cloze" for q in created),
-                    "composition": sum(q.quiz_type == "composition" for q in created),
-                }
                 for quiz in created:
                     quiz.source_kind = (
                         "auto_generation"
                         if run.source == "auto"
                         else "developer_generation"
                     )
+                created_counts = {
+                    "cloze": sum(quiz.quiz_type == "cloze" for quiz in created),
+                    "composition": sum(
+                        quiz.quiz_type == "composition" for quiz in created
+                    ),
+                }
                 await _record_exploration(
                     session,
                     user.id,
                     str(node_id),
                     language,
-                    counts["composition"],
-                    counts["cloze"],
+                    created_counts["composition"],
+                    created_counts["cloze"],
                     material.expression_count,
                     True,
                 )
                 await session.commit()
+                # Persisted rows are authoritative. In particular, a run can
+                # cross multiple commits while it creates composition and
+                # expression cards, which previously left the history at 0/0.
+                counts, quiz_ids = await _persisted_pair_quiz_result(
+                    session,
+                    user_id=user.id,
+                    node_id=node_id,
+                    language=language,
+                )
                 item.update(
                     status="completed",
                     generated_counts=counts,
-                    quiz_ids=[str(quiz.id) for quiz in created],
+                    quiz_ids=quiz_ids,
                     error=None,
                 )
             except BundleSeedError as exc:

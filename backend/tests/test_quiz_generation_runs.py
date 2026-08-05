@@ -5,7 +5,7 @@ import uuid
 import pytest
 
 from app import crud
-from app.quiz_generation_runs import create_generation_run
+from app.quiz_generation_runs import _persisted_pair_quiz_result, create_generation_run
 
 
 @pytest.mark.asyncio
@@ -104,3 +104,36 @@ async def test_generation_run_rejects_inactive_language(
             languages=["german"],
             idempotency_key=f"test-{uuid.uuid4()}",
         )
+
+
+@pytest.mark.asyncio
+async def test_run_history_uses_persisted_active_quiz_counts(db_session, iso_user) -> None:
+    node = await crud._get_or_create_node(
+        db_session,
+        name=f"run-counts-{uuid.uuid4()}",
+        type_="Statement",
+        description='{"content":"생성 이력의 실제 문제 수를 검증하는 문장입니다."}',
+        user_id=iso_user.id,
+    )
+    await db_session.commit()
+    for quiz_type, queue_kind, language in [
+        ("composition", "new", "english"),
+        ("cloze", "new", "english"),
+        ("cloze", "archived", "english"),
+        ("composition", "new", "german"),
+    ]:
+        await crud.create_quiz(
+            db_session,
+            user_id=iso_user.id,
+            quiz_type=quiz_type,
+            language=language,
+            queue_kind=queue_kind,
+            source_nodes=[node.id],
+        )
+
+    counts, quiz_ids = await _persisted_pair_quiz_result(
+        db_session, user_id=iso_user.id, node_id=node.id, language="english"
+    )
+
+    assert counts == {"cloze": 1, "composition": 1}
+    assert len(quiz_ids) == 2
