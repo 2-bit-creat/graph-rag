@@ -223,6 +223,37 @@ async def _persisted_pair_quiz_result(
     )
 
 
+async def _backfill_empty_completed_run_items(
+    session: AsyncSession, run: QuizGenerationRun
+) -> bool:
+    """Repair pre-fix history rows whose completed item was stored as 0/0."""
+    changed = False
+    items = [dict(item) for item in (run.items or [])]
+    for item in items:
+        if item.get("status") != "completed":
+            continue
+        counts = item.get("generated_counts")
+        quiz_ids = item.get("quiz_ids")
+        if isinstance(counts, dict) and any(int(counts.get(k) or 0) for k in ("cloze", "composition")):
+            continue
+        if quiz_ids:
+            continue
+        recovered_counts, recovered_ids = await _persisted_pair_quiz_result(
+            session,
+            user_id=run.user_id,
+            node_id=uuid.UUID(str(item["node_id"])),
+            language=str(item["language"]).lower(),
+        )
+        if any(recovered_counts.values()):
+            item["generated_counts"] = recovered_counts
+            item["quiz_ids"] = recovered_ids
+            changed = True
+    if changed:
+        run.items = items
+        await session.commit()
+    return changed
+
+
 async def process_generation_run(run_id: uuid.UUID) -> None:
     """Background entry point; commits each pair independently."""
     async with async_session_factory() as session:
@@ -362,4 +393,6 @@ async def list_generation_runs(
             .limit(limit)
         )
     ).all()
+    for run in rows:
+        await _backfill_empty_completed_run_items(session, run)
     return list(rows), total

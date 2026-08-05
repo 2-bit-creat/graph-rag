@@ -5,7 +5,11 @@ import uuid
 import pytest
 
 from app import crud
-from app.quiz_generation_runs import _persisted_pair_quiz_result, create_generation_run
+from app.quiz_generation_runs import (
+    _backfill_empty_completed_run_items,
+    _persisted_pair_quiz_result,
+    create_generation_run,
+)
 
 
 @pytest.mark.asyncio
@@ -137,3 +141,35 @@ async def test_run_history_uses_persisted_active_quiz_counts(db_session, iso_use
 
     assert counts == {"cloze": 1, "composition": 1}
     assert len(quiz_ids) == 2
+
+
+@pytest.mark.asyncio
+async def test_run_history_backfills_legacy_zero_count_item(db_session, iso_user) -> None:
+    node = await crud._get_or_create_node(
+        db_session,
+        name=f"run-legacy-counts-{uuid.uuid4()}",
+        type_="Statement",
+        description='{"content":"과거 실행 이력의 수량을 복원합니다."}',
+        user_id=iso_user.id,
+    )
+    await db_session.commit()
+    run, _ = await create_generation_run(
+        db_session,
+        iso_user,
+        node_ids=[node.id],
+        languages=["english"],
+        idempotency_key=f"legacy-counts-{uuid.uuid4()}",
+    )
+    run.items = [{**run.items[0], "status": "completed"}]
+    await crud.create_quiz(
+        db_session,
+        user_id=iso_user.id,
+        quiz_type="composition",
+        language="english",
+        source_nodes=[node.id],
+    )
+    await db_session.commit()
+
+    assert await _backfill_empty_completed_run_items(db_session, run) is True
+    assert run.items[0]["generated_counts"] == {"cloze": 0, "composition": 1}
+    assert len(run.items[0]["quiz_ids"]) == 1
