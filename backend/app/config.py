@@ -30,10 +30,11 @@ class Settings(BaseSettings):
     # non-secret and is safe to expose from /ready for release verification.
     app_version: str = "local"
     openai_api_key: str = ""
-    # Single model for every LLM call — quiz generation, tutor, chat, cleanup.
-    # (The old gpt-4o "premium" path was removed for cost; the bundle generator
-    # produces 4-8 questions per call, so a mini model is both cheaper and enough.)
+    # General-purpose inexpensive model for broad drafting. Quiz plan editing,
+    # individual final-card authoring, QA, and failed-card repair may use the
+    # stronger quality model because a semantic defect becomes learned content.
     openai_model: str = "gpt-4o-mini"
+    quiz_quality_model: str = "gpt-4o"
     # Cap each LLM request so a hung/slow OpenAI call surfaces as a fast failure
     # instead of leaving the graph build stuck in 'graph_processing' (the default
     # SDK timeout is 600s × retries — perceived as an indefinite buffering spinner).
