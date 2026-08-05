@@ -66,7 +66,8 @@ class JournalTaskController extends ChangeNotifier {
     final status = entry['status']?.toString() ?? '';
     final graphStatus = entry['graph_status']?.toString() ?? '';
     final restaging = force &&
-        (status == 'graph_staging_ready' || graphStatus == 'graph_staging_ready');
+        (status == 'graph_staging_ready' ||
+            graphStatus == 'graph_staging_ready');
     if (status != 'ready' && !restaging) return false;
     if (speakersPending(entry)) return false;
     if (graphStatus == 'graph_pending' || graphStatus.isEmpty) return true;
@@ -81,7 +82,7 @@ class JournalTaskController extends ChangeNotifier {
     String? sourceText,
   }) {
     return _runWork(
-      tr('journal.stageTranscribing'),
+      tr('journal.stageTextSaving'),
       () => apiClient.createTextJournalEntry(
         paragraphText,
         attributionKind: attributionKind,
@@ -345,9 +346,7 @@ class JournalTaskController extends ChangeNotifier {
   /// a pipeline parked on a user gate (화자 확인 / 그래프 검토) can be set aside
   /// too — otherwise a half-finished entry deadlocks every later save.
   void release({bool force = false}) {
-    if (!force &&
-        _phase != ComposePhase.done &&
-        _phase != ComposePhase.error) {
+    if (!force && _phase != ComposePhase.done && _phase != ComposePhase.error) {
       return;
     }
     _workSerial++;

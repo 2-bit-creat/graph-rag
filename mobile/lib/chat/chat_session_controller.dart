@@ -77,7 +77,8 @@ class ChatSessionController extends ChangeNotifier {
       _quizIndex < _quizItems.length ? _quizItems[_quizIndex] : null;
   Map<String, dynamic>? get quizFeedback => _quizFeedback;
   bool get wordQuizSolved => _wordQuizSolved;
-  List<String> get clozeCompletedWords => List.unmodifiable(_clozeCompletedWords);
+  List<String> get clozeCompletedWords =>
+      List.unmodifiable(_clozeCompletedWords);
   String get clozeLiveDraft => _clozeLiveDraft;
   bool get wordQuizUsesComposer {
     if (_mode != ChatMode.quizWord) return false;
@@ -393,6 +394,10 @@ class ChatSessionController extends ChangeNotifier {
     await _ensureSession();
     try {
       _appendJournalSubmit(displayText ?? labeledText);
+      // The API does refinement synchronously before it can return an entry id.
+      // Put a real in-feed status card up first, rather than leaving the only
+      // feedback as the tiny spinner in the send button.
+      _appendJournalSubmissionProgress();
       final entry =
           await journalTask.submitText(labeledText, sourceText: displayText);
       final id = entry['id']?.toString();
@@ -400,9 +405,10 @@ class ChatSessionController extends ChangeNotifier {
         errors.value = tr('chat.journalSaveFailed');
         return;
       }
-      _appendJournalProgress(id);
+      _promoteJournalSubmissionProgress(id);
       exitMode();
     } catch (e) {
+      _failJournalSubmissionProgress(_clean(e));
       errors.value = _clean(e);
     }
   }
@@ -417,6 +423,7 @@ class ChatSessionController extends ChangeNotifier {
     await _ensureSession();
     try {
       _appendJournalSubmit(filename);
+      _appendJournalSubmissionProgress();
       late Map<String, dynamic> entry;
       if (bytes != null) {
         entry = await journalTask.uploadAudioBytes(
@@ -435,9 +442,10 @@ class ChatSessionController extends ChangeNotifier {
         errors.value = tr('chat.journalSaveFailed');
         return;
       }
-      _appendJournalProgress(id);
+      _promoteJournalSubmissionProgress(id);
       exitMode();
     } catch (e) {
+      _failJournalSubmissionProgress(_clean(e));
       errors.value = _clean(e);
     }
   }
@@ -488,6 +496,52 @@ class ChatSessionController extends ChangeNotifier {
     }
   }
 
+  void _appendJournalSubmissionProgress() {
+    _messages.add(GraphChatMessage(
+      role: 'assistant',
+      kind: 'journal_submission_progress',
+      content: tr('chat.journalSending'),
+    ));
+    notifyListeners();
+  }
+
+  void _promoteJournalSubmissionProgress(String entryId) {
+    final index = _messages.lastIndexWhere(
+        (message) => message.kind == 'journal_submission_progress');
+    if (index >= 0) {
+      _messages[index] = GraphChatMessage(
+        role: 'assistant',
+        kind: 'journal_progress',
+        content: tr('chat.journalProcessing'),
+        meta: {'entry_id': entryId},
+      );
+      notifyListeners();
+      if (_activeId != null) {
+        unawaited(apiClient.appendChatEvent(
+          _activeId!,
+          role: 'assistant',
+          kind: 'journal_progress',
+          content: tr('chat.journalProcessing'),
+          meta: {'entry_id': entryId},
+        ));
+      }
+      return;
+    }
+    _appendJournalProgress(entryId);
+  }
+
+  void _failJournalSubmissionProgress(String detail) {
+    final index = _messages.lastIndexWhere(
+        (message) => message.kind == 'journal_submission_progress');
+    if (index < 0) return;
+    _messages[index] = GraphChatMessage(
+      role: 'assistant',
+      kind: 'journal_submission_failed',
+      content: detail,
+    );
+    notifyListeners();
+  }
+
   Future<void> sendMessage(String text) async {
     await _ensureSession();
     if (_activeId == null) return;
@@ -507,17 +561,24 @@ class ChatSessionController extends ChangeNotifier {
         referencedNodeIds: referenced,
         meta: resp['retrieval_meta'] == null
             ? null
-            : {'retrieval': Map<String, dynamic>.from(resp['retrieval_meta'] as Map)},
+            : {
+                'retrieval':
+                    Map<String, dynamic>.from(resp['retrieval_meta'] as Map)
+              },
       ));
       final cardRaw = resp['learning_card'];
-      if (cardRaw is Map && (cardRaw['prompt']?.toString().trim().isNotEmpty ?? false)) {
+      if (cardRaw is Map &&
+          (cardRaw['prompt']?.toString().trim().isNotEmpty ?? false)) {
         final card = Map<String, dynamic>.from(cardRaw);
         final prompt = card['prompt'].toString();
         _messages.add(GraphChatMessage(
           role: 'assistant',
           kind: 'learning_card',
           content: prompt,
-          referencedNodeIds: [if (card['source_node_id'] != null) card['source_node_id'].toString()],
+          referencedNodeIds: [
+            if (card['source_node_id'] != null)
+              card['source_node_id'].toString()
+          ],
           meta: card,
         ));
         // Persist the optional practice prompt separately from the factual
@@ -527,7 +588,10 @@ class ChatSessionController extends ChangeNotifier {
           role: 'assistant',
           kind: 'learning_card',
           content: prompt,
-          referencedNodeIds: [if (card['source_node_id'] != null) card['source_node_id'].toString()],
+          referencedNodeIds: [
+            if (card['source_node_id'] != null)
+              card['source_node_id'].toString()
+          ],
           meta: card,
         ));
       }
@@ -707,7 +771,9 @@ class ChatSessionController extends ChangeNotifier {
     List<String> revealedTokens = const [],
     bool answerRevealed = false,
   }) async {
-    if (_mode != ChatMode.quizWord || !wordQuizUsesComposer || _wordQuizSolved) {
+    if (_mode != ChatMode.quizWord ||
+        !wordQuizUsesComposer ||
+        _wordQuizSolved) {
       return false;
     }
     final quiz = activeQuiz;
@@ -722,7 +788,8 @@ class ChatSessionController extends ChangeNotifier {
       return false;
     }
 
-    final normalized = text.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+    final normalized =
+        text.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
     final target = words[_clozeCompletedWords.length].toLowerCase();
     if (normalized.isEmpty || normalized != target) {
       _clozeLiveDraft = text;
@@ -905,6 +972,8 @@ class ChatSessionController extends ChangeNotifier {
     }
 
     try {
+      _appendJournalSubmit(paragraph);
+      _appendJournalSubmissionProgress();
       final entry = await journalTask.submitText(
         paragraph,
         attributionKind: attributionKind,
@@ -914,9 +983,10 @@ class ChatSessionController extends ChangeNotifier {
         errors.value = tr('chat.journalSaveFailed');
         return;
       }
-      _appendJournalProgress(id);
+      _promoteJournalSubmissionProgress(id);
       exitMode();
     } catch (e) {
+      _failJournalSubmissionProgress(_clean(e));
       errors.value = _clean(e);
     }
   }

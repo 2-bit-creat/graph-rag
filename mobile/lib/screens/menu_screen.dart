@@ -31,6 +31,10 @@ class MenuScreen extends StatefulWidget {
 class _MenuScreenState extends State<MenuScreen> {
   bool _devToolsExpanded = false;
 
+  // Quiz 큐와 파이프라인 진단은 운영에서 실제 학습 품질을 확인·복구하는
+  // 도구다. kDebugMode로 감싸면 release web 빌드에서 통째로 사라진다.
+  static const bool _showOperationalTools = true;
+
   void _open(Widget screen) {
     Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
   }
@@ -146,73 +150,76 @@ class _MenuScreenState extends State<MenuScreen> {
 
             // 설정 진입점은 상단 프로필 헤더가 겸한다(중복 타일 제거).
             // ── 개발자 도구 (접힘, 잠금 없음) ─────────────────────────────
-            if (kDebugMode) ...[
-            Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: () =>
-                    setState(() => _devToolsExpanded = !_devToolsExpanded),
-                borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-                  child: Row(
-                    children: [
-                      const Expanded(
-                        child: AppSectionHeader(
-                          title: '개발자 도구',
-                          subtitle: '퀴즈 품질 · 파이프라인 디버그',
+            if (_showOperationalTools) ...[
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () =>
+                      setState(() => _devToolsExpanded = !_devToolsExpanded),
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                    child: Row(
+                      children: [
+                        const Expanded(
+                          child: AppSectionHeader(
+                            title: '개발자 도구',
+                            subtitle: '퀴즈 품질 · 파이프라인 디버그',
+                          ),
                         ),
-                      ),
-                      Icon(
-                        _devToolsExpanded
-                            ? Icons.expand_less_rounded
-                            : Icons.expand_more_rounded,
-                        color: AppColors.textMuted,
-                      ),
-                    ],
+                        Icon(
+                          _devToolsExpanded
+                              ? Icons.expand_less_rounded
+                              : Icons.expand_more_rounded,
+                          color: AppColors.textMuted,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-            if (_devToolsExpanded) ...[
-              const SizedBox(height: AppSpacing.md),
-              AppHubTile(
-                icon: Icons.playlist_add_check_rounded,
-                title: '퀴즈 큐',
-                subtitle: '문제 관리 · Statement 선택 생성 · Quiz Path trace',
-                color: AppColors.hubQuiz,
-                onTap: () => _open(const QuizQueueScreen()),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              AppHubTile(
-                icon: Icons.account_tree_outlined,
-                title: '파이프라인',
-                subtitle: '음성·텍스트 기록별 처리 trace · GraphRAG 단계',
-                color: AppColors.hubVoice,
-                onTap: () => _open(const PipelineDebugHubScreen()),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              AppHubTile(
-                icon: Icons.bug_report_outlined,
-                title: 'KG 디버그',
-                subtitle: 'KG 파이프라인 실행 기록',
-                color: AppColors.hubVoice,
-                onTap: () => _open(
-                  Scaffold(
-                    appBar: AppBar(title: const Text('KG 파이프라인 디버그')),
-                    body: const KgDebugScreen(),
+              if (_devToolsExpanded) ...[
+                const SizedBox(height: AppSpacing.md),
+                AppHubTile(
+                  icon: Icons.playlist_add_check_rounded,
+                  title: '퀴즈 큐',
+                  subtitle: '문제 관리 · Statement 선택 생성 · Quiz Path trace',
+                  color: AppColors.hubQuiz,
+                  onTap: () => _open(const QuizQueueScreen()),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                AppHubTile(
+                  icon: Icons.account_tree_outlined,
+                  title: '파이프라인',
+                  subtitle: '음성·텍스트 기록별 처리 trace · GraphRAG 단계',
+                  color: AppColors.hubVoice,
+                  onTap: () => _open(const PipelineDebugHubScreen()),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                AppHubTile(
+                  icon: Icons.bug_report_outlined,
+                  title: 'KG 디버그',
+                  subtitle: 'KG 파이프라인 실행 기록',
+                  color: AppColors.hubVoice,
+                  onTap: () => _open(
+                    Scaffold(
+                      appBar: AppBar(title: const Text('KG 파이프라인 디버그')),
+                      body: const KgDebugScreen(),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              AppHubTile(
-                icon: Icons.groups_outlined,
-                title: '계정 개요',
-                subtitle: '서버의 전체 계정 · 대략적인 DB 사용량',
-                color: AppColors.hubGraph,
-                onTap: () => _open(const AccountsOverviewScreen()),
-              ),
-            ],
+                if (kDebugMode) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  AppHubTile(
+                    icon: Icons.groups_outlined,
+                    title: '계정 개요',
+                    subtitle: '서버의 전체 계정 · 대략적인 DB 사용량',
+                    color: AppColors.hubGraph,
+                    onTap: () => _open(const AccountsOverviewScreen()),
+                  ),
+                ],
+              ],
             ],
           ],
         ),

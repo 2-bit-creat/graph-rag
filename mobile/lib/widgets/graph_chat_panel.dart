@@ -210,7 +210,11 @@ class GraphChatPanel extends StatelessWidget {
         // re-triggers as the ListView recycles rows during scroll.
         final entranceKey = m.id ?? '${i}_${m.role}_${m.content.hashCode}';
         Widget child;
-        if (m.kind == 'journal_progress') {
+        if (m.kind == 'journal_submission_progress') {
+          child = const JournalSubmissionProgressCard();
+        } else if (m.kind == 'journal_submission_failed') {
+          child = JournalSubmissionProgressCard(errorDetail: m.content);
+        } else if (m.kind == 'journal_progress') {
           final entryId = m.meta?['entry_id']?.toString();
           if (entryId != null && entryId.isNotEmpty) {
             return JournalProgressCard(entryId: entryId);

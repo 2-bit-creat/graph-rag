@@ -16,6 +16,70 @@ import 'transcript_speaker_view.dart';
 ///
 /// Live when [journalTask] owns [entryId]; otherwise a one-shot [getEntry]
 /// snapshot for historical cards after room reload.
+///
+/// This is intentionally separate from [JournalProgressCard]: the first API
+/// call has no entry id yet because it includes text refinement. The user still
+/// needs a clear, full-size indication of what is taking time.
+class JournalSubmissionProgressCard extends StatelessWidget {
+  const JournalSubmissionProgressCard({super.key, this.errorDetail});
+
+  final String? errorDetail;
+
+  @override
+  Widget build(BuildContext context) {
+    final failed = (errorDetail ?? '').trim().isNotEmpty;
+    return _Shell(
+      child: AnimatedBuilder(
+        animation: journalTask,
+        builder: (context, _) {
+          final label = journalTask.stageLabel.isEmpty
+              ? tr('chat.journalSending')
+              : journalTask.stageLabel;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    failed
+                        ? Icons.error_outline_rounded
+                        : Icons.auto_stories_rounded,
+                    size: 18,
+                    color: failed ? Colors.red.shade400 : AppColors.hubVoice,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      failed ? tr('chat.journalSendFailed') : label,
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  if (!failed)
+                    const SizedBox(
+                      width: 17,
+                      height: 17,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                failed ? errorDetail! : tr('chat.journalSendingHint'),
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.4,
+                  color: failed ? Colors.red.shade400 : context.shell.mutedText,
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
 class JournalProgressCard extends StatefulWidget {
   const JournalProgressCard({super.key, required this.entryId});
 
@@ -251,8 +315,8 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
       phase: derived.phase,
       label: derived.label,
       entry: _staticEntry,
-      showSpeakerConfirm:
-          derived.phase == ComposePhase.needsInput && derived.awaitingSpeakerAck,
+      showSpeakerConfirm: derived.phase == ComposePhase.needsInput &&
+          derived.awaitingSpeakerAck,
       showGraphReview: derived.phase == ComposePhase.needsInput &&
           derived.graphReviewPending,
       onRefresh: () => _loadStatic(),
@@ -280,7 +344,8 @@ class _Shell extends StatelessWidget {
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.65)),
+        border:
+            Border.all(color: scheme.outlineVariant.withValues(alpha: 0.65)),
         boxShadow: Theme.of(context).brightness == Brightness.light
             ? [
                 BoxShadow(
@@ -348,11 +413,11 @@ class _CardBody extends StatelessWidget {
   final String? errorDetail;
 
   static List<String> get _steps => [
-    tr('progressCard.stepTranscribe'),
-    tr('progressCard.stepSpeakerConfirm'),
-    tr('progressCard.stepGraphBuild'),
-    tr('progressCard.stepDone'),
-  ];
+        tr('progressCard.stepTranscribe'),
+        tr('progressCard.stepSpeakerConfirm'),
+        tr('progressCard.stepGraphBuild'),
+        tr('progressCard.stepDone'),
+      ];
 
   int get _activeStep {
     switch (phase) {
@@ -388,8 +453,7 @@ class _CardBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final step = _activeStep;
-    final showDismiss =
-        onDismiss != null &&
+    final showDismiss = onDismiss != null &&
         (phase == ComposePhase.done || phase == ComposePhase.error);
     // Every live pipeline gets a way out. A gate waiting on the user is exactly
     // where a mistaken submit (wrong speakers) has to be undoable.
@@ -494,8 +558,7 @@ class _CardBody extends StatelessWidget {
               const SizedBox(height: 6),
               Container(
                 width: double.infinity,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 decoration: BoxDecoration(
                   color: context.shell.subtleSurface,
                   borderRadius: BorderRadius.circular(6),
@@ -582,7 +645,9 @@ class _InlineSpeakerConfirm extends StatelessWidget {
             FilledButton.icon(
               onPressed: pending ? null : () => onConfirm!(),
               icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
-              label: Text(pending ? tr('progressCard.assignSpeakerFirst') : tr('progressCard.confirmAndBuildGraph')),
+              label: Text(pending
+                  ? tr('progressCard.assignSpeakerFirst')
+                  : tr('progressCard.confirmAndBuildGraph')),
             )
           else
             Align(
@@ -672,7 +737,8 @@ class _StepDot extends StatelessWidget {
     Widget icon;
     switch (state) {
       case _StepState.done:
-        icon = const Icon(Icons.check_circle, size: 16, color: Color(0xFF4CAF50));
+        icon =
+            const Icon(Icons.check_circle, size: 16, color: Color(0xFF4CAF50));
         break;
       case _StepState.busy:
         icon = const SizedBox(

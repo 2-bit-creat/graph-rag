@@ -643,9 +643,12 @@ def validate_migration_sql(sql: str) -> None:
     the separately approved operational runbook, never a normal main push.
     """
     normalized = " ".join(sql.upper().split())
-    # ALTER TABLE is only allowed for ADD COLUMN / ADD CONSTRAINT. It is checked
-    # separately because the broad ALTER token is otherwise unsafe.
+    # ALTER TABLE is only allowed for ADD COLUMN / ADD CONSTRAINT, plus the one
+    # expand-compatible default repair below. A default affects future writes
+    # only and is safe to roll back.
     if normalized.startswith("ALTER TABLE "):
+        if normalized == "ALTER TABLE NODES ALTER COLUMN IS_PINNED SET DEFAULT FALSE":
+            return
         if " ADD COLUMN " not in normalized and " ADD CONSTRAINT " not in normalized:
             raise ValueError("automatic ALTER TABLE migrations may only add columns or constraints")
         if " NOT NULL" in normalized or " DROP " in normalized or " RENAME " in normalized:

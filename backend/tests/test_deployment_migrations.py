@@ -44,6 +44,12 @@ def test_additive_migrations_are_allowed(sql: str) -> None:
     validate_migration_sql(sql)
 
 
+def test_legacy_pin_default_repair_is_allowed() -> None:
+    validate_migration_sql(
+        "ALTER TABLE nodes ALTER COLUMN is_pinned SET DEFAULT FALSE"
+    )
+
+
 @pytest.mark.parametrize(
     "sql",
     [

@@ -242,7 +242,7 @@ const Map<String, String> _ko = {
   'chat.unconfirmedSpeakerTitle': '확정되지 않은 화자가 있어요',
   'chat.unconfirmedSpeakerBody':
       '{names} 은(는) 아직 화자로 확정되지 않았어요. 이대로 저장하면 앞 화자의 말로 합쳐집니다.\n\n'
-      '화자로 쓰려면 "@이름:" 형식으로 줄을 시작하거나, @를 입력한 뒤 목록에서 골라 주세요.',
+          '화자로 쓰려면 "@이름:" 형식으로 줄을 시작하거나, @를 입력한 뒤 목록에서 골라 주세요.',
   'chat.unconfirmedSpeakerFix': '돌아가서 고치기',
   'chat.unconfirmedSpeakerSaveAnyway': '그대로 저장',
   'chat.expandEditorTooltip': '크게 편집',
@@ -250,6 +250,10 @@ const Map<String, String> _ko = {
   'chat.expandEditorHint': '@화자로 구분해서 자유롭게 쓰세요',
   'chat.noRecordingData': '녹음 데이터가 없어요.',
   'chat.journalProcessing': '일기 처리 중…',
+  'chat.journalSending': '일기를 전송하고 있어요',
+  'chat.journalSendingHint':
+      '작성한 내용을 다듬고 안전하게 저장하고 있어요. 완료되면 화자 확인과 그래프 검토 단계가 이어집니다.',
+  'chat.journalSendFailed': '일기 전송에 실패했어요',
   'chat.wrongAnswerHint': '오답이에요. 힌트를 참고하거나 정답 보기를 눌러 확인해 보세요.',
   'chat.quizAnswerContent': '퀴즈: {answer}',
   'chat.startConversationFirst': '먼저 대화를 시작해 주세요.',
@@ -288,6 +292,7 @@ const Map<String, String> _ko = {
   'journal.stageGraphCommitting': '지식그래프 확정 중',
   'journal.stageGraphCommitFailed': '지식그래프 확정 실패',
   'journal.stageTextRefining': '일기 정제하는 중',
+  'journal.stageTextSaving': '일기를 다듬고 저장하는 중',
   // Compose window
   'compose.unsavedDraftTitle': '작성 중인 기록이 있어요',
   'compose.unsavedDraftBody': '지금 닫으면 저장되지 않은 내용이 사라집니다.',
@@ -1279,9 +1284,9 @@ const Map<String, String> _en = {
   'chat.unconfirmedSpeakerTitle': 'Unconfirmed speakers',
   'chat.unconfirmedSpeakerBody':
       '{names} are not confirmed speakers yet. Saving as-is merges them into the '
-      'previous speaker\'s text.\n\n'
-      'To use them as speakers, start the line with "@name:" or type @ and pick '
-      'from the list.',
+          'previous speaker\'s text.\n\n'
+          'To use them as speakers, start the line with "@name:" or type @ and pick '
+          'from the list.',
   'chat.unconfirmedSpeakerFix': 'Go back and fix',
   'chat.unconfirmedSpeakerSaveAnyway': 'Save as-is',
   'chat.expandEditorTooltip': 'Expand editor',
@@ -1289,6 +1294,10 @@ const Map<String, String> _en = {
   'chat.expandEditorHint': 'Write freely, separating speakers with @',
   'chat.noRecordingData': 'No recording data.',
   'chat.journalProcessing': 'Processing journal…',
+  'chat.journalSending': 'Sending your journal…',
+  'chat.journalSendingHint':
+      'We are refining and safely saving your entry. Speaker confirmation and graph review come next.',
+  'chat.journalSendFailed': 'Couldn\'t send the journal entry',
   'chat.wrongAnswerHint':
       "That's incorrect. Check the hint or tap reveal answer.",
   'chat.quizAnswerContent': 'Quiz: {answer}',
@@ -1330,6 +1339,7 @@ const Map<String, String> _en = {
   'journal.stageGraphCommitting': 'Committing knowledge graph…',
   'journal.stageGraphCommitFailed': 'Knowledge graph commit failed',
   'journal.stageTextRefining': 'Refining journal…',
+  'journal.stageTextSaving': 'Refining and saving journal…',
   // Compose window
   'compose.unsavedDraftTitle': 'You have an unsaved draft',
   'compose.unsavedDraftBody': 'Closing now will discard the unsaved content.',
@@ -1794,7 +1804,8 @@ const Map<String, String> _en = {
   'inspector.mergeIntoOtherButton': 'Merge into another identity',
   'inspector.relationsCount': 'Relations ({count})',
   'inspector.recordedDate': 'Recorded: {date}',
-  'inspector.eventDateGuessed': 'Based on the day it was written — tap to change',
+  'inspector.eventDateGuessed':
+      'Based on the day it was written — tap to change',
   'inspector.eventDateUnsaved': 'Applies when you save',
   'inspector.advancedSection': 'Advanced',
   'inspector.debugSection': 'Debug info',
@@ -2052,7 +2063,7 @@ const Map<String, String> _en = {
   'progressCard.cancelTitle': 'Stop working on this entry?',
   'progressCard.cancelBody':
       'The entry is kept. You can pick the review back up from this card later, '
-      'or rewrite now and get your original text back in the composer.',
+          'or rewrite now and get your original text back in the composer.',
   'progressCard.cancelPark': 'Finish later',
   'progressCard.cancelRewrite': 'Rewrite from scratch',
   'progressCard.stepTranscribe': 'Transcribe',
@@ -2173,7 +2184,8 @@ const Map<String, String> _en = {
       "Speakers are a core input to the graph, so they can't be changed here.\nGo back to speaker setup to fix it, then rebuild the graph draft.",
   'reviewPanel.noConceptsChatHint':
       'No concepts — this may become an isolated node',
-  'reviewDate.questionGuessed': 'When did this happen? (set to the day you wrote it)',
+  'reviewDate.questionGuessed':
+      'When did this happen? (set to the day you wrote it)',
   'reviewDate.questionKnown': 'When did this happen?',
   'reviewDate.mixedDates': 'Several dates',
   'reviewDate.thatDay': 'Day written',
