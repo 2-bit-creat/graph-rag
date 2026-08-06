@@ -131,15 +131,27 @@ class ApiClient {
 
   late final Dio _dio;
 
-  /// Enter (or create) an ID-entry account space; returns its bearer token.
-  Future<String> simpleLogin(String handle, {String? nativeLanguage}) async {
+  /// Enter an ID-entry account space; returns its bearer token.
+  ///
+  /// [create] defaults to true for backward-compatible callers (the
+  /// developer "create account" tool). The plain entry screen must pass
+  /// `create: false` so typing an unregistered handle 404s instead of
+  /// silently creating a new account from the login screen.
+  Future<String> simpleLogin(String handle,
+      {String? nativeLanguage, bool create = true}) async {
     try {
       final resp = await _dio.post('/auth/simple', data: {
         'handle': handle,
         if (nativeLanguage != null) 'native_language': nativeLanguage,
+        'create': create,
       });
       return (resp.data as Map)['access_token'] as String;
     } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        throw Exception(appLocaleController.isEnglish
+            ? 'No account is registered for this ID.'
+            : '등록되지 않은 ID예요.');
+      }
       throw _friendlyError(e, '입장');
     }
   }

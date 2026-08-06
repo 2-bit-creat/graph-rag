@@ -114,6 +114,38 @@ class ChatSessionController extends ChangeNotifier {
     }
   }
 
+  /// Wipe every account-scoped field so the next [init] call reloads from
+  /// scratch instead of silently keeping the previous account's rooms and
+  /// messages on screen. [chatSession] is a single app-wide singleton (see
+  /// class doc), and [init]'s `_initialized` guard is a one-shot: without an
+  /// explicit reset, switching accounts remounts the screen but `init()`
+  /// no-ops, leaving the OLD account's chat history and active room visible
+  /// under the NEW account's identity. Call this before the new account's
+  /// `init()` runs — [AccountController.enter]/`switchTo`/`signOut` do so.
+  void reset() {
+    _sessions = [];
+    _activeId = null;
+    _messages.clear();
+    _busy = false;
+    _loadingMessages = false;
+    _mode = ChatMode.normal;
+    _initialized = false;
+    _quizItems.clear();
+    _quizIndex = 0;
+    _quizType = 'composition';
+    _quizLanguage = null;
+    _quizFeedback = null;
+    _wordQuizSolved = false;
+    _clozeCompletedWords.clear();
+    _clozeLiveDraft = '';
+    _distillSentences.clear();
+    _distillLoading = false;
+    _journalCompleteNotified.clear();
+    errors.value = null;
+    composerRestore.value = null;
+    notifyListeners();
+  }
+
   void _attachJournalListener() {
     if (_journalListenerAttached) return;
     _journalListenerAttached = true;

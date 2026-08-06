@@ -315,6 +315,11 @@ class SimpleLoginRequest(BaseModel):
     # Required only when the handle creates a new account. Existing accounts
     # retain their immutable native language and ignore this value.
     native_language: str | None = None
+    # False from the plain entry screen: log into an ALREADY-registered
+    # handle only, never silently create one there. True (default) preserves
+    # create-on-first-entry for callers that still want it, e.g. the
+    # developer "create account" tool.
+    create: bool = True
 
 
 class TokenResponse(BaseModel):

@@ -184,15 +184,14 @@ async def pick_quizzes_by_ids(
 def _normalize_answer(text: str, language: str) -> str:
     """Grading-time normalization for a learner's typed answer.
 
-    Latin-script targets (English/German) fold to lowercase, trimmed. Korean
-    tolerates whitespace variants a learner naturally introduces around
-    particles/spacing rules that don't change the answer's identity (e.g.
-    "그 사람" vs "그사람") by also stripping internal whitespace.
+    Delegates to the target language pack — Latin-script targets fold to
+    lowercase, trimmed; Korean also tolerates whitespace variants a learner
+    naturally introduces around particles/spacing rules that don't change the
+    answer's identity (e.g. "그 사람" vs "그사람").
     """
-    normalized = (text or "").strip().lower()
-    if (language or "").lower() == "korean":
-        normalized = "".join(normalized.split())
-    return normalized
+    from .language_packs import target_pack
+
+    return target_pack(language).normalize_learner_answer(text)
 
 
 def grade_answer(quiz: Quiz, payload: dict) -> tuple[bool, int]:

@@ -19,7 +19,10 @@ def test_registry_covers_supported_languages():
 def test_native_cannot_learn_itself():
     assert "english" not in valid_target_for_native("english")
     assert "korean" not in valid_target_for_native("korean")
-    assert valid_target_for_native("english") == {"german", "korean"}
+    # Only 3 pairs are supported: ko->en, ko->de, en->ko. An english native no
+    # longer sees german as a target (dropped when SUPPORTED_PAIRS narrowed).
+    assert valid_target_for_native("english") == {"korean"}
+    assert valid_target_for_native("korean") == {"english", "german"}
 
 
 def test_tts_voice_covers_korean_target():

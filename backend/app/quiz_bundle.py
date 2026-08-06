@@ -2,9 +2,15 @@
 
 A Statement is split into stable native-language composition prompts. Per target
 language, one planning call creates reference realizations and extracts canonical
-expressions plus their inflected surface forms. A second call creates one cloze
-card per expression.  Each card then receives an independent, fail-closed native
-translation pass based on its final target-language sentence.
+expressions plus their inflected surface forms (``bundle_plan_generate``), then a
+second call reviews and corrects that plan (``bundle_plan_quality_review``), with
+conditional repair calls when the review collapses or fragments units. Each
+accepted expression is authored as its own cloze card in an isolated request
+(``_author_individual_cloze_items``) so one bad card cannot contaminate its
+siblings, then every card in the batch is reviewed together
+(``_review_cloze_quality``) and any card that fails is re-authored with the
+reviewer's feedback. A card that still fails after repair falls back to a
+source-faithful card (``_safe_reference_fallback``) rather than shipping nothing.
 """
 
 from __future__ import annotations
@@ -25,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import crud
 from .config import get_settings
+from .language_packs import native_quiz_pack, pair_rules, target_pack
 from .level_guidelines import cefr_label, get_level_band
 from .models import Quiz, User
 from .pipeline_trace import PipelineTracer
@@ -39,94 +46,29 @@ logger = logging.getLogger(__name__)
 
 # Bump this whenever the cloze contract changes.  The batch service uses it to
 # retry sources that were exhausted by an older, broken prompt/normalizer.
-CLOZE_GENERATOR_VERSION = "cloze-contract-v13-semantic-units-individual-cards"
+CLOZE_GENERATOR_VERSION = "cloze-contract-v14-language-packs"
 _BLANK_RUN_RE = re.compile(r"_{2,}")
+# Kept as a module-level alias: several structural helpers below tokenize
+# canonical/answer text with the English word pattern regardless of target
+# language when doing generic bookkeeping (not a quality gate). Language-
+# specific gates go through ``language_packs`` instead — see that package's
+# docstring for why the split exists.
 _ENGLISH_WORD_RE = re.compile(r"[A-Za-z]+(?:['-][A-Za-z]+)*")
-_HANGUL_RE = re.compile(r"[가-힣]")
-_GENERIC_KO_CONTEXT_RE = re.compile(r"(문맥에\s*맞는|일반적인\s*표현|표현을\s*떠올려)")
-_TRIVIAL_ENGLISH_CLOZES = frozenset({
-    "a", "an", "the", "and", "or", "but", "so", "if", "of", "to", "in", "on",
-    "at", "by", "for", "from", "with", "as", "is", "am", "are", "was", "were",
-    "be", "been", "being", "have", "has", "had", "do", "does", "did", "can", "could",
-    "will", "would", "shall", "should", "may", "might", "must", "not", "no", "yes",
-    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-    "sub", "main", "major", "minor",
-})
-_ENGLISH_LEADING_DETERMINERS = frozenset({
-    "a", "an", "the", "this", "that", "these", "those", "my", "your", "his",
-    "her", "its", "our", "their",
-})
-
-_LATIN_WORD_RE = re.compile(r"[A-Za-z]")
 
 
 def _native_script_re(native_language: str) -> re.Pattern[str]:
     """Regex matching one character of the given native language's script —
     used to sanity-check that a "native text" field is actually in that
     script rather than accidentally left in the target language."""
-    from .languages import spec as _language_spec
-
-    return _HANGUL_RE if _language_spec(native_language, default="korean").script == "hangul" else _LATIN_WORD_RE
-
-# Target-language teaching focus, injected into the generation prompt so quizzes
-# stress what actually matters in each language. Shared with the composition
-# tutor (see tutor.py) so drill coaching and quiz generation stay aligned.
-LANG_GUIDES: dict[str, str] = {
-    "english": (
-        "Focus on collocations, phrasal verbs, article/tense naturalness, and "
-        "prepositions. Penalize word-for-word translationese."
-    ),
-    "german": (
-        "Focus on case (Nominativ/Akkusativ/Dativ/Genitiv), V2 and subordinate-"
-        "clause word order, separable verbs, and noun gender. Respect Sie/du register."
-    ),
-    "korean": (
-        "Focus on particles (조사), verb/adjective endings and conjugation, "
-        "honorific levels (높임법), and word order. Watch Sino-Korean vs native nuance."
-    ),
-}
-
-# The control contract stays in one language so its schema and invariants do not
-# drift between targets.  Native target-language rubrics are added alongside it
-# for idiomaticity and language-specific grammar.
-LOCALIZED_QUALITY_RULES: dict[str, str] = {
-    "english": (
-        "Write idiomatic contemporary English — restructure the sentence into a natural "
-        "English predicate rather than mirroring the native sentence's grammar. A Korean "
-        "definitional sentence ('X는 Y이다') that casts X as an abstract right/permission/"
-        "ability belonging to someone else must NOT become a literal English copula ('X is "
-        "Y'): use the natural predicate instead, e.g. 'X gives investors the right to ...', "
-        "never 'X is a legal right for investors to ...'. The same applies to any '이다' "
-        "sentence describing what X does, allows, or causes rather than what category X "
-        "belongs to. Keep names and surrounding context outside the learnable answer; the "
-        "answer must contain only the reusable expression."
-    ),
-    "german": (
-        "Formuliere idiomatisches, modernes Deutsch — übernimm nicht wörtlich den Satzbau "
-        "der Ausgangssprache. Ein koreanischer Definitionssatz ('X는 Y이다'), der X als ein "
-        "abstraktes Recht einer anderen Partei beschreibt, darf nicht zu einer wörtlichen "
-        "Kopula ('X ist Y') werden; verwende stattdessen ein natürliches Prädikat (z. B. 'X "
-        "gibt Investoren das Recht, ...', nicht 'X ist ein Recht für Investoren, ...'). "
-        "Eigennamen und bloßer Kontext dürfen nie Teil der Lernantwort sein; die Antwort "
-        "enthält nur den wiederverwendbaren Ausdruck."
-    ),
-    "korean": (
-        "자연스러운 현대 한국어를 사용하세요. 원문 언어의 문장 구조를 그대로 옮기지 말고, "
-        "무언가를 부여하거나 허용하는 의미라면 'X는 Y이다' 식 계사 문장이 아니라 "
-        "'X는 Y에게 ~할 권리를 준다'처럼 자연스러운 서술어로 재구성하세요. "
-        "고유명사와 단순 문맥은 학습 정답에 넣지 말고, 재사용 가능한 표현만 정답으로 만드세요."
-    ),
-}
+    return native_quiz_pack(native_language).script_re
 
 
 def lang_guide(language: str) -> str:
-    return LANG_GUIDES.get((language or "").lower(), LANG_GUIDES["english"])
+    return target_pack(language).teaching_guide or target_pack("english").teaching_guide
 
 
 def localized_quality_rules(language: str) -> str:
-    return LOCALIZED_QUALITY_RULES.get(
-        (language or "").lower(), LOCALIZED_QUALITY_RULES["english"]
-    )
+    return target_pack(language).quality_rubric or target_pack("english").quality_rubric
 
 
 def _lang_label(language: str) -> str:
@@ -396,114 +338,6 @@ def _build_cloze_qa_system_prompt(native_label: str, target_label: str) -> str:
     )
 
 
-# The cloze author often writes a good target sentence but summarizes it again
-# in ``sentence_ko``.  Structural validation cannot discover a missing clause
-# across languages (the reported "acquiring management control" case passed all
-# of the old checks), so derive the visible native sentence separately from the
-# final target sentence.  One request per card deliberately keeps this quality
-# boundary independent: a bad translation for one card cannot contaminate its
-# siblings or be silently copied from the source statement.
-_CLOZE_TRANSLATION_RESPONSE_FORMAT = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "complete_cloze_native_translation",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["sentence_ko", "target_ko"],
-            "properties": {
-                "sentence_ko": {"type": "string"},
-                "target_ko": {"type": "string"},
-            },
-        },
-    },
-}
-
-
-def _build_cloze_translation_system_prompt(
-    native_label: str, target_label: str,
-) -> str:
-    return (
-        "You are the final translation-quality gate for a language-learning cloze card. "
-        f"Translate the supplied FINAL {target_label} sentence completely and naturally into {native_label}. "
-        "Do not summarize it, simplify it, or use the source note as a substitute. "
-        "Every proposition, predicate, object, coordination, negation, modality, comparison, "
-        "and time relation in the final target sentence must be present in sentence_ko. "
-        "For example, if the target says it involves both acquiring management control AND "
-        "restructuring governance, the translation must explicitly contain both meanings. "
-        "target_ko must be the exact contiguous native-language phrase translating surface_answer, "
-        "must occur verbatim inside sentence_ko, and must cover the complete surface_answer. "
-        "Never put blanks, underscores, markup, explanations, or extra facts in either field. "
-        "Return only the requested JSON."
-    )
-
-
-async def _complete_cloze_native_translations(
-    items: list[Any],
-    *,
-    native_language: str,
-    target_language: str,
-    model: str,
-    timeout: float,
-) -> tuple[list[dict[str, Any]], list[str], list[dict[str, Any]]]:
-    """Replace every model-authored gloss with an independent full translation.
-
-    This is intentionally fail-closed.  If a card cannot produce a structurally
-    usable native translation, it remains available for a later retry instead of
-    shipping a partial meaning to the learner.
-    """
-    system = _build_cloze_translation_system_prompt(
-        _lang_label(native_language), _lang_label(target_language)
-    )
-    completed: list[dict[str, Any]] = []
-    rejected: list[str] = []
-    usages: list[dict[str, Any]] = []
-    for index, raw_item in enumerate(items):
-        if not isinstance(raw_item, dict):
-            rejected.append(f"candidate {index}: cloze item is not an object")
-            continue
-        sentence_target = str(
-            raw_item.get("sentence_en") or raw_item.get("sentence_target") or ""
-        ).strip()
-        surface_answer = str(
-            raw_item.get("surface_answer") or raw_item.get("blank") or ""
-        ).strip()
-        if not sentence_target or not surface_answer:
-            rejected.append(f"candidate {index}: missing sentence_target or surface_answer")
-            continue
-        try:
-            response = await _client().chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": json.dumps({
-                        "sentence_target": sentence_target,
-                        "surface_answer": surface_answer,
-                    }, ensure_ascii=False)},
-                ],
-                temperature=0,
-                response_format=_CLOZE_TRANSLATION_RESPONSE_FORMAT,
-                timeout=timeout,
-            )
-            translated = json.loads(response.choices[0].message.content or "{}")
-        except Exception as exc:
-            logger.warning("Cloze translation gate failed for candidate %s: %s", index, exc)
-            rejected.append(f"candidate {index}: independent translation failed")
-            continue
-        sentence_ko = str(translated.get("sentence_ko") or "").strip()
-        target_ko = str(translated.get("target_ko") or "").strip()
-        if not sentence_ko or not target_ko or target_ko not in sentence_ko:
-            rejected.append(f"candidate {index}: independent translation lacks aligned target_ko")
-            continue
-        item = dict(raw_item)
-        item["sentence_ko"] = sentence_ko
-        item["target_ko"] = target_ko
-        completed.append(item)
-        usages.append(_usage_payload(response))
-    return completed, rejected, usages
-
-
 def _split_statement_units(text: str) -> list[str]:
     """Split a Statement into stable composition prompts without inventing text."""
     cleaned = re.sub(r"[ \t]+", " ", (text or "").strip())
@@ -651,33 +485,35 @@ def _plan_has_incomplete_units(segments: list[Any]) -> bool:
     return False
 
 
-def _has_explicit_detail_comparison(text: str) -> bool:
-    """Return whether Korean source explicitly licenses 'more/closer'."""
-    return bool(re.search(r"(?:더|더욱|한층|좀\s*더|이전보다|전보다)\s*(?:자세|상세)", text))
-
-
-def _source_semantic_guardrails(text: str, language: str) -> list[str]:
+def _source_semantic_guardrails(
+    text: str, language: str, *, native_language: str = "korean"
+) -> list[str]:
     guards = [
         "Do not add comparison, intensity, negation, modality, repetition, or certainty that is absent from source_text."
     ]
-    if language == "english" and re.search(r"자세(?:히|하게)", text):
-        if _has_explicit_detail_comparison(text):
-            guards.append(
-                "The source explicitly says 더 자세히: preserve the comparative meaning with 'more closely' or 'a closer look'."
-            )
-        else:
-            guards.append(
-                "The source says 자세히, NOT 더 자세히. Use 'closely' or 'a close look'; NEVER use 'closer' or 'more closely'."
-            )
+    for guardrail in pair_rules(native_language, language).guardrails:
+        if not guardrail.source_re.search(text):
+            continue
+        note = guardrail.licensed_note if guardrail.licensed(text) else guardrail.note
+        if note:
+            guards.append(note)
     return guards
 
 
 def _normalize_unlicensed_detail_comparatives(
-    raw_segments: list[Any], source_units: list[str], language: str
+    raw_segments: list[Any],
+    source_units: list[str],
+    language: str,
+    *,
+    native_language: str = "korean",
 ) -> list[dict[str, Any]]:
     """Narrow source-fidelity normalization, not a subjective quality judge."""
     changes: list[dict[str, Any]] = []
-    if language != "english":
+    guardrails = [
+        g for g in pair_rules(native_language, language).guardrails
+        if g.normalize_target or g.normalize_native
+    ]
+    if not guardrails:
         return changes
     for segment in raw_segments:
         if not isinstance(segment, dict):
@@ -686,18 +522,22 @@ def _normalize_unlicensed_detail_comparatives(
         if not isinstance(index, int) or not 0 <= index < len(source_units):
             continue
         source = source_units[index]
-        if not re.search(r"자세(?:히|하게)", source) or _has_explicit_detail_comparison(source):
+        guardrail = next(
+            (g for g in guardrails if g.source_re.search(source) and not g.licensed(source)),
+            None,
+        )
+        if guardrail is None:
             continue
 
         def normalize_target(value: Any) -> Any:
-            if not isinstance(value, str):
+            if not isinstance(value, str) or guardrail.normalize_target is None:
                 return value
-            normalized = re.sub(
-                r"\bmore\s+closely\b", "closely",
-                re.sub(r"\ba\s+closer\s+look\b", "a close look", value, flags=re.I),
-                flags=re.I,
-            )
-            return re.sub(r"\bcloser\b", "close", normalized, flags=re.I)
+            return guardrail.normalize_target(value)
+
+        def normalize_native_field(value: Any) -> Any:
+            if not isinstance(value, str) or guardrail.normalize_native is None:
+                return value
+            return guardrail.normalize_native(value)
 
         changed = False
         for answer in segment.get("reference_answers") or []:
@@ -718,68 +558,19 @@ def _normalize_unlicensed_detail_comparatives(
             ]
             meaning = expression.get("meaning")
             if isinstance(meaning, str):
-                expression["meaning"] = meaning.replace("더 자세히", "자세히")
+                expression["meaning"] = normalize_native_field(meaning)
             for part in expression.get("meaning_parts") or []:
                 if isinstance(part, dict):
                     part["target"] = normalize_target(part.get("target"))
                     native = part.get("native")
                     if isinstance(native, str):
-                        part["native"] = native.replace("더 자세히", "자세히")
+                        part["native"] = normalize_native_field(native)
         if changed:
             changes.append({
                 "segment_index": index,
-                "reason": "source has 자세히 without explicit 더; removed unlicensed English comparative",
+                "reason": f"unlicensed {guardrail.code} normalized per pair guardrail",
             })
     return changes
-
-
-def _build_system_prompt(native_label: str, target_label: str, level: int, guide: str) -> str:
-    band = get_level_band(level)
-    return (
-        "You are an expert language-quiz author. From a single sentence the learner "
-        "wrote in their diary (NATIVE language), produce a BUNDLE of practice quizzes "
-        f"in the TARGET language. NATIVE language: {native_label}. TARGET language: "
-        f"{target_label}. Learner level: {level}/100 (CEFR {band.cefr}); vocabulary "
-        f"scope: {band.vocabulary}; grammar scope: {band.grammar}. Keep every target-"
-        "language sentence within this level — comprehensible, never showing off. "
-        f"TARGET-LANGUAGE TEACHING FOCUS: {guide} "
-        "Produce one natural 'composition' (translate the native sentence) and "
-        "First extract 1-3 distinct useful expression_chunks from the composition answer, then create exactly one cloze item for each chunk. "
-        "Every cloze.expression and cloze.blank MUST exactly equal its expression_chunks.text. "
-        "Never extract or blank proper names: people, organizations, brands, products, events, locations, dates, IDs, acronyms, or capitalized names. "
-        "Do not create scramble or multiple-choice items in this endpoint. "
-        "For EVERY cloze item, sentence_en MUST be a complete TARGET-language "
-        "sentence with blank filled in exactly once. NEVER put underscores or a blank "
-        "marker in sentence_en; the server creates the blanked sentence itself. Never "
-        "put the native-language source sentence in sentence_en. sentence_ko is "
-        "mandatory, must contain NO underscores, and must translate the "
-        "entire English sentence naturally. target_ko is mandatory and must occur "
-        "verbatim inside sentence_ko: it is the exact native-language counterpart of "
-        "blank, written in Korean when the native language is Korean; NEVER copy an "
-        "English or German answer into target_ko. Copy the exact inflected Korean surface "
-        "phrase from sentence_ko (for example 정리했다, not the lemma 정리하다). "
-        "blank MUST be copied verbatim from sentence_en, including the exact "
-        "inflected surface form (for German use 'sorgfältig verglichen' when the sentence "
-        "contains verglichen, never the dictionary form 'sorgfältig vergleichen'). "
-        "If a useful collocation is discontinuous in a draft, rewrite the complete sentence "
-        "naturally so it is contiguous (English example: 'I carefully compared the reports' "
-        "with blank 'carefully compared'). "
-        "Choose only expressions worth actively learning: collocations, phrasal "
-        "verbs, natural predicates, or meaningful domain terms. Do not choose numbers, "
-        "articles, auxiliaries, isolated prefixes, or trivial words. Do not use a "
-        "generic object noun phrase merely because it is easy to blank. When the source "
-        "contains a useful action, prefer its verb collocation or predicate. An English "
-        "blank must never begin with an article or determiner. Do not use a "
-        "generic situation/explanation in place of sentence_ko. "
-        "For mcq, all "
-        "four options must express the SAME situation set by 'prompt_ko'; exactly one is "
-        "the most natural, the other three each carry one plausible flaw. "
-        "Native-language fields (prompt, notes, prompt_ko, explanation, hints.note, "
-        "glossary.term) MUST be in the native language; target-language fields "
-        "(sentence_target, blank, options, model_answers.text, key_expressions.expression, "
-        "hints.snippet) MUST be in the target language. "
-        f"Respond ONLY with JSON of this exact shape: {_BUNDLE_SCHEMA_HINT}"
-    )
 
 
 def _build_plan_system_prompt(
@@ -829,8 +620,20 @@ def _build_plan_system_prompt(
         "or 'auf der Webseite', but NEVER 'at the Antock webpage' or 'auf der Webseite von Entok'. "
         "Do not create native-language questions, cloze, scramble, or multiple-choice content in this planning step. "
         "Native-language fields must use the native language and target-language fields must use the target language. "
+        f"{_plan_prompt_extra_notes(language)}"
         f"Respond only with JSON of this exact shape: {_BUNDLE_SCHEMA_HINT}"
     )
+
+
+def _plan_prompt_extra_notes(language: str) -> str:
+    """A per-target-pack addendum appended to the shared plan prompt.
+
+    Empty for English (its rules are still the hardcoded sentences above,
+    preserved byte-for-byte for the golden-prompt parity test); non-empty
+    for a pack like German that needs a rule the shared English-oriented
+    prose above doesn't state correctly for its own morphology."""
+    notes = target_pack(language).plan_prompt_notes
+    return f"{notes} " if notes else ""
 
 
 def _build_plan_qa_system_prompt(
@@ -883,6 +686,7 @@ def _build_expression_inventory_system_prompt(
         "Use established target-language terminology for domain concepts rather than literal calques; for example, the database anomaly "
         "Korean '갱신 손실' is 'lost update', never 'update loss'; a production-worthy verb phrase is 'reproduce a lost update'. "
         f"Apply this target-language rubric: {localized_quality_rules(language)} "
+        f"{_plan_prompt_extra_notes(language)}"
         f"Respond only with JSON of this exact shape: {_BUNDLE_SCHEMA_HINT}"
     )
 
@@ -913,8 +717,15 @@ def _build_cloze_system_prompt(
         "sentence_ko must be its complete natural native-language translation and contain no underscores. "
         "target_ko should identify the matching inflected native-language span when one is available. "
         "The instruction must not reveal the answer. "
+        f"{_author_prompt_extra_notes(language)}"
         f"Respond only with JSON of this exact shape: {_CLOZE_SCHEMA_HINT}"
     )
+
+
+def _author_prompt_extra_notes(language: str) -> str:
+    """See ``_plan_prompt_extra_notes`` — same additive, English-neutral pattern."""
+    notes = target_pack(language).author_prompt_notes
+    return f"{notes} " if notes else ""
 
 
 def _compose_quiz_data(comp: dict, language: str, level: int) -> dict:
@@ -994,21 +805,20 @@ def _normalize_bundle_cloze(
 
     # Never trust the model's prompt separately. Build it from the completed
     # sentence, so ``___ eight`` and other answer-leaking variants cannot ship.
-    matcher = re.compile(
-        r"(?<![A-Za-z0-9])" + re.escape(blank) + r"(?![A-Za-z0-9])",
-        re.IGNORECASE,
-    )
+    pack = target_pack(language)
+    matcher = pack.answer_boundary_re(blank)
     if "_" in full_sentence or len(list(matcher.finditer(full_sentence))) != 1:
         return None
     prompt = matcher.sub("___", full_sentence, count=1)
-    if language == "english" and len(_ENGLISH_WORD_RE.findall(full_sentence)) < 3:
+    if pack.sentence_length_reason(full_sentence):
         return None
 
     sentence_ko = str(item.get("sentence_ko") or "").strip()
     target_ko = str(item.get("target_ko") or "").strip()
     if not sentence_ko:
         return None
-    native_script = _native_script_re(native_language)
+    native_pack = native_quiz_pack(native_language)
+    native_script = native_pack.script_re
     if target_ko and native_script.search(sentence_ko) and not native_script.search(target_ko):
         return None
     # Some models incorrectly blank the native translation too. Unlike guessing
@@ -1021,9 +831,9 @@ def _normalize_bundle_cloze(
         sentence_ko = _BLANK_RUN_RE.sub(target_ko, sentence_ko, count=1)
     if "_" in sentence_ko:
         return None
-    if _GENERIC_KO_CONTEXT_RE.search(sentence_ko):
+    if native_pack.generic_filler_re.search(sentence_ko):
         return None
-    if not target_ko or target_ko not in sentence_ko:
+    if not target_ko or not native_pack.contains_span(sentence_ko, target_ko):
         return None
     context_ko = sentence_ko.replace(
         target_ko, f"<span color='#FFA500'>{target_ko}</span>", 1
@@ -1033,22 +843,7 @@ def _normalize_bundle_cloze(
 
 def _is_teachable_cloze(blank: str, *, language: str) -> bool:
     """Reject answers that cannot justify a production-learning card."""
-    normalized = blank.strip().casefold()
-    if not normalized:
-        return False
-    if language == "english":
-        if normalized in _TRIVIAL_ENGLISH_CLOZES or normalized.isdigit():
-            return False
-        words = _ENGLISH_WORD_RE.findall(normalized)
-        if not words or " ".join(words).casefold() != normalized:
-            return False
-        if words[0].casefold() in _ENGLISH_LEADING_DETERMINERS:
-            return False
-        # Bare one/two-letter fragments (for example ``sub`` from ``sub-model``)
-        # are not a useful expression even when grammatically valid.
-        if len(words) == 1 and len(words[0]) < 4:
-            return False
-    return True
+    return target_pack(language).teachability_reason(blank) is None
 
 
 def _expression_key(value: str) -> str:
@@ -1056,10 +851,11 @@ def _expression_key(value: str) -> str:
     return " ".join(re.findall(r"[\w'-]+", value.casefold()))
 
 
-def _expression_utility_score(chunk: dict[str, Any]) -> int:
+def _expression_utility_score(chunk: dict[str, Any], pack: Any = None) -> int:
     """Transparent first-pass ranking for deferred cloze materialisation."""
     canonical = str(chunk.get("canonical_form") or chunk.get("text") or "").strip()
-    words = len(_ENGLISH_WORD_RE.findall(canonical)) or len(canonical.split())
+    tokenizer = pack or target_pack("english")
+    words = len(tokenizer.tokens(canonical)) or len(canonical.split())
     kind = str(chunk.get("kind") or "")
     score = 10 + min(words, 4) * 3
     if kind in {"collocation", "verb_phrase", "grammar", "discourse_frame"}:
@@ -1071,31 +867,37 @@ def _expression_utility_score(chunk: dict[str, Any]) -> int:
     return score
 
 
-def _looks_like_subject_predicate_expression(chunk: dict[str, Any], key: str) -> bool:
-    """Reject sentence clauses mislabeled as reusable verb/collocation chunks."""
-    for part in chunk.get("meaning_parts") or []:
-        if not isinstance(part, dict):
-            continue
-        target_part = _expression_key(str(part.get("target") or ""))
-        native_part = str(part.get("native") or "").strip()
-        if (
-            len(target_part.split()) >= 2
-            and key.startswith(f"{target_part} ")
-            and re.search(r"(?:이|가|은|는)$", native_part)
-        ):
-            return True
-    return False
+# Gates below only make sense for a self-contained action/collocation, not for
+# a grammar pattern or discourse frame that legitimately spans a whole clause.
+_LENGTH_GATED_KINDS = frozenset({"verb_phrase", "collocation"})
 
 
 def _select_quality_expression_chunks(
-    chunks: list[dict[str, Any]], *, language: str = "english", limit: int = 6
+    chunks: list[dict[str, Any]],
+    *,
+    language: str = "english",
+    limit: int = 6,
+    native_language: str = "korean",
 ) -> list[dict[str, Any]]:
-    """Rank useful expressions while removing nested/near-duplicate targets."""
+    """Rank useful expressions while removing nested/near-duplicate targets.
+
+    Which gates actually reject a candidate is entirely data-driven per
+    target-language pack: ``length_reason``/``sibling_join_reason``/
+    ``base_form_reason``/``clause_answer_reason`` are called for every
+    language here, but they are no-ops unless the pack configures
+    ``max_words``/``coordinators``/overrides them — so English (fully
+    configured) behaves exactly as before, and German/Korean (not yet
+    configured beyond Phase 2) stay exactly as permissive as before too.
+    Phase 4/5 tighten German/Korean by adding data to their packs, not by
+    touching this function again.
+    """
+    pack = target_pack(language)
+    native = native_quiz_pack(native_language)
     ranked = sorted(
         chunks,
         key=lambda item: (
             int(item.get("quality_score") or 0),
-            _expression_utility_score(item),
+            _expression_utility_score(item, pack),
             len(_expression_key(str(item.get("canonical_form") or ""))),
         ),
         reverse=True,
@@ -1105,23 +907,18 @@ def _select_quality_expression_chunks(
     for chunk in ranked:
         if int(chunk.get("quality_score") or 0) < 70:
             continue
-        key = _expression_key(str(chunk.get("canonical_form") or ""))
+        canonical = str(chunk.get("canonical_form") or "")
+        key = _expression_key(canonical)
         tokens = set(key.split())
         if not tokens:
             continue
-        ordered_tokens = key.split()
         kind = str(chunk.get("kind") or "").lower()
-        if language == "english" and kind in {"verb_phrase", "collocation"}:
-            max_words = 7 if kind == "verb_phrase" else 5
-            if len(ordered_tokens) > max_words or {"and", "while"} & tokens:
-                continue
-            if _looks_like_subject_predicate_expression(chunk, key):
-                continue
-            first = ordered_tokens[0]
+        if kind in _LENGTH_GATED_KINDS:
             if (
-                first.endswith("ing")
-                or first.endswith("ed")
-                or first in {"took", "went", "made", "saw", "did", "had", "was", "were", "wrote", "spoke", "bought"}
+                pack.length_reason(canonical, kind)
+                or pack.sibling_join_reason(canonical)
+                or pack.clause_answer_reason(chunk, key, native)
+                or pack.base_form_reason(canonical, kind)
             ):
                 continue
         # Nested targets such as "acquire control" / "acquire management
@@ -1159,24 +956,6 @@ def _segment_entity_terms(segment: dict[str, Any]) -> tuple[list[str], list[str]
     return native, target
 
 
-def _contains_term(text: str, terms: list[str]) -> str | None:
-    """Return the matched entity spelling using word-aware, case-insensitive bounds."""
-    for term in sorted(set(terms), key=len, reverse=True):
-        pattern = re.compile(r"(?<!\w)" + re.escape(term) + r"(?!\w)", re.IGNORECASE)
-        if pattern.search(text or ""):
-            return term
-    return None
-
-
-def _same_lexeme(left: str, right: str) -> bool:
-    """Conservative inflection match used only for capitalisation fallback checks."""
-    left = left.casefold()
-    right = right.casefold()
-    if left == right:
-        return True
-    return len(left) >= 4 and len(right) >= 4 and left[:4] == right[:4]
-
-
 def _surface_answer_contract_reason(
     *,
     answer: str,
@@ -1188,60 +967,17 @@ def _surface_answer_contract_reason(
     """Reject context/entity expansion while still allowing grammatical inflection.
 
     This is a mechanical boundary, not subjective LLM QA. Explicit entity forms
-    come from the planning payload; capitalization is a fallback for a missed
-    entity such as ``Antock``/``Entok``.
+    come from the planning payload; capitalization-based detection is a
+    per-language fallback for a missed entity such as ``Antock``/``Entok``
+    (see ``TargetLanguagePack.surface_boundary_reason``).
     """
-    matched = _contains_term(answer, excluded_target_terms)
-    if matched:
-        return f"surface_answer contains excluded context entity {matched!r}"
-
-    if language not in {"english", "german"}:
-        return None
-    answer_words = _ENGLISH_WORD_RE.findall(answer)
-    canonical_words = _ENGLISH_WORD_RE.findall(canonical_form)
-    if not answer_words:
-        return None
-    answer_at_sentence_start = sentence_target.lstrip().casefold().startswith(
-        answer.casefold()
+    pack = target_pack(language)
+    for term in sorted(set(excluded_target_terms), key=len, reverse=True):
+        if pack.contains_term(answer, term):
+            return f"surface_answer contains excluded context entity {term!r}"
+    return pack.surface_boundary_reason(
+        answer=answer, sentence_target=sentence_target, canonical_form=canonical_form
     )
-    for index, word in enumerate(answer_words):
-        if not word[:1].isupper() or word.casefold() == "i":
-            continue
-        if index == 0 and answer_at_sentence_start and canonical_words:
-            if _same_lexeme(word, canonical_words[0]):
-                continue
-        if language == "german" and any(
-            _same_lexeme(word, canonical_word) for canonical_word in canonical_words
-        ):
-            continue
-        # English words inside a reusable answer are not title-cased. German
-        # common nouns are, but a new capitalised token absent from the canonical
-        # expression is contextual content and must stay outside the blank.
-        return f"surface_answer adds entity-like token {word!r} outside canonical_form"
-    return None
-
-
-_REPETITION_STOPWORDS = frozenset({
-    "a", "an", "the", "of", "in", "on", "at", "to", "for", "and", "or", "with",
-    "by", "is", "are", "as", "that", "this", "its", "their",
-})
-
-
-def _has_tautological_repetition(text: str, *, language: str) -> bool:
-    """Flag a phrase that restates the same headword twice, e.g. a discourse
-    frame stacked on a term that already carries the frame's own head noun
-    ("in the event of credit events" repeats "event"). This is a mechanical
-    check, not a real reduplication idiom ("day by day"), so it only looks at
-    content words of 4+ letters."""
-    if language not in {"english", "german"}:
-        return False
-    words = [w.casefold() for w in re.findall(r"[A-Za-zÄÖÜäöüß]+", text)]
-    lemmas = [
-        w[:-1] if w.endswith("s") and len(w) > 4 else w
-        for w in words
-        if w not in _REPETITION_STOPWORDS and len(w) >= 4
-    ]
-    return len(lemmas) != len(set(lemmas))
 
 
 def _usable_expression_chunks(raw_chunks: Any, *, language: str) -> set[str]:
@@ -1251,7 +987,7 @@ def _usable_expression_chunks(raw_chunks: Any, *, language: str) -> set[str]:
     exclusion deterministic even when a model ignores that instruction.
     """
     chunks: set[str] = set()
-    language = (language or "").lower()
+    pack = target_pack(language)
     for item in raw_chunks or []:
         text = str(
             (item.get("canonical_form") or item.get("text"))
@@ -1260,28 +996,19 @@ def _usable_expression_chunks(raw_chunks: Any, *, language: str) -> set[str]:
         ).strip()
         kind = str(item.get("kind") if isinstance(item, dict) else "").strip().lower()
         key = _expression_key(text)
-        if not key or any(ch.isdigit() for ch in text) or "@" in text or "://" in text:
+        if not key:
             continue
-        if kind in {"proper_name", "person", "organization", "brand", "location", "event"}:
+        if pack.proper_name_reason(text, kind):
             continue
-        if re.search(r"\b[A-ZÄÖÜ]{2,}\b", text):
-            continue
-        words = re.findall(r"[A-Za-zÄÖÜäöüß]+", text)
-        # A dictionary-form English expression may accidentally retain sentence-
-        # initial capitalization, but an internal title-cased token is a name.
-        if language == "english" and any(word[:1].isupper() for word in words[1:]):
-            continue
-        # German common nouns are capitalized by rule. Only reject a phrase
-        # made entirely of title-cased tokens, a strong multi-word name signal.
-        if language == "german" and len(words) > 1 and all(word[:1].isupper() for word in words):
-            continue
-        if _has_tautological_repetition(text, language=language):
+        if pack.tautology_reason(text):
             continue
         chunks.add(key)
     return chunks
 
 
-def _cloze_structural_reason(item: Any, raw_index: int, native_language: str = "korean") -> str:
+def _cloze_structural_reason(
+    item: Any, raw_index: int, native_language: str = "korean", language: str = "english"
+) -> str:
     """Give the repair model a field-specific reason instead of a generic failure."""
     if not isinstance(item, dict):
         return f"candidate {raw_index}: item must be a JSON object"
@@ -1295,10 +1022,7 @@ def _cloze_structural_reason(item: Any, raw_index: int, native_language: str = "
     markers = _BLANK_RUN_RE.findall(completed)
     if len(markers) == 1:
         completed = _BLANK_RUN_RE.sub(blank, completed, count=1)
-    matcher = re.compile(
-        r"(?<![A-Za-z0-9])" + re.escape(blank) + r"(?![A-Za-z0-9])",
-        re.IGNORECASE,
-    )
+    matcher = target_pack(language).answer_boundary_re(blank)
     if "_" in completed or len(list(matcher.finditer(completed))) != 1:
         return (
             f"candidate {raw_index}: blank {blank!r} must be copied verbatim as one "
@@ -1311,16 +1035,17 @@ def _cloze_structural_reason(item: Any, raw_index: int, native_language: str = "
     native_markers = _BLANK_RUN_RE.findall(native_completed)
     if len(native_markers) == 1:
         native_completed = _BLANK_RUN_RE.sub(target_ko, native_completed, count=1)
-    native_script = _native_script_re(native_language)
+    native = native_quiz_pack(native_language)
+    native_script = native.script_re
     if native_script.search(sentence_ko) and not native_script.search(target_ko):
         return (
             f"candidate {raw_index}: target_ko {target_ko!r} is target-language text; "
             "target_ko must be the native-language text copied verbatim from sentence_ko"
         )
-    if not target_ko or target_ko not in native_completed:
+    if not target_ko or not native.contains_span(native_completed, target_ko):
         return (
             f"candidate {raw_index}: target_ko {target_ko!r} must be the exact inflected "
-            "Korean surface phrase copied verbatim from sentence_ko (not a lemma)"
+            f"{native.script_label} surface phrase copied verbatim from sentence_ko (not a lemma)"
         )
     return (
         f"candidate {raw_index}: sentence_en and sentence_ko must be complete natural "
@@ -1373,18 +1098,18 @@ def _prepare_cloze_candidates(
             reasons.append(f"candidate {raw_index}: duplicate answer {blank!r}")
             continue
         seen_blanks.add(blank_key)
-        question_ko = str(
-            item.get("question_ko") or _default_question_ko("cloze", language)
-        ).strip()
-        if native_language == "korean":
-            aligned_native = str(item.get("target_ko") or "").strip()
-            native_meaning = (
-                aligned_native
-                if _native_script_re(native_language).search(aligned_native)
-                else _native_expression_meaning(contract, native_language)
-            )
-            if native_meaning:
-                question_ko = f"‘{native_meaning}’라는 뜻에 맞는 표현은 무엇일까요?"
+        native = native_quiz_pack(native_language)
+        question_ko = str(item.get("question_ko") or "").strip()
+        if not question_ko:
+            question_ko = native.default_question("cloze", _lang_label(language))
+        aligned_native = str(item.get("target_ko") or "").strip()
+        native_meaning = (
+            aligned_native
+            if native.script_re.search(aligned_native)
+            else _native_expression_meaning(contract, native_language)
+        )
+        if native_meaning:
+            question_ko = native.meaning_question(native_meaning)
         try:
             validated = validate_quiz_payload(
                 "cloze",
@@ -1610,10 +1335,16 @@ async def generate_quiz_bundle(
     Returns (created_quizzes, trace). Raises :class:`BundleSeedError` when the
     learner has no usable Statement yet.
     """
+    from .languages import is_supported_pair
+
     settings = get_settings()
     quality_model = settings.quiz_quality_model or settings.openai_model
     language = (language or "english").lower()
     native_language = (getattr(user, "native_language", None) or "korean").lower()
+    if not is_supported_pair(native_language, language):
+        raise BundleSeedError(
+            f"unsupported language pair: native={native_language!r} target={language!r}"
+        )
     native_label = _lang_label(native_language)
     target_label = _lang_label(language)
     level = crud.get_language_level(user, language)
@@ -1652,7 +1383,9 @@ async def generate_quiz_bundle(
                 {
                     "segment_index": index,
                     "source_text": text,
-                    "semantic_guardrails": _source_semantic_guardrails(text, language),
+                    "semantic_guardrails": _source_semantic_guardrails(
+                        text, language, native_language=native_language
+                    ),
                 }
                 for index, text in enumerate(source_units)
             ],
@@ -1715,7 +1448,7 @@ async def generate_quiz_bundle(
         planned_segments.append(segment)
     raw_segments = planned_segments
     semantic_normalizations = _normalize_unlicensed_detail_comparatives(
-        raw_segments, source_units, language
+        raw_segments, source_units, language, native_language=native_language
     )
     raw_expression_count = sum(
         len(segment.get("expressions") or [])
@@ -1851,7 +1584,7 @@ async def generate_quiz_bundle(
         if isinstance(item, dict)
     ]
     usable_expression_count = len(_select_quality_expression_chunks(
-        proposed_expression_chunks, language=language, limit=6
+        proposed_expression_chunks, language=language, limit=6, native_language=native_language
     ))
     native_script = _native_script_re(native_language)
     has_non_native_meaning = any(
@@ -2031,7 +1764,9 @@ async def generate_quiz_bundle(
                 "segment_index": segment_index,
                 "source_segment": source_text,
                 "meaning": _native_expression_meaning(chunk, native_language),
-                "semantic_guardrails": _source_semantic_guardrails(source_text, language),
+                "semantic_guardrails": _source_semantic_guardrails(
+                    source_text, language, native_language=native_language
+                ),
                 "reference_answers": references,
                 "quality_score": int(chunk.get("quality_score") or 80),
                 "quality_reason": str(chunk.get("quality_reason") or "").strip(),
@@ -2039,7 +1774,7 @@ async def generate_quiz_bundle(
             seen_expression_keys.add(key)
 
     accepted_chunks = _select_quality_expression_chunks(
-        accepted_chunks, language=language, limit=6
+        accepted_chunks, language=language, limit=6, native_language=native_language
     )
     expression_keys = {
         _expression_key(str(chunk.get("canonical_form") or ""))
@@ -2403,7 +2138,9 @@ async def materialize_expression_clozes(
             "excluded_target_terms": [],
             "segment_index": index,
             "source_segment": segment,
-            "semantic_guardrails": _source_semantic_guardrails(segment, language),
+            "semantic_guardrails": _source_semantic_guardrails(
+                segment, language, native_language=native_language
+            ),
             "reference_answers": normalized_refs,
         })
     step = tracer.begin_step(

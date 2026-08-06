@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../l10n/languages.dart';
 import '../theme/app_theme.dart';
 import '../utils/idempotency_key.dart';
 import '../widgets/app_ui.dart';
@@ -29,19 +30,7 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
   Timer? _settleRefreshTimer;
   bool _hadActiveRun = false;
 
-  static const _languageLabels = {
-    'english': '영어',
-    'german': '독일어',
-    'korean': '한국어',
-    'japanese': '일본어',
-    'chinese': '중국어',
-    'spanish': '스페인어',
-    'french': '프랑스어',
-    'portuguese': '포르투갈어',
-    'italian': '이탈리아어',
-    'arabic': '아랍어',
-    'russian': '러시아어',
-  };
+  static const _languageLabels = kLegacyLanguageLabelsKo;
 
   @override
   void initState() {

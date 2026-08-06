@@ -1028,19 +1028,27 @@ async def update_profile_settings(
                 "message": "Native language is fixed when the account is created",
             },
         )
-    # A learner can't "learn" their own native language.
+    # Only the 3 supported (native, target) pairs may be chosen.
     allowed_targets = valid_target_for_native(native)
     if payload.target_languages is not None:
         bad = {l.lower() for l in payload.target_languages} - allowed_targets
         if bad:
             raise HTTPException(
                 status_code=400,
-                detail={"code": "unsupported_target", "languages": sorted(bad)},
+                detail={
+                    "code": "unsupported_target",
+                    "languages": sorted(bad),
+                    "allowed": sorted(allowed_targets),
+                },
             )
     if payload.target_language is not None and payload.target_language.lower() not in allowed_targets:
         raise HTTPException(
             status_code=400,
-            detail={"code": "unsupported_target", "languages": [payload.target_language]},
+            detail={
+                "code": "unsupported_target",
+                "languages": [payload.target_language],
+                "allowed": sorted(allowed_targets),
+            },
         )
 
     prev_level = user.current_level

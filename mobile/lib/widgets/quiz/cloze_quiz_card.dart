@@ -66,8 +66,35 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
   bool get telemetryAnswerRevealed => _answerRevealed;
   List<String> get telemetryRevealedTokens {
     if (_answerRevealed || _hintLevel >= 2) return [_blank];
-    if (_hintLevel == 1 && _blank.isNotEmpty) return [_blank[0]];
+    if (_hintLevel == 1 && _blank.isNotEmpty) {
+      return [_hintChar(_blank, _targetLanguage)];
+    }
     return const [];
+  }
+
+  /// The language of the answer itself (quiz_data['language']), not the
+  /// learner's native language — determines which "first letter" convention
+  /// the level-1 hint uses.
+  String get _targetLanguage =>
+      widget.quizData['language']?.toString() ?? 'english';
+
+  static const _choseong =
+      'ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ';
+
+  /// The level-1 hint unit for one word: the leading consonant (초성) for a
+  /// Korean answer, or the first letter for anything else. A Korean answer's
+  /// first LETTER (e.g. the whole syllable 정 in 정리했다) reveals far more
+  /// than a Latin first letter does — 초성 alone (ㅈ) is the equivalent-size
+  /// hint, matching the level-1 tier used server-side for level-scaled hints.
+  String _hintChar(String word, String targetLanguage) {
+    if (word.isEmpty) return '';
+    if (targetLanguage == 'korean') {
+      final code = word.codeUnitAt(0);
+      if (code >= 0xAC00 && code <= 0xD7A3) {
+        return _choseong[(code - 0xAC00) ~/ 588];
+      }
+    }
+    return word.substring(0, 1);
   }
 
   @override
@@ -296,7 +323,7 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
               scheme: scheme,
               hintText: i == activeIndex && words[i].isNotEmpty
                   ? (_hintLevel == 1
-                      ? words[i][0]
+                      ? _hintChar(words[i], _targetLanguage)
                       : (_hintLevel >= 2 ? words[i] : null))
                   : null,
               dense: dense,

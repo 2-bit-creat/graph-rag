@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../api/client.dart';
+import '../l10n/languages.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import 'quiz_admin_detail_screen.dart';
@@ -33,19 +34,7 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
   String _sort = 'created_desc';
   Object? _error;
 
-  static const _languageLabels = {
-    'english': '영어',
-    'german': '독일어',
-    'korean': '한국어',
-    'japanese': '일본어',
-    'chinese': '중국어',
-    'spanish': '스페인어',
-    'french': '프랑스어',
-    'portuguese': '포르투갈어',
-    'italian': '이탈리아어',
-    'arabic': '아랍어',
-    'russian': '러시아어',
-  };
+  static const _languageLabels = kLegacyLanguageLabelsKo;
 
   @override
   void initState() {

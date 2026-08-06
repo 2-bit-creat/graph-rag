@@ -10,6 +10,7 @@ import '../chat/chat_suggestions.dart';
 import '../chat/journal_task_controller.dart';
 import '../compose/compose_session_controller.dart';
 import '../l10n/app_strings.dart';
+import '../l10n/languages.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart';
 import '../utils/statement_display.dart';
@@ -876,13 +877,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     }
   }
 
-  // Learnable target languages — kept in sync with settings_screen.dart's
-  // _kLanguages (the quiz engine is only tuned for these three).
-  static List<({String key, String label, String flag})> get _quizLanguages => [
-        (key: 'english', label: tr('kg.langEnglish'), flag: '🇺🇸'),
-        (key: 'german', label: tr('kg.langGerman'), flag: '🇩🇪'),
-        (key: 'korean', label: tr('kg.langKorean'), flag: '🇰🇷'),
-      ];
+  static List<({String key, String label, String flag})> get _quizLanguages =>
+      kTargetLanguages;
 
   /// When the learner has more than one target language configured in their
   /// profile, ask which one this quiz session should draw from before
@@ -2222,15 +2218,7 @@ class _SelectionInfoCard extends StatelessWidget {
     );
   }
 
-  static const _languageLabels = {
-    'english': '영어',
-    'german': '독일어',
-    'korean': '한국어',
-    'japanese': '일본어',
-    'chinese': '중국어',
-    'spanish': '스페인어',
-    'french': '프랑스어',
-  };
+  static const _languageLabels = kLegacyLanguageLabelsKo;
 
   Future<void> _startStudyQuiz(
     BuildContext context,

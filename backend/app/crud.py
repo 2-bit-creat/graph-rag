@@ -896,10 +896,16 @@ async def create_user(
     *,
     native_language: str,
 ) -> User:
+    from .languages import default_target_for_native
+
+    native = native_language.strip().lower()
+    target = default_target_for_native(native)
     user = User(
         email=email.lower(),
         password_hash=password_hash,
-        native_language=native_language.strip().lower(),
+        native_language=native,
+        target_language=target,
+        target_languages=[target],
     )
     session.add(user)
     await session.commit()
@@ -3866,17 +3872,25 @@ async def update_user_profile_settings(
     auto_generate_quizzes: bool | None = None,
 ) -> User:
     from .level_guidelines import clamp_level
+    from .languages import valid_target_for_native
 
     if level is not None:
         user.current_level = clamp_level(level)
     if is_freedom_on is not None:
         user.is_freedom_on = is_freedom_on
+    allowed_targets = valid_target_for_native(user.native_language)
     if target_language is not None:
+        target_language = target_language.strip().lower()
+        if target_language not in allowed_targets:
+            raise ValueError(f"unsupported target_language {target_language!r} for native {user.native_language!r}")
         user.target_language = target_language
     if target_languages is not None:
         langs = [l.strip().lower() for l in target_languages if isinstance(l, str) and l.strip()]
         if not langs:
             raise ValueError("target_languages must be a non-empty list")
+        bad = [l for l in langs if l not in allowed_targets]
+        if bad:
+            raise ValueError(f"unsupported target_languages {bad!r} for native {user.native_language!r}")
         user.target_languages = langs
         user.target_language = langs[0]
     if (
@@ -3918,12 +3932,26 @@ def get_language_level(user: "User", language: str) -> int:
 
 
 def get_effective_target_languages(user: "User") -> list[str]:
-    """Return the user's active target languages (always at least one)."""
+    """Return the user's active target languages (always at least one).
+
+    Filters out any target that is no longer a supported pair for this user's
+    native language — e.g. a stale english-native/german-target row from
+    before the 3-pair restriction. If filtering empties the list, falls back
+    to the current default target for the native language, so a caller always
+    gets a usable language rather than an empty result.
+    """
+    from .languages import valid_target_for_native, default_target_for_native
+
+    allowed = valid_target_for_native(getattr(user, "native_language", None))
     langs = getattr(user, "target_languages", None)
     if langs and isinstance(langs, list):
-        return [l for l in langs if isinstance(l, str)]
-    legacy = getattr(user, "target_language", None) or "english"
-    return [legacy]
+        filtered = [l for l in langs if isinstance(l, str) and l.lower() in allowed]
+        if filtered:
+            return filtered
+    legacy = getattr(user, "target_language", None) or ""
+    if legacy.lower() in allowed:
+        return [legacy]
+    return [default_target_for_native(getattr(user, "native_language", None))]
 
 
 async def get_all_statement_nodes(

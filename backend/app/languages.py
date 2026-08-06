@@ -76,11 +76,20 @@ LANGUAGES: dict[str, LanguageSpec] = {
     ),
 }
 
+# The only (native, target) combinations the product supports. Every other
+# native/target set below is DERIVED from this — to add a 4th pair, add one
+# tuple here (and a LanguageSpec entry above if the language is new).
+SUPPORTED_PAIRS: frozenset[tuple[str, str]] = frozenset({
+    ("korean", "english"),
+    ("korean", "german"),
+    ("english", "korean"),
+})
+
 # Languages the user may set as their native (UI/graph/explanation) language.
-SUPPORTED_NATIVE: frozenset[str] = frozenset({"korean", "english"})
+SUPPORTED_NATIVE: frozenset[str] = frozenset(native for native, _target in SUPPORTED_PAIRS)
 
 # Languages the user may pick to learn (quiz target).
-SUPPORTED_TARGET: frozenset[str] = frozenset({"english", "german", "korean"})
+SUPPORTED_TARGET: frozenset[str] = frozenset(target for _native, target in SUPPORTED_PAIRS)
 
 DEFAULT_NATIVE = "korean"
 DEFAULT_TARGET = "english"
@@ -100,6 +109,27 @@ def label(language: str | None, default: str = DEFAULT_TARGET) -> str:
 
 
 def valid_target_for_native(native_language: str | None) -> frozenset[str]:
-    """A learner can't "learn" their own native language."""
+    """The targets a learner may pick given their native language."""
     native = normalize(native_language, DEFAULT_NATIVE)
-    return frozenset(SUPPORTED_TARGET - {native})
+    return frozenset(target for pair_native, target in SUPPORTED_PAIRS if pair_native == native)
+
+
+def is_supported_pair(native_language: str | None, target_language: str | None) -> bool:
+    native = normalize(native_language, DEFAULT_NATIVE)
+    target = normalize(target_language, DEFAULT_TARGET)
+    return (native, target) in SUPPORTED_PAIRS
+
+
+def default_target_for_native(native_language: str | None) -> str:
+    """The target a fresh account should start with, given its native language."""
+    native = normalize(native_language, DEFAULT_NATIVE)
+    if native == DEFAULT_NATIVE:
+        return DEFAULT_TARGET
+    allowed = valid_target_for_native(native)
+    return DEFAULT_TARGET if DEFAULT_TARGET in allowed else next(iter(sorted(allowed)), DEFAULT_TARGET)
+
+
+def pair_key(native_language: str | None, target_language: str | None) -> str:
+    native = normalize(native_language, DEFAULT_NATIVE)
+    target = normalize(target_language, DEFAULT_TARGET)
+    return f"{spec(native).code}-{spec(target).code}"

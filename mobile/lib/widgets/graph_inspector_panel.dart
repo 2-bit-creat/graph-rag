@@ -1679,11 +1679,12 @@ class _NodeExpressionButtonState extends State<_NodeExpressionButton> {
 
 Map<String, String> get _kLangLabelMap => {
       'english': tr('kg.langEnglish'),
+      'german': tr('kg.langGerman'),
+      'korean': tr('kg.langKorean'),
       'japanese': tr('lang.japanese'),
       'chinese': tr('lang.chinese'),
       'spanish': tr('lang.spanish'),
       'french': tr('lang.french'),
-      'german': tr('kg.langGerman'),
       'portuguese': tr('lang.portuguese'),
       'italian': tr('lang.italian'),
       'arabic': tr('lang.arabic'),

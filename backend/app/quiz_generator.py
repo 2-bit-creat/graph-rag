@@ -167,33 +167,14 @@ def _client() -> AsyncOpenAI:
     return AsyncOpenAI(api_key=get_settings().openai_api_key)
 
 
-def _hint_single_token(token: str, level: int) -> str:
-    word = token.strip().lower()
-    if not word:
-        return ""
-    n = len(word)
-    if level <= 30:
-        reveal = max(1, round(n * 0.3))
-        parts = list(word[:reveal]) + ["_"] * (n - reveal)
-    elif level <= 70:
-        parts = [word[0]] + ["_"] * (n - 1)
-    elif n > 7:
-        parts = [word[0]] + ["_"] * (n - 1)
-    else:
-        parts = ["_"] * n
-    return " ".join(parts)
+def generate_malheoboca_hint(
+    blank_word: str, current_level: int, *, target_language: str = "english"
+) -> str:
+    """Level-scaled letter hints — delegates to the target language pack
+    (e.g. a Korean target reveals 초성 instead of a Latin first-letter mask)."""
+    from .language_packs import target_pack
 
-
-def generate_malheoboca_hint(blank_word: str, current_level: int) -> str:
-    """Level-scaled letter hints — supports multi-word phrases."""
-    word = blank_word.strip().lower()
-    if not word:
-        return ""
-    level = clamp_level(current_level)
-    tokens = word.split()
-    if len(tokens) > 1:
-        return "   ".join(_hint_single_token(t, level) for t in tokens)
-    return _hint_single_token(word, level)
+    return target_pack(target_language).mask_answer(blank_word, clamp_level(current_level))
 
 
 def _tokenize_scramble_sentence(sentence_en: str) -> list[str]:
@@ -385,12 +366,16 @@ def _is_english_blank(text: str) -> bool:
     return bool(_EN_BLANK_RE.match(text.strip()))
 
 
-def _validate_malheoboca_cloze(quiz_data: dict, blank: str, difficulty: int) -> None:
+def _validate_malheoboca_cloze(
+    quiz_data: dict, blank: str, difficulty: int, *, target_language: str = "english"
+) -> None:
     # Never use the target answer as a fallback for the native-language
     # meaning. That leaks the answer before the learner submits.
     context_ko = _ensure_malheoboca_span(quiz_data.get("context_ko") or "")
     quiz_data["context_ko"] = context_ko
-    quiz_data["blank_display"] = generate_malheoboca_hint(blank, difficulty)
+    quiz_data["blank_display"] = generate_malheoboca_hint(
+        blank, difficulty, target_language=target_language
+    )
 
 
 def _sync_prompt_en_with_blank(quiz_data: dict, seed: str) -> None:
@@ -421,6 +406,7 @@ def _apply_freedom_seed(
     target_level: int,
     *,
     sentence_en: str = "",
+    target_language: str = "english",
 ) -> None:
     seed = seed_word.strip().lower()
     quiz_data["blank"] = seed
@@ -428,19 +414,17 @@ def _apply_freedom_seed(
     if sentence_en:
         quiz_data["sentence_en"] = sentence_en
     _sync_prompt_en_with_blank(quiz_data, seed)
-    quiz_data["blank_display"] = generate_malheoboca_hint(seed, target_level)
+    quiz_data["blank_display"] = generate_malheoboca_hint(
+        seed, target_level, target_language=target_language
+    )
     quiz_data["context_ko"] = _ensure_malheoboca_span(quiz_data.get("context_ko") or "")
 
 
 def _is_valid_blank(text: str, *, target_language: str = "english") -> bool:
-    """Accept blanks in any language — Latin-only check only for English."""
-    cleaned = text.strip()
-    if not cleaned:
-        return False
-    if target_language.lower() == "english":
-        return _is_english_blank(cleaned)
-    # For non-English allow any non-whitespace word/phrase
-    return bool(cleaned)
+    """Accept blanks in any language — delegates to the target language pack."""
+    from .language_packs import target_pack
+
+    return target_pack(target_language).is_valid_blank(text)
 
 
 def validate_quiz_payload(
@@ -488,6 +472,7 @@ def validate_quiz_payload(
                 freedom_seed,
                 difficulty,
                 sentence_en=(payload.get("sentence_en") or quiz_data.get("sentence_en") or ""),
+                target_language=target_language,
             )
             blank = quiz_data["blank"]
         else:
@@ -512,7 +497,7 @@ def validate_quiz_payload(
             if not accepted_valid:
                 raise ValueError(f"cloze accepted_answers must be valid {target_language} words")
             quiz_data["accepted_answers"] = [a.strip().lower() for a in accepted_valid]
-            _validate_malheoboca_cloze(quiz_data, blank, difficulty)
+            _validate_malheoboca_cloze(quiz_data, blank, difficulty, target_language=target_language)
             # Ensure prompt_en has ___ even in non-freedom mode.
             prompt_en = (quiz_data.get("prompt_en") or "").strip()
             if not prompt_en or "___" not in prompt_en:

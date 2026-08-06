@@ -7,26 +7,12 @@ import 'package:flutter/services.dart';
 import '../api/client.dart';
 import '../auth/account_controller.dart';
 import '../l10n/app_strings.dart';
+import '../l10n/languages.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import 'privacy_policy_screen.dart';
 
 // ─── Static data ──────────────────────────────────────────────────────────────
-
-// Learnable target languages (the quiz engine is tuned for these three).
-// A learner can't "learn" their own native language, so [forNative] excludes
-// it — mirrors the backend's languages.valid_target_for_native().
-List<({String key, String label})> _kLanguages({String? forNative}) => [
-      (key: 'english', label: tr('kg.langEnglish')),
-      (key: 'german', label: tr('kg.langGerman')),
-      (key: 'korean', label: tr('kg.langKorean')),
-    ].where((l) => l.key != forNative).toList();
-
-// Native languages (UI + graph + explanations are generated in this language).
-List<({String key, String label})> get _kNativeLanguages => [
-      (key: 'korean', label: tr('kg.langKorean')),
-      (key: 'english', label: tr('kg.langEnglish')),
-    ];
 
 String _cefrLabel(int level) {
   if (level <= 15) return 'Pre-A1~A1';
@@ -335,10 +321,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       const SizedBox(width: AppSpacing.sm),
                       Expanded(
                         child: Text(
-                          _kNativeLanguages
+                          kNativeLanguages
                               .firstWhere(
                                 (lang) => lang.key == _nativeLanguage,
-                                orElse: () => _kNativeLanguages.first,
+                                orElse: () => kNativeLanguages.first,
                               )
                               .label,
                           style: Theme.of(context).textTheme.titleSmall,
@@ -355,7 +341,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   child: Wrap(
                     spacing: AppSpacing.sm,
                     runSpacing: AppSpacing.xs,
-                    children: _kNativeLanguages
+                    children: kNativeLanguages
                         .map((lang) => ChoiceChip(
                               label: Text(lang.label),
                               selected: _nativeLanguage == lang.key,
@@ -369,7 +355,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                         if (_targetLanguages.remove(lang.key) &&
                                             _targetLanguages.isEmpty) {
                                           _targetLanguages.add(
-                                            _kLanguages(forNative: lang.key)
+                                            targetsForNative(lang.key)
                                                 .first
                                                 .key,
                                           );
@@ -393,7 +379,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         spacing: AppSpacing.sm,
                         runSpacing: AppSpacing.xs,
                         children:
-                            _kLanguages(forNative: _nativeLanguage).map((lang) {
+                            targetsForNative(_nativeLanguage).map((lang) {
                           final selected = _targetLanguages.contains(lang.key);
                           return FilterChip(
                             avatar:
@@ -417,9 +403,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       const SizedBox(height: 16),
                       ..._targetLanguages.map((lang) {
                         final langInfo =
-                            _kLanguages(forNative: _nativeLanguage).firstWhere(
+                            targetsForNative(_nativeLanguage).firstWhere(
                           (l) => l.key == lang,
-                          orElse: () => (key: lang, label: lang),
+                          orElse: () => (key: lang, label: lang, flag: '🌐'),
                         );
                         final level = _langLevels[lang] ?? 10;
                         final cefr = _cefrLabel(level.round());

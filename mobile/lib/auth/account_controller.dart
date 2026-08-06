@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/client.dart';
+import '../chat/chat_session_controller.dart';
 
 /// ID-entry accounts: no signup form, just a handle. Each handle maps to its own
 /// backend space (JWT); bearer tokens are cached in platform secure storage
@@ -64,15 +65,24 @@ class AccountController extends ChangeNotifier {
     }
   }
 
-  /// Enter (or create) a space by handle and make it current.
-  Future<void> enter(String handle, {String? nativeLanguage}) async {
+  /// Enter a space by handle and make it current. [create] must be true
+  /// (the default) only for the developer "create account" tool — the plain
+  /// entry screen passes false so an unregistered handle 404s instead of
+  /// creating a new account from the login screen.
+  Future<void> enter(String handle,
+      {String? nativeLanguage, bool create = true}) async {
     final h = handle.trim().toLowerCase();
-    final token =
-        await apiClient.simpleLogin(h, nativeLanguage: nativeLanguage);
+    final token = await apiClient.simpleLogin(h,
+        nativeLanguage: nativeLanguage, create: create);
     _tokens[h] = token;
     _current = h;
     _resetConsent();
     setApiAuthToken(token);
+    // chatSession is a single app-wide singleton keyed by nothing but "the
+    // current account" — without this it keeps showing the PREVIOUS
+    // account's rooms/messages after a switch, since its init() is a
+    // one-shot guard that silently no-ops on the new account's remount.
+    chatSession.reset();
     await _persist();
     notifyListeners();
     await _refreshConsent();
@@ -87,6 +97,7 @@ class AccountController extends ChangeNotifier {
     _current = handle;
     _resetConsent();
     setApiAuthToken(_tokens[handle]);
+    chatSession.reset();
     await _persist();
     notifyListeners();
     await _refreshConsent();
@@ -156,6 +167,7 @@ class AccountController extends ChangeNotifier {
     _current = null;
     _resetConsent();
     setApiAuthToken(null);
+    chatSession.reset();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_currentKey);
     notifyListeners();

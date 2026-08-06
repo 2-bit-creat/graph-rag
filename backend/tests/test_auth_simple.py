@@ -8,6 +8,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import delete as sa_delete
 
+from app import crud
 from app.auth_utils import decode_access_token
 from app.db import async_session_factory
 from app.dev_user import DEV_USER_ID
@@ -43,6 +44,40 @@ async def test_simple_login_new_handle_creates_space(db_session):
     )
     assert uuid.UUID(decode_access_token(resp2.access_token)["sub"]) == uid
     assert user.native_language == "english"
+    # Cleanup.
+    async with async_session_factory() as s:
+        await s.execute(sa_delete(User).where(User.id == uid))
+        await s.commit()
+
+
+@pytest.mark.asyncio
+async def test_simple_login_create_false_rejects_unknown_handle(db_session):
+    """The plain entry screen passes create=False: an unregistered handle
+    must 404, not silently create a new account."""
+    handle = f"iso{uuid.uuid4().hex[:8]}"
+    with pytest.raises(HTTPException) as exc:
+        await simple_login(
+            SimpleLoginRequest(handle=handle, create=False), db_session
+        )
+    assert exc.value.status_code == 404
+    assert exc.value.detail["code"] == "account_not_found"
+    # The handle must still not exist afterward.
+    user = await crud.get_user_by_email(db_session, f"simple:{handle}@local")
+    assert user is None
+
+
+@pytest.mark.asyncio
+async def test_simple_login_create_false_allows_existing_handle(db_session):
+    handle = f"iso{uuid.uuid4().hex[:8]}"
+    resp = await simple_login(
+        SimpleLoginRequest(handle=handle, native_language="english"), db_session
+    )
+    uid = uuid.UUID(decode_access_token(resp.access_token)["sub"])
+    # Logging in with create=False now succeeds since the account exists.
+    resp2 = await simple_login(
+        SimpleLoginRequest(handle=handle, create=False), db_session
+    )
+    assert uuid.UUID(decode_access_token(resp2.access_token)["sub"]) == uid
     # Cleanup.
     async with async_session_factory() as s:
         await s.execute(sa_delete(User).where(User.id == uid))

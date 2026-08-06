@@ -1,0 +1,80 @@
+{
+  "ko-en": {
+    "pair": "ko-en",
+    "native": "korean",
+    "target": "english",
+    "statements": 24,
+    "bundles": 24,
+    "bundle_errors": 0,
+    "chunks_proposed": 34,
+    "chunks_selected": 40,
+    "cards_emitted": 76,
+    "gate_histogram": {
+      "candidate 0": 1,
+      "0": 2,
+      "candidate 1": 1,
+      "1": 1
+    },
+    "qa_scores": [],
+    "verdicts": {},
+    "repaired": 32,
+    "fallback": 0,
+    "pack_coverage": "full",
+    "usage": {
+      "prompt_tokens": 55654,
+      "completion_tokens": 3997
+    },
+    "cards_per_statement": 3.1666666666666665,
+    "fallback_rate": 0.0
+  },
+  "ko-de": {
+    "pair": "ko-de",
+    "native": "korean",
+    "target": "german",
+    "statements": 24,
+    "bundles": 24,
+    "bundle_errors": 0,
+    "chunks_proposed": 41,
+    "chunks_selected": 33,
+    "cards_emitted": 67,
+    "gate_histogram": {
+      "uncoded": 16
+    },
+    "qa_scores": [],
+    "verdicts": {},
+    "repaired": 41,
+    "fallback": 0,
+    "pack_coverage": "full",
+    "usage": {
+      "prompt_tokens": 65435,
+      "completion_tokens": 4454
+    },
+    "cards_per_statement": 2.7916666666666665,
+    "fallback_rate": 0.0
+  },
+  "en-ko": {
+    "pair": "en-ko",
+    "native": "english",
+    "target": "korean",
+    "statements": 12,
+    "bundles": 12,
+    "bundle_errors": 0,
+    "chunks_proposed": 24,
+    "chunks_selected": 24,
+    "cards_emitted": 47,
+    "gate_histogram": {
+      "uncoded": 3
+    },
+    "qa_scores": [],
+    "verdicts": {},
+    "repaired": 23,
+    "fallback": 0,
+    "pack_coverage": "full",
+    "usage": {
+      "prompt_tokens": 34072,
+      "completion_tokens": 2374
+    },
+    "cards_per_statement": 3.9166666666666665,
+    "fallback_rate": 0.0
+  }
+}

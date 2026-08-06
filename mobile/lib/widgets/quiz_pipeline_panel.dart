@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../api/client.dart';
+import '../l10n/languages.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import '../screens/quiz_session_screen.dart';
@@ -552,17 +553,6 @@ class QuizGraphGenerateCard extends StatelessWidget {
     ),
   ];
 
-  static const _kLangMeta = {
-    'english': (label: '영어 🇺🇸'),
-    'german': (label: '독일어 🇩🇪'),
-    'japanese': (label: '일본어 🇯🇵'),
-    'chinese': (label: '중국어 🇨🇳'),
-    'spanish': (label: '스페인어 🇪🇸'),
-    'french': (label: '프랑스어 🇫🇷'),
-    'portuguese': (label: '포르투갈어 🇧🇷'),
-    'italian': (label: '이탈리아어 🇮🇹'),
-  };
-
   String get _settingsHint {
     final s = profile?['selection_settings'];
     if (s is! Map) return '';
@@ -583,8 +573,8 @@ class QuizGraphGenerateCard extends StatelessWidget {
       langs = [profile?['target_language']?.toString() ?? 'english'];
     }
     return langs.map((k) {
-      final meta = _kLangMeta[k];
-      return (key: k, label: meta?.label ?? k);
+      final meta = kTargetLanguages.where((l) => l.key == k).firstOrNull;
+      return (key: k, label: meta != null ? '${meta.label} ${meta.flag}' : k);
     }).toList();
   }
 

@@ -23,41 +23,25 @@ class _Completions:
         )
 
 
-@pytest.mark.asyncio
-async def test_full_translation_gate_repairs_omitted_management_control(monkeypatch) -> None:
-    """Regression for a card whose old Korean gloss omitted the first clause."""
-    completions = _Completions([
-        {
-            "sentence_ko": "M&A에는 경영권 인수와 지배구조 개편이 포함됩니다.",
-            "target_ko": "지배구조 개편",
-        }
-    ])
-    monkeypatch.setattr(
-        quiz_bundle,
-        "_client",
-        lambda: SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+def test_cloze_author_prompt_requires_complete_native_translation() -> None:
+    """The single-card author prompt (not a separate translation pass) is the
+    quality boundary today: it must still demand that sentence_ko translate the
+    *complete* sentence_target and that target_ko be copied verbatim from it, so
+    a card can never omit a clause the way the old Korean gloss regression did
+    (a card that said "acquiring management control AND restructuring
+    governance" but glossed only the second clause)."""
+    prompt = quiz_bundle._build_cloze_system_prompt(
+        "Korean (한국어)", "English", 50, quiz_bundle.lang_guide("english"), "english"
+    ) + (
+        " This request contains exactly ONE expression. Create exactly one card for it. "
+        "The card must focus on that expression alone; never import a sibling expression from the reference answer. "
+        "Prefer a concise 6-14 word standalone example with one clear proposition. sentence_ko must translate the final "
+        "sentence_target completely in this same response, and target_ko must be copied verbatim from sentence_ko."
     )
-    completed, rejected, _ = await quiz_bundle._complete_cloze_native_translations(
-        [{
-            "expression_id": "0:0",
-            "surface_answer": "restructuring governance",
-            "sentence_target": "M&As involve acquiring management control and restructuring governance.",
-            "sentence_ko": "M&A는 지배구조 개편을 포함합니다.",
-            "target_ko": "지배구조 개편",
-        }],
-        native_language="korean",
-        target_language="english",
-        model="test-model",
-        timeout=1,
-    )
-
-    assert rejected == []
-    assert completed[0]["sentence_ko"] == "M&A에는 경영권 인수와 지배구조 개편이 포함됩니다."
-    assert completed[0]["target_ko"] == "지배구조 개편"
-    payload = json.loads(completions.calls[0]["messages"][1]["content"])
-    assert payload["sentence_target"] == (
-        "M&As involve acquiring management control and restructuring governance."
-    )
+    assert "sentence_ko must translate the final" in prompt
+    assert "sentence_target completely in this same response" in prompt
+    assert "target_ko must be copied verbatim from sentence_ko" in prompt
+    assert "sentence_ko must be its complete natural native-language translation" in prompt
 
 
 @pytest.mark.asyncio

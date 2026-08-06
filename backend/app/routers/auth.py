@@ -52,6 +52,14 @@ async def simple_login(
         email = f"simple:{handle}@local"
         user = await crud.get_user_by_email(session, email)
         if user is None:
+            if not payload.create:
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "code": "account_not_found",
+                        "message": "No account is registered for this ID",
+                    },
+                )
             native_language = (payload.native_language or "").strip().lower()
             if native_language not in SUPPORTED_NATIVE:
                 raise HTTPException(
