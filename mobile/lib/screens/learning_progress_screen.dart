@@ -4,6 +4,7 @@ import '../api/client.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
+import 'kg_insight_screen.dart';
 import 'quiz_session_screen.dart';
 
 List<String> get _weekdays => [
@@ -12,6 +13,14 @@ List<String> get _weekdays => [
   tr('progress.weekdaySun'),
 ];
 
+/// 내 학습률 — quiz progress AND the record insights that used to live on their
+/// own "기록 인사이트" page.
+///
+/// The two screens answered nearly the same question ("how am I doing?") from
+/// two angles (what I studied vs. what I recorded), so they were two menu
+/// entries competing for one intent. They're now two tabs behind a single
+/// destination. The 기록 tab's network calls are deferred until it is first
+/// opened, so the merge costs nothing to anyone who only ever looks at 학습.
 class LearningProgressScreen extends StatefulWidget {
   const LearningProgressScreen({super.key});
 
@@ -19,16 +28,39 @@ class LearningProgressScreen extends StatefulWidget {
   State<LearningProgressScreen> createState() => _LearningProgressScreenState();
 }
 
-class _LearningProgressScreenState extends State<LearningProgressScreen> {
+class _LearningProgressScreenState extends State<LearningProgressScreen>
+    with SingleTickerProviderStateMixin {
   Map<String, dynamic>? _dashboard;
   Map<String, dynamic>? _profile;
   Object? _error;
   bool _loading = true;
 
+  late final TabController _tabs;
+  bool _insightVisited = false;
+
   @override
   void initState() {
     super.initState();
+    _tabs = TabController(length: 2, vsync: this);
+    // Track the *animation*, not just `index`: a drag moves the view before the
+    // index commits, so keying off index alone would show a blank page for the
+    // whole swipe.
+    _tabs.animation?.addListener(_onTabMoved);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _tabs.animation?.removeListener(_onTabMoved);
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  /// Build the 기록 tab only once it has actually started coming into view.
+  void _onTabMoved() {
+    if (_insightVisited) return;
+    if ((_tabs.animation?.value ?? 0) <= 0.001) return;
+    setState(() => _insightVisited = true);
   }
 
   Future<void> _load() async {
@@ -66,10 +98,14 @@ class _LearningProgressScreenState extends State<LearningProgressScreen> {
   }
 
   Future<void> _editGoals() async {
-    final profile = _profile!;
+    // Reachable from the app bar, which is now painted before the first load
+    // finishes — an unguarded `_profile!` would throw on an early tap.
+    final profile = _profile;
+    if (profile == null) return;
     var cloze = (profile['daily_cloze_target'] as num?)?.toInt() ?? 20;
     var composition =
         (profile['daily_composition_target'] as num?)?.toInt() ?? 5;
+    var saving = false;
     final saved = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
@@ -124,14 +160,36 @@ class _LearningProgressScreenState extends State<LearningProgressScreen> {
                 ),
                 const SizedBox(height: 20),
                 FilledButton(
-                  onPressed: () async {
-                    await apiClient.updateQuizProfileSettings(
-                      dailyClozeTarget: cloze,
-                      dailyCompositionTarget: composition,
-                    );
-                    if (context.mounted) Navigator.pop(context, true);
-                  },
-                  child: Text(tr('progress.saveGoal')),
+                  // A failed save used to throw out of the callback and leave
+                  // the sheet sitting open with no explanation, looking like a
+                  // dead button.
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          setSheetState(() => saving = true);
+                          final messenger = ScaffoldMessenger.of(context);
+                          try {
+                            await apiClient.updateQuizProfileSettings(
+                              dailyClozeTarget: cloze,
+                              dailyCompositionTarget: composition,
+                            );
+                            if (context.mounted) Navigator.pop(context, true);
+                          } catch (error) {
+                            setSheetState(() => saving = false);
+                            messenger.showSnackBar(
+                              SnackBar(
+                                content: Text(tr('progress.goalSaveFailed')),
+                              ),
+                            );
+                          }
+                        },
+                  child: saving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Text(tr('progress.saveGoal')),
                 ),
               ],
             ),
@@ -144,18 +202,58 @@ class _LearningProgressScreenState extends State<LearningProgressScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(tr('progress.title')),
+        actions: [
+          // Goal editing belongs to the 학습 tab only; showing it over 기록
+          // would be an action with nothing to act on.
+          AnimatedBuilder(
+            animation: _tabs,
+            builder: (context, _) => _tabs.index == 0
+                ? IconButton(
+                    tooltip: tr('progress.goalTooltip'),
+                    onPressed: _profile == null ? null : _editGoals,
+                    icon: const Icon(Icons.tune_rounded),
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ],
+        bottom: TabBar(
+          controller: _tabs,
+          tabs: [
+            Tab(text: tr('progress.tabLearning')),
+            Tab(text: tr('progress.tabRecord')),
+          ],
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabs,
+        children: [
+          _buildLearningTab(context),
+          // Deferred: nothing here hits the network until the tab is reached.
+          // Kept alive afterwards — TabBarView disposes off-screen children, so
+          // without this the 기록 tab would refetch its stats on every switch
+          // back. The 학습 tab needs no equivalent: its data lives in this state,
+          // not in the child.
+          _insightVisited
+              ? const _KeepAlive(child: KgInsightScreen())
+              : const SizedBox.shrink(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLearningTab(BuildContext context) {
     if (_loading) {
-      return Scaffold(body: AppLoadingScreen(message: tr('progress.loading')));
+      return AppLoadingScreen(message: tr('progress.loading'));
     }
     if (_error != null) {
-      return Scaffold(
-        appBar: AppBar(title: Text(tr('progress.title'))),
-        body: AppEmptyState(
-          icon: Icons.cloud_off_rounded,
-          title: tr('progress.loadFailed'),
-          subtitle: '$_error',
-          action: FilledButton(onPressed: _load, child: Text(tr('progress.retry'))),
-        ),
+      return AppEmptyState(
+        icon: Icons.cloud_off_rounded,
+        title: tr('progress.loadFailed'),
+        subtitle: '$_error',
+        action: FilledButton(onPressed: _load, child: Text(tr('progress.retry'))),
       );
     }
     final data = _dashboard!;
@@ -174,70 +272,60 @@ class _LearningProgressScreenState extends State<LearningProgressScreen> {
     final levelProgress =
         ((totalXp - startXp) / (nextXp - startXp).clamp(1, 1 << 30)).clamp(0.0, 1.0);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(tr('progress.title')),
-        actions: [
-          IconButton(
-            tooltip: tr('progress.goalTooltip'),
-            onPressed: _editGoals,
-            icon: const Icon(Icons.tune_rounded),
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 32),
+        children: [
+          _HeroCard(data: data, levelProgress: levelProgress),
+          const SizedBox(height: 14),
+          _TodayMissionCard(
+            today: today,
+            onCloze: () => _start('cloze'),
+            onComposition: () => _start('composition'),
+            onEdit: _editGoals,
           ),
-        ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 32),
-          children: [
-            _HeroCard(data: data, levelProgress: levelProgress),
-            const SizedBox(height: 14),
-            _TodayMissionCard(
-              today: today,
-              onCloze: () => _start('cloze'),
-              onComposition: () => _start('composition'),
-              onEdit: _editGoals,
-            ),
-            const SizedBox(height: 18),
-            _SectionTitle(
-              title: tr('progress.weekTitle'),
-              subtitle: tr('progress.weekSubtitle'),
-            ),
-            const SizedBox(height: 10),
-            _WeekCard(week: week),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _MetricCard(
-                    icon: Icons.local_fire_department_rounded,
-                    color: const Color(0xFFFF7A45),
-                    value: tr('progress.days', {'count': data['longest_streak'] ?? 0}),
-                    label: tr('progress.longestStreak'),
-                  ),
+          const SizedBox(height: 18),
+          _SectionTitle(
+            title: tr('progress.weekTitle'),
+            subtitle: tr('progress.weekSubtitle'),
+          ),
+          const SizedBox(height: 10),
+          _WeekCard(week: week),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _MetricCard(
+                  icon: Icons.local_fire_department_rounded,
+                  color: const Color(0xFFFF7A45),
+                  value: tr('progress.days', {'count': data['longest_streak'] ?? 0}),
+                  label: tr('progress.longestStreak'),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _MetricCard(
-                    icon: Icons.task_alt_rounded,
-                    color: const Color(0xFF5B67F1),
-                    value: tr('progress.items', {'count': data['week_completed'] ?? 0}),
-                    label: tr('progress.weekCompleted'),
-                  ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _MetricCard(
+                  icon: Icons.task_alt_rounded,
+                  color: const Color(0xFF5B67F1),
+                  value: tr('progress.items', {'count': data['week_completed'] ?? 0}),
+                  label: tr('progress.weekCompleted'),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _MetricCard(
-                    icon: Icons.track_changes_rounded,
-                    color: const Color(0xFF13A88A),
-                    value:
-                        '${(((data['accuracy'] as num?)?.toDouble() ?? 0) * 100).round()}%',
-                    label: tr('progress.recentAccuracy'),
-                  ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _MetricCard(
+                  icon: Icons.track_changes_rounded,
+                  color: const Color(0xFF13A88A),
+                  value:
+                      '${(((data['accuracy'] as num?)?.toDouble() ?? 0) * 100).round()}%',
+                  label: tr('progress.recentAccuracy'),
                 ),
-              ],
-            ),
+              ),
+            ],
+          ),
+          if (achievements.isNotEmpty) ...[
             const SizedBox(height: 22),
             _SectionTitle(
               title: tr('progress.badgesTitle'),
@@ -255,9 +343,30 @@ class _LearningProgressScreenState extends State<LearningProgressScreen> {
               ),
             ),
           ],
-        ),
+        ],
       ),
     );
+  }
+}
+
+/// Holds a TabBarView page's State across tab switches.
+class _KeepAlive extends StatefulWidget {
+  const _KeepAlive({required this.child});
+  final Widget child;
+
+  @override
+  State<_KeepAlive> createState() => _KeepAliveState();
+}
+
+class _KeepAliveState extends State<_KeepAlive>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
   }
 }
 
@@ -484,6 +593,13 @@ class _MissionRow extends StatelessWidget {
   }
 }
 
+/// One malformed date in the week payload used to throw out of `build` and blank
+/// the whole screen; a missing label costs nothing by comparison.
+String _weekdayLabel(Object? raw) {
+  final parsed = DateTime.tryParse(raw?.toString() ?? '');
+  return parsed == null ? '' : _weekdays[parsed.weekday - 1];
+}
+
 class _WeekCard extends StatelessWidget {
   const _WeekCard({required this.week});
   final List<Map<String, dynamic>> week;
@@ -536,7 +652,7 @@ class _WeekCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        _weekdays[DateTime.parse(row['date'].toString()).weekday - 1],
+                        _weekdayLabel(row['date']),
                         style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
                       ),
                       if (row['perfect'] == true)
@@ -583,6 +699,18 @@ class _MetricCard extends StatelessWidget {
       );
 }
 
+/// The dashboard's `title` field is a Korean literal baked into the backend, so
+/// an English account was reading Korean badge names on an otherwise English
+/// screen. Localise off the stable `id` and fall back to the server string for
+/// any badge the app doesn't know yet.
+String _badgeTitle(Map<String, dynamic> data) {
+  final id = data['id']?.toString() ?? '';
+  final key = 'progress.badge.$id';
+  final localized = tr(key);
+  if (localized != key) return localized;
+  return data['title']?.toString() ?? '';
+}
+
 class _AchievementCard extends StatelessWidget {
   const _AchievementCard({required this.data});
   final Map<String, dynamic> data;
@@ -608,7 +736,7 @@ class _AchievementCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              data['title']?.toString() ?? '',
+              _badgeTitle(data),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontWeight: FontWeight.w800),

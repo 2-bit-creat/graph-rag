@@ -373,7 +373,7 @@ class ChatInputBar extends StatelessWidget {
   /// Quiz controls rendered beside the mode chip, above the input pill.
   final Widget? modeActions;
 
-  /// "+" menu action: 'journal' | 'composition' | 'word' | 'distill'.
+  /// "+" menu action: 'journal' | 'ocr' | 'composition' | 'word' | 'distill'.
   final ValueChanged<String>? onModeSelected;
 
   final bool inputEnabled;
@@ -1248,6 +1248,8 @@ class _ModeMenuButtonState extends State<_ModeMenuButton> {
                         children: [
                           _item('journal', Icons.auto_stories_rounded,
                               tr('chat.menu.journal')),
+                          _item('ocr', Icons.photo_camera_outlined,
+                              tr('chat.menu.ocr')),
                           _item('distill', Icons.playlist_add_check_rounded,
                               tr('chat.menu.distill')),
                           _item('composition', Icons.edit_note_rounded,

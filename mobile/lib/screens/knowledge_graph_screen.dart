@@ -13,15 +13,18 @@ import '../l10n/app_strings.dart';
 import '../l10n/languages.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart';
+import '../utils/image_file_import.dart';
 import '../utils/statement_display.dart';
 import '../widgets/graph_chat_panel.dart';
 import '../widgets/graph_inspector_panel.dart';
 import '../widgets/knowledge_graph_canvas.dart';
 import '../widgets/measure_size.dart';
+import '../widgets/ocr_review_sheet.dart';
 import '../widgets/ontology_settings_sheet.dart';
 import '../widgets/quiz/cloze_quiz_card.dart';
 import '../widgets/thinking_orbs.dart';
 import 'graph_trash_screen.dart';
+import 'quiz_deck_screen.dart';
 
 /// Full-screen interactive knowledge graph with integrated chat panel.
 class KnowledgeGraphScreen extends StatefulWidget {
@@ -128,6 +131,15 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   bool _chatPeekThrough = false;
   Set<String> _glowIds = const {};
   int _glowSeq = 0;
+  // Dual view: "오늘" lights up the nodes behind today's due cards and hands
+  // exactly those quiz ids to the deck, so the highlight and the deck can
+  // never disagree about what "today" means.
+  bool _todayMode = false;
+  bool _todayLoading = false;
+  List<Map<String, dynamic>> _todayItems = const [];
+  // Textract answers in a couple of seconds, but on a slow phone connection the
+  // upload alone is long enough that a silent UI reads as a dead tap.
+  bool _ocrBusy = false;
   int _lastMsgCount = 0;
   ChatMode _lastChatMode = ChatMode.normal;
   bool _lastChatBusy = false;
@@ -728,6 +740,88 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     _canvasKey.currentState?.focusOnNodes(known);
   }
 
+  // ── Dual view: 그래프 ↔ 오늘 복습 ────────────────────────────────────────
+
+  /// Load today's due cards and glow the graph nodes they were built from.
+  ///
+  /// Due-ness is decided here rather than server-side because the review queue
+  /// endpoint is a plain listing; filtering on the client keeps this a single
+  /// read with no new endpoint, and the resulting quiz ids are handed straight
+  /// to the deck so both views agree on the set.
+  Future<void> _toggleTodayMode() async {
+    if (_todayMode) {
+      setState(() {
+        _todayMode = false;
+        _todayItems = const [];
+        _glowIds = const {};
+        _glowSeq++;
+      });
+      return;
+    }
+
+    setState(() {
+      _todayMode = true;
+      _todayLoading = true;
+    });
+    try {
+      final data = await apiClient.listQuizQueueItems(
+        queueKind: 'review',
+        limit: 200,
+      );
+      final now = DateTime.now();
+      final due = (data['items'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>()
+          .where((item) {
+        final raw = item['next_review_at']?.toString();
+        if (raw == null || raw.isEmpty) return true;
+        final at = DateTime.tryParse(raw);
+        return at == null || !at.toLocal().isAfter(now);
+      }).toList();
+
+      final nodeIds = <String>{};
+      for (final item in due) {
+        final ids = item['source_node_ids'];
+        if (ids is List) nodeIds.addAll(ids.map((e) => e.toString()));
+      }
+      if (!mounted) return;
+      setState(() {
+        _todayItems = due;
+        _todayLoading = false;
+        _glowIds = nodeIds;
+        _glowSeq++;
+      });
+      if (nodeIds.isNotEmpty) {
+        _canvasKey.currentState?.focusOnNodes(nodeIds);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _todayLoading = false;
+        _todayMode = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr('quizDeck.loadFailed', {'error': e}))),
+      );
+    }
+  }
+
+  Future<void> _startTodayDeck() async {
+    if (_todayItems.isEmpty) return;
+    // The deck mixes types; cloze is the deck-friendly default and the ids
+    // pin the selection regardless of the type filter build_session applies.
+    await Navigator.push(
+      context,
+      QuizDeckScreen.route(
+        quizType: 'cloze',
+        quizIds: _todayItems.map((e) => e['id'].toString()).toList(),
+      ),
+    );
+    if (!mounted || !_todayMode) return;
+    // Re-read so cards graded in the deck drop out of today's set.
+    setState(() => _todayMode = false);
+    await _toggleTodayMode();
+  }
+
   /// 사후 교정: 검토에서 놓친 개념/정체성을 그래프에 직접 추가한다.
   /// (이름+타입 dedupe — 같은 이름·타입이 있으면 그 노드를 재사용)
   Future<void> _load({bool silent = false}) async {
@@ -864,6 +958,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         _activateInputMode();
         chatSession.enterJournalMode();
         break;
+      case 'ocr':
+        await _importFromPhoto();
+        break;
       case 'distill':
         _activateInputMode();
         chatSession.startDistill();
@@ -875,6 +972,69 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         _startQuizWithLanguagePrompt('word');
         break;
     }
+  }
+
+  // ── 사진에서 글자 가져오기 (OCR) ──────────────────────────────────────────
+
+  /// Photo → text → the composer. Stops there deliberately: the learner edits
+  /// the recognised text and drives the normal extract/commit flow themselves,
+  /// so a misread word never becomes a graph claim silently.
+  Future<void> _importFromPhoto() async {
+    final picked = await pickImageFile();
+    if (!mounted || picked.isCancelled) return;
+
+    if (picked.rejection != null) {
+      _snack(switch (picked.rejection!) {
+        ImageRejection.empty => tr('ocr.errorEmpty'),
+        ImageRejection.tooLarge => tr('ocr.errorTooLarge'),
+        ImageRejection.unsupportedFormat => tr('ocr.errorUnsupported'),
+      });
+      return;
+    }
+
+    final file = picked.file!;
+    setState(() => _ocrBusy = true);
+    Map<String, dynamic> result;
+    try {
+      result = await apiClient.ocrImage(
+        file.bytes,
+        filename: file.name,
+        mimeType: file.mimeType,
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() => _ocrBusy = false);
+        _snack(tr('ocr.errorFailed', {'error': e}));
+      }
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _ocrBusy = false);
+
+    final text = result['text']?.toString() ?? '';
+    if (text.trim().isEmpty) {
+      _snack(tr('ocr.errorNoText'));
+      return;
+    }
+
+    final confirmed = await OcrReviewSheet.show(
+      context,
+      initialText: text,
+      meanConfidence: (result['mean_confidence'] as num?)?.toDouble(),
+      lowConfidence: result['low_confidence'] == true,
+    );
+    if (!mounted || confirmed == null || confirmed.isEmpty) return;
+
+    _ensureChatVisible();
+    _chatInputController.text = confirmed;
+    _chatInputController.selection = TextSelection.collapsed(
+      offset: confirmed.length,
+    );
+    _chatInputFocusNode.requestFocus();
+  }
+
+  void _snack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   static List<({String key, String label, String flag})> get _quizLanguages =>
@@ -1763,6 +1923,53 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           const Positioned.fill(
             child: IgnorePointer(child: _EmptyGraphHint()),
           ),
+        if (_ocrBusy)
+          Positioned.fill(
+            child: ColoredBox(
+              color: Colors.black.withValues(alpha: 0.35),
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.xl,
+                    vertical: AppSpacing.lg,
+                  ),
+                  decoration: BoxDecoration(
+                    color: context.shell.panelBackground,
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                    border: Border.all(color: context.shell.panelBorder),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      const SizedBox(width: AppSpacing.md),
+                      Text(
+                        tr('ocr.working'),
+                        style: TextStyle(color: context.shell.primaryText),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        // Dual view toggle — sits under the search pill rather than inside it;
+        // that pill is already at its icon budget at 390px.
+        Positioned(
+          top: _graphToolsVisible ? chipsTop + 48 : chipsTop,
+          right: 12,
+          child: _TodayPill(
+            active: _todayMode,
+            loading: _todayLoading,
+            count: _todayItems.length,
+            onToggle: _toggleTodayMode,
+            onStart: _startTodayDeck,
+          ),
+        ),
         if (_graphToolsVisible)
           Positioned(
             top: chipsTop,
@@ -1915,6 +2122,133 @@ class _CompactGraphHeader extends StatelessWidget {
             icon: Icon(Icons.open_in_full, size: 20, color: shell.mutedText),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Dual-view toggle. Collapsed it is a single chip; active it grows a count and
+/// a start button, so entering the deck is one tap from the graph.
+class _TodayPill extends StatelessWidget {
+  const _TodayPill({
+    required this.active,
+    required this.loading,
+    required this.count,
+    required this.onToggle,
+    required this.onStart,
+  });
+
+  final bool active;
+  final bool loading;
+  final int count;
+  final VoidCallback onToggle;
+  final VoidCallback onStart;
+
+  @override
+  Widget build(BuildContext context) {
+    final shell = context.shell;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final surface = isDark ? const Color(0xE91A1A22) : const Color(0xF2FFFFFF);
+    final accent = active ? AppColors.hubQuiz : shell.mutedText;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOutCubic,
+      height: 40,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: active
+              ? AppColors.hubQuiz.withValues(alpha: 0.5)
+              : shell.panelBorder,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.34 : 0.10),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            InkWell(
+              onTap: loading ? null : onToggle,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (loading)
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: accent,
+                        ),
+                      )
+                    else
+                      Icon(Icons.style_outlined, size: 18, color: accent),
+                    const SizedBox(width: 6),
+                    Text(
+                      tr('kg.todayToggle'),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: accent,
+                        fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+                      ),
+                    ),
+                    if (active && !loading) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        '$count',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.hubQuiz,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            if (active && !loading && count > 0)
+              InkWell(
+                onTap: onStart,
+                child: Container(
+                  height: 40,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  color: AppColors.hubQuiz.withValues(alpha: 0.12),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.play_arrow_rounded,
+                        size: 18,
+                        color: AppColors.hubQuiz,
+                      ),
+                      const SizedBox(width: 2),
+                      Text(
+                        tr('kg.todayStart'),
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.hubQuiz,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

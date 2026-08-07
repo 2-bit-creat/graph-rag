@@ -19,8 +19,21 @@ DEFAULT_TIMEZONE = "Asia/Seoul"
 def safe_timezone(name: str | None) -> ZoneInfo:
     try:
         return ZoneInfo(name or DEFAULT_TIMEZONE)
-    except ZoneInfoNotFoundError:
+    except (ZoneInfoNotFoundError, ValueError):
+        # ValueError covers malformed input ("", "Not/AZone", path-traversal
+        # attempts) — this value reaches Postgres as a timezone argument, so it
+        # must never be anything but a name the tz database actually knows.
         return ZoneInfo(DEFAULT_TIMEZONE)
+
+
+def user_timezone_name(user: User) -> str:
+    """The learner's IANA zone, validated.
+
+    Single source of truth for every day boundary: streaks, the daily goal reset
+    and the once-per-day XP cap. Reading it from the User (rather than a request
+    parameter) is what keeps those three from disagreeing.
+    """
+    return getattr(safe_timezone(getattr(user, "timezone", None)), "key", DEFAULT_TIMEZONE)
 
 
 def raw_xp(
@@ -149,39 +162,46 @@ async def dashboard(
     session: AsyncSession,
     user: User,
     *,
-    timezone_name: str = DEFAULT_TIMEZONE,
+    timezone_name: str | None = None,
 ) -> dict:
+    # The learner's stored zone wins; `timezone_name` is an explicit override for
+    # tests and internal callers. It used to come straight from a client query
+    # parameter while `add_attempt` used the Seoul default, so a learner outside
+    # KST could see a streak day the XP cap disagreed about.
+    timezone_name = timezone_name or user_timezone_name(user)
     tz = safe_timezone(timezone_name)
     timezone_name = getattr(tz, "key", DEFAULT_TIMEZONE)
     now = datetime.now(UTC)
     today = now.astimezone(tz).date()
-    attempts = list(
-        (
-            await session.scalars(
-                select(QuizAttempt)
-                .where(QuizAttempt.user_id == user.id)
-                .order_by(QuizAttempt.answered_at.asc())
-            )
-        ).all()
-    )
-    total_xp = int(
-        await session.scalar(
-            select(func.coalesce(func.sum(QuizAttempt.xp_awarded), 0)).where(
-                QuizAttempt.user_id == user.id
-            )
+    # Aggregate in Postgres, grouped by the learner's *local* day. The previous
+    # version hydrated every QuizAttempt row the account had ever produced —
+    # answer_payload and tutor_feedback JSONB included — purely to bucket them by
+    # date in Python. A few hundred attempts made this the slowest call in the
+    # app, and it got monotonically worse the more the user studied.
+    local_day = func.date(func.timezone(timezone_name, QuizAttempt.answered_at))
+    day_rows = await session.execute(
+        select(
+            local_day.label("day"),
+            func.count().label("total"),
+            func.count().filter(QuizAttempt.quiz_type == "composition").label("composition"),
+            func.count().filter(QuizAttempt.quiz_type != "composition").label("cloze"),
+            func.coalesce(func.sum(QuizAttempt.xp_awarded), 0).label("xp"),
+            func.count().filter(QuizAttempt.correct.is_(True)).label("correct"),
         )
-        or 0
+        .where(QuizAttempt.user_id == user.id)
+        .group_by(local_day)
     )
     by_day: dict[date, dict] = {}
-    for attempt in attempts:
-        day = attempt.answered_at.astimezone(tz).date()
-        row = by_day.setdefault(
-            day, {"cloze": 0, "composition": 0, "xp": 0, "correct": 0, "total": 0}
-        )
-        row["composition" if attempt.quiz_type == "composition" else "cloze"] += 1
-        row["xp"] += attempt.xp_awarded
-        row["correct"] += int(attempt.correct)
-        row["total"] += 1
+    total_xp = 0
+    for day, total, composition, cloze, xp, correct in day_rows.all():
+        by_day[day] = {
+            "cloze": int(cloze),
+            "composition": int(composition),
+            "xp": int(xp),
+            "correct": int(correct),
+            "total": int(total),
+        }
+        total_xp += int(xp)
 
     active_days = set(by_day)
     current, longest, at_risk = _streaks(active_days, today)
@@ -213,6 +233,10 @@ async def dashboard(
     cloze_count = sum(row["cloze"] for row in by_day.values())
     composition_count = sum(row["composition"] for row in by_day.values())
     growth_level, level_start, next_level = _level_for_xp(total_xp)
+    # `title` stays for older clients, but it is a Korean literal — the app
+    # localises off `id` (see `progress.badge.*` in app_strings.dart) so an
+    # English account doesn't get Korean badge names on an otherwise English
+    # screen.
     achievement_specs = [
         ("first_quiz", "첫걸음", total_attempts, 1),
         ("perfect_day", "퍼펙트 데이", perfect_days, 1),

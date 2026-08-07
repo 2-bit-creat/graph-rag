@@ -34,6 +34,13 @@
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
+  <!--
+    The standardised name above is what current browsers read. Safari before
+    iOS 15.4 only honours the apple- prefixed one, and without it those versions
+    open the home-screen shortcut in a normal tab with the address bar showing —
+    which is the whole thing installing is meant to remove. Both must be present.
+  -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="Daylog">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
@@ -125,6 +132,19 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
+  <script>
+    // Register the push worker alongside Flutter's own. Scope '/' so a
+    // notification click can focus any page of the app. Failure is non-fatal:
+    // Web Push is unavailable in private windows and on iOS below 16.4, and the
+    // app must still start there.
+    if ('serviceWorker' in navigator && 'PushManager' in window) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker
+          .register('push_sw.js', { scope: '/' })
+          .catch(function (e) { console.warn('push worker registration failed', e); });
+      });
+    }
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

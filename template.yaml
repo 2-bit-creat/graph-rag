@@ -25,6 +25,11 @@ Parameters:
     Default: "false"
     AllowedValues: ["true", "false"]
     Description: Enable after the first alias-creation deployment.
+  EnableReminders:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Nightly push reminders. Turn on once VAPID keys are in Secrets Manager.
   Environment:
     Type: String
     Default: production
@@ -70,6 +75,14 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref S3Bucket
+        # Textract has no resource-level permissions for DetectDocumentText, so
+        # "*" is the only grantable resource. Scoped to the single read-only
+        # synchronous action — no async jobs, no analysis APIs.
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: textract:DetectDocumentText
+              Resource: "*"
       Environment:
         Variables:
           # Dynamic references keep secret values out of source, SAM config,
@@ -77,6 +90,11 @@ Resources:
           DATABASE_URL: !Sub '{{resolve:secretsmanager:${AppSecretName}:SecretString:DATABASE_URL}}'
           OPENAI_API_KEY: !Sub '{{resolve:secretsmanager:${AppSecretName}:SecretString:OPENAI_API_KEY}}'
           JWT_SECRET: !Sub '{{resolve:secretsmanager:${AppSecretName}:SecretString:JWT_SECRET}}'
+          # Web Push. The public key is not secret, but it is kept beside the
+          # private one so the pair can never drift apart. Absent keys disable
+          # push rather than breaking the app — see app/push.py:push_enabled.
+          VAPID_PUBLIC_KEY: !Sub '{{resolve:secretsmanager:${AppSecretName}:SecretString:VAPID_PUBLIC_KEY}}'
+          VAPID_PRIVATE_KEY: !Sub '{{resolve:secretsmanager:${AppSecretName}:SecretString:VAPID_PRIVATE_KEY}}'
           APP_VERSION: !Ref AppVersion
           CORS_ORIGINS: !Ref CorsOrigins
           ENVIRONMENT: !Ref Environment
@@ -99,6 +117,19 @@ Resources:
           - !Ref LambdaDurationAlarm
         Hooks:
           PreTraffic: !Ref DeploymentValidationHook
+      Events:
+        # Nightly review reminder. 22:00 KST = 13:00 UTC — late enough that the
+        # day's studying is done, early enough to still act on it. EventBridge
+        # cron has no timezone, so this must be re-checked if the app's default
+        # timezone ever stops being Asia/Seoul.
+        DailyReminder:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 13 * * ? *)
+            Name: !Sub ${AWS::StackName}-daily-reminder
+            Description: Push a review reminder to learners with cards due.
+            Enabled: !Equals [!Ref EnableReminders, "true"]
+            Input: '{"kind": "reminder"}'
 
   GraphRagCodeDeployServiceRole:
     Type: AWS::IAM::Role

@@ -13,6 +13,7 @@ import 'screens/consent_screen.dart';
 import 'screens/knowledge_graph_screen.dart';
 import 'theme/app_theme.dart';
 import 'theme/app_theme_controller.dart';
+import 'utils/device_timezone.dart';
 import 'utils/keyboard_inset.dart';
 import 'widgets/keyboard_inset_scope.dart';
 
@@ -102,8 +103,26 @@ class _ChatHomeShellState extends State<ChatHomeShell> {
       final profile = await apiClient.getUserProfile();
       await appLocaleController
           .setFromNativeLanguage(profile['native_language']?.toString());
+      await _syncTimezone(profile['timezone']?.toString());
     } catch (_) {
       // Non-fatal — keep the persisted locale.
+    }
+  }
+
+  /// Tell the server which zone this device is in, so streaks, the daily goal
+  /// reset and the daily XP cap all roll over at the learner's own midnight
+  /// rather than Seoul's.
+  ///
+  /// Only PATCHes when the zone actually differs from what the server has, so
+  /// the common case (same device, same country) costs nothing beyond the
+  /// profile read that was already happening.
+  Future<void> _syncTimezone(String? serverZone) async {
+    final device = await deviceTimezoneName();
+    if (device == null || device == serverZone) return;
+    try {
+      await apiClient.updateQuizProfileSettings(timezone: device);
+    } catch (_) {
+      // Non-fatal — the server keeps the zone it already had.
     }
   }
 

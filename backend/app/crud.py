@@ -7,9 +7,9 @@ from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, case, delete, func, or_, select, update
+from sqlalchemy import and_, case, delete, func, inspect as sa_inspect, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, defer, undefer, with_expression
 
 from .models import (
     ChatMessage,
@@ -77,6 +77,7 @@ def build_node_out(
     source_transcript_clean_ko: str | None = None,
     entry_created_at: datetime | None = None,
     alias_embedding_count: int = 0,
+    has_name_embedding: bool | None = None,
 ) -> NodeOut:
     """Graph API node + voice/name embedding metadata."""
     linked = is_bidirectional_voice_link(profile, node)
@@ -110,7 +111,11 @@ def build_node_out(
         event_timezone=getattr(node, "event_timezone", None),
         entry_created_at=entry_created_at,
         created_at=node.created_at,
-        has_name_embedding=node.name_embedding is not None,
+        has_name_embedding=(
+            has_name_embedding
+            if has_name_embedding is not None
+            else node_has_name_embedding(node)
+        ),
         aliases=[a for a in (node.aliases or []) if isinstance(a, str)],
         alias_embedding_count=alias_embedding_count,
         speaker_profile_id=profile.id if linked and profile else None,
@@ -143,8 +148,17 @@ async def _speaker_profiles_for_nodes(
     profile_ids = {n.speaker_profile_id for n in nodes if n.speaker_profile_id}
     if not profile_ids:
         return by_id
+    # undefer + populate_existing: sanitize_stale_voice_links runs first on the
+    # graph read path and loads every profile with `embedding` deferred, so these
+    # instances are already in the identity map without it. A plain SELECT would
+    # hand them back still deferred, and build_node_out's
+    # `profile.embedding is not None` would then fire a lazy load — illegal on an
+    # async session. Only the handful of *linked* profiles pay for the vector.
     result = await session.execute(
-        select(SpeakerProfile).where(SpeakerProfile.id.in_(profile_ids))
+        select(SpeakerProfile)
+        .where(SpeakerProfile.id.in_(profile_ids))
+        .options(undefer(SpeakerProfile.embedding))
+        .execution_options(populate_existing=True)
     )
     profiles_by_id = {p.id: p for p in result.scalars()}
     for n in nodes:
@@ -161,8 +175,24 @@ async def sanitize_stale_voice_links(
     session: AsyncSession, user_id: uuid.UUID
 ) -> int:
     """Clear one-sided or orphaned profile↔node links left by graph wipes / heuristics."""
+    cleared, _ = await _sanitize_stale_voice_links(session, user_id)
+    return cleared
+
+
+async def _sanitize_stale_voice_links(
+    session: AsyncSession, user_id: uuid.UUID
+) -> tuple[int, list[Node] | None]:
+    """Implementation that also hands back the nodes it loaded.
+
+    ``list_nodes_out`` runs this first on every graph read and then needs the very
+    same node list. Returning it lets the caller skip a second full query in the
+    overwhelmingly common case where there was nothing to repair; when something
+    *was* cleared (nodes may have been deleted) the list is returned as None so
+    the caller re-reads.
+    """
     cleared = 0
-    profiles = await list_speaker_profiles(session, user_id)
+    # Link bookkeeping only — no voiceprint is read anywhere in this function.
+    profiles = await list_speaker_profiles(session, user_id, with_embeddings=False)
     for profile in profiles:
         node = await session.get(Node, profile.node_id) if profile.node_id else None
         if profile.node_id is not None and (
@@ -175,6 +205,10 @@ async def sanitize_stale_voice_links(
             profile.node_id = None
             cleared += 1
 
+    # Loaded once and reused for the orphan pass below. The two passes are
+    # separated only by profile deletions and in-memory attribute writes — no
+    # node is inserted or removed between them — so re-querying returned the
+    # identical identity-mapped objects at the cost of a second full scan.
     nodes = await get_all_nodes(session, user_id=user_id)
     for node in nodes:
         if node.speaker_profile_id is None:
@@ -218,7 +252,9 @@ async def sanitize_stale_voice_links(
         .where(JournalEntry.user_id == user_id)
     )
     referenced_ids = {pid for (pid,) in referenced.all() if pid is not None}
-    for profile in await list_speaker_profiles(session, user_id):
+    # Reuse the list fetched above rather than re-querying: the flush only wrote,
+    # so the identity map hands back these very objects anyway.
+    for profile in profiles:
         if profile.id in referenced_ids:
             continue
         # Voice invariant: an embedding exists only while some journal entry still
@@ -240,7 +276,7 @@ async def sanitize_stale_voice_links(
     # such edge and would otherwise linger in the graph forever, even after every
     # journal entry referencing it is deleted (the '장세영' ghost-node bug).
     await session.flush()
-    active_nodes = await get_all_nodes(session, user_id=user_id)
+    active_nodes = nodes
     node_ids = [n.id for n in active_nodes]
     connected: set[uuid.UUID] = set()
     provenance_linked: set[uuid.UUID] = set()
@@ -278,7 +314,9 @@ async def sanitize_stale_voice_links(
 
     if cleared:
         await session.commit()
-    return cleared
+        # Nodes may have been deleted and links rewritten — force a re-read.
+        return cleared, None
+    return cleared, nodes
 
 
 async def unlink_speakers_from_graph(
@@ -378,8 +416,9 @@ async def _speaker_names_for_chunk_nodes(
 async def list_nodes_out(
     session: AsyncSession, user_id: uuid.UUID
 ) -> list[NodeOut]:
-    await sanitize_stale_voice_links(session, user_id)
-    nodes = await get_all_nodes(session, user_id=user_id)
+    _, nodes = await _sanitize_stale_voice_links(session, user_id)
+    if nodes is None:
+        nodes = await get_all_nodes(session, user_id=user_id)
     profiles = await _speaker_profiles_for_nodes(session, nodes)
     chunk_ids = [
         n.id for n in nodes if normalize_entity_type(n.type) == NODE_CHUNK
@@ -424,6 +463,9 @@ async def list_nodes_out(
             source_entry_id=entry_by_node.get(n.id),
             entry_created_at=entry_created_at_by_entry.get(entry_by_node.get(n.id)),
             alias_embedding_count=alias_emb_counts.get(n.id, 0),
+            # `has_embedding` rides along on the node query itself — see
+            # get_all_nodes — so this costs no extra round trip.
+            has_name_embedding=node_has_name_embedding(n),
         )
         for n in nodes
     ]
@@ -1142,14 +1184,53 @@ async def get_all_nodes(
     session: AsyncSession,
     user_id: uuid.UUID | None = None,
     include_deleted: bool = False,
+    with_embeddings: bool = False,
 ) -> list[Node]:
+    """Every active node for a user, WITHOUT ``name_embedding`` by default.
+
+    ``name_embedding`` is a 1536-float vector that Postgres serialises as text —
+    roughly 20 KB per node. Nothing that lists nodes (the graph, the timeline,
+    the stats dashboards) reads the vector; they only ever ask whether one
+    exists. Fetching it turned a 500-node graph into a ~10 MB result set on
+    every single list call, which is the bulk of the app's load time.
+
+    Similarity search never goes through here — it compares vectors inside
+    Postgres via ``Node.name_embedding.cosine_distance`` (a class-level
+    expression, unaffected by this deferral). Pass ``with_embeddings=True``
+    only if a caller genuinely needs the raw values in Python.
+    """
     q = select(Node).order_by(Node.created_at)
+    if not with_embeddings:
+        q = q.options(
+            defer(Node.name_embedding),
+            # Evaluate the "has one?" predicate in Postgres and ship the boolean
+            # instead of the vector — same information, ~20 KB per node cheaper,
+            # and no second query to reconstruct it.
+            with_expression(Node.has_embedding, Node.name_embedding.isnot(None)),
+        )
     if user_id is not None:
         q = q.where(Node.user_id == user_id)
     if not include_deleted:
         q = q.where(Node.deleted_at.is_(None))
     result = await session.execute(q)
     return list(result.scalars().all())
+
+
+def node_has_name_embedding(node: Node) -> bool:
+    """Whether the node carries a name embedding, without ever loading it.
+
+    Touching a deferred ``name_embedding`` would emit a lazy SELECT — illegal on
+    an async session (MissingGreenlet). ``get_all_nodes`` therefore asks Postgres
+    for the predicate itself and lands it on ``Node.has_embedding``; prefer that
+    when present, and fall back to the real column for nodes loaded some other
+    way (``session.get``, id-scoped queries).
+    """
+    computed = getattr(node, "has_embedding", None)
+    if computed is not None:
+        return bool(computed)
+    if "name_embedding" in sa_inspect(node).unloaded:
+        return False
+    return node.name_embedding is not None
 
 
 async def get_all_edges(
@@ -1181,12 +1262,23 @@ async def get_graph_summary(session: AsyncSession, user_id: uuid.UUID) -> dict:
 async def get_dynamic_node_types(
     session: AsyncSession, user_id: uuid.UUID
 ) -> list[dict]:
-    """Distinct node types (PascalCase, case-deduplicated) for filter tabs."""
-    result = await session.execute(select(Node).where(Node.user_id == user_id))
+    """Distinct node types (PascalCase, case-deduplicated) for filter tabs.
+
+    Counts in Postgres. This used to hydrate every node the user owns — 1536-dim
+    embedding included — to return a dozen integers, which made a 120-byte
+    response one of the slowest calls in the app.
+    """
+    result = await session.execute(
+        select(Node.type, func.count())
+        .where(Node.user_id == user_id)
+        .group_by(Node.type)
+    )
     counts: dict[str, int] = {}
-    for node in result.scalars():
-        t = normalize_entity_type(node.type)
-        counts[t] = counts.get(t, 0) + 1
+    # Casing is still folded in Python: normalize_entity_type is the app's
+    # canonical mapping, and the raw types-per-user set is tiny.
+    for node_type, count in result.all():
+        t = normalize_entity_type(node_type)
+        counts[t] = counts.get(t, 0) + int(count)
     return [
         {"type": t, "count": c}
         for t, c in sorted(counts.items(), key=lambda x: (-x[1], x[0]))
@@ -1196,14 +1288,34 @@ async def get_dynamic_node_types(
 async def deduplicate_node_type_casing(
     session: AsyncSession, user_id: uuid.UUID
 ) -> int:
-    """Merge PERSON/Person/person → Person in stored nodes."""
-    result = await session.execute(select(Node).where(Node.user_id == user_id))
+    """Merge PERSON/Person/person → Person in stored nodes.
+
+    Runs on every ``/graph`` read, so it reads two columns and writes only the
+    rows that are actually mis-cased. It used to hydrate every node the user has
+    — soft-deleted ones and their embeddings included — to discover that, almost
+    always, nothing needed fixing at all.
+    """
+    rows = await session.execute(
+        select(Node.id, Node.type).where(Node.user_id == user_id)
+    )
+    by_canon: dict[str, list[uuid.UUID]] = {}
+    for node_id, node_type in rows.all():
+        canon = normalize_entity_type(node_type)
+        if node_type != canon:
+            by_canon.setdefault(canon, []).append(node_id)
+
     changed = 0
-    for node in result.scalars():
-        canon = normalize_entity_type(node.type)
-        if node.type != canon:
-            node.type = canon
-            changed += 1
+    for canon, ids in by_canon.items():
+        # synchronize_session: a bulk UPDATE bypasses the identity map, so any
+        # Node already loaded in this session would keep the old casing —
+        # including the ones read_graph is about to re-serialise.
+        await session.execute(
+            update(Node)
+            .where(Node.id.in_(ids))
+            .values(type=canon)
+            .execution_options(synchronize_session="fetch")
+        )
+        changed += len(ids)
     if changed:
         await session.flush()
     return changed
@@ -1574,15 +1686,41 @@ async def update_journal_entry(
     return entry
 
 
+# JournalEntry columns that only the single-entry detail view ever reads. Each is
+# an unbounded blob — a full staged extraction, diarization segments, per-language
+# translations — so a 150-row list view was fetching megabytes to render titles.
+_ENTRY_LIST_DEFERRED = (
+    JournalEntry.graph_staging,
+    JournalEntry.transcript_segments,
+    JournalEntry.translations,
+    JournalEntry.translation_en,
+    JournalEntry.translation_de,
+)
+
+
 async def list_journal_entries(
-    session: AsyncSession, user_id: uuid.UUID, limit: int = 50
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    limit: int = 50,
+    *,
+    with_blobs: bool = True,
 ) -> list[JournalEntry]:
-    result = await session.execute(
+    """Recent entries, newest first.
+
+    Pass ``with_blobs=False`` from list/summary views: it leaves the large
+    per-entry payloads in Postgres. Touching a deferred attribute afterwards
+    would emit a lazy load, which an async session cannot do — so only use it
+    where the columns in ``_ENTRY_LIST_DEFERRED`` are genuinely unread.
+    """
+    q = (
         select(JournalEntry)
         .where(JournalEntry.user_id == user_id)
         .order_by(JournalEntry.created_at.desc())
         .limit(limit)
     )
+    if not with_blobs:
+        q = q.options(*(defer(col) for col in _ENTRY_LIST_DEFERRED))
+    result = await session.execute(q)
     return list(result.scalars().all())
 
 
@@ -2774,13 +2912,25 @@ async def apply_ontology_preset(
 
 
 async def list_speaker_profiles(
-    session: AsyncSession, user_id: uuid.UUID
+    session: AsyncSession, user_id: uuid.UUID, *, with_embeddings: bool = True
 ) -> list[SpeakerProfile]:
-    result = await session.execute(
+    """Voice profiles for a user.
+
+    ``embedding`` is a 256-float voiceprint. Callers that only inspect link
+    bookkeeping (node_id, label, display_name) should pass
+    ``with_embeddings=False`` — see ``sanitize_stale_voice_links``, which runs on
+    every graph read and was pulling every voiceprint the account owns to do it.
+    Defaults to True because ``build_node_out`` reports voice registration from
+    ``profile.embedding is not None``.
+    """
+    q = (
         select(SpeakerProfile)
         .where(SpeakerProfile.user_id == user_id)
         .order_by(SpeakerProfile.created_at)
     )
+    if not with_embeddings:
+        q = q.options(defer(SpeakerProfile.embedding))
+    result = await session.execute(q)
     return list(result.scalars().all())
 
 
@@ -3870,6 +4020,7 @@ async def update_user_profile_settings(
     daily_composition_target: int | None = None,
     quiz_review_ratio: float | None = None,
     auto_generate_quizzes: bool | None = None,
+    timezone: str | None = None,
 ) -> User:
     from .level_guidelines import clamp_level
     from .languages import valid_target_for_native
@@ -3914,6 +4065,18 @@ async def update_user_profile_settings(
         user.quiz_review_ratio = max(0.0, min(1.0, float(quiz_review_ratio)))
     if auto_generate_quizzes is not None:
         user.auto_generate_quizzes = bool(auto_generate_quizzes)
+    if timezone is not None:
+        # Validate against the tz database — the value is later handed to
+        # Postgres as a zone argument, so an unknown name must never be stored.
+        # A name we can't resolve is *ignored* rather than coerced to the
+        # default: silently moving a Berlin learner to Seoul because their
+        # device reported something odd is worse than leaving them as they were.
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            user.timezone = getattr(ZoneInfo(timezone), "key", timezone)
+        except (ZoneInfoNotFoundError, ValueError):
+            pass
     await session.commit()
     await session.refresh(user)
     return user
@@ -4174,10 +4337,17 @@ async def count_today_completed_quiz_types(
     session: AsyncSession,
     user_id: uuid.UUID,
     languages: list[str],
+    timezone_name: str = "Asia/Seoul",
 ) -> dict[str, dict[str, int]]:
-    """Count distinct daily-set quizzes first answered today, per language/type."""
-    korea = ZoneInfo("Asia/Seoul")
-    today_start = datetime.now(korea).replace(hour=0, minute=0, second=0, microsecond=0)
+    """Count distinct daily-set quizzes first answered today, per language/type.
+
+    "Today" must be the learner's today: this drives the daily-goal reset, and
+    hardcoding Seoul made the goal flip hours early or late for anyone else.
+    """
+    from .quiz_progress import safe_timezone
+
+    tz = safe_timezone(timezone_name)
+    today_start = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
     start_utc = today_start.astimezone(UTC)
     progress = {
         language.lower(): {"cloze_completed": 0, "composition_completed": 0}

@@ -3,7 +3,7 @@ from datetime import date, datetime
 
 from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, query_expression, relationship
 
 from pgvector.sqlalchemy import Vector
 
@@ -34,6 +34,14 @@ class User(Base):
     quiz_review_ratio: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
     auto_generate_quizzes: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
+    )
+    # IANA zone the learner's day boundaries are computed in — streaks, the daily
+    # goal reset, and the once-per-day XP cap. Stored on the user rather than
+    # passed per request so those three can never disagree with each other (the
+    # dashboard used to take a query parameter while attempt recording silently
+    # used the Seoul default). The app reports the device zone on launch.
+    timezone: Mapped[str] = mapped_column(
+        String, nullable=False, default="Asia/Seoul", server_default="Asia/Seoul"
     )
     # Consent (PIPA): the privacy-policy/terms version the user accepted and when.
     # speaker_id_consent_at is the SEPARATE consent required to derive a voiceprint
@@ -207,6 +215,11 @@ class Node(Base):
         nullable=True,
     )
     name_embedding: Mapped[list | None] = mapped_column(Vector(1536), nullable=True)
+    # Populated by crud.get_all_nodes via with_expression: "does this node have a
+    # name embedding?" evaluated inside Postgres. Lets the graph API report the
+    # flag while the 1536-float vector itself stays in the database — and without
+    # the extra id-only round trip a separate query would cost on every read.
+    has_embedding: Mapped[bool] = query_expression()
     # Legacy day-level projection of event_start_at.  Kept for mobile/API
     # compatibility while the richer temporal fields below roll out.
     occurred_at: Mapped[date | None] = mapped_column(Date, nullable=True, default=None)
@@ -856,3 +869,66 @@ class OntologyVersion(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class UsageCounter(Base):
+    """Per-user, per-day call counts for the cost-bearing endpoints.
+
+    Kept in Postgres rather than Redis on purpose. Lambda runs many concurrent
+    containers, so an in-process counter cannot enforce a shared limit, and the
+    Redis in docker-compose is not part of the deployed path — standing up
+    ElastiCache to add three integers is not worth it. A single
+    INSERT ... ON CONFLICT DO UPDATE ... RETURNING is atomic under concurrency
+    and costs one round trip against a database the request already talks to.
+
+    ``day`` is a LOCAL date (see rate_limit.local_day): resetting on UTC
+    midnight would land at 9am for Korean users, mid-morning.
+    """
+
+    __tablename__ = "usage_counters"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    kind: Mapped[str] = mapped_column(String, primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class PushSubscription(Base):
+    """A Web Push endpoint the learner's browser handed us.
+
+    The row's existence *is* the opt-in record: the browser only produces a
+    subscription after the learner grants notification permission, and
+    unsubscribing deletes the row. A separate `users.push_opt_in` flag would be
+    a second source of truth that can silently disagree with the browser's.
+
+    ``endpoint`` is unique because the push service issues one per browser
+    install; re-subscribing the same browser must update the keys in place
+    rather than accumulate dead rows.
+    """
+
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    endpoint: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    p256dh: Mapped[str] = mapped_column(Text, nullable=False)
+    auth: Mapped[str] = mapped_column(Text, nullable=False)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_success_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

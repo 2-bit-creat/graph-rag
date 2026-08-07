@@ -124,3 +124,110 @@ async def test_dashboard_uses_attempts_for_today_and_xp(db_session, iso_user):
     assert result["today"]["composition"] == 1
     assert result["today_xp"] == 14
     assert result["current_streak"] == 1
+
+
+@pytest.mark.asyncio
+async def test_dashboard_buckets_days_in_the_learners_timezone(db_session, iso_user):
+    """The same attempt falls on different calendar days in different zones.
+
+    The dashboard used to take its zone from a client query parameter while
+    `add_attempt` silently used the Seoul default, so the streak and the daily
+    XP cap could disagree about which day an attempt belonged to. Both now read
+    `User.timezone`.
+    """
+    from datetime import UTC, datetime
+
+    quiz = await crud.create_quiz(
+        db_session,
+        user_id=iso_user.id,
+        quiz_type="cloze",
+        language="english",
+        quiz_data={},
+    )
+    attempt = await add_attempt(
+        db_session,
+        user_id=iso_user.id,
+        quiz=quiz,
+        idempotency_key="tz-attempt",
+        answer_payload={"answer": "x"},
+        correct=True,
+        quality=5,
+        tutor_feedback=None,
+        hint_level=0,
+        revealed_tokens=[],
+        answer_revealed=False,
+    )
+    # 02:00 UTC is 11:00 the same day in Seoul, but 19:00 the *previous* day in
+    # Los Angeles — the exact case a hardcoded Seoul default gets wrong.
+    attempt.answered_at = datetime(2026, 8, 7, 2, 0, tzinfo=UTC)
+    await db_session.commit()
+
+    def active_days(result: dict) -> set[str]:
+        return {row["date"] for row in result["week"] if row["total"] > 0}
+
+    seoul = await dashboard(db_session, iso_user, timezone_name="Asia/Seoul")
+    la = await dashboard(db_session, iso_user, timezone_name="America/Los_Angeles")
+
+    assert active_days(seoul) == {"2026-08-07"}
+    assert active_days(la) == {"2026-08-06"}
+
+
+@pytest.mark.asyncio
+async def test_dashboard_defaults_to_the_zone_stored_on_the_user(db_session, iso_user):
+    """No explicit argument -> the learner's own zone, not Seoul."""
+    from datetime import UTC, datetime
+
+    quiz = await crud.create_quiz(
+        db_session,
+        user_id=iso_user.id,
+        quiz_type="cloze",
+        language="english",
+        quiz_data={},
+    )
+    attempt = await add_attempt(
+        db_session,
+        user_id=iso_user.id,
+        quiz=quiz,
+        idempotency_key="tz-stored",
+        answer_payload={"answer": "x"},
+        correct=True,
+        quality=5,
+        tutor_feedback=None,
+        hint_level=0,
+        revealed_tokens=[],
+        answer_revealed=False,
+    )
+    attempt.answered_at = datetime(2026, 8, 7, 2, 0, tzinfo=UTC)
+    iso_user.timezone = "America/Los_Angeles"
+    await db_session.commit()
+
+    result = await dashboard(db_session, iso_user)
+    assert result["timezone"] == "America/Los_Angeles"
+    assert {row["date"] for row in result["week"] if row["total"] > 0} == {"2026-08-06"}
+
+
+def test_user_timezone_name_rejects_names_the_tz_database_does_not_know():
+    """The stored value reaches Postgres as a timezone argument, so a malformed
+    name must never survive validation."""
+    from types import SimpleNamespace
+
+    from app.quiz_progress import DEFAULT_TIMEZONE, user_timezone_name
+
+    assert user_timezone_name(SimpleNamespace(timezone="Europe/Berlin")) == "Europe/Berlin"
+    for bad in ("", "Not/AZone", "../../etc/passwd", None):
+        assert user_timezone_name(SimpleNamespace(timezone=bad)) == DEFAULT_TIMEZONE
+
+
+@pytest.mark.asyncio
+async def test_settings_ignores_an_unresolvable_zone_instead_of_resetting(
+    db_session, iso_user
+):
+    """A device reporting nonsense must not silently move the learner to Seoul."""
+    await crud.update_user_profile_settings(
+        db_session, iso_user, timezone="Europe/Berlin"
+    )
+    assert iso_user.timezone == "Europe/Berlin"
+
+    for bad in ("Not/AZone", "../../etc/passwd", "xyz"):
+        await crud.update_user_profile_settings(db_session, iso_user, timezone=bad)
+        assert iso_user.timezone == "Europe/Berlin"

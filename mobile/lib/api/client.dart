@@ -48,6 +48,7 @@ const Map<String, String> _kActionLabelsEn = {
   '문제 생성': 'Question generation',
   '별칭 임베딩 생성': 'Alias embedding generation',
   '삭제 영향 조회': 'Delete impact lookup',
+  '사진 글자 인식': 'Photo text recognition',
   '언어 설정 저장': 'Language settings save',
   '연습 언어 저장': 'Target language save',
   '영구 삭제': 'Permanent delete',
@@ -394,6 +395,35 @@ class ApiClient {
     return resp.data as Map<String, dynamic>;
   }
 
+  /// Run OCR on an image and get plain text back. Nothing is written to the
+  /// graph — the caller edits the text and then runs the normal /kg/extract
+  /// flow, so a misread character can be fixed before any claim is drafted.
+  Future<Map<String, dynamic>> ocrImage(
+    List<int> bytes, {
+    required String filename,
+    required String mimeType,
+    bool retain = false,
+  }) async {
+    try {
+      final formData = FormData.fromMap({
+        'file': MultipartFile.fromBytes(
+          bytes,
+          filename: filename,
+          contentType: DioMediaType.parse(mimeType),
+        ),
+      });
+      final resp = await _dio.post(
+        '/ocr/image',
+        data: formData,
+        queryParameters: retain ? {'retain': 'true'} : null,
+        options: Options(contentType: 'multipart/form-data'),
+      );
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '사진 글자 인식');
+    }
+  }
+
   /// [attributionKind]: 'self' (내 생각) / 'person' (저자·강연자) / 'source' (매체·AI).
   /// null이면 기존 화자 라벨링 흐름. 'person'은 [attributionName] 필수.
   Future<Map<String, dynamic>> createTextJournalEntry(
@@ -565,13 +595,11 @@ class ApiClient {
     return Map<String, dynamic>.from(resp.data as Map);
   }
 
-  Future<Map<String, dynamic>> getQuizProgressDashboard({
-    String timezone = 'Asia/Seoul',
-  }) async {
-    final resp = await _dio.get(
-      '/quiz/progress/dashboard',
-      queryParameters: {'timezone': timezone},
-    );
+  /// Streaks, goals and XP. No timezone parameter: the server uses the zone
+  /// stored on the profile (reported by the device on launch), which is also
+  /// what attempt recording uses — passing it per request let the two disagree.
+  Future<Map<String, dynamic>> getQuizProgressDashboard() async {
+    final resp = await _dio.get('/quiz/progress/dashboard');
     return Map<String, dynamic>.from(resp.data as Map);
   }
 
@@ -652,9 +680,11 @@ class ApiClient {
     int? dailyCompositionTarget,
     double? quizReviewRatio,
     bool? autoGenerateQuizzes,
+    String? timezone,
   }) async {
     try {
       final resp = await _dio.patch('/quiz/profile/settings', data: {
+        if (timezone != null && timezone.isNotEmpty) 'timezone': timezone,
         if (level != null) 'level': level,
         if (isFreedomOn != null) 'is_freedom_on': isFreedomOn,
         if (dailyClozeTarget != null) 'daily_cloze_target': dailyClozeTarget,
@@ -787,6 +817,9 @@ class ApiClient {
     String? answer,
     List<int>? order,
     int? selectedIndex,
+    // Flashcard deck: 'known' | 'again'. The learner grades themselves after
+    // flipping the card, so the backend skips answer comparison entirely.
+    String? selfGrade,
     String? entryId,
     String? idempotencyKey,
     int hintLevel = 0,
@@ -798,6 +831,7 @@ class ApiClient {
         if (answer != null) 'answer': answer,
         if (order != null) 'order': order,
         if (selectedIndex != null) 'selected_index': selectedIndex,
+        if (selfGrade != null) 'self_grade': selfGrade,
         if (entryId != null) 'entry_id': entryId,
         if (idempotencyKey != null) 'idempotency_key': idempotencyKey,
         'hint_level': hintLevel,
@@ -1356,6 +1390,26 @@ class ApiClient {
     try {
       final resp = await _dio.get('/kg/stats');
       return resp.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw _friendlyError(e, 'KG 통계');
+    }
+  }
+
+  /// Statements recorded on one UTC day — the heat-map day feed.
+  ///
+  /// This used to be served by pulling the whole graph down and filtering it in
+  /// Dart, so tapping a heat-map cell cost a full `/graph` round trip.
+  Future<List<Map<String, dynamic>>> getKgStatementsByDate(String date) async {
+    try {
+      final resp = await _dio.get(
+        '/kg/statements/by-date',
+        queryParameters: {'date': date},
+      );
+      final data = Map<String, dynamic>.from(resp.data as Map);
+      return (data['statements'] as List? ?? const [])
+          .whereType<Map>()
+          .map(Map<String, dynamic>.from)
+          .toList();
     } on DioException catch (e) {
       throw _friendlyError(e, 'KG 통계');
     }

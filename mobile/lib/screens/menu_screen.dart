@@ -9,7 +9,6 @@ import 'accounts_overview_screen.dart';
 import 'pipeline_debug_hub_screen.dart';
 import 'quiz_queue_screen.dart';
 import 'kg_debug_screen.dart';
-import 'kg_insight_screen.dart';
 import 'learning_progress_screen.dart';
 import 'settings_screen.dart';
 import 'vocabulary_hub_screen.dart';
@@ -100,25 +99,15 @@ class _MenuScreenState extends State<MenuScreen> {
               onTap: () => _open(const VocabularyHubScreen()),
             ),
             const SizedBox(height: AppSpacing.sm),
+            // 기록 인사이트 used to be its own tile right below this one. Both
+            // answered "how am I doing?" — one from the study side, one from the
+            // recording side — so they're now the two tabs of this destination.
             AppHubTile(
               icon: Icons.local_fire_department_rounded,
               title: tr('menu.learningRate'),
               subtitle: tr('menu.learningRateSubtitle'),
               color: AppColors.accentWarm,
               onTap: () => _open(const LearningProgressScreen()),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            AppHubTile(
-              icon: Icons.insights_outlined,
-              title: tr('menu.recordInsight'),
-              subtitle: tr('menu.recordInsightSubtitle'),
-              color: AppColors.hubGraph,
-              onTap: () => _open(
-                Scaffold(
-                  appBar: AppBar(title: Text(tr('menu.recordInsight'))),
-                  body: const KgInsightScreen(),
-                ),
-              ),
             ),
             const SizedBox(height: AppSpacing.xl),
 

@@ -95,6 +95,10 @@ def quiz_queue_item_dict(
         "queue_kind": quiz.queue_kind,
         "difficulty_level": quiz.difficulty_level,
         "target_node": target_node,
+        # The IDs behind target_node's display names. The graph canvas highlights
+        # today's review by node id, and resolving a name back to a node is
+        # ambiguous (names are only unique per user *and type*).
+        "source_node_ids": list(quiz.source_nodes or []),
         "source_label": _source_label(quiz),
         "context_sentence": _context_sentence(quiz),
         # Legacy keys kept for existing mobile builds; _native/_target are the

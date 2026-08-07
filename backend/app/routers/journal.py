@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import crud
 from ..db import get_session, is_transient_database_error
-from ..deps import request_user_dep
+from ..deps import daily_quota, request_user_dep
+from ..rate_limit import KIND_STT
 from ..models import User
 from ..pipeline_runner import (
     run_entry_graph_draft,
@@ -181,6 +182,7 @@ async def upload_journal(
     source_type: str | None = Form(None),
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
+    _quota: None = Depends(daily_quota(KIND_STT)),
 ) -> JournalEntryOut:
     """Fast Path only: STT → cleanup/translate. GraphRAG is manual per entry."""
     data = await file.read()

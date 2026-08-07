@@ -38,17 +38,6 @@ Map<String, String> get _kSourceLabels => {
     };
 String _sourceLabelFor(String type) => _kSourceLabels[type] ?? type;
 
-String _stmtContent(Map<String, dynamic> node) {
-  final f = node['content']?.toString();
-  if (f != null && f.isNotEmpty) return f;
-  final desc = (node['description'] as String? ?? '').trim();
-  if (desc.startsWith('{')) {
-    try { return ((jsonDecode(desc) as Map)['content'] as String? ?? '').trim(); } catch (_) {}
-  }
-  final parts = desc.split('\n');
-  return parts.length > 1 ? parts.sublist(1).join('\n').trim() : desc;
-}
-
 // ─── Color palette for donut segments ─────────────────────────────────────────
 
 const List<Color> _kSegmentColors = [
@@ -78,7 +67,11 @@ class _KgInsightScreenState extends State<KgInsightScreen> {
   bool _loading = true;
   String? _error;
   String? _selectedDate;         // tapped heatmap date (ISO "2026-06-26")
-  List<dynamic> _allNodes = [];  // for day-click feed
+
+  // Day feed, fetched per tapped date instead of filtered out of a full graph
+  // dump. Cached so re-tapping a day is instant.
+  final Map<String, List<Map<String, dynamic>>> _dayFeeds = {};
+  String? _dayFeedLoading;
 
   @override
   void initState() {
@@ -90,11 +83,10 @@ class _KgInsightScreenState extends State<KgInsightScreen> {
     setState(() { _loading = true; _error = null; });
     try {
       final stats = await apiClient.getKgStats();
-      final graph = await apiClient.getGraph();
       if (mounted) {
         setState(() {
           _stats = stats;
-          _allNodes = (graph['nodes'] as List<dynamic>? ?? []);
+          _dayFeeds.clear();
           _loading = false;
         });
       }
@@ -103,12 +95,25 @@ class _KgInsightScreenState extends State<KgInsightScreen> {
     }
   }
 
-  List<dynamic> _statementsOnDate(String date) {
-    return _allNodes.where((n) {
-      if (n['type'] != 'Statement') return false;
-      final raw = n['created_at']?.toString() ?? '';
-      return raw.startsWith(date);
-    }).toList();
+  Future<void> _loadDay(String date) async {
+    if (_dayFeeds.containsKey(date) || _dayFeedLoading == date) return;
+    setState(() => _dayFeedLoading = date);
+    try {
+      final rows = await apiClient.getKgStatementsByDate(date);
+      if (!mounted) return;
+      setState(() {
+        _dayFeeds[date] = rows;
+        _dayFeedLoading = null;
+      });
+    } catch (_) {
+      // A failed day feed shouldn't blank the dashboard behind it — fall back
+      // to an empty list, which renders the "nothing this day" line.
+      if (!mounted) return;
+      setState(() {
+        _dayFeeds[date] = const [];
+        _dayFeedLoading = null;
+      });
+    }
   }
 
   @override
@@ -135,28 +140,15 @@ class _KgInsightScreenState extends State<KgInsightScreen> {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: AppSpacing.sm),
-              if (isOffline)
-                Container(
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  decoration: BoxDecoration(
-                    color: AppColors.surfaceLight,
-                    borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                  ),
-                  child: Text(
-                    'cd backend\npy -3.12 -m uvicorn app.main:app --reload --reload-dir app --host 0.0.0.0 --port 8000',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontFamily: 'monospace',
+              // Offline used to print the developer's uvicorn command here —
+              // meaningless (and slightly alarming) to an actual learner.
+              Text(
+                isOffline ? tr('insight.offlineSubtitle') : _error!,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: AppColors.textMuted,
                     ),
-                    textAlign: TextAlign.center,
-                  ),
-                )
-              else
-                Text(
-                  _error!,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.textMuted),
-                  textAlign: TextAlign.center,
-                ),
+                textAlign: TextAlign.center,
+              ),
               const SizedBox(height: AppSpacing.xl),
               FilledButton.icon(
                 onPressed: _load,
@@ -198,6 +190,7 @@ class _KgInsightScreenState extends State<KgInsightScreen> {
                 });
                 if (_selectedDate != null) {
                   widget.onDateSelected?.call(_selectedDate!);
+                  _loadDay(_selectedDate!);
                 }
               },
             ),
@@ -207,7 +200,8 @@ class _KgInsightScreenState extends State<KgInsightScreen> {
               const SizedBox(height: AppSpacing.lg),
               _DayFeed(
                 date: _selectedDate!,
-                statements: _statementsOnDate(_selectedDate!),
+                statements: _dayFeeds[_selectedDate!],
+                loading: _dayFeedLoading == _selectedDate,
               ),
             ],
 
@@ -460,25 +454,45 @@ class _HeatmapGrid extends StatelessWidget {
 // ─── Day feed ─────────────────────────────────────────────────────────────────
 
 class _DayFeed extends StatelessWidget {
-  const _DayFeed({required this.date, required this.statements});
+  const _DayFeed({
+    required this.date,
+    required this.statements,
+    required this.loading,
+  });
   final String date;
-  final List<dynamic> statements;
+
+  /// Null until this day's feed has been fetched.
+  final List<Map<String, dynamic>>? statements;
+  final bool loading;
 
   @override
   Widget build(BuildContext context) {
+    final rows = statements;
+    if (rows == null || loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
+        child: Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         AppSectionHeader(
           title: DateFormat(tr('insight.monthDayFormat')).format(DateTime.parse(date)),
-          subtitle: tr('insight.recordCountSuffix', {'count': statements.length}),
+          subtitle: tr('insight.recordCountSuffix', {'count': rows.length}),
         ),
         const SizedBox(height: AppSpacing.sm),
-        if (statements.isEmpty)
+        if (rows.isEmpty)
           Text(tr('insight.noStatementsThisDay'),
               style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.textMuted))
         else
-          for (final s in statements) ...[
+          for (final s in rows) ...[
             AppSurfaceCard(
               padding: const EdgeInsets.symmetric(
                 horizontal: AppSpacing.lg, vertical: AppSpacing.md,
@@ -559,7 +573,6 @@ class _SourceDonutState extends State<_SourceDonut> {
         radius: isTouched ? 60 : 52,
         title: isTouched ? '${(pct * 100).toStringAsFixed(1)}%' : '',
         titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white),
-        badgeWidget: isTouched ? null : null,
       );
     }).toList();
 

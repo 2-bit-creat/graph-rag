@@ -550,6 +550,78 @@ _MIGRATIONS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_quiz_audio_links_asset ON quiz_audio_links (audio_asset_id)",
+    # The insight dashboards (kg_stats, kg_calendar_data, kg_statements_by_date)
+    # all filter nodes by (user, type='Statement') and bucket by created_at. Only
+    # (user_id, occurred_at) and (user_id, event_start_at) existed, neither of
+    # which matches — every one of those calls was a full per-user node scan.
+    "CREATE INDEX IF NOT EXISTS idx_nodes_user_type_created ON nodes (user_id, type, created_at)",
+    # `get_all_nodes` — the single most-called query in the app — is exactly
+    # `user_id = ? AND deleted_at IS NULL ORDER BY created_at`. No index matched
+    # it: uq_node_user_name_type leads with user_id but can't serve the ordering,
+    # and the occurred_at/event_start_at indexes are for different columns. This
+    # partial index holds only live rows and returns them already sorted.
+    "CREATE INDEX IF NOT EXISTS idx_nodes_user_active ON nodes (user_id, created_at) WHERE deleted_at IS NULL",
+    # Per-learner day boundaries (streaks, daily goal reset, daily XP cap). Was
+    # hardcoded to Asia/Seoul everywhere, so anyone outside KST rolled over at
+    # the wrong hour. Existing rows keep Seoul — the app overwrites it with the
+    # device zone on next launch.
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'Asia/Seoul'",
+    # Provenance lookups (list_nodes_out, kg_timeline) join from the entry side;
+    # journal_graph_links had no index on either foreign key.
+    "CREATE INDEX IF NOT EXISTS idx_journal_graph_links_entry ON journal_graph_links (journal_entry_id)",
+    "CREATE INDEX IF NOT EXISTS idx_journal_graph_links_node ON journal_graph_links (node_id)",
+    # ── Account deletion never removed the graph ────────────────────────────
+    #
+    # `nodes` and `edges` predate multi-user support: `user_id` was bolted on by
+    # the bare `ALTER TABLE ... ADD COLUMN` above, with no REFERENCES clause, so
+    # neither table ever got a foreign key to `users`. Every *other* user-scoped
+    # table has one, because they were created later by `Base.metadata.create_all`
+    # — which declares the FK but will not add it to a table that already exists.
+    #
+    # `DELETE /auth/me` and the admin handle-delete both just `session.delete(user)`
+    # and rely on "FK cascade clears the rows". For nodes and edges that cascade
+    # never existed, so deleting an account silently left its entire knowledge
+    # graph — diary statements, the names of everyone mentioned, their relations —
+    # in the database forever. That is both a 완전파기 (complete-destruction)
+    # failure and, on the dev database, 97% of the nodes table.
+    #
+    # The test suite cannot catch this: tests run on a freshly created database,
+    # which gets the FK from create_all and behaves correctly. Only long-lived
+    # databases carry the drift.
+    #
+    # Adding the constraint is additive and safe to deploy, but Postgres rejects
+    # it while violating rows exist — so on a database that already leaked, this
+    # is a no-op until the orphans are purged. The purge itself is a mass DELETE:
+    # deliberately NOT automated here, because validate_migration_sql draws
+    # exactly that line ("destructive/data SQL is blocked ... must use the
+    # separately approved operational runbook, never a normal main push").
+    # Run `python -m scripts.purge_orphan_graph --apply` once per environment;
+    # after that this block installs the constraint and the leak cannot recur.
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+             WHERE conrelid = 'nodes'::regclass
+               AND contype = 'f'
+               AND confrelid = 'users'::regclass
+        ) THEN
+            ALTER TABLE nodes
+                ADD CONSTRAINT nodes_user_id_fkey
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+             WHERE conrelid = 'edges'::regclass
+               AND contype = 'f'
+               AND confrelid = 'users'::regclass
+        ) THEN
+            ALTER TABLE edges
+                ADD CONSTRAINT edges_user_id_fkey
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+        END IF;
+    END $$;
+    """,
 ]
 
 

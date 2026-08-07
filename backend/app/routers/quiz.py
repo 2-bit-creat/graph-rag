@@ -20,7 +20,8 @@ from ..composition_quiz import (
 )
 from ..config import get_settings
 from ..db import async_session_factory, get_session
-from ..deps import request_user_dep, require_debug_enabled, require_operator_tools
+from ..deps import daily_quota, request_user_dep, require_debug_enabled, require_operator_tools
+from ..rate_limit import KIND_QUIZ_GEN, remaining as rate_limit_remaining
 from ..languages import DEFAULT_NATIVE, SUPPORTED_NATIVE, valid_target_for_native
 from ..level_adjuster import reclassify_queue_by_level
 from ..level_guidelines import cefr_label, window_for_level
@@ -42,10 +43,10 @@ from ..quiz_generation_runs import (
 )
 from ..quiz_queue import build_session, count_queues, grade_answer, pick_quizzes_by_ids, record_quiz_result
 from ..quiz_progress import (
-    DEFAULT_TIMEZONE,
     add_attempt,
     dashboard as progress_dashboard,
     find_idempotent_attempt,
+    user_timezone_name,
 )
 from ..quiz_batch import create_extra_daily_batch, fill_user_daily_batches
 from ..quiz_audio_engine import (
@@ -149,7 +150,7 @@ async def get_profile(
     counts = await count_queues(session, user.id)
     target_languages = crud.get_effective_target_languages(user)
     daily_progress = await crud.count_today_completed_quiz_types(
-        session, user.id, target_languages
+        session, user.id, target_languages, timezone_name=user_timezone_name(user)
     )
 
     lo, hi = window_for_level(user.current_level)
@@ -171,6 +172,10 @@ async def get_profile(
             getattr(user, "auto_generate_quizzes", False)
         ),
         daily_progress_by_language=daily_progress,
+        timezone=user_timezone_name(user),
+        # Surfaced so the client can warn before a generation attempt fails.
+        # Learning that the quota is gone from a 429 is learning it too late.
+        daily_quota=await rate_limit_remaining(session, user.id, user),
     )
 
 
@@ -351,13 +356,17 @@ async def get_admin_quiz_item(
 
 @router.get("/progress/dashboard", response_model=QuizProgressDashboardOut)
 async def get_progress_dashboard(
-    timezone: str = Query(DEFAULT_TIMEZONE, min_length=1, max_length=80),
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> QuizProgressDashboardOut:
-    return QuizProgressDashboardOut(
-        **await progress_dashboard(session, user, timezone_name=timezone)
-    )
+    """Streaks, goals and XP in the learner's own timezone.
+
+    The zone comes from the stored profile, not a query parameter: attempt
+    recording reads the same field, so the streak shown here and the day the XP
+    cap applies to can no longer drift apart. Older clients still send
+    `?timezone=`; FastAPI ignores the unknown parameter.
+    """
+    return QuizProgressDashboardOut(**await progress_dashboard(session, user))
 
 
 @router.get("/queue/explorations", response_model=QuizExplorationListOut)
@@ -857,6 +866,7 @@ async def generate_quiz_graph(
     body: QuizGenerateRequest | None = None,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
+    _quota: None = Depends(daily_quota(KIND_QUIZ_GEN)),
 ) -> QuizGenerateOut:
     if quiz_type not in ENABLED_QUIZ_TYPES:
         raise HTTPException(
@@ -1066,6 +1076,7 @@ async def update_profile_settings(
         daily_composition_target=payload.daily_composition_target,
         quiz_review_ratio=payload.quiz_review_ratio,
         auto_generate_quizzes=payload.auto_generate_quizzes,
+        timezone=payload.timezone,
     )
     if payload.level is not None and payload.level != prev_level:
         await reclassify_queue_by_level(session, user.id, payload.level)
@@ -1218,12 +1229,16 @@ async def submit_quiz(
             "answer": payload.answer,
             "order": payload.order,
             "selected_index": payload.selected_index,
+            "self_grade": payload.self_grade,
             "entry_id": str(payload.entry_id) if payload.entry_id else None,
         }.items()
         if value is not None
     }
 
-    if quiz.quiz_type == "composition":
+    # A self-graded flashcard carries no written attempt, so the reference
+    # evaluation below would score an empty string with a real LLM call. Fall
+    # through to grade_answer's self_grade branch instead.
+    if quiz.quiz_type == "composition" and payload.self_grade is None:
         qd = quiz.quiz_data or {}
         eval_result = await evaluate_attempt_against_reference(
             user,
@@ -1251,6 +1266,7 @@ async def submit_quiz(
             hint_level=payload.hint_level,
             revealed_tokens=payload.revealed_tokens,
             answer_revealed=payload.answer_revealed,
+            timezone_name=user_timezone_name(user),
         )
         quiz = await record_quiz_result(
             session, quiz, correct=correct, quality=quality, commit=False
@@ -1284,6 +1300,7 @@ async def submit_quiz(
         hint_level=payload.hint_level,
         revealed_tokens=payload.revealed_tokens,
         answer_revealed=payload.answer_revealed,
+        timezone_name=user_timezone_name(user),
     )
     quiz = await record_quiz_result(
         session, quiz, correct=correct, quality=quality, commit=False
@@ -1319,6 +1336,7 @@ async def submit_quiz(
 async def manual_refill(
     background: BackgroundTasks,
     user: User = Depends(request_user_dep),
+    _quota: None = Depends(daily_quota(KIND_QUIZ_GEN)),
 ) -> dict:
     # A refill can include several LLM + TTS calls.  Return immediately so the
     # client connection never waits for the entire batch and times out.
@@ -1340,6 +1358,7 @@ async def generate_more_batch(
     language: str | None = Query(None),
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
+    _quota: None = Depends(daily_quota(KIND_QUIZ_GEN)),
 ) -> dict:
     lang = (language or crud.get_effective_target_languages(user)[0]).lower()
     return await create_extra_daily_batch(session, user, language=lang)

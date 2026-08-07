@@ -23,7 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import crud
 from ..chat_summary import needs_summary_update, update_session_summary, watermark_from_state
 from ..db import get_session
-from ..deps import request_user_dep
+from ..deps import daily_quota, request_user_dep
+from ..rate_limit import KIND_CHAT
 from ..graph_chat import graph_chat_answer
 from ..models import ChatMessage, ChatSession, User
 from ..schemas import (
@@ -194,6 +195,7 @@ async def send_message(
     background_tasks: BackgroundTasks,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
+    _quota: None = Depends(daily_quota(KIND_CHAT)),
 ) -> GraphChatResponse:
     row = await _require_session(session, user, session_id)
     message = payload.message.strip()

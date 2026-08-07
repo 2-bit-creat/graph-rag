@@ -22,7 +22,7 @@ docker compose up -d postgres redis worker
 # 2. Backend
 cd backend
 py -3.12 -m pip install -r requirements.txt
-py -3.12 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+py -3.12 -m uvicorn app.main:app --reload --reload-dir app --host 0.0.0.0 --port 8000
 
 # 3. Flutter (from repo root — NOT frontend)
 cd mobile
@@ -44,7 +44,8 @@ flutter run -d chrome --dart-define=API_BASE_URL=http://localhost:8000
 # Find your PC Wi-Fi IPv4
 ipconfig
 
-# Backend must bind 0.0.0.0 (see command above)
+# Backend must bind 0.0.0.0 (see command above). If netstat shows
+# 127.0.0.1:8000, stop that process and restart with backend\run_server.bat.
 
 # Flutter — replace with your LAN IP
 cd mobile

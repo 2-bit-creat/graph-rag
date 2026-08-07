@@ -121,6 +121,34 @@ class Settings(BaseSettings):
     free_tier_quiz_limit: int = 3
     free_tier_review_days: int = 7
 
+    # Per-user daily call ceilings on the endpoints that spend money (LLM,
+    # Whisper, Textract). Enforced by app/rate_limit.py. A missing key or a
+    # negative value means unlimited, so a deployment can disable one counter
+    # without a code change. Override via env as JSON, e.g.
+    #   DAILY_LIMITS_FREE='{"quiz_gen": 5, "ocr": 3}'
+    daily_limits_free: dict[str, int] = {
+        "quiz_gen": 20,
+        "kg_extract": 30,
+        "ocr": 20,
+        "chat": 100,
+        "stt": 20,
+    }
+    # Web Push (VAPID). The private key is a secret and comes from Secrets
+    # Manager in deployed environments; empty values disable push entirely so a
+    # deployment without keys degrades to "no notifications" rather than 500s.
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+    # RFC 8292 requires a contact for the push service to reach on abuse.
+    vapid_subject: str = "mailto:support@daylog.app"
+
+    daily_limits_premium: dict[str, int] = {
+        "quiz_gen": 200,
+        "kg_extract": 300,
+        "ocr": 200,
+        "chat": 1000,
+        "stt": 200,
+    }
+
     # Statement-bank extraction is the language-learning path: one background
     # analysis prepares the composition drill and its reusable expressions for
     # every configured target language. It can still be disabled explicitly by

@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -126,6 +126,67 @@ def require_operator_tools() -> None:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Not found",
         )
+
+
+def daily_quota(kind: str):
+    """Dependency that charges one call of ``kind`` to the caller's daily quota.
+
+    Use as ``_: None = Depends(daily_quota(rate_limit.KIND_OCR))``. Returning
+    429 with Retry-After lets the client back off until local midnight rather
+    than retrying into a wall.
+    """
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from . import rate_limit
+
+    async def _dep(
+        request: Request,
+        response: Response,
+        user: User = Depends(get_request_user),
+        session: AsyncSession = Depends(get_session),
+    ) -> None:
+        try:
+            used, limit = await rate_limit.consume(session, user, kind)
+        except rate_limit.QuotaExceeded as exc:
+            tz = ZoneInfo(get_settings().chat_timezone)
+            now = datetime.now(tz)
+            midnight = (now + timedelta(days=1)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "code": "daily_quota_exceeded",
+                    "kind": exc.kind,
+                    "limit": exc.limit,
+                    "message": (
+                        f"오늘 사용 가능한 횟수({exc.limit}회)를 모두 사용했습니다. "
+                        "내일 다시 이용해 주세요."
+                    ),
+                },
+                headers={
+                    "Retry-After": str(max(1, int((midnight - now).total_seconds()))),
+                    "X-RateLimit-Limit": str(exc.limit),
+                    "X-RateLimit-Remaining": "0",
+                },
+            ) from exc
+
+        if limit is not None:
+            remaining = str(max(0, limit - used))
+            response.headers["X-RateLimit-Limit"] = str(limit)
+            response.headers["X-RateLimit-Remaining"] = remaining
+            # The line above only reaches the client when the handler returns
+            # normally — a raised HTTPException builds a fresh response and
+            # discards it. Stash the values so rate_limit_headers (main.py) can
+            # put them back on every outcome; a client tracking its own budget
+            # would otherwise drift by one on each 5xx.
+            request.state.rate_limit_headers = {
+                "X-RateLimit-Limit": str(limit),
+                "X-RateLimit-Remaining": remaining,
+            }
+
+    return _dep
 
 
 def require_premium(user: User) -> None:

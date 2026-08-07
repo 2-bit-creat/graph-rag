@@ -196,6 +196,15 @@ def _normalize_answer(text: str, language: str) -> str:
 
 def grade_answer(quiz: Quiz, payload: dict) -> tuple[bool, int]:
     """Return (correct, quality 0-5)."""
+    # Flashcard deck: the learner already graded themselves against the revealed
+    # back of the card, so there is nothing to compare. Quality mirrors what the
+    # typed path produces (4 correct / 1 wrong) so record_quiz_result's SM-2
+    # branches behave identically for both entry points.
+    self_grade = payload.get("self_grade")
+    if self_grade in ("known", "again"):
+        correct = self_grade == "known"
+        return correct, (4 if correct else 1)
+
     quiz_type = quiz.quiz_type
     data = quiz.quiz_data or {}
     language = getattr(quiz, "language", None) or data.get("language") or "english"
@@ -283,19 +292,43 @@ async def record_quiz_result(
 async def count_queues(
     session: AsyncSession, user_id: uuid.UUID
 ) -> dict[str, dict[str, int]]:
-    """Per-type new/review counts."""
+    """Per-type new/review counts.
+
+    Counted in Postgres. The previous version loaded every non-archived Quiz row
+    the user owns — each carrying its full ``quiz_data`` JSONB question payload —
+    to add up four integers, which made ``GET /quiz/profile`` one of the slowest
+    calls in the app and one that got worse with every quiz generated.
+    """
     now = datetime.now(UTC)
     result: dict[str, dict[str, int]] = {
         t: {"new": 0, "review": 0}
         for t in ("cloze", "composition")
     }
-    q = select(Quiz).where(Quiz.user_id == user_id, Quiz.queue_kind != "archived")
-    for quiz in (await session.execute(q)).scalars().all():
-        if quiz.quiz_type not in result:
-            continue
-        if quiz.queue_kind == "new" and quiz.repetitions == 0:
-            result[quiz.quiz_type]["new"] += 1
-        elif quiz.queue_kind == "review":
-            if quiz.next_review_at is None or quiz.next_review_at <= now:
-                result[quiz.quiz_type]["review"] += 1
+    rows = await session.execute(
+        select(
+            Quiz.quiz_type,
+            func.count()
+            .filter(and_(Quiz.queue_kind == "new", Quiz.repetitions == 0))
+            .label("new"),
+            func.count()
+            .filter(
+                and_(
+                    Quiz.queue_kind == "review",
+                    or_(
+                        Quiz.next_review_at.is_(None),
+                        Quiz.next_review_at <= now,
+                    ),
+                )
+            )
+            .label("review"),
+        )
+        .where(
+            Quiz.user_id == user_id,
+            Quiz.queue_kind != "archived",
+            Quiz.quiz_type.in_(tuple(result)),
+        )
+        .group_by(Quiz.quiz_type)
+    )
+    for quiz_type, new_count, review_count in rows.all():
+        result[str(quiz_type)] = {"new": int(new_count), "review": int(review_count)}
     return result

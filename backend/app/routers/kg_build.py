@@ -27,13 +27,14 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import crud
 from ..config import get_settings
 from ..db import get_session
-from ..deps import request_user_dep, require_debug_enabled
+from ..deps import daily_quota, request_user_dep, require_debug_enabled
+from ..rate_limit import KIND_KG_EXTRACT, KIND_STT
 from ..entity_types import (
     is_identity_type,
     is_person_like_type,
@@ -883,6 +884,7 @@ async def kg_extract(
     body: KgExtractRequest,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
+    _quota: None = Depends(daily_quota(KIND_KG_EXTRACT)),
 ) -> dict:
     """Stage 1 — LLM drafts claims from Korean text. Nothing persisted yet.
 
@@ -1944,6 +1946,7 @@ async def build_statement_graph_from_entry(
 async def kg_transcribe(
     file: UploadFile = File(...),
     user: User = Depends(request_user_dep),
+    _quota: None = Depends(daily_quota(KIND_STT)),
 ) -> dict:
     """STT + speaker diarization for audio uploaded to the KG build flow.
 
@@ -2007,53 +2010,117 @@ async def kg_stats(
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Returns aggregated stats for the Insight dashboard."""
-    nodes = await crud.get_all_nodes(session, user.id)
+    """Returns aggregated stats for the Insight dashboard.
 
-    statements = [n for n in nodes if n.type == "Statement"]
-    concepts   = [n for n in nodes if n.type == "Concept"]
-    # Statement heads: people AND 출처(Source) nodes both anchor statements.
-    speakers   = [n for n in nodes if n.type in ("Person", "Source")]
+    Deliberately avoids ``crud.get_all_nodes``: the dashboard needs three counts
+    plus (date, description) for Statements, and hydrating every ORM node — with
+    aliases, temporal columns and provenance — to throw all of it away was the
+    single slowest thing behind this screen.
+    """
+    # Node counts straight from Postgres — one grouped scan, no rows hydrated.
+    type_rows = await session.execute(
+        select(Node.type, func.count())
+        .where(Node.user_id == user.id, Node.deleted_at.is_(None))
+        .group_by(Node.type)
+    )
+    type_counts = {str(t): int(c) for t, c in type_rows.all()}
 
-    # daily_activity: count Statement nodes per UTC date (last 365 days)
     today = datetime.now(timezone.utc).date()
     cutoff = today - timedelta(days=364)
+
+    # context_type lives inside the description blob (JSON or legacy two-line),
+    # so the distribution still needs the text — but only for Statements, and
+    # only those two columns.
+    stmt_rows = await session.execute(
+        select(Node.created_at, Node.description).where(
+            Node.user_id == user.id,
+            Node.deleted_at.is_(None),
+            Node.type == "Statement",
+        )
+    )
+
     day_counts: dict[str, int] = {}
-    for n in statements:
-        d = n.created_at.astimezone(timezone.utc).date() if n.created_at.tzinfo else n.created_at.date()
+    src_counts: dict[str, int] = {}
+    for created_at, description in stmt_rows.all():
+        d = (
+            created_at.astimezone(timezone.utc).date()
+            if created_at.tzinfo
+            else created_at.date()
+        )
         if d >= cutoff:
             key = d.isoformat()
             day_counts[key] = day_counts.get(key, 0) + 1
+        src, _ = _parse_stmt_description(description)
+        src_counts[src] = src_counts.get(src, 0) + 1
+
     daily_activity = [{"date": k, "count": v} for k, v in sorted(day_counts.items())]
 
     # streak: consecutive days with at least 1 statement up to today
     streak = 0
     check = today
-    while True:
-        if day_counts.get(check.isoformat(), 0) > 0:
-            streak += 1
-            check -= timedelta(days=1)
-        else:
-            break
+    while day_counts.get(check.isoformat(), 0) > 0:
+        streak += 1
+        check -= timedelta(days=1)
 
-    # source_distribution: parse context_type from structured description
-    src_counts: dict[str, int] = {}
-    for n in statements:
-        src, _ = _parse_stmt_description(n.description)
-        src_counts[src] = src_counts.get(src, 0) + 1
     source_distribution = [
         {"source": k, "count": v}
         for k, v in sorted(src_counts.items(), key=lambda x: -x[1])
     ]
 
     return {
-        "total_statements": len(statements),
-        "total_concepts": len(concepts),
-        "total_speakers": len(speakers),
+        "total_statements": type_counts.get("Statement", 0),
+        "total_concepts": type_counts.get("Concept", 0),
+        # Statement heads: people AND 출처(Source) nodes both anchor statements.
+        "total_speakers": type_counts.get("Person", 0) + type_counts.get("Source", 0),
         "streak_days": streak,
         "daily_activity": daily_activity,
         "source_distribution": source_distribution,
     }
+
+
+@router.get("/statements/by-date")
+async def kg_statements_by_date(
+    date: str,
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+    limit: int = 100,
+) -> dict:
+    """Statements recorded on one UTC day, for the insight heat-map day feed.
+
+    The feed used to be served by fetching the *entire* graph client-side and
+    filtering it in Dart — every tap on a heat-map cell paid for the whole node
+    and edge set. This returns just the handful of rows that day actually has.
+    """
+    try:
+        day = _date.fromisoformat(date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+
+    start = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
+    rows = await session.execute(
+        select(Node.id, Node.name, Node.description, Node.created_at)
+        .where(
+            Node.user_id == user.id,
+            Node.deleted_at.is_(None),
+            Node.type == "Statement",
+            Node.created_at >= start,
+            Node.created_at < start + timedelta(days=1),
+        )
+        .order_by(Node.created_at)
+        .limit(max(1, min(limit, 500)))
+    )
+    statements = []
+    for node_id, name, description, created_at in rows.all():
+        context_type, _ = _parse_stmt_description(description)
+        statements.append(
+            {
+                "id": str(node_id),
+                "name": name,
+                "context_type": context_type,
+                "created_at": created_at.isoformat(),
+            }
+        )
+    return {"date": date, "statements": statements}
 
 
 # ─── Debug runs endpoint ───────────────────────────────────────────────────────
@@ -2117,25 +2184,36 @@ async def kg_calendar_data(
     Returns last 365 days. Each day includes list of context_types present
     so the calendar can render colored indicator dots per source type.
     """
-    nodes = await crud.get_all_nodes(session, user.id)
-    statements = [n for n in nodes if n.type == "Statement"]
-
     today = datetime.now(timezone.utc).date()
     cutoff = today - timedelta(days=364)
 
+    # Only the four Statement columns this projection reads — see kg_stats for
+    # why the full ORM load was worth removing.
+    rows = await session.execute(
+        select(Node.id, Node.description, Node.created_at).where(
+            Node.user_id == user.id,
+            Node.deleted_at.is_(None),
+            Node.type == "Statement",
+            Node.created_at
+            >= datetime.combine(cutoff, datetime.min.time(), tzinfo=timezone.utc),
+        )
+    )
+
     # Build per-day map: date → {types: set, ids: list}
     day_map: dict[str, dict] = {}
-    for n in statements:
-        d = n.created_at.astimezone(timezone.utc).date() if n.created_at.tzinfo else n.created_at.date()
-        if d < cutoff:
-            continue
+    for node_id, description, created_at in rows.all():
+        d = (
+            created_at.astimezone(timezone.utc).date()
+            if created_at.tzinfo
+            else created_at.date()
+        )
         key = d.isoformat()
         if key not in day_map:
             day_map[key] = {"context_types": [], "statement_ids": []}
-        ctx, _ = _parse_stmt_description(n.description)
+        ctx, _ = _parse_stmt_description(description)
         if ctx not in day_map[key]["context_types"]:
             day_map[key]["context_types"].append(ctx)
-        day_map[key]["statement_ids"].append(str(n.id))
+        day_map[key]["statement_ids"].append(str(node_id))
 
     days = [
         {
@@ -2160,15 +2238,23 @@ async def kg_timeline(
     groups them under their source entry so the user sees one card, not many.
     Includes entries with no graph yet (has_graph=false) so every upload appears.
     """
-    entries = await crud.list_journal_entries(session, user.id, limit=500)
+    # Cards read only id/created_at/status/source_type/transcript/pipeline_trace —
+    # never the staged graph, segments, or translations.
+    entries = await crud.list_journal_entries(
+        session, user.id, limit=500, with_blobs=False
+    )
     nodes = await crud.get_all_nodes(session, user.id)
     node_by_id = {n.id: n for n in nodes}
     edges = await crud.get_all_edges(session, user.id)
 
     # Provenance: entry_id → [node_id]
+    # Scoped to this user's entries. Without the IN filter this scanned every
+    # link row in the table — other users' provenance included — and threw the
+    # rest away after the node_by_id lookup missed.
     link_rows = await session.execute(
         select(JournalGraphLink.journal_entry_id, JournalGraphLink.node_id).where(
-            JournalGraphLink.node_id.is_not(None)
+            JournalGraphLink.node_id.is_not(None),
+            JournalGraphLink.journal_entry_id.in_([e.id for e in entries]),
         )
     )
     # Dedupe (entry_id, node_id): a re-run of the graph build can leave duplicate

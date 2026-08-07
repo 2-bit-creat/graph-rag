@@ -672,6 +672,10 @@ class QuizSubmitRequest(BaseModel):
     answer: str | None = None
     order: list[int] | None = None
     selected_index: int | None = None
+    # Flashcard deck: the learner grades themselves after flipping the card, so
+    # there is no typed answer to compare. Set, this short-circuits both
+    # grade_answer's per-type comparison and the composition LLM evaluation.
+    self_grade: Literal["known", "again"] | None = None
     entry_id: uuid.UUID | None = None
     idempotency_key: str | None = Field(default=None, min_length=8, max_length=200)
     hint_level: int = Field(default=0, ge=0, le=2)
@@ -715,6 +719,12 @@ class LearningProfileOut(BaseModel):
     quiz_review_ratio: float = 0.5
     auto_generate_quizzes: bool = False
     daily_progress_by_language: dict[str, DailyLanguageProgressOut] = {}
+    # Zone the server computes this learner's day boundaries in, so the app can
+    # tell whether the device has moved and only PATCH when it actually differs.
+    timezone: str = "Asia/Seoul"
+    # Per-counter {used, limit, remaining} for today. `limit`/`remaining` are
+    # null when that counter is unlimited for this tier.
+    daily_quota: dict[str, dict[str, int | None]] = {}
 
 
 class QuizQueueItemOut(BaseModel):
@@ -723,6 +733,7 @@ class QuizQueueItemOut(BaseModel):
     queue_kind: str
     difficulty_level: int
     target_node: str
+    source_node_ids: list[uuid.UUID] = Field(default_factory=list)
     source_label: str = ""
     context_sentence: str
     question_ko: str | None = None
@@ -934,6 +945,10 @@ class ProfileSettingsUpdateRequest(BaseModel):
     daily_composition_target: int | None = Field(default=None, ge=0, le=100)
     quiz_review_ratio: float | None = Field(default=None, ge=0, le=1)
     auto_generate_quizzes: bool | None = None
+    # IANA zone name reported by the device, e.g. "Europe/Berlin". Unknown names
+    # fall back to the default rather than erroring — a wrong streak boundary is
+    # better than a failed settings save.
+    timezone: str | None = Field(default=None, min_length=1, max_length=80)
 
     @model_validator(mode="after")
     def at_least_one_field(self) -> "ProfileSettingsUpdateRequest":
@@ -943,7 +958,7 @@ class ProfileSettingsUpdateRequest(BaseModel):
                        self.target_languages, self.native_language,
                        self.language_levels, self.daily_cloze_target,
                        self.daily_composition_target, self.quiz_review_ratio,
-                       self.auto_generate_quizzes]
+                       self.auto_generate_quizzes, self.timezone]
         ):
             raise ValueError("At least one field must be provided")
         return self

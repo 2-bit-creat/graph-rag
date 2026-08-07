@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .db import database_readiness, init_db, is_transient_database_error
-from .routers import auth, debug, graph, graph_chat, graph_chat_distill, jobs, journal, kg_build, legal, ontology, quiz, tutor, vocabulary
+from .routers import auth, debug, graph, graph_chat, graph_chat_distill, jobs, journal, kg_build, legal, ocr, ontology, push, quiz, tutor, vocabulary
 
 settings = get_settings()
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -87,6 +87,23 @@ app.add_middleware(CORSMiddleware, **_cors_kwargs)
 
 
 @app.middleware("http")
+async def rate_limit_headers(request: Request, call_next):
+    """Re-attach quota headers that an exception response would have dropped.
+
+    deps.daily_quota writes them to the injected Response, which only survives a
+    normal return. This runs outside Starlette's exception handling, so the
+    headers ride on 4xx/5xx too and a client tracking its own budget stays in
+    step with the server on every outcome.
+    """
+    response = await call_next(request)
+    headers = getattr(request.state, "rate_limit_headers", None)
+    if headers:
+        for key, value in headers.items():
+            response.headers.setdefault(key, value)
+    return response
+
+
+@app.middleware("http")
 async def database_recovery_response(request: Request, call_next):
     """Make a transient Postgres restart explicitly retryable for clients."""
     try:
@@ -117,6 +134,8 @@ app.include_router(graph_chat_distill.router)
 app.include_router(graph.router)
 app.include_router(graph.v1_router)
 app.include_router(kg_build.router)
+app.include_router(ocr.router)
+app.include_router(push.router)
 app.include_router(ontology.router)
 app.include_router(legal.router)
 
