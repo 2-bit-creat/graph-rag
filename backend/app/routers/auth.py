@@ -16,6 +16,7 @@ from ..languages import SUPPORTED_NATIVE
 from ..models import ChatSession, JournalEntry, Node, User
 from ..storage import purge_user_storage
 from ..schemas import (
+    AccountCreateRequest,
     AccountSummaryOut,
     ConsentRequest,
     LoginRequest,
@@ -32,6 +33,24 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # journals/graph/quizzes stay accessible under it.
 _HANDLE_RE = re.compile(r"^[a-z0-9]{3,20}$")
 _RESERVED_MAIN = "main"
+
+
+def require_main_account(user: User = Depends(request_user_dep)) -> User:
+    """Restrict account administration to the reserved "main" space.
+
+    Account admin enumerates every handle on the server and can delete other
+    people's spaces, so it must not be reachable from an ordinary handle —
+    being merely logged in is not enough.
+    """
+    if user.id != DEV_USER_ID:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "main_account_required",
+                "message": 'Account administration is only available in the "main" space',
+            },
+        )
+    return user
 
 
 @router.post("/simple", response_model=TokenResponse)
@@ -118,15 +137,15 @@ def _handle_from_email(email: str) -> str:
 
 @router.get("/admin/accounts", response_model=list[AccountSummaryOut])
 async def list_accounts(
-    _user: User = Depends(request_user_dep),
+    _user: User = Depends(require_main_account),
     session: AsyncSession = Depends(get_session),
 ) -> list[AccountSummaryOut]:
-    """Dev-tools-only overview of every account and a rough DB-usage proxy
-    (row counts, not disk bytes). Gated by being logged in already — same
-    "no extra lock, just tucked away" posture as the rest of dev tools — but
-    NEVER call this from an unauthenticated surface (e.g. the account entry
-    screen): it enumerates every handle on the server, which is exactly the
-    kind of cross-user exposure this app's privacy work has been avoiding.
+    """Overview of every account and a rough DB-usage proxy (row counts, not
+    disk bytes), for the "main" space only.
+
+    It enumerates every handle on the server, so it is restricted to main
+    rather than to "any logged-in handle" — and it must NEVER be called from
+    an unauthenticated surface such as the account entry screen.
     """
     users = (await session.execute(select(User).order_by(User.created_at))).scalars().all()
 
@@ -153,9 +172,99 @@ async def list_accounts(
             journal_count=journal_counts.get(u.id, 0),
             node_count=node_counts.get(u.id, 0),
             chat_session_count=chat_counts.get(u.id, 0),
+            is_main=u.id == DEV_USER_ID,
         )
         for u in users
     ]
+
+
+@router.post(
+    "/admin/accounts",
+    response_model=AccountSummaryOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_account(
+    payload: AccountCreateRequest,
+    _user: User = Depends(require_main_account),
+    session: AsyncSession = Depends(get_session),
+) -> AccountSummaryOut:
+    """Provision a handle from main, choosing its (immutable) native language.
+
+    Returns no token: main stays signed in as main. The new handle is entered
+    from the login screen by typing its id, which is why that screen no longer
+    asks for a native language.
+    """
+    handle = (payload.handle or "").strip().lower()
+    if not _HANDLE_RE.match(handle) or handle == _RESERVED_MAIN:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "bad_handle",
+                "message": "handle must be 3-20 lowercase letters or digits, and not \"main\"",
+            },
+        )
+    native_language = (payload.native_language or "").strip().lower()
+    if native_language not in SUPPORTED_NATIVE:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "native_language_required",
+                "message": "Choose a supported native language when creating an account",
+            },
+        )
+    email = f"simple:{handle}@local"
+    if await crud.get_user_by_email(session, email) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "handle_taken", "message": "This ID is already in use"},
+        )
+    user = await crud.create_user(
+        session, email, password_hash="", native_language=native_language
+    )
+    return AccountSummaryOut(
+        handle=handle,
+        created_at=user.created_at,
+        journal_count=0,
+        node_count=0,
+        chat_session_count=0,
+    )
+
+
+@router.delete("/admin/accounts/{handle}")
+async def delete_account(
+    handle: str,
+    _user: User = Depends(require_main_account),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Delete another handle and all of its data, from main.
+
+    Mirrors ``DELETE /auth/me``: FK cascade clears the rows, then on-disk
+    artifacts are purged explicitly. Main itself is not deletable.
+    """
+    normalized = (handle or "").strip().lower()
+    if normalized == _RESERVED_MAIN:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "protected", "message": "the primary account cannot be deleted"},
+        )
+    target = await crud.get_user_by_email(session, f"simple:{normalized}@local")
+    if target is None or target.id == DEV_USER_ID:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "account_not_found", "message": "No account is registered for this ID"},
+        )
+
+    user_id = target.id
+    entry_id_rows = await session.execute(
+        select(JournalEntry.id).where(JournalEntry.user_id == user_id)
+    )
+    entry_ids = [row[0] for row in entry_id_rows.all()]
+
+    await session.delete(target)
+    await session.commit()
+
+    await asyncio.to_thread(purge_user_storage, user_id, entry_ids)
+    return {"status": "deleted", "handle": normalized}
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)

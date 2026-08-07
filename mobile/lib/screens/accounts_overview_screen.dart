@@ -7,11 +7,16 @@ import '../l10n/languages.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 
-/// Dev-tools-only: every account on the server + a rough DB-usage proxy (row
-/// counts, not disk bytes). Reached exclusively from [MenuScreen]'s
-/// authenticated 개발자 도구 section — never surface this on an
-/// unauthenticated screen (e.g. the account entry screen), since it
-/// enumerates every handle on the server.
+/// Account administration for the reserved "main" space: every account on the
+/// server + a rough DB-usage proxy (row counts, not disk bytes), plus create,
+/// switch, and delete.
+///
+/// Reached only from [MenuScreen] while signed in as main (the server 403s
+/// every other handle). Never surface this on an unauthenticated screen such
+/// as the account entry screen — it enumerates every handle on the server.
+///
+/// This is the only place a handle is minted: the entry screen just takes an
+/// id, which is why it no longer asks for a native language.
 class AccountsOverviewScreen extends StatefulWidget {
   const AccountsOverviewScreen({super.key});
 
@@ -48,6 +53,11 @@ class _AccountsOverviewScreenState extends State<AccountsOverviewScreen> {
     }
   }
 
+  void _toast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _createAccount() async {
     final result = await showDialog<({String handle, String native})>(
       context: context,
@@ -55,27 +65,66 @@ class _AccountsOverviewScreenState extends State<AccountsOverviewScreen> {
     );
     if (result == null) return;
     try {
-      // create: true (the default) — this is the one place a brand-new
-      // account is allowed to come into existence; the plain entry screen
-      // never creates one. This also switches the app into the new account,
-      // same as picking it from the saved-handle list.
-      await accountController.enter(result.handle,
-          nativeLanguage: result.native);
-      // Dev tools are typically pushed a couple of screens deep (menu ->
-      // accounts overview); pop all the way back so the account-keyed root
-      // shell remounts under the new account instead of leaving a stale
-      // settings screen on top of it.
-      if (mounted) {
-        Navigator.of(context).popUntil((route) => route.isFirst);
-      }
+      // Provision only — main stays signed in as main. Switching here would
+      // strand the admin in the space they just created; the new id is
+      // entered from the login screen instead.
+      await apiClient.createAccount(
+        handle: result.handle,
+        nativeLanguage: result.native,
+      );
+      _toast('계정 "${result.handle}"을(를) 만들었어요');
+      await _load();
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content:
-                  Text(e.toString().replaceFirst('Exception: ', ''))),
-        );
-      }
+      _toast(e.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  /// Switch the app into [handle]. The account-keyed root shell has to remount
+  /// under the new account, so pop back to it rather than leaving this screen
+  /// stacked on top.
+  Future<void> _switchTo(String handle) async {
+    try {
+      await accountController.enter(handle, create: false);
+      if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
+    } catch (e) {
+      _toast(e.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  Future<void> _deleteAccount(Map<String, dynamic> account) async {
+    final handle = account['handle']?.toString() ?? '';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('"$handle" 계정을 삭제할까요?'),
+        content: Text(
+          '일기 ${account['journal_count'] ?? 0}개 · 노드 ${account['node_count'] ?? 0}개 · '
+          '채팅방 ${account['chat_session_count'] ?? 0}개가 모두 지워지고, 되돌릴 수 없어요.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(ctx).colorScheme.error),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('삭제'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await apiClient.deleteAccountByHandle(handle);
+      // Drop the saved token/handle too, so the entry screen stops offering a
+      // space that no longer exists.
+      await accountController.forget(handle);
+      _toast('계정 "$handle"을(를) 삭제했어요');
+      await _load();
+    } catch (e) {
+      _toast(e.toString().replaceFirst('Exception: ', ''));
     }
   }
 
@@ -121,20 +170,41 @@ class _AccountsOverviewScreenState extends State<AccountsOverviewScreen> {
                   ),
                   itemCount: _accounts.length,
                   separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
-                  itemBuilder: (context, i) => _AccountCard(
-                    account: _accounts[i],
-                    isCurrent: _accounts[i]['handle'] == accountController.current,
-                  ),
+                  itemBuilder: (context, i) {
+                    final account = _accounts[i];
+                    final handle = account['handle']?.toString() ?? '';
+                    final isCurrent = handle == accountController.current;
+                    return _AccountCard(
+                      account: account,
+                      isCurrent: isCurrent,
+                      // main administers the others and cannot delete itself;
+                      // switching into the account you are already in is a no-op.
+                      onSwitch: isCurrent ? null : () => _switchTo(handle),
+                      onDelete: (account['is_main'] == true || isCurrent)
+                          ? null
+                          : () => _deleteAccount(account),
+                    );
+                  },
                 ),
     );
   }
 }
 
 class _AccountCard extends StatelessWidget {
-  const _AccountCard({required this.account, required this.isCurrent});
+  const _AccountCard({
+    required this.account,
+    required this.isCurrent,
+    this.onSwitch,
+    this.onDelete,
+  });
 
   final Map<String, dynamic> account;
   final bool isCurrent;
+
+  /// Null when the action does not apply — switching into the current account,
+  /// or deleting main / the account in use.
+  final VoidCallback? onSwitch;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -170,19 +240,11 @@ class _AccountCard extends StatelessWidget {
                         .titleSmall
                         ?.copyWith(fontWeight: FontWeight.w700)),
               ),
-              if (isCurrent)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: scheme.primary.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text('현재 계정',
-                      style: TextStyle(
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w700,
-                          color: scheme.primary)),
-                ),
+              if (account['is_main'] == true) _Badge(label: 'main', color: AppColors.hubGraph),
+              if (isCurrent) ...[
+                const SizedBox(width: 6),
+                _Badge(label: '현재 계정', color: scheme.primary),
+              ],
             ],
           ),
           const SizedBox(height: 10),
@@ -200,8 +262,50 @@ class _AccountCard extends StatelessWidget {
             Text('가입 ${DateFormat('yyyy.MM.dd').format(createdAt.toLocal())}',
                 style: TextStyle(fontSize: 11, color: context.shell.mutedText)),
           ],
+          if (onSwitch != null || onDelete != null) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                if (onSwitch != null)
+                  TextButton.icon(
+                    onPressed: onSwitch,
+                    icon: const Icon(Icons.login_rounded, size: 16),
+                    label: const Text('이 계정으로 전환'),
+                  ),
+                const Spacer(),
+                if (onDelete != null)
+                  TextButton.icon(
+                    onPressed: onDelete,
+                    style: TextButton.styleFrom(foregroundColor: scheme.error),
+                    icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                    label: const Text('삭제'),
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
+    );
+  }
+}
+
+class _Badge extends StatelessWidget {
+  const _Badge({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(label,
+          style: TextStyle(
+              fontSize: 10.5, fontWeight: FontWeight.w700, color: color)),
     );
   }
 }

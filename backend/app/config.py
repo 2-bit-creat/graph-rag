@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     # prompts, transcripts, and audio, so they are OFF in production by default.
     # None = auto (on in development, off in production); set true/false to force.
     debug_features_enabled: bool | None = None
+    # Operator tools (학습 큐 관리 · 노드 탐색 현황 · 생성 실행 이력). Unlike debug
+    # tracing these only ever return the caller's OWN rows and carry no prompts
+    # or transcripts, so they stay ON in production — the menu exposes them in
+    # release web builds and gating them on debug is what made them 404.
+    operator_tools_enabled: bool = True
     # Debug artifacts older than this are swept at startup (0 disables the sweep).
     debug_runs_retention_days: int = 7
     s3_bucket: str = ""

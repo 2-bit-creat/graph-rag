@@ -20,7 +20,7 @@ from ..composition_quiz import (
 )
 from ..config import get_settings
 from ..db import async_session_factory, get_session
-from ..deps import request_user_dep, require_debug_enabled
+from ..deps import request_user_dep, require_debug_enabled, require_operator_tools
 from ..languages import DEFAULT_NATIVE, SUPPORTED_NATIVE, valid_target_for_native
 from ..level_adjuster import reclassify_queue_by_level
 from ..level_guidelines import cefr_label, window_for_level
@@ -272,7 +272,7 @@ async def list_admin_quiz_items(
     offset: int = Query(0, ge=0),
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
-    _: None = Depends(require_debug_enabled),
+    _: None = Depends(require_operator_tools),
 ) -> QuizAdminListOut:
     filters = [
         Quiz.user_id == user.id,
@@ -321,7 +321,7 @@ async def get_admin_quiz_item(
     quiz_id: uuid.UUID,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
-    _: None = Depends(require_debug_enabled),
+    _: None = Depends(require_operator_tools),
 ) -> QuizAdminDetailOut:
     quiz = await crud.get_quiz(session, quiz_id, user.id)
     if quiz is None:
@@ -365,7 +365,7 @@ async def list_queue_explorations(
     language: str | None = Query(None),
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
-    _: None = Depends(require_debug_enabled),
+    _: None = Depends(require_operator_tools),
 ) -> QuizExplorationListOut:
     """Show Statement coverage, including per-language quiz-type counts."""
     languages = (
@@ -443,7 +443,7 @@ async def start_generation_run(
     background: BackgroundTasks,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
-    _: None = Depends(require_debug_enabled),
+    _: None = Depends(require_operator_tools),
 ) -> QuizGenerationRunOut:
     try:
         run, created = await create_generation_run(
@@ -466,7 +466,7 @@ async def get_generation_runs(
     offset: int = Query(0, ge=0),
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
-    _: None = Depends(require_debug_enabled),
+    _: None = Depends(require_operator_tools),
 ) -> QuizGenerationRunListOut:
     runs, total = await list_generation_runs(
         session, user.id, limit=limit, offset=offset
@@ -482,7 +482,7 @@ async def get_generation_run(
     run_id: uuid.UUID,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
-    _: None = Depends(require_debug_enabled),
+    _: None = Depends(require_operator_tools),
 ) -> QuizGenerationRunOut:
     await recover_stale_generation_runs(session, user.id)
     run = await session.get(QuizGenerationRun, run_id)
@@ -681,7 +681,7 @@ async def retry_generation_run(
     background: BackgroundTasks,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
-    _: None = Depends(require_debug_enabled),
+    _: None = Depends(require_operator_tools),
 ) -> QuizGenerationRunOut:
     await recover_stale_generation_runs(session, user.id)
     previous = await session.get(QuizGenerationRun, run_id)
@@ -793,7 +793,7 @@ async def list_generations(
     offset: int = Query(0, ge=0),
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
-    _: None = Depends(require_debug_enabled),
+    _: None = Depends(require_operator_tools),
 ) -> QuizGenerationListOut:
     items, total = await crud.list_quiz_generations(
         session, user.id, limit=limit, offset=offset

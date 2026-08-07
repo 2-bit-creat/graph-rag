@@ -171,12 +171,38 @@ class ApiClient {
     return resp.data as Map<String, dynamic>;
   }
 
-  /// Dev-tools-only: every account + a rough DB-usage proxy (row counts).
-  /// Requires auth — never call this from an unauthenticated screen, it
-  /// enumerates every handle on the server.
+  /// Every account + a rough DB-usage proxy (row counts). "main" only — the
+  /// server 403s any other handle, since this enumerates every handle on the
+  /// server. Never call it from an unauthenticated screen.
   Future<List<Map<String, dynamic>>> getAccountsOverview() async {
     final resp = await _dio.get('/auth/admin/accounts');
     return (resp.data as List).cast<Map<String, dynamic>>();
+  }
+
+  /// Provision a handle from main. Returns no token and does not switch
+  /// accounts — the new id is entered from the login screen by typing it.
+  Future<Map<String, dynamic>> createAccount({
+    required String handle,
+    required String nativeLanguage,
+  }) async {
+    try {
+      final resp = await _dio.post('/auth/admin/accounts', data: {
+        'handle': handle,
+        'native_language': nativeLanguage,
+      });
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '계정 만들기');
+    }
+  }
+
+  /// Delete another handle and all its data, from main.
+  Future<void> deleteAccountByHandle(String handle) async {
+    try {
+      await _dio.delete('/auth/admin/accounts/$handle');
+    } on DioException catch (e) {
+      throw _friendlyError(e, '계정 삭제');
+    }
   }
 
   /// Record privacy-policy acceptance + the separate voice speaker-id opt-in.

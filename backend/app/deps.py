@@ -113,6 +113,21 @@ def require_debug_enabled() -> None:
         )
 
 
+def require_operator_tools() -> None:
+    """Gate the operator screens (학습 큐 관리 · 노드 탐색 현황 · 생성 실행 이력).
+
+    Deliberately separate from ``require_debug_enabled``: these endpoints are
+    scoped to ``user.id`` and return no prompts or transcripts, so production
+    keeps them on. They used to share the debug gate, which 404'd every one of
+    them in production even though the menu still linked to their screens.
+    """
+    if not get_settings().operator_tools_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not found",
+        )
+
+
 def require_premium(user: User) -> None:
     if user.subscription_tier != "premium":
         raise HTTPException(

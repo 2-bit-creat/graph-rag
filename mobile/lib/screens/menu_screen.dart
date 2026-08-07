@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../auth/account_controller.dart';
@@ -209,12 +208,14 @@ class _MenuScreenState extends State<MenuScreen> {
                     ),
                   ),
                 ),
-                if (kDebugMode) ...[
+                // main만 계정을 만들고 지운다. kDebugMode로 감싸면 release web
+                // 빌드에서 사라져 배포 환경에선 계정을 아예 관리할 수 없었다.
+                if (accountController.current == 'main') ...[
                   const SizedBox(height: AppSpacing.sm),
                   AppHubTile(
                     icon: Icons.groups_outlined,
-                    title: '계정 개요',
-                    subtitle: '서버의 전체 계정 · 대략적인 DB 사용량',
+                    title: '계정 관리',
+                    subtitle: '계정 만들기 · 전환 · 삭제 · DB 사용량',
                     color: AppColors.hubGraph,
                     onTap: () => _open(const AccountsOverviewScreen()),
                   ),

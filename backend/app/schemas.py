@@ -340,14 +340,26 @@ class UserOut(BaseModel):
 
 
 class AccountSummaryOut(BaseModel):
-    """One row of the dev-tools account overview — handle + a rough DB-usage
-    proxy (row counts, not actual disk bytes)."""
+    """One row of the account overview — handle + a rough DB-usage proxy (row
+    counts, not actual disk bytes)."""
 
     handle: str
     created_at: datetime
     journal_count: int
     node_count: int
     chat_session_count: int
+    # The reserved "main" space, which administers the others and cannot be
+    # deleted. Lets the UI mark it without re-deriving the rule client-side.
+    is_main: bool = False
+
+
+class AccountCreateRequest(BaseModel):
+    """Provision a handle from the main space. Unlike ``/auth/simple`` this
+    never returns a token — main stays signed in as main, and the new handle
+    is entered from the login screen by typing its id."""
+
+    handle: str
+    native_language: str
 
 
 class ConsentRequest(BaseModel):
