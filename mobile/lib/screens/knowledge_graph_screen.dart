@@ -99,7 +99,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   Map<String, dynamic>? _ontology;
   bool _loading = true;
   String? _error;
-  String _typeFilter = '전체';
+  String _typeFilter = kAllTypesFilter;
   String _query = '';
   String? _selectedNodeId;
   String? _selectedEdgeId;
@@ -1383,7 +1383,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       _hideHeads = !_hideHeads;
       if (_hideHeads) {
         // head 타입 필터는 숨김 모드에서 빈 화면이 되므로 해제.
-        if (isStatementHeadType(_typeFilter)) _typeFilter = '전체';
+        if (isStatementHeadType(_typeFilter)) _typeFilter = kAllTypesFilter;
         // 숨겨질 head가 선택돼 있으면 선택도 해제.
         final selType = _selectedNode?['type']?.toString();
         if (selType != null && isStatementHeadType(selType)) {
@@ -1467,7 +1467,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         _selectedNodeId = null;
         _selectedEdge = null;
         _selectedEdgeId = null;
-        _typeFilter = '전체';
+        _typeFilter = kAllTypesFilter;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -2252,14 +2252,17 @@ class _SelectionInfoCard extends StatelessWidget {
           children: [
             ListTile(
               title: Text(
-                quizType == 'composition' ? '작문 퀴즈 언어 선택' : '단어 퀴즈 언어 선택',
+                quizType == 'composition'
+                    ? tr('kg.quizLangPickComposition')
+                    : tr('kg.quizLangPickWord'),
               ),
             ),
             for (final language in byLanguage.keys)
               ListTile(
                 leading: const Icon(Icons.translate_rounded),
                 title: Text(_languageLabels[language] ?? language),
-                trailing: Text('${byLanguage[language]!.length}개'),
+                trailing: Text(tr('kg.countItems',
+                    {'count': byLanguage[language]!.length})),
                 onTap: () => Navigator.pop(sheetContext, language),
               ),
             const SizedBox(height: 8),
@@ -2308,8 +2311,8 @@ class _SelectionInfoCard extends StatelessWidget {
       spacing: 8,
       runSpacing: 6,
       children: [
-        button('cloze', word, '단어 퀴즈'),
-        button('composition', composition, '작문 퀴즈'),
+        button('cloze', word, tr('kg.wordQuiz')),
+        button('composition', composition, tr('kg.compositionQuiz')),
         OutlinedButton.icon(
           onPressed:
               (!needsRegeneration || regenerating) ? null : onRegenerate,
@@ -2324,7 +2327,7 @@ class _SelectionInfoCard extends StatelessWidget {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Icon(Icons.autorenew_rounded, size: 16),
-          label: Text(regenerating ? '재생성 중' : '문제 재생성'),
+          label: Text(regenerating ? tr('kg.regenerating') : tr('kg.regenerateQuiz')),
         ),
       ],
     );
@@ -2534,7 +2537,7 @@ class _SelectionInfoCard extends StatelessWidget {
             if (isStatement) ...[
               const SizedBox(height: 10),
               Text(
-                '이 진술에서 만든 문제',
+                tr('kg.quizFromStatement'),
                 style: TextStyle(
                   color: shell.mutedText,
                   fontSize: 11.5,

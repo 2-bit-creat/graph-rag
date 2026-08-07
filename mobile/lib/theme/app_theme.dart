@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// MyLife English — polished mobile-first design tokens.
+/// Daylog — polished mobile-first design tokens.
 class AppColors {
   static const primary = Color(0xFF5B5FEF);
   static const primaryDark = Color(0xFF4347D4);

@@ -143,7 +143,7 @@ class _KgInsightScreenState extends State<KgInsightScreen> {
                     borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                   ),
                   child: Text(
-                    'cd backend\npy -3.12 -m uvicorn app.main:app --reload --port 8000',
+                    'cd backend\npy -3.12 -m uvicorn app.main:app --reload --reload-dir app --host 0.0.0.0 --port 8000',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       fontFamily: 'monospace',
                       color: AppColors.textMuted,

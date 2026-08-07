@@ -10,6 +10,11 @@ import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart';
 
+/// Sentinel for "no entity-type filter". It is a stored value, not a
+/// label — the chip renders `tr('common.all')` instead, so this string
+/// must stay stable regardless of locale.
+const kAllTypesFilter = '전체';
+
 const _kWorldPadding = 100.0;
 
 /// Below this effective zoom the painter drops blurs, edge glow and edge
@@ -41,7 +46,7 @@ class KnowledgeGraphCanvas extends StatefulWidget {
     this.selectedNodeId,
     this.selectedEdgeId,
     this.highlightQuery = '',
-    this.typeFilter = '전체',
+    this.typeFilter = kAllTypesFilter,
     this.focusMode = true,
     this.compactMode = false,
     this.showControls = true,
@@ -1982,10 +1987,10 @@ class OntologyLegendBar extends StatelessWidget {
       child: Row(
         children: [
           _LegendChip(
-            label: '전체',
+            label: kAllTypesFilter,
             color: AppColors.textMuted,
-            selected: selectedType == '전체',
-            onTap: () => onTypeSelected('전체'),
+            selected: selectedType == kAllTypesFilter,
+            onTap: () => onTypeSelected(kAllTypesFilter),
           ),
           ...entityTypes.map((et) {
             final name = et['name']?.toString() ?? '';
@@ -2022,7 +2027,7 @@ class _LegendChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final shell = context.shell;
-    final isAll = label == '전체';
+    final isAll = label == kAllTypesFilter;
     final bg = selected
         ? (isAll ? shell.subtleSurface : color.withValues(alpha: 0.18))
         : shell.panelBackground;

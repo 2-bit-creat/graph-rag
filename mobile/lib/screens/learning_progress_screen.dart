@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import 'quiz_session_screen.dart';
 
-const _weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+List<String> get _weekdays => [
+  tr('progress.weekdayMon'), tr('progress.weekdayTue'), tr('progress.weekdayWed'),
+  tr('progress.weekdayThu'), tr('progress.weekdayFri'), tr('progress.weekdaySat'),
+  tr('progress.weekdaySun'),
+];
 
 class LearningProgressScreen extends StatefulWidget {
   const LearningProgressScreen({super.key});
@@ -82,17 +87,17 @@ class _LearningProgressScreenState extends State<LearningProgressScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('일일 학습 목표', style: Theme.of(context).textTheme.titleLarge),
+                Text(tr('progress.goalSheetTitle'), style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 4),
-                const Text('활성 Target 언어마다 적용됩니다.'),
+                Text(tr('progress.goalSheetSubtitle')),
                 const SizedBox(height: 16),
                 Wrap(
                   spacing: 8,
                   children: [
-                    for (final preset in const [
-                      ('가볍게', 10, 2),
-                      ('꾸준히', 20, 5),
-                      ('집중', 40, 10),
+                    for (final preset in [
+                      (tr('progress.presetLight'), 10, 2),
+                      (tr('progress.presetSteady'), 20, 5),
+                      (tr('progress.presetIntense'), 40, 10),
                     ])
                       ChoiceChip(
                         label: Text(preset.$1),
@@ -106,13 +111,13 @@ class _LearningProgressScreenState extends State<LearningProgressScreen> {
                 ),
                 const SizedBox(height: 18),
                 _GoalStepper(
-                  label: '단어',
+                  label: tr('progress.words'),
                   value: cloze,
                   onChanged: (value) => setSheetState(() => cloze = value),
                 ),
                 const SizedBox(height: 12),
                 _GoalStepper(
-                  label: '작문',
+                  label: tr('progress.writing'),
                   value: composition,
                   max: 50,
                   onChanged: (value) => setSheetState(() => composition = value),
@@ -126,7 +131,7 @@ class _LearningProgressScreenState extends State<LearningProgressScreen> {
                     );
                     if (context.mounted) Navigator.pop(context, true);
                   },
-                  child: const Text('목표 저장'),
+                  child: Text(tr('progress.saveGoal')),
                 ),
               ],
             ),
@@ -140,16 +145,16 @@ class _LearningProgressScreenState extends State<LearningProgressScreen> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Scaffold(body: AppLoadingScreen(message: '학습 성장을 계산하는 중…'));
+      return Scaffold(body: AppLoadingScreen(message: tr('progress.loading')));
     }
     if (_error != null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('내 학습률')),
+        appBar: AppBar(title: Text(tr('progress.title'))),
         body: AppEmptyState(
           icon: Icons.cloud_off_rounded,
-          title: '학습률을 불러오지 못했습니다',
+          title: tr('progress.loadFailed'),
           subtitle: '$_error',
-          action: FilledButton(onPressed: _load, child: const Text('다시 시도')),
+          action: FilledButton(onPressed: _load, child: Text(tr('progress.retry'))),
         ),
       );
     }
@@ -171,10 +176,10 @@ class _LearningProgressScreenState extends State<LearningProgressScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('내 학습률'),
+        title: Text(tr('progress.title')),
         actions: [
           IconButton(
-            tooltip: '목표 설정',
+            tooltip: tr('progress.goalTooltip'),
             onPressed: _editGoals,
             icon: const Icon(Icons.tune_rounded),
           ),
@@ -195,9 +200,9 @@ class _LearningProgressScreenState extends State<LearningProgressScreen> {
               onEdit: _editGoals,
             ),
             const SizedBox(height: 18),
-            const _SectionTitle(
-              title: '이번 주의 리듬',
-              subtitle: '작은 학습이 쌓인 흐름을 확인해 보세요',
+            _SectionTitle(
+              title: tr('progress.weekTitle'),
+              subtitle: tr('progress.weekSubtitle'),
             ),
             const SizedBox(height: 10),
             _WeekCard(week: week),
@@ -208,8 +213,8 @@ class _LearningProgressScreenState extends State<LearningProgressScreen> {
                   child: _MetricCard(
                     icon: Icons.local_fire_department_rounded,
                     color: const Color(0xFFFF7A45),
-                    value: '${data['longest_streak'] ?? 0}일',
-                    label: '최고 연속 기록',
+                    value: tr('progress.days', {'count': data['longest_streak'] ?? 0}),
+                    label: tr('progress.longestStreak'),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -217,8 +222,8 @@ class _LearningProgressScreenState extends State<LearningProgressScreen> {
                   child: _MetricCard(
                     icon: Icons.task_alt_rounded,
                     color: const Color(0xFF5B67F1),
-                    value: '${data['week_completed'] ?? 0}개',
-                    label: '이번 주 완료',
+                    value: tr('progress.items', {'count': data['week_completed'] ?? 0}),
+                    label: tr('progress.weekCompleted'),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -228,15 +233,15 @@ class _LearningProgressScreenState extends State<LearningProgressScreen> {
                     color: const Color(0xFF13A88A),
                     value:
                         '${(((data['accuracy'] as num?)?.toDouble() ?? 0) * 100).round()}%',
-                    label: '최근 정답률',
+                    label: tr('progress.recentAccuracy'),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 22),
-            const _SectionTitle(
-              title: '나의 배지',
-              subtitle: '꾸준함이 새로운 배지를 열어 줍니다',
+            _SectionTitle(
+              title: tr('progress.badgesTitle'),
+              subtitle: tr('progress.badgesSubtitle'),
             ),
             const SizedBox(height: 10),
             SizedBox(
@@ -266,7 +271,7 @@ class _HeroCard extends StatelessWidget {
     final streak = (data['current_streak'] as num?)?.toInt() ?? 0;
     final atRisk = data['streak_at_risk'] == true;
     return Semantics(
-      label: '현재 연속 학습 $streak일',
+      label: tr('progress.streakSemantics', {'streak': streak}),
       child: Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
@@ -308,7 +313,7 @@ class _HeroCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '$streak일 연속',
+                        tr('progress.streakDays', {'streak': streak}),
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w900,
@@ -316,7 +321,7 @@ class _HeroCard extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        atRisk ? '오늘 한 문제로 불꽃을 지켜 주세요' : '오늘도 성장 기록을 이어가고 있어요',
+                        atRisk ? tr('progress.streakAtRisk') : tr('progress.streakOnTrack'),
                         style: TextStyle(color: Colors.white.withValues(alpha: .84)),
                       ),
                     ],
@@ -328,12 +333,12 @@ class _HeroCard extends StatelessWidget {
             Row(
               children: [
                 Text(
-                  '성장 Lv.${data['growth_level'] ?? 1}',
+                  tr('progress.growthLevel', {'level': data['growth_level'] ?? 1}),
                   style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
                 ),
                 const Spacer(),
                 Text(
-                  '${data['total_xp'] ?? 0} XP · 오늘 +${data['today_xp'] ?? 0}',
+                  tr('progress.xpSummary', {'total': data['total_xp'] ?? 0, 'today': data['today_xp'] ?? 0}),
                   style: TextStyle(color: Colors.white.withValues(alpha: .9)),
                 ),
               ],
@@ -376,7 +381,7 @@ class _TodayMissionCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    today['perfect'] == true ? '오늘의 미션 완료!' : '오늘의 미션',
+                    today['perfect'] == true ? tr('progress.missionDone') : tr('progress.missionTitle'),
                     style: Theme.of(context)
                         .textTheme
                         .titleLarge
@@ -384,20 +389,20 @@ class _TodayMissionCard extends StatelessWidget {
                   ),
                 ),
                 IconButton(
-                  tooltip: '목표 편집',
+                  tooltip: tr('progress.goalEditTooltip'),
                   onPressed: onEdit,
                   icon: const Icon(Icons.edit_outlined),
                 ),
               ],
             ),
             Text(
-              '${today['language_count'] ?? 1}개 Target 언어의 목표를 합산합니다',
+              tr('progress.missionSubtitle', {'count': today['language_count'] ?? 1}),
               style: const TextStyle(color: AppColors.textMuted),
             ),
             const SizedBox(height: 16),
             _MissionRow(
               icon: Icons.spellcheck_rounded,
-              label: '단어',
+              label: tr('progress.words'),
               current: (today['cloze'] as num?)?.toInt() ?? 0,
               goal: (today['cloze_goal'] as num?)?.toInt() ?? 0,
               color: const Color(0xFF5B67F1),
@@ -406,7 +411,7 @@ class _TodayMissionCard extends StatelessWidget {
             const SizedBox(height: 14),
             _MissionRow(
               icon: Icons.edit_note_rounded,
-              label: '작문',
+              label: tr('progress.writing'),
               current: (today['composition'] as num?)?.toInt() ?? 0,
               goal: (today['composition_goal'] as num?)?.toInt() ?? 0,
               color: const Color(0xFF13A88A),
@@ -473,7 +478,7 @@ class _MissionRow extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 10),
-        FilledButton.tonal(onPressed: onStart, child: const Text('학습')),
+        FilledButton.tonal(onPressed: onStart, child: Text(tr('progress.startStudy'))),
       ],
     );
   }

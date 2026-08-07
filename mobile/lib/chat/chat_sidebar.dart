@@ -180,25 +180,34 @@ class _ChatSidebarState extends State<ChatSidebar> {
           padding: const EdgeInsets.fromLTRB(18, 18, 14, 14),
           child: Row(
             children: [
+              // Monogram, not a sparkle: a flat single-colour "D" in a rounded
+              // square. The gradient + auto_awesome pairing read as generic AI
+              // chrome and said nothing about a journal.
               Container(
-                width: 38,
-                height: 38,
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [AppColors.hubGraph, AppColors.hubQuiz],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  shape: BoxShape.circle,
+                width: 34,
+                height: 34,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: AppColors.hubGraph,
+                  borderRadius: BorderRadius.circular(9),
                 ),
-                child: const Icon(Icons.auto_awesome_rounded,
-                    size: 20, color: Colors.white),
+                child: const Text(
+                  'D',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w700,
+                    height: 1.0,
+                  ),
+                ),
               ),
               const SizedBox(width: 11),
-              const Expanded(
-                child: Text('MyLife English',
-                    style:
-                        TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+              Expanded(
+                child: Text(tr('app.title'),
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 18,
+                        letterSpacing: -0.2)),
               ),
               if (widget.onCollapse != null || widget.onNavigate != null)
                 IconButton(

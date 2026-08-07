@@ -1,11 +1,11 @@
 {
-    "name": "graphrag_mobile",
-    "short_name": "graphrag_mobile",
+    "name": "Daylog",
+    "short_name": "Daylog",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#4F46E5",
+    "theme_color": "#4F46E5",
+    "description": "Turn your own diary into a knowledge graph, and study the words and sentences that come out of it.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

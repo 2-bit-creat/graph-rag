@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import 'app_ui.dart';
 
@@ -26,11 +27,11 @@ Future<void> showGraphIngestSnackBar(BuildContext context, String? status) {
   final messenger = ScaffoldMessenger.of(context);
   if (status == 'graph_ready') {
     messenger.showSnackBar(
-      const SnackBar(content: Text('지식 그래프 생성 완료 (화자 · Statement · Concept)')),
+      SnackBar(content: Text(tr('ingest.done'))),
     );
   } else if (status == 'graph_failed') {
     messenger.showSnackBar(
-      const SnackBar(content: Text('지식 그래프 생성 실패 — 파이프라인 로그를 확인하세요')),
+      SnackBar(content: Text(tr('ingest.failed'))),
     );
   }
   return Future.value();
@@ -66,7 +67,7 @@ class GraphManualAddBanner extends StatelessWidget {
               const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Text(
-                  '지식 그래프에 추가',
+                  tr('ingest.addToGraph'),
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
               ),
@@ -75,8 +76,8 @@ class GraphManualAddBanner extends StatelessWidget {
           const SizedBox(height: AppSpacing.sm),
           Text(
             blocked
-                ? '위 화자별 스크립트에서 화자를 먼저 확인해야 지식 그래프를 생성할 수 있습니다.'
-                : '번역·화자 확인이 끝났다면 화자 · Statement · Concept 노드를 생성합니다.',
+                ? tr('ingest.needSpeakers')
+                : tr('ingest.ready'),
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: blocked ? AppColors.accentWarm : null,
                 ),
@@ -93,10 +94,10 @@ class GraphManualAddBanner extends StatelessWidget {
                 : Icon(blocked ? Icons.lock_outline : Icons.play_arrow),
             label: Text(
               loading
-                  ? '생성 중…'
+                  ? tr('ingest.running')
                   : blocked
-                      ? '화자 확인 필요'
-                      : '지식 그래프 생성',
+                      ? tr('ingest.speakerNeeded')
+                      : tr('ingest.build'),
             ),
           ),
         ],
