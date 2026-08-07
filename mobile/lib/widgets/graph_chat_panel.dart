@@ -590,6 +590,18 @@ class _InputBarState extends State<_InputBar> {
 
   bool get _canType => widget.enabled && !widget.busy && !_journalSaving;
 
+  /// Whether the composer accepts a *tap* — deliberately independent of
+  /// [widget.busy].
+  ///
+  /// `TextField.enabled` false→true tears down and recreates the platform
+  /// text-input connection. On iOS Safari the recreated field looks tappable
+  /// but never reopens the keyboard, and `busy` flips on every quiz load — so
+  /// gating `enabled` on it killed the composer the moment a 작문 퀴즈 card
+  /// arrived. Transient in-flight state uses `readOnly` instead, which blocks
+  /// typing while leaving that connection (and the DOM node behind it) intact.
+  /// See the matching note on `_inputEnabled` in knowledge_graph_screen.dart.
+  bool get _composerTappable => widget.enabled && !_journalSaving;
+
   void _insertNewline() {
     final value = widget.controller.value;
     final text = value.text;
@@ -855,6 +867,7 @@ class _InputBarState extends State<_InputBar> {
   @override
   Widget build(BuildContext context) {
     final canType = _canType;
+    final composerTappable = _composerTappable;
     final shell = context.shell;
     final journalMode = widget.journalMode;
     final recording = _recorder?.recording ?? false;
@@ -938,7 +951,8 @@ class _InputBarState extends State<_InputBar> {
                         child: TextField(
                           controller: widget.controller,
                           focusNode: _focusNode,
-                          enabled: canType,
+                          enabled: composerTappable,
+                          readOnly: !canType,
                           minLines: 1,
                           maxLines: null,
                           keyboardType: TextInputType.multiline,

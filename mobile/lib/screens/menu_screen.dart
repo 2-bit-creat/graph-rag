@@ -102,20 +102,20 @@ class _MenuScreenState extends State<MenuScreen> {
             const SizedBox(height: AppSpacing.sm),
             AppHubTile(
               icon: Icons.local_fire_department_rounded,
-              title: '내 학습률',
-              subtitle: '오늘의 목표 · XP · 연속 학습 · 성장 배지',
+              title: tr('menu.learningRate'),
+              subtitle: tr('menu.learningRateSubtitle'),
               color: AppColors.accentWarm,
               onTap: () => _open(const LearningProgressScreen()),
             ),
             const SizedBox(height: AppSpacing.sm),
             AppHubTile(
               icon: Icons.insights_outlined,
-              title: '기록 인사이트',
-              subtitle: 'Statement 작성 활동과 지식 그래프 통계',
+              title: tr('menu.recordInsight'),
+              subtitle: tr('menu.recordInsightSubtitle'),
               color: AppColors.hubGraph,
               onTap: () => _open(
                 Scaffold(
-                  appBar: AppBar(title: const Text('기록 인사이트')),
+                  appBar: AppBar(title: Text(tr('menu.recordInsight'))),
                   body: const KgInsightScreen(),
                 ),
               ),
@@ -161,10 +161,10 @@ class _MenuScreenState extends State<MenuScreen> {
                         const EdgeInsets.symmetric(vertical: AppSpacing.xs),
                     child: Row(
                       children: [
-                        const Expanded(
+                        Expanded(
                           child: AppSectionHeader(
-                            title: '개발자 도구',
-                            subtitle: '퀴즈 품질 · 파이프라인 디버그',
+                            title: tr('menu.devTools'),
+                            subtitle: tr('menu.devToolsSubtitle'),
                           ),
                         ),
                         Icon(
@@ -182,28 +182,28 @@ class _MenuScreenState extends State<MenuScreen> {
                 const SizedBox(height: AppSpacing.md),
                 AppHubTile(
                   icon: Icons.playlist_add_check_rounded,
-                  title: '퀴즈 큐',
-                  subtitle: '문제 관리 · Statement 선택 생성 · Quiz Path trace',
+                  title: tr('menu.quizQueue'),
+                  subtitle: tr('menu.quizQueueSubtitle'),
                   color: AppColors.hubQuiz,
                   onTap: () => _open(const QuizQueueScreen()),
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 AppHubTile(
                   icon: Icons.account_tree_outlined,
-                  title: '파이프라인',
-                  subtitle: '음성·텍스트 기록별 처리 trace · GraphRAG 단계',
+                  title: tr('menu.pipeline'),
+                  subtitle: tr('menu.pipelineSubtitle'),
                   color: AppColors.hubVoice,
                   onTap: () => _open(const PipelineDebugHubScreen()),
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 AppHubTile(
                   icon: Icons.bug_report_outlined,
-                  title: 'KG 디버그',
-                  subtitle: 'KG 파이프라인 실행 기록',
+                  title: tr('menu.kgDebug'),
+                  subtitle: tr('menu.kgDebugSubtitle'),
                   color: AppColors.hubVoice,
                   onTap: () => _open(
                     Scaffold(
-                      appBar: AppBar(title: const Text('KG 파이프라인 디버그')),
+                      appBar: AppBar(title: Text(tr('menu.kgDebugScreenTitle'))),
                       body: const KgDebugScreen(),
                     ),
                   ),
@@ -214,8 +214,8 @@ class _MenuScreenState extends State<MenuScreen> {
                   const SizedBox(height: AppSpacing.sm),
                   AppHubTile(
                     icon: Icons.groups_outlined,
-                    title: '계정 관리',
-                    subtitle: '계정 만들기 · 전환 · 삭제 · DB 사용량',
+                    title: tr('menu.accountAdmin'),
+                    subtitle: tr('menu.accountAdminSubtitle'),
                     color: AppColors.hubGraph,
                     onTap: () => _open(const AccountsOverviewScreen()),
                   ),

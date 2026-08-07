@@ -107,6 +107,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// Leave the current handle and return to the entry screen, which is where
+  /// another id is entered. Nothing is deleted — the saved handles stay, so
+  /// coming back is one tap.
+  Future<void> _confirmSignOut() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('menu.signOut')),
+        content: Text(tr('settings.signOutConfirm',
+            {'handle': accountController.current ?? ''})),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(tr('common.cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(tr('menu.signOut')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final nav = Navigator.of(context);
+    await accountController.signOut();
+    // The root swaps `home` to the entry screen on sign-out, but this screen
+    // was pushed on top of it — without popping back the learner keeps staring
+    // at a settings page belonging to an account they just left.
+    nav.popUntil((r) => r.isFirst);
+  }
+
   Future<void> _exportData() async {
     setState(() => _exporting = true);
     try {
@@ -314,7 +345,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 // ── Native language ─────────────────────────────────────────
                 _SectionCard(
                   title: tr('settings.nativeLanguageTitle'),
-                  subtitle: '그래프·번역·설명의 기준 언어로, 계정 생성 후 변경할 수 없습니다.',
+                  subtitle: tr('settings.nativeLanguageNote'),
                   child: Row(
                     children: [
                       const Icon(Icons.lock_outline_rounded),
@@ -331,7 +362,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ),
                       Text(
-                        '계정 생성 시 고정',
+                        tr('settings.nativeLanguageLocked'),
                         style: Theme.of(context).textTheme.labelMedium,
                       ),
                     ],
@@ -431,9 +462,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       const Icon(Icons.local_fire_department_rounded,
                           color: AppColors.accentWarm),
                       const SizedBox(width: AppSpacing.md),
-                      const Expanded(
+                      Expanded(
                         child: Text(
-                          '일일 단어·작문 목표는 ‘내 학습률’에서 설정할 수 있습니다.',
+                          tr('settings.dailyGoalNote'),
                         ),
                       ),
                     ],
@@ -495,6 +526,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ]),
                 ),
                 const SizedBox(height: AppSpacing.lg),
+
+                // ── Account ──────────────────────────────────────────────────
+                // Signing out is the only way back to the entry screen, and
+                // therefore the only way into another handle. It belongs here
+                // as well as in the menu: once you switch away from "main" the
+                // account-admin tile is gone, so the profile has to carry it.
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.logout_rounded),
+                    title: Text(tr('menu.signOut')),
+                    subtitle: Text(tr('menu.signOutSubtitle')),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: _confirmSignOut,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
 
                 // ── Dev ──────────────────────────────────────────────────────
                 Card(
