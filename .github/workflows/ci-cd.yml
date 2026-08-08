@@ -3,8 +3,17 @@ name: CI and production deployment
 on:
   pull_request:
     branches: [main]
+    # A doc-only change still triggers the workflow if it touches any file
+    # outside these patterns in the same push — paths-ignore only skips when
+    # EVERY changed file matches. Keep in sync with the push trigger below.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   workflow_dispatch:
     inputs:
       scope:
