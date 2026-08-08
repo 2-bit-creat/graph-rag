@@ -648,9 +648,64 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
               ],
             ],
           ),
+          ..._meaningPartsRow(color, dense: dense),
         ],
       ),
     );
+  }
+
+  /// Morpheme-level breakdown of the answer (척하다 → pretend, 보장하다 →
+  /// guarantee).
+  ///
+  /// quiz_bundle generates this for every card and it rides in every payload,
+  /// but nothing rendered it — the learner saw *that* 보장하는 척합니다 is
+  /// "pretend to guarantee" and never *why*. Shown only once the answer is
+  /// visible, so it explains rather than gives the answer away.
+  List<Widget> _meaningPartsRow(Color color, {bool dense = false}) {
+    final raw = widget.quizData['meaning_parts'];
+    if (raw is! List || raw.isEmpty) return const [];
+
+    final pairs = <(String, String)>[];
+    for (final part in raw) {
+      if (part is! Map) continue;
+      final target = (part['target'] ?? '').toString().trim();
+      final native = (part['native'] ?? '').toString().trim();
+      if (target.isEmpty || native.isEmpty) continue;
+      pairs.add((target, native));
+    }
+    if (pairs.isEmpty) return const [];
+
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    return [
+      SizedBox(height: dense ? 4 : 6),
+      Wrap(
+        spacing: dense ? 6 : 8,
+        runSpacing: dense ? 4 : 6,
+        children: [
+          for (final (target, native) in pairs)
+            Container(
+              padding: EdgeInsets.symmetric(
+                  horizontal: dense ? 6 : 8, vertical: dense ? 2 : 3),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text.rich(
+                TextSpan(children: [
+                  TextSpan(
+                    text: target,
+                    style: TextStyle(
+                        color: color, fontWeight: FontWeight.w700),
+                  ),
+                  TextSpan(text: '  ·  ', style: TextStyle(color: muted)),
+                  TextSpan(text: native, style: TextStyle(color: muted)),
+                ]),
+                style: TextStyle(fontSize: dense ? 11.5 : 12.5, height: 1.25),
+              ),
+            ),
+        ],
+      ),
+    ];
   }
 
   @override

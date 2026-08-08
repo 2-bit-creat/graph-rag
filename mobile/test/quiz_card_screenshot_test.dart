@@ -76,6 +76,33 @@ const _realClozeCard = {
   },
 };
 
+const _realCompositionCard = {
+  'id': 'e5f65d7f-b0b6-41c3-bfcb-5b0b8b9c4ae0',
+  'quiz_type': 'composition',
+  'question_ko': 'Carve-outs는 계약서상 풋옵션 권리를 보장하는 척한다.',
+  'question_native': 'Carve-outs는 계약서상 풋옵션 권리를 보장하는 척한다.',
+  'quiz_data': {
+    'cefr': 'C2',
+    'language': 'english',
+    'source_label': '진술 노드',
+    'model_answers': [
+      {
+        'text': 'Carve-outs pretend to guarantee put option rights in the contract.',
+        'note': 'This captures the essence of the original statement.',
+        'tone': 'neutral',
+      },
+    ],
+    'key_expressions': [
+      {
+        'expression': 'pretend to guarantee',
+        'meaning': '계약서상 풋옵션 권리를 보장해 주는 척하다',
+        'example':
+            'Carve-outs pretend to guarantee put option rights in the contract.',
+      },
+    ],
+  },
+};
+
 Widget _harness({
   required Widget child,
   required Size size,
@@ -197,6 +224,90 @@ void main() {
     await expectLater(
       find.byType(MaterialApp),
       matchesGoldenFile('screenshots/cloze_card_scale130.png'),
+    );
+  }, skip: _skipUnlessFont);
+
+  // 320px is the narrowest phone still in use (iPhone SE 1st gen). The cloze
+  // blanks are WidgetSpans sized off the answer's letter count, which cannot
+  // shrink after RichText has laid out a line — the width most likely to
+  // overflow.
+  testWidgets('cloze card — 320px wide', (tester) async {
+    _silenceMissingPlugin();
+    const narrow = Size(320, 568);
+    await tester.binding.setSurfaceSize(narrow);
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(_harness(
+      size: narrow,
+      brightness: Brightness.dark,
+      child: WordQuizCard(
+        quiz: _realClozeCard,
+        onSubmit: ({answer, order, selectedIndex}) async =>
+            {'is_correct': false},
+        onNext: () {},
+        onExit: () {},
+      ),
+    ));
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('screenshots/cloze_card_320.png'),
+    );
+  }, skip: _skipUnlessFont);
+
+  // The solved state carries the parts nobody had looked at: the answer panel,
+  // the morpheme breakdown, and the audio controls.
+  testWidgets('cloze card — solved', (tester) async {
+    _silenceMissingPlugin();
+    await tester.binding.setSurfaceSize(phone);
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(_harness(
+      size: phone,
+      brightness: Brightness.dark,
+      child: WordQuizCard(
+        quiz: _realClozeCard,
+        onSubmit: ({answer, order, selectedIndex}) async =>
+            {'is_correct': true},
+        onNext: () {},
+        onExit: () {},
+        clozeSolved: true,
+        externalResult: const {'is_correct': true},
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('screenshots/cloze_card_solved.png'),
+    );
+  }, skip: _skipUnlessFont);
+
+  testWidgets('composition card — unanswered', (tester) async {
+    _silenceMissingPlugin();
+    await tester.binding.setSurfaceSize(phone);
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(_harness(
+      size: phone,
+      brightness: Brightness.dark,
+      child: CompositionDrillCard(
+        quiz: _realCompositionCard,
+        feedback: null,
+        busy: false,
+        onNext: () {},
+        onExit: () {},
+      ),
+    ));
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('screenshots/composition_card.png'),
     );
   }, skip: _skipUnlessFont);
 }
