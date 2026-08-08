@@ -952,6 +952,7 @@ async def _judge_quiz(
             ],
             temperature=0.0,
             response_format={"type": "json_object"},
+            timeout=get_settings().openai_timeout_sec,
         )
         verdict = json.loads(resp.choices[0].message.content or "{}")
     except Exception:  # noqa: BLE001 — fail open, never block on judge errors
@@ -1022,6 +1023,7 @@ async def generate_one(
             messages=messages,
             temperature=0.35 if attempt == 0 else 0.2,
             response_format={"type": "json_object"},
+            timeout=settings.openai_timeout_sec,
         )
         raw = resp.choices[0].message.content or "{}"
         data = json.loads(raw)
@@ -1137,6 +1139,7 @@ async def generate_vocab_cloze_from_context(
         ],
         temperature=0.35,
         response_format={"type": "json_object"},
+        timeout=settings.openai_timeout_sec,
     )
     raw = resp.choices[0].message.content or "{}"
     data = json.loads(raw)

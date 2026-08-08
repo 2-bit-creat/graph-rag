@@ -730,6 +730,7 @@ async def _suggest_identity_by_embedding(
     try:
         vectors = await embed_texts([name for _, name in pairs])
     except Exception:
+        logger.warning("identity alias fuzzy-match: embedding call failed", exc_info=True)
         return
 
     for (c, _name), vec in zip(pairs, vectors):
@@ -803,6 +804,7 @@ async def _enrich_plain_concepts(
             [str(c.get("name") or "").strip() for c in unresolved]
         )
     except Exception:
+        logger.warning("concept fuzzy-match: embedding call failed", exc_info=True)
         return
 
     for c, vec in zip(unresolved, vectors):

@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 
@@ -47,6 +48,8 @@ from ..schemas import (
 from ..speaker_confirmation import confirm_speaker_identity, recommend_speaker_node
 
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/graph", tags=["graph"])
 
@@ -537,7 +540,8 @@ async def clear_graph(
         return {"ok": True, **stats}
     except Exception as exc:
         await session.rollback()
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("Failed to clear knowledge graph for user %s", user.id)
+        raise HTTPException(status_code=500, detail="Failed to clear graph") from exc
 
 
 @v1_router.delete("", status_code=status.HTTP_200_OK)

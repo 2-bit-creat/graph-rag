@@ -86,6 +86,7 @@ async def refine_entity_types(
         ],
         temperature=0,
         response_format={"type": "json_object"},
+        timeout=settings.openai_timeout_sec,
     )
     raw = resp.choices[0].message.content or "{}"
     try:

@@ -307,6 +307,7 @@ async def _call_cleanup_llm(korean_text: str, system_prompt: str | None = None) 
         ],
         temperature=0.2,
         response_format={"type": "json_object"},
+        timeout=settings.openai_timeout_sec,
     )
     raw = resp.choices[0].message.content or "{}"
     data = json.loads(raw)
@@ -347,6 +348,7 @@ def _client() -> AsyncOpenAI:
 async def transcribe_audio(file_path: Path, native_language: str = "korean") -> str:
     from .languages import spec as language_spec
 
+    settings = get_settings()
     client = _client()
     whisper_lang = language_spec(native_language, default="korean").whisper
     with file_path.open("rb") as f:
@@ -354,6 +356,7 @@ async def transcribe_audio(file_path: Path, native_language: str = "korean") -> 
             model="whisper-1",
             file=f,
             language=whisper_lang,
+            timeout=settings.openai_timeout_sec,
         )
     return resp.text.strip()
 

@@ -45,6 +45,7 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
     resp = await client.embeddings.create(
         model="text-embedding-3-small",
         input=texts,
+        timeout=get_settings().openai_timeout_sec,
     )
     by_index = {item.index: item.embedding for item in resp.data}
     return [by_index[i] for i in range(len(texts))]

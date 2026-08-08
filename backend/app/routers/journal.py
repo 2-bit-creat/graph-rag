@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -41,9 +42,20 @@ from ..schemas import (
     SpeakerProfileOut,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/journal", tags=["journal"])
 
 _GRAPH_BUILD_STALE_AFTER = timedelta(minutes=5)
+
+# Whisper's own limit is 25MB; well-encoded speech at typical bitrates never
+# approaches this for a single journal entry, so cap well below it to bound
+# memory/storage/transcription cost from an oversized or bogus upload.
+MAX_AUDIO_BYTES = 20 * 1024 * 1024
+
+# Matches the encoders the mobile client actually produces (see
+# mobile/lib/utils/audio_mime.dart) plus common desktop/web recorder output.
+_ALLOWED_AUDIO_EXTENSIONS = {"m4a", "mp4", "mp3", "wav", "aac", "ogg", "webm", "flac"}
 
 
 def _is_stale_graph_build(requested_at: datetime | None, now: datetime) -> bool:
@@ -185,16 +197,26 @@ async def upload_journal(
     _quota: None = Depends(daily_quota(KIND_STT)),
 ) -> JournalEntryOut:
     """Fast Path only: STT → cleanup/translate. GraphRAG is manual per entry."""
+    filename = file.filename or "recording.m4a"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in _ALLOWED_AUDIO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Unsupported audio file type")
+
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
+    if len(data) > MAX_AUDIO_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Audio file too large (max {MAX_AUDIO_BYTES // (1024 * 1024)}MB)",
+        )
 
     try:
         entry, _trace = await run_journal_fast_pipeline(
             session,
             user.id,
             data,
-            file.filename or "recording.m4a",
+            filename,
             source_type=source_type,
         )
     except Exception as exc:
@@ -207,7 +229,8 @@ async def upload_journal(
                 },
                 headers={"Retry-After": "3"},
             ) from exc
-        raise HTTPException(status_code=500, detail=f"Processing failed: {exc}") from exc
+        logger.exception("Journal audio upload processing failed for user %s", user.id)
+        raise HTTPException(status_code=500, detail="Processing failed") from exc
 
     await session.refresh(entry)
     return await _entry_out(session, user.id, entry)
@@ -244,7 +267,8 @@ async def create_text_journal_entry(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Processing failed: {exc}") from exc
+        logger.exception("Journal text entry processing failed for user %s", user.id)
+        raise HTTPException(status_code=500, detail="Processing failed") from exc
 
     await session.refresh(entry)
     return await _entry_out(session, user.id, entry)

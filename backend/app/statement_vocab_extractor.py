@@ -118,6 +118,7 @@ async def extract_multilang(
             ],
             temperature=0.1,
             response_format={"type": "json_object"},
+            timeout=settings.openai_timeout_sec,
         )
         raw = resp.choices[0].message.content or "{}"
         data = json.loads(raw)
