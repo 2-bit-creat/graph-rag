@@ -43,6 +43,23 @@ Parameters:
   MediaBaseUrl:
     Type: String
     Default: ""
+  # Plain Parameters, not a secretsmanager dynamic reference like DATABASE_URL
+  # above: {{resolve:secretsmanager:...:SecretString:VAPID_PUBLIC_KEY}} fails
+  # CloudFormation's stack update HARD if that JSON key is absent from the
+  # secret, and it does not exist yet — that took production deploys down
+  # once already. Defaulting to "" here keeps deploys unblocked; app/push.py
+  # already treats empty keys as "push disabled". Once real VAPID keys are
+  # generated, either pass them via --parameter-overrides, or add the two
+  # JSON keys to the existing secret and switch these back to
+  # {{resolve:secretsmanager:...}} to match the other three.
+  VapidPublicKey:
+    Type: String
+    Default: ""
+    NoEcho: false
+  VapidPrivateKey:
+    Type: String
+    Default: ""
+    NoEcho: true
   DbRequireSsl:
     Type: String
     Default: "true"
@@ -90,11 +107,11 @@ Resources:
           DATABASE_URL: !Sub '{{resolve:secretsmanager:${AppSecretName}:SecretString:DATABASE_URL}}'
           OPENAI_API_KEY: !Sub '{{resolve:secretsmanager:${AppSecretName}:SecretString:OPENAI_API_KEY}}'
           JWT_SECRET: !Sub '{{resolve:secretsmanager:${AppSecretName}:SecretString:JWT_SECRET}}'
-          # Web Push. The public key is not secret, but it is kept beside the
-          # private one so the pair can never drift apart. Absent keys disable
-          # push rather than breaking the app — see app/push.py:push_enabled.
-          VAPID_PUBLIC_KEY: !Sub '{{resolve:secretsmanager:${AppSecretName}:SecretString:VAPID_PUBLIC_KEY}}'
-          VAPID_PRIVATE_KEY: !Sub '{{resolve:secretsmanager:${AppSecretName}:SecretString:VAPID_PRIVATE_KEY}}'
+          # Web Push. Absent keys disable push rather than breaking the app —
+          # see app/push.py:push_enabled. See the Parameters block above for
+          # why these are plain parameters rather than a secretsmanager ref.
+          VAPID_PUBLIC_KEY: !Ref VapidPublicKey
+          VAPID_PRIVATE_KEY: !Ref VapidPrivateKey
           APP_VERSION: !Ref AppVersion
           CORS_ORIGINS: !Ref CorsOrigins
           ENVIRONMENT: !Ref Environment
