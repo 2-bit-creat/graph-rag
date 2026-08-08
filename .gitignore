@@ -51,3 +51,6 @@ backend/test_audio_ko.mp3
 
 # Generated runtime audio (quiz TTS output); keep the dir via .gitkeep
 backend/static/audio/*.mp3
+
+# Golden-test diff artifacts (regenerated on every failing run)
+mobile/test/failures/
