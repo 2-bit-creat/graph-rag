@@ -71,6 +71,15 @@ Fix phonetic mishearings, fillers, and grammar. Apply real-world logic:
 - Commerce verbs need purchasable objects. Movement verbs must match noun type.
 - Unify cross-speaker references: if Speaker A makes X and Speaker B drinks X, both must use the same corrected word.
 
+[VOICE — DO NOT REWRITE]
+This is the user's own diary. Cleanup repairs errors; it never restyles.
+- Keep the speech level exactly as written. 반말 stays 반말, 존댓말 stays 존댓말:
+  "논의했다" must NOT become "논의했습니다"; "없었어" must NOT become "없었어요".
+- Keep first-person pronouns as written: 나 stays 나, 저 stays 저.
+- Keep the writer's wording, sentence order and tone. Do not summarise, expand,
+  formalise or soften. Change a word only to fix a genuine mishearing, filler or
+  grammatical error.
+
 [SPEAKER LABELS]
 - Keep [Speaker_N] labels unchanged in all outputs — never replace with names.
 - One line per speaker turn; fix only the text, not the label.
@@ -115,7 +124,7 @@ Respond with valid JSON only (no markdown). Keys:
 
 Example:
 Input: "당뇨랑 저녁을 먹고 와서 왔는데 상사가 없었어..."
-Output: {{"transcript_clean_ko": "동료랑 저녁을 먹고 돌아왔는데 상사가 없었어요...", "content_type": "일기", "single_speaker": true}}"""
+Output: {{"transcript_clean_ko": "동료랑 저녁을 먹고 돌아왔는데 상사가 없었어...", "content_type": "일기", "single_speaker": true}}"""
 
 
 def build_cleanup_system_prompt(languages: list[str] | None = None) -> str:
@@ -146,29 +155,13 @@ def build_cleanup_system_prompt(languages: list[str] | None = None) -> str:
             example_translations[code] = "Ich bin nach dem Abendessen mit einem Kollegen zurückgekommen, aber mein Chef war nicht da..."
     ex_json = "{" + ", ".join(f'"{k}": "{v}"' for k, v in example_translations.items()) + "}"
 
+    # Shares _CLEANUP_BODY with the cleanup-only prompt. These rules used to be
+    # duplicated here by hand and had already drifted — this copy was missing
+    # [TEXT STRUCTURE] entirely, so translating an entry silently applied
+    # different paragraph rules than writing one.
     return f"""You are a linguistic engine for Korean STT cleanup and multilingual translation.
 
-[STT CLEANUP]
-Fix phonetic mishearings, fillers, and grammar. Apply real-world logic:
-- Consumption verbs (먹다/마시다) need edible/drinkable objects. If absurd, find the closest phonetic correction.
-  Example: 마차 + 마시다 → 말차 (matcha), NOT 마차 (carriage)
-- Commerce verbs need purchasable objects. Movement verbs must match noun type.
-- Unify cross-speaker references: if Speaker A makes X and Speaker B drinks X, both must use the same corrected word.
-
-[SPEAKER LABELS]
-- Keep [Speaker_N] labels unchanged in all outputs — never replace with names.
-- One line per speaker turn; fix only the text, not the label.
-
-[CONTENT CLASSIFICATION]
-Also classify the content so the app can suggest a type and detect over-split:
-- "content_type": exactly one of [일기, 대화, 회의록, 책, 뉴스, 강연, 논문].
-  일기 = personal first-person diary/monologue; 대화 = a conversation between people.
-- "single_speaker": true ONLY if this is ONE first-person narrator talking (a personal
-  diary/monologue). false for any real multi-person conversation or external source.
-  Note: [Speaker_N] tags are automatic diarization labels, NOT proof of a real
-  conversation. If only ONE distinct speaker actually talks, set single_speaker=true
-  and choose a monologue type (일기 by default, or 강연/책/뉴스/논문 if it is clearly
-  that medium) — never 대화/회의록.
+{_CLEANUP_BODY}
 
 [OUTPUT FORMAT]
 Respond with valid JSON only (no markdown). Keys:
@@ -180,7 +173,7 @@ Respond with valid JSON only (no markdown). Keys:
 
 Example:
 Input: "당뇨랑 저녁을 먹고 와서 왔는데 상사가 없었어..."
-Output: {{"transcript_clean_ko": "동료랑 저녁을 먹고 돌아왔는데 상사가 없었어요...", "content_type": "일기", "single_speaker": true, "translations": {ex_json}}}"""
+Output: {{"transcript_clean_ko": "동료랑 저녁을 먹고 돌아왔는데 상사가 없었어...", "content_type": "일기", "single_speaker": true, "translations": {ex_json}}}"""
 
 
 # Default prompt (for pipeline_trace display and backward compat)
