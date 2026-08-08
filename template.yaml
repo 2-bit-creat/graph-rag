@@ -134,19 +134,22 @@ Resources:
           - !Ref LambdaDurationAlarm
         Hooks:
           PreTraffic: !Ref DeploymentValidationHook
-      Events:
-        # Nightly review reminder. 22:00 KST = 13:00 UTC — late enough that the
-        # day's studying is done, early enough to still act on it. EventBridge
-        # cron has no timezone, so this must be re-checked if the app's default
-        # timezone ever stops being Asia/Seoul.
-        DailyReminder:
-          Type: Schedule
-          Properties:
-            Schedule: cron(0 13 * * ? *)
-            Name: !Sub ${AWS::StackName}-daily-reminder
-            Description: Push a review reminder to learners with cards due.
-            Enabled: !Equals [!Ref EnableReminders, "true"]
-            Input: '{"kind": "reminder"}'
+      # The nightly-reminder EventBridge Schedule (Type: Schedule) is
+      # deliberately NOT wired in here yet. SAM turns it into an
+      # AWS::Events::Rule + AWS::Lambda::Permission, and creating those needs
+      # events:PutRule/DescribeRule/PutTargets/RemoveTargets/DeleteRule +
+      # lambda:AddPermission/RemovePermission on whatever role runs `sam
+      # deploy` — the GitHub Actions OIDC role (graph-rag-backend-github-deploy)
+      # does not have them. Adding the Events block without that grant is not a
+      # "disabled but present" no-op: CloudFormation still tries to CREATE the
+      # rule regardless of Enabled, gets AccessDenied, and rolls back the WHOLE
+      # changeset — including the Lambda code update that had already gone out
+      # through CodeDeploy. Confirmed live: 2026-08-08 run #67.
+      #
+      # To re-enable: grant the deploy role those six actions scoped to
+      # arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/${AWS::StackName}-*,
+      # then restore the Events: DailyReminder block from git history
+      # (template.yaml, commit 90918b8) and set EnableReminders=true.
 
   GraphRagCodeDeployServiceRole:
     Type: AWS::IAM::Role
