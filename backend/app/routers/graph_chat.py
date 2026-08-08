@@ -130,8 +130,23 @@ async def list_sessions(
         await _migrate_legacy_json(session, user)
         await session.commit()
         rows = await crud.list_chat_sessions(session, user.id)
+    # One query for every room's preview. Building them row by row via
+    # _session_out was a query per room, and this list is on the cold-start
+    # critical path — the messages fetch cannot start until it returns.
+    previews = await crud.last_message_previews(
+        session, [r.id for r in rows], user_id=user.id
+    )
     return ChatSessionListOut(
-        items=[await _session_out(session, r) for r in rows]
+        items=[
+            ChatSessionOut(
+                id=str(r.id),
+                title=r.title,
+                preview=(previews.get(r.id) or "").strip()[:80] or None,
+                created_at=_iso(r.created_at),
+                updated_at=_iso(r.updated_at),
+            )
+            for r in rows
+        ]
     )
 
 

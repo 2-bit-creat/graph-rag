@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -58,7 +59,13 @@ class AccountController extends ChangeNotifier {
       if (cur != null && _tokens.containsKey(cur)) {
         _current = cur;
         setApiAuthToken(_tokens[cur]);
-        await _refreshConsent();
+        // Deliberately NOT awaited: main() gates runApp() on load(), so
+        // awaiting a network round trip here held back the very first frame and
+        // the launch was a blank window until /auth/me answered. The app
+        // already renders a splash for `!consentKnown`, and _refreshConsent
+        // notifies when it lands, so let the UI come up now and resolve consent
+        // behind it.
+        unawaited(_refreshConsent());
       }
     } catch (_) {
       // Non-fatal — start with no accounts (entry screen will show).

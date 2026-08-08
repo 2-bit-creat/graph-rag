@@ -22,9 +22,13 @@ Future<void> main() async {
   // No-op on native; on web this starts the visualViewport listener that
   // KeyboardInsetScope feeds into MediaQuery.
   startKeyboardInsetTracking();
-  await appThemeController.load();
-  await appLocaleController.load();
-  await accountController.load();
+  // Independent local reads (prefs + secure storage) — run them together
+  // instead of one after another, since nothing here needs another's result.
+  await Future.wait([
+    appThemeController.load(),
+    appLocaleController.load(),
+    accountController.load(),
+  ]);
   runApp(const GraphRagApp());
 }
 
@@ -187,14 +191,34 @@ class _ChatHomeShellState extends State<ChatHomeShell> {
   }
 }
 
-/// Brief spinner shown right after login while the account's consent state loads.
+/// Splash shown while the account's consent state loads.
+///
+/// This is the app's first frame on a warm launch, so it carries the same mark
+/// as the entry screen: a bare centred spinner on an empty window read as a
+/// failed launch rather than as the app starting.
 class _ConsentLoadingScreen extends StatelessWidget {
   const _ConsentLoadingScreen();
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(child: CircularProgressIndicator()),
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.hub_rounded, size: 44, color: AppColors.hubGraph),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: AppColors.hubGraph.withValues(alpha: 0.7),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -4870,6 +4870,62 @@ async def last_message_preview(
     return None
 
 
+async def last_message_previews(
+    session: AsyncSession,
+    session_ids: Sequence[uuid.UUID],
+    *,
+    user_id: uuid.UUID | None = None,
+) -> dict[uuid.UUID, str | None]:
+    """Sidebar one-liners for many rooms at once.
+
+    The per-room [last_message_preview] made the sidebar list one query per
+    room; at 51 rooms that was the slowest call in the cold start. This pulls
+    every room's candidate messages in a single window-function pass — the
+    existing (session_id, created_at) index serves it — and then applies the
+    same resolution rules per room.
+    """
+    if not session_ids:
+        return {}
+
+    ranked = (
+        select(
+            ChatMessage,
+            func.row_number()
+            .over(
+                partition_by=ChatMessage.session_id,
+                order_by=ChatMessage.created_at.desc(),
+            )
+            .label("rn"),
+        )
+        .where(ChatMessage.session_id.in_(list(session_ids)))
+        .subquery()
+    )
+    msg = aliased(ChatMessage, ranked)
+    result = await session.execute(
+        select(msg).where(ranked.c.rn <= 8).order_by(ranked.c.session_id, ranked.c.rn)
+    )
+
+    by_session: dict[uuid.UUID, list[ChatMessage]] = {}
+    for m in result.scalars().all():
+        by_session.setdefault(m.session_id, []).append(m)
+
+    previews: dict[uuid.UUID, str | None] = {}
+    for sid in session_ids:
+        previews[sid] = None
+        for m in by_session.get(sid, ()):
+            if m.kind in ("journal_progress", "journal_complete"):
+                resolved = await _journal_sidebar_preview(session, m, user_id=user_id)
+                if resolved:
+                    previews[sid] = resolved[:80]
+                    break
+                continue
+            content = (m.content or "").strip()
+            if content:
+                previews[sid] = content[:80]
+                break
+    return previews
+
+
 async def _journal_sidebar_preview(
     session: AsyncSession,
     message: ChatMessage,
