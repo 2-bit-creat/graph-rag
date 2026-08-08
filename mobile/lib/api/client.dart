@@ -599,8 +599,12 @@ class ApiClient {
   /// stored on the profile (reported by the device on launch), which is also
   /// what attempt recording uses — passing it per request let the two disagree.
   Future<Map<String, dynamic>> getQuizProgressDashboard() async {
-    final resp = await _dio.get('/quiz/progress/dashboard');
-    return Map<String, dynamic>.from(resp.data as Map);
+    try {
+      final resp = await _dio.get('/quiz/progress/dashboard');
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '학습 현황');
+    }
   }
 
   /// Graph Statement nodes visited (or still waiting) by quiz generation.

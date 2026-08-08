@@ -137,8 +137,13 @@ class _MenuScreenState extends State<MenuScreen> {
             const SizedBox(height: AppSpacing.xl),
 
             // 설정 진입점은 상단 프로필 헤더가 겸한다(중복 타일 제거).
-            // ── 개발자 도구 (접힘, 잠금 없음) ─────────────────────────────
-            if (_showOperationalTools) ...[
+            // ── 개발자 도구 (접힘, main 계정 전용) ────────────────────────
+            // 파이프라인/KG 원본 트레이스와 아티팩트를 노출하므로 다른 사람이
+            // 만든(초대된) 계정에는 보이지 않게 main으로 제한한다. kDebugMode로
+            // 감싸면 release web 빌드에서 사라져 배포 환경에선 운영진(main)조차
+            // 학습 품질 진단·복구를 못 하게 되므로 그 대신 계정으로 게이팅한다.
+            if (_showOperationalTools &&
+                accountController.current == 'main') ...[
               Material(
                 color: Colors.transparent,
                 child: InkWell(

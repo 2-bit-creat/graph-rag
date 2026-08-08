@@ -19,6 +19,8 @@ class KgDebugScreen extends StatefulWidget {
 class _KgDebugScreenState extends State<KgDebugScreen> {
   List<dynamic> _runs = [];
   bool _loading = true;
+  bool _loadFailed = false;
+  bool _resetting = false;
   int _selectedIndex = 0;
   bool _showMobileDetail = false;
 
@@ -29,7 +31,10 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _loadFailed = false;
+    });
     try {
       final runs = await apiClient.getKgDebugRuns();
       if (mounted) {
@@ -46,7 +51,12 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadFailed = true;
+        });
+      }
     }
   }
 
@@ -104,17 +114,37 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
         Expanded(
           child: _loading
               ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
-              : _runs.isEmpty
+              : _loadFailed
                   ? Center(
-                      child: Text('실행 기록 없음',
-                          style: TextStyle(
-                              color: AppColors.textMuted, fontSize: 13)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(AppSpacing.md),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('불러오지 못했습니다',
+                                style: TextStyle(
+                                    color: AppColors.textMuted, fontSize: 13)),
+                            const SizedBox(height: AppSpacing.sm),
+                            TextButton.icon(
+                              onPressed: _load,
+                              icon: const Icon(Icons.refresh, size: 16),
+                              label: const Text('다시 시도'),
+                            ),
+                          ],
+                        ),
+                      ),
                     )
-                  : ListView.separated(
-                      itemCount: _runs.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (context, i) => _runTile(i, mobile),
-                    ),
+                  : _runs.isEmpty
+                      ? Center(
+                          child: Text('실행 기록 없음',
+                              style: TextStyle(
+                                  color: AppColors.textMuted, fontSize: 13)),
+                        )
+                      : ListView.separated(
+                          itemCount: _runs.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (context, i) => _runTile(i, mobile),
+                        ),
         ),
         const Divider(height: 1),
         Padding(
@@ -128,8 +158,14 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
                       )),
               const SizedBox(height: AppSpacing.sm),
               OutlinedButton.icon(
-                onPressed: _confirmReset,
-                icon: const Icon(Icons.refresh, size: 16),
+                onPressed: _resetting ? null : _confirmReset,
+                icon: _resetting
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh, size: 16),
                 label: const Text('그래프 초기화', style: TextStyle(fontSize: 13)),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.redAccent,
@@ -178,6 +214,19 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
   }
 
   Widget _detailBody() {
+    if (_loadFailed) {
+      return Center(
+        child: AppEmptyState(
+          icon: Icons.error_outline_rounded,
+          title: '불러오지 못했습니다',
+          action: FilledButton.icon(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('다시 시도'),
+          ),
+        ),
+      );
+    }
     if (_runs.isEmpty) {
       return Center(
         child: AppEmptyState(
@@ -242,6 +291,7 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
       ),
     );
     if (confirm != true || !mounted) return;
+    setState(() => _resetting = true);
     try {
       await apiClient.clearGraph();
       if (mounted) {
@@ -249,12 +299,14 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
           const SnackBar(content: Text('그래프가 초기화되었습니다.')),
         );
       }
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('초기화 실패: $e')),
+          const SnackBar(content: Text('초기화에 실패했습니다. 다시 시도해 주세요.')),
         );
       }
+    } finally {
+      if (mounted) setState(() => _resetting = false);
     }
   }
 }

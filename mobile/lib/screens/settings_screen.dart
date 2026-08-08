@@ -60,6 +60,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   double _dailyCompositionTarget = 5;
   double _quizReviewRatio = 0.5;
   bool _loading = true;
+  bool _loadFailed = false;
   bool _saving = false;
   bool _speakerConsent = accountController.speakerIdConsent;
   bool _speakerBusy = false;
@@ -183,6 +184,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _loadFailed = false;
+    });
     try {
       final profile = await apiClient.getQuizProfile();
       if (mounted) {
@@ -220,7 +225,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadFailed = true;
+        });
+      }
     }
   }
 
@@ -256,7 +266,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr('settings.saveFailed', {'error': e}))),
+          SnackBar(
+            content: Text(tr('settings.saveFailed', {
+              'error': e.toString().replaceFirst('Exception: ', ''),
+            })),
+          ),
         );
       }
     } finally {
@@ -334,7 +348,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
           subtitle: tr('settings.langLevelSubtitle')),
       body: _loading
           ? const AppLoadingScreen()
-          : ListView(
+          : _loadFailed
+              ? AppEmptyState(
+                  icon: Icons.error_outline_rounded,
+                  title: tr('settings.loadFailed'),
+                  action: FilledButton.icon(
+                    onPressed: _load,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: Text(tr('common.retry')),
+                  ),
+                )
+              : ListView(
               padding: const EdgeInsets.fromLTRB(
                 AppSpacing.pageH,
                 AppSpacing.md,

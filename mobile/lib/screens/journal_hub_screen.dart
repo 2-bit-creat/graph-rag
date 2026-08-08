@@ -134,6 +134,11 @@ class _JournalEntryDetailScreenState extends State<JournalEntryDetailScreen>
               ? AppEmptyState(
                   icon: Icons.error_outline_rounded,
                   title: tr('journalHub.loadFailed'),
+                  action: FilledButton.icon(
+                    onPressed: () => _load(),
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: Text(tr('common.retry')),
+                  ),
                 )
               : JournalUserDetailPanel(
                   entryId: widget.entryId,

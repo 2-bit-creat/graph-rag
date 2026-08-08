@@ -26,6 +26,7 @@ class _VocabularyDetailScreenState extends State<VocabularyDetailScreen> {
   List<VocabWord> _words = [];
   bool _loading = true;
   bool _adding = false;
+  final Set<String> _deletingWords = {};
   bool _savingMeta = false;
   String? _error;
   final _addCardKey = GlobalKey<VocabularyWordAddCardState>();
@@ -193,6 +194,7 @@ class _VocabularyDetailScreenState extends State<VocabularyDetailScreen> {
   }
 
   Future<void> _deleteWord(VocabWord word) async {
+    if (_deletingWords.contains(word.word)) return;
     final ok = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
@@ -205,8 +207,9 @@ class _VocabularyDetailScreenState extends State<VocabularyDetailScreen> {
           ),
         ) ??
         false;
-    if (!ok) return;
+    if (!ok || _deletingWords.contains(word.word)) return;
 
+    setState(() => _deletingWords.add(word.word));
     try {
       await apiClient.deleteVocabularyWord(widget.vocabId, word.word);
       if (mounted) {
@@ -220,6 +223,7 @@ class _VocabularyDetailScreenState extends State<VocabularyDetailScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr('vocabDetail.editFailed', {'error': e}))),
         );
+        setState(() => _deletingWords.remove(word.word));
       }
     }
   }
@@ -349,11 +353,20 @@ class _VocabularyDetailScreenState extends State<VocabularyDetailScreen> {
                                   tooltip: tr('vocabDetail.editMeaningTooltip'),
                                   onPressed: () => _editWordMeaning(w),
                                 ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete_outline),
-                                  tooltip: tr('common.delete'),
-                                  onPressed: () => _deleteWord(w),
-                                ),
+                                _deletingWords.contains(w.word)
+                                    ? const Padding(
+                                        padding: EdgeInsets.all(12),
+                                        child: SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                        ),
+                                      )
+                                    : IconButton(
+                                        icon: const Icon(Icons.delete_outline),
+                                        tooltip: tr('common.delete'),
+                                        onPressed: () => _deleteWord(w),
+                                      ),
                               ],
                             ),
                           ),

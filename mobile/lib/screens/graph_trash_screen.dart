@@ -33,6 +33,7 @@ class _GraphTrashScreenState extends State<GraphTrashScreen> {
   List<dynamic> _nodes = [];
   bool _loading = true;
   String? _error;
+  final Set<String> _busyIds = {};
 
   @override
   void initState() {
@@ -60,6 +61,8 @@ class _GraphTrashScreenState extends State<GraphTrashScreen> {
   }
 
   Future<void> _restore(Map<String, dynamic> node) async {
+    final id = node['id'].toString();
+    if (_busyIds.contains(id)) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -71,9 +74,10 @@ class _GraphTrashScreenState extends State<GraphTrashScreen> {
         ],
       ),
     );
-    if (ok != true || !mounted) return;
+    if (ok != true || !mounted || _busyIds.contains(id)) return;
+    setState(() => _busyIds.add(id));
     try {
-      await apiClient.restoreFromTrash(node['id'].toString());
+      await apiClient.restoreFromTrash(id);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr('trash.restoredSnackbar'))),
@@ -85,11 +89,14 @@ class _GraphTrashScreenState extends State<GraphTrashScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr('trash.restoreFailedSnackbar', {'error': e}))),
         );
+        setState(() => _busyIds.remove(id));
       }
     }
   }
 
   Future<void> _purge(Map<String, dynamic> node) async {
+    final id = node['id'].toString();
+    if (_busyIds.contains(id)) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -105,9 +112,10 @@ class _GraphTrashScreenState extends State<GraphTrashScreen> {
         ],
       ),
     );
-    if (ok != true || !mounted) return;
+    if (ok != true || !mounted || _busyIds.contains(id)) return;
+    setState(() => _busyIds.add(id));
     try {
-      await apiClient.purgeFromTrash(node['id'].toString());
+      await apiClient.purgeFromTrash(id);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr('trash.purgedSnackbar'))),
@@ -119,6 +127,7 @@ class _GraphTrashScreenState extends State<GraphTrashScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr('trash.purgeFailedSnackbar', {'error': e}))),
         );
+        setState(() => _busyIds.remove(id));
       }
     }
   }
@@ -168,7 +177,20 @@ class _GraphTrashScreenState extends State<GraphTrashScreen> {
       body: _loading
           ? AppLoadingScreen(message: tr('trash.loadingMessage'))
           : _error != null
-              ? Center(child: Text(_error!, style: const TextStyle(color: Colors.red)))
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(_error!, style: const TextStyle(color: Colors.red)),
+                      const SizedBox(height: 16),
+                      FilledButton.icon(
+                        onPressed: _load,
+                        icon: const Icon(Icons.refresh_rounded),
+                        label: Text(tr('common.retry')),
+                      ),
+                    ],
+                  ),
+                )
               : _nodes.isEmpty
                   ? Center(
                       child: Column(
@@ -191,6 +213,7 @@ class _GraphTrashScreenState extends State<GraphTrashScreen> {
                         final ctx = node['deleted_context'] as Map? ?? {};
                         final orphanCount = (ctx['orphan_node_ids'] as List?)?.length ?? 0;
                         final quizCount = (ctx['quiz_ids'] as List?)?.length ?? 0;
+                        final busy = _busyIds.contains(node['id'].toString());
 
                         return Card(
                           margin: const EdgeInsets.only(bottom: 10),
@@ -255,18 +278,29 @@ class _GraphTrashScreenState extends State<GraphTrashScreen> {
                                       ),
                                     ],
                                     const Spacer(),
-                                    TextButton.icon(
-                                      onPressed: () => _restore(node),
-                                      icon: const Icon(Icons.restore, size: 16),
-                                      label: Text(tr('trash.restoreAction'), style: const TextStyle(fontSize: 13)),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    TextButton.icon(
-                                      onPressed: () => _purge(node),
-                                      style: TextButton.styleFrom(foregroundColor: Colors.red),
-                                      icon: const Icon(Icons.delete_forever, size: 16),
-                                      label: Text(tr('trash.purgeAction'), style: const TextStyle(fontSize: 13)),
-                                    ),
+                                    if (busy)
+                                      const Padding(
+                                        padding: EdgeInsets.symmetric(horizontal: 8),
+                                        child: SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                        ),
+                                      )
+                                    else ...[
+                                      TextButton.icon(
+                                        onPressed: () => _restore(node),
+                                        icon: const Icon(Icons.restore, size: 16),
+                                        label: Text(tr('trash.restoreAction'), style: const TextStyle(fontSize: 13)),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      TextButton.icon(
+                                        onPressed: () => _purge(node),
+                                        style: TextButton.styleFrom(foregroundColor: Colors.red),
+                                        icon: const Icon(Icons.delete_forever, size: 16),
+                                        label: Text(tr('trash.purgeAction'), style: const TextStyle(fontSize: 13)),
+                                      ),
+                                    ],
                                   ],
                                 ),
                               ],

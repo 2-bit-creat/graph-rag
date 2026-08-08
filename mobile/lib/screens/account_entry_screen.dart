@@ -32,7 +32,10 @@ class _AccountEntryScreenState extends State<AccountEntryScreen> {
 
   Future<void> _enter(String handle) async {
     final h = handle.trim().toLowerCase();
-    if (h.isEmpty) return;
+    if (h.isEmpty) {
+      setState(() => _error = tr('account.emptyHandle'));
+      return;
+    }
     setState(() {
       _busy = true;
       _error = null;

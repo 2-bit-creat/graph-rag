@@ -143,7 +143,9 @@ class _KgInsightScreenState extends State<KgInsightScreen> {
               // Offline used to print the developer's uvicorn command here —
               // meaningless (and slightly alarming) to an actual learner.
               Text(
-                isOffline ? tr('insight.offlineSubtitle') : _error!,
+                isOffline
+                    ? tr('insight.offlineSubtitle')
+                    : tr('insight.errorSubtitle'),
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: AppColors.textMuted,
                     ),

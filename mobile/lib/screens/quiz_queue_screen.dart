@@ -221,8 +221,34 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
         ) ??
         false;
     if (!confirmed) return;
-    await Future.wait(_selectedIds.map(apiClient.deleteQuizItem));
-    await _load();
+    final ids = List<String>.from(_selectedIds);
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const AlertDialog(
+        title: Text('보관 중'),
+        content: Row(
+          children: [
+            SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
+            SizedBox(width: 12),
+            Expanded(child: Text('선택한 문제를 보관하고 있습니다…')),
+          ],
+        ),
+      ),
+    );
+    try {
+      await Future.wait(ids.map(apiClient.deleteQuizItem));
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      await _load();
+    } catch (error) {
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('보관 실패: $error')));
+      await _load();
+    }
   }
 
   Future<void> _permanentlyDeleteSelected() async {

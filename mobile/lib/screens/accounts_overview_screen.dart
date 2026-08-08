@@ -28,6 +28,8 @@ class _AccountsOverviewScreenState extends State<AccountsOverviewScreen> {
   List<Map<String, dynamic>> _accounts = [];
   bool _loading = true;
   String? _error;
+  bool _creating = false;
+  final Set<String> _busyHandles = {};
 
   @override
   void initState() {
@@ -59,11 +61,13 @@ class _AccountsOverviewScreenState extends State<AccountsOverviewScreen> {
   }
 
   Future<void> _createAccount() async {
+    if (_creating) return;
     final result = await showDialog<({String handle, String native})>(
       context: context,
       builder: (ctx) => const _CreateAccountDialog(),
     );
     if (result == null) return;
+    setState(() => _creating = true);
     try {
       // Provision only — main stays signed in as main. Switching here would
       // strand the admin in the space they just created; the new id is
@@ -76,6 +80,8 @@ class _AccountsOverviewScreenState extends State<AccountsOverviewScreen> {
       await _load();
     } catch (e) {
       _toast(e.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _creating = false);
     }
   }
 
@@ -83,11 +89,14 @@ class _AccountsOverviewScreenState extends State<AccountsOverviewScreen> {
   /// under the new account, so pop back to it rather than leaving this screen
   /// stacked on top.
   Future<void> _switchTo(String handle) async {
+    if (_busyHandles.contains(handle)) return;
+    setState(() => _busyHandles.add(handle));
     try {
       await accountController.enter(handle, create: false);
       if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
     } catch (e) {
       _toast(e.toString().replaceFirst('Exception: ', ''));
+      if (mounted) setState(() => _busyHandles.remove(handle));
     }
   }
 
@@ -115,7 +124,8 @@ class _AccountsOverviewScreenState extends State<AccountsOverviewScreen> {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true || _busyHandles.contains(handle)) return;
+    setState(() => _busyHandles.add(handle));
     try {
       await apiClient.deleteAccountByHandle(handle);
       // Drop the saved token/handle too, so the entry screen stops offering a
@@ -125,6 +135,7 @@ class _AccountsOverviewScreenState extends State<AccountsOverviewScreen> {
       await _load();
     } catch (e) {
       _toast(e.toString().replaceFirst('Exception: ', ''));
+      if (mounted) setState(() => _busyHandles.remove(handle));
     }
   }
 
@@ -136,8 +147,14 @@ class _AccountsOverviewScreenState extends State<AccountsOverviewScreen> {
         actions: [
           IconButton(
             tooltip: '새 계정 만들기',
-            onPressed: _createAccount,
-            icon: const Icon(Icons.person_add_alt_1_rounded),
+            onPressed: _creating ? null : _createAccount,
+            icon: _creating
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.person_add_alt_1_rounded),
           ),
           IconButton(
             tooltip: '새로고침',
@@ -174,15 +191,19 @@ class _AccountsOverviewScreenState extends State<AccountsOverviewScreen> {
                     final account = _accounts[i];
                     final handle = account['handle']?.toString() ?? '';
                     final isCurrent = handle == accountController.current;
+                    final busy = _busyHandles.contains(handle);
                     return _AccountCard(
                       account: account,
                       isCurrent: isCurrent,
+                      busy: busy,
                       // main administers the others and cannot delete itself;
                       // switching into the account you are already in is a no-op.
-                      onSwitch: isCurrent ? null : () => _switchTo(handle),
-                      onDelete: (account['is_main'] == true || isCurrent)
-                          ? null
-                          : () => _deleteAccount(account),
+                      onSwitch:
+                          (isCurrent || busy) ? null : () => _switchTo(handle),
+                      onDelete:
+                          (account['is_main'] == true || isCurrent || busy)
+                              ? null
+                              : () => _deleteAccount(account),
                     );
                   },
                 ),
@@ -194,12 +215,14 @@ class _AccountCard extends StatelessWidget {
   const _AccountCard({
     required this.account,
     required this.isCurrent,
+    this.busy = false,
     this.onSwitch,
     this.onDelete,
   });
 
   final Map<String, dynamic> account;
   final bool isCurrent;
+  final bool busy;
 
   /// Null when the action does not apply — switching into the current account,
   /// or deleting main / the account in use.
@@ -262,7 +285,20 @@ class _AccountCard extends StatelessWidget {
             Text('가입 ${DateFormat('yyyy.MM.dd').format(createdAt.toLocal())}',
                 style: TextStyle(fontSize: 11, color: context.shell.mutedText)),
           ],
-          if (onSwitch != null || onDelete != null) ...[
+          if (busy) ...[
+            const SizedBox(height: 4),
+            const Row(
+              children: [
+                SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: 8),
+                Text('처리 중…', style: TextStyle(fontSize: 12)),
+              ],
+            ),
+          ] else if (onSwitch != null || onDelete != null) ...[
             const SizedBox(height: 4),
             Row(
               children: [
@@ -345,6 +381,8 @@ class _CreateAccountDialog extends StatefulWidget {
 }
 
 class _CreateAccountDialogState extends State<_CreateAccountDialog> {
+  static final _handleRe = RegExp(r'^[a-z0-9]{3,20}$');
+
   final _controller = TextEditingController();
   String? _native;
   String? _error;
@@ -359,6 +397,10 @@ class _CreateAccountDialogState extends State<_CreateAccountDialog> {
     final handle = _controller.text.trim().toLowerCase();
     if (handle.isEmpty) {
       setState(() => _error = '아이디를 입력하세요.');
+      return;
+    }
+    if (!_handleRe.hasMatch(handle) || handle == 'main') {
+      setState(() => _error = '아이디는 3~20자의 영문 소문자·숫자만 사용할 수 있어요.');
       return;
     }
     if (_native == null) {

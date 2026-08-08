@@ -35,6 +35,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
   List<Map<String, dynamic>> _items = [];
   int _index = 0;
   bool _loading = true;
+  bool _loadFailed = false;
   bool _answered = false;
   bool? _lastCorrect;
   bool _clozeSolved = false;
@@ -59,6 +60,10 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
   }
 
   Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _loadFailed = false;
+    });
     try {
       final session = await apiClient.startQuizSession(
         quizType: widget.quizType,
@@ -77,7 +82,10 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _loading = false);
+        setState(() {
+          _loading = false;
+          _loadFailed = true;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr('quizSession.sessionLoadFailed', {'error': e}))),
         );
@@ -209,6 +217,20 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
       return Scaffold(
         appBar: AppHubAppBar(title: tr('quizSession.quizTitle', {'label': label})),
         body: AppLoadingScreen(message: tr('quizSession.loadingQuestions')),
+      );
+    }
+    if (_loadFailed) {
+      return Scaffold(
+        appBar: AppHubAppBar(title: tr('quizSession.quizTitle', {'label': label})),
+        body: AppEmptyState(
+          icon: Icons.error_outline_rounded,
+          title: tr('quizSession.loadFailedTitle'),
+          action: FilledButton.icon(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh_rounded),
+            label: Text(tr('common.retry')),
+          ),
+        ),
       );
     }
     if (_items.isEmpty) {

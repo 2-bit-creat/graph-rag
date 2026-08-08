@@ -15,7 +15,16 @@ String get resolvedApiBaseUrl {
   // Production web bundles must be built with API_BASE_URL. Keep the fallback
   // exclusively useful for local runs, where Flutter's dev server host is
   // reachable on port 8000. The CI/CD workflow validates and injects an HTTPS
-  // value before it publishes any web bundle.
+  // value before it publishes any web bundle — this is a second line of
+  // defense against a release build ever produced outside that pipeline (e.g.
+  // a manual `flutter build` without --dart-define), which would otherwise
+  // silently ship pointed at localhost/10.0.2.2 over plain HTTP. A plain
+  // `assert` would be stripped from release binaries, so this throws instead.
+  if (kReleaseMode) {
+    throw StateError(
+      'API_BASE_URL must be set via --dart-define for a release build.',
+    );
+  }
   // Flutter web must call the same host that served the app.  `localhost`
   // means the phone itself when a development server is opened through its
   // LAN address (e.g. http://192.168.x.x:5435), so requests never reach the

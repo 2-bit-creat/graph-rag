@@ -19,6 +19,7 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
   List<VocabularySummary> _items = [];
   bool _loading = true;
   String? _error;
+  bool _mutating = false;
 
   @override
   void initState() {
@@ -56,6 +57,7 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
   }
 
   Future<void> _createVocabulary() async {
+    if (_mutating) return;
     final nameCtrl = TextEditingController();
     final descCtrl = TextEditingController();
     final ok = await showDialog<bool>(
@@ -98,6 +100,7 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
         false;
     if (!ok) return;
 
+    setState(() => _mutating = true);
     try {
       await apiClient.createVocabulary(
         name: nameCtrl.text.trim(),
@@ -115,11 +118,13 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
           SnackBar(content: Text(tr('vocabHub.createFailed', {'error': e}))),
         );
       }
+    } finally {
+      if (mounted) setState(() => _mutating = false);
     }
   }
 
   Future<void> _deleteVocabulary(VocabularySummary vocab) async {
-    if (vocab.isDefault) return;
+    if (vocab.isDefault || _mutating) return;
     final ok = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
@@ -138,6 +143,7 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
         false;
     if (!ok) return;
 
+    setState(() => _mutating = true);
     try {
       await apiClient.deleteVocabulary(vocab.id);
       if (mounted) {
@@ -152,10 +158,13 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
           SnackBar(content: Text(tr('vocabHub.deleteFailed', {'error': e}))),
         );
       }
+    } finally {
+      if (mounted) setState(() => _mutating = false);
     }
   }
 
   Future<void> _deleteStatementBank(String langKey, String displayName) async {
+    if (_mutating) return;
     final ok = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
@@ -179,6 +188,7 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
         false;
     if (!ok || !mounted) return;
 
+    setState(() => _mutating = true);
     try {
       final result = await apiClient.deleteAndReextractLanguage(langKey);
       if (mounted) {
@@ -194,6 +204,8 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
           SnackBar(content: Text(tr('vocabHub.deleteFailed', {'error': e}))),
         );
       }
+    } finally {
+      if (mounted) setState(() => _mutating = false);
     }
   }
 
@@ -206,7 +218,7 @@ class _VocabularyHubScreenState extends State<VocabularyHubScreen> {
           IconButton(
             icon: const Icon(Icons.add),
             tooltip: tr('vocabHub.newVocabTooltip'),
-            onPressed: _createVocabulary,
+            onPressed: _mutating ? null : _createVocabulary,
           ),
         ],
       ),

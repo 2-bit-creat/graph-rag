@@ -87,7 +87,7 @@ class _QuizAdminDetailScreenState extends State<QuizAdminDetailScreen> {
         body: AppEmptyState(
           icon: Icons.error_outline,
           title: '상세 정보를 불러오지 못했습니다',
-          subtitle: '$_error',
+          subtitle: _error.toString().replaceFirst('Exception: ', ''),
           action: FilledButton(onPressed: _load, child: const Text('다시 시도')),
         ),
       );
