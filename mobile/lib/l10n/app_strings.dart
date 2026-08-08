@@ -99,6 +99,9 @@ const Map<String, String> _ko = {
   'graph.emptyBody': '+ 버튼으로 첫 일기를 써보세요. 기록이 지식그래프가 됩니다.',
   'journal.failed': '일기 처리에 실패했어요. 잠시 후 다시 시도해 주세요.',
   'quiz.empty': '아직 풀 문제가 없어요. 방금 문제를 만들기 시작했으니 잠시 후 다시 눌러 주세요.',
+  'quiz.preparing': '내 지식그래프에서 문제를 만들고 있어요',
+  'quiz.preparingHint': '20초쯤 걸려요. 다 되면 바로 시작할게요.',
+  'quiz.refillSlow': '문제 만드는 데 오래 걸리고 있어요. 잠시 후 다시 눌러 주세요.',
   'quiz.sessionDone': '이 세션을 다 풀었어요!',
   'quiz.close': '닫기',
   'quiz.more': '더 풀기',
@@ -1260,6 +1263,10 @@ const Map<String, String> _en = {
       "Couldn't process the journal. Please try again in a moment.",
   'quiz.empty':
       'No questions yet. I just started generating some — try again in a moment.',
+  'quiz.preparing': 'Building questions from your knowledge graph',
+  'quiz.preparingHint': "This takes about 20 seconds. I'll start as soon as they're ready.",
+  'quiz.refillSlow':
+      'Questions are taking longer than usual. Please try again in a moment.',
   'quiz.sessionDone': 'You finished this session!',
   'quiz.close': 'Close',
   'quiz.more': 'More',

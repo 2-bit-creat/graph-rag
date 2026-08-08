@@ -54,6 +54,17 @@ class ChatSessionController extends ChangeNotifier {
   final List<Map<String, dynamic>> _distillSentences = [];
   bool _distillLoading = false;
 
+  /// True while an empty queue is being refilled and we are waiting for the
+  /// first cards to land. The feed shows a "만드는 중" card instead of bouncing
+  /// the learner out of quiz mode — see [startQuiz].
+  bool _quizRefilling = false;
+
+  /// Bumped whenever a quiz mode is entered or left, so a refill wait that is
+  /// still polling can tell its session ended and stop touching state.
+  int _quizEpoch = 0;
+
+  bool get quizRefilling => _quizRefilling;
+
   /// Set by the graph screen so referenced nodes glow + the camera flies to them.
   ValueChanged<Set<String>>? onReferencedNodes;
 
@@ -309,6 +320,10 @@ class ChatSessionController extends ChangeNotifier {
     if (_mode == m) return;
     _mode = m;
     if (m == ChatMode.normal) {
+      // Retires the epoch so a refill still polling for this session stops and
+      // does not resurrect quiz state after the learner has left it.
+      _quizEpoch++;
+      _quizRefilling = false;
       _quizItems.clear();
       _quizIndex = 0;
       _quizFeedback = null;
@@ -661,6 +676,7 @@ class ChatSessionController extends ChangeNotifier {
     _clozeCompletedWords.clear();
     _clozeLiveDraft = '';
     _busy = true;
+    final epoch = ++_quizEpoch;
     notifyListeners();
     try {
       final data = await apiClient.startQuizSession(
@@ -673,11 +689,12 @@ class ChatSessionController extends ChangeNotifier {
           .toList();
       _quizItems.addAll(items);
       if (items.isEmpty) {
-        // Nothing queued yet — kick off a background top-up and let the learner
-        // retry shortly. Refill generates straight from their graph statements.
-        errors.value = tr('quiz.empty');
-        _mode = ChatMode.normal;
-        unawaited(apiClient.refillQuizzes());
+        // Nothing queued yet. Refill generates straight from the learner's
+        // graph statements and takes ~20s of LLM + TTS work, so telling them to
+        // "press again in a moment" sent them back too early, onto the same
+        // empty queue. Hold them in quiz mode behind a preparing state and pull
+        // the cards in ourselves the moment they exist.
+        await _refillAndWaitForQuizzes(epoch);
       }
     } catch (e) {
       errors.value = _clean(e);
@@ -685,6 +702,61 @@ class ChatSessionController extends ChangeNotifier {
     } finally {
       _busy = false;
       notifyListeners();
+    }
+  }
+
+  /// How long to keep waiting on a refill before handing control back.
+  ///
+  /// A refill is several LLM calls plus TTS per card; measured end-to-end it
+  /// runs a little over 20s, so the budget has to clear that with room to spare
+  /// or the learner is dropped right before their cards land.
+  static const _refillTimeout = Duration(seconds: 75);
+  static const _refillPollInterval = Duration(seconds: 3);
+
+  /// Kick a queue refill and stay on it until the first cards arrive.
+  ///
+  /// The learner stays in quiz mode the whole time; [quizRefilling] drives a
+  /// "preparing" card in the feed. Returns with items loaded, or leaves quiz
+  /// mode if the refill produced nothing inside [_refillTimeout].
+  Future<void> _refillAndWaitForQuizzes(int epoch) async {
+    _quizRefilling = true;
+    notifyListeners();
+    try {
+      await apiClient.refillQuizzes();
+
+      final deadline = DateTime.now().add(_refillTimeout);
+      while (DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(_refillPollInterval);
+        // The learner left this quiz session (closed it, switched mode, or
+        // started another) — abandon the wait rather than write into it.
+        if (epoch != _quizEpoch) return;
+
+        final data = await apiClient.startQuizSession(
+          quizType: _quizType,
+          size: 5,
+          language: _quizLanguage,
+        );
+        final items = ((data['items'] as List?) ?? [])
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+        if (items.isNotEmpty) {
+          if (epoch != _quizEpoch) return;
+          _quizItems.addAll(items);
+          return;
+        }
+      }
+      if (epoch != _quizEpoch) return;
+      errors.value = tr('quiz.refillSlow');
+      _mode = ChatMode.normal;
+    } catch (e) {
+      if (epoch != _quizEpoch) return;
+      errors.value = _clean(e);
+      _mode = ChatMode.normal;
+    } finally {
+      if (epoch == _quizEpoch) {
+        _quizRefilling = false;
+        notifyListeners();
+      }
     }
   }
 

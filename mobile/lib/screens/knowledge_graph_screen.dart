@@ -1286,6 +1286,44 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   }
 
   Widget? _quizStatusCard() {
+    // Checked before `busy`, which stays true for the whole refill wait: a bare
+    // 18px spinner for ~20s reads as a hang. Name the work and its cost instead.
+    if (chatSession.quizRefilling) {
+      return Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    tr('quiz.preparing'),
+                    style: TextStyle(
+                        color: context.shell.primaryText,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    tr('quiz.preparingHint'),
+                    style: TextStyle(
+                        color: context.shell.mutedText, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     if (chatSession.busy) {
       return const Padding(
         padding: EdgeInsets.all(AppSpacing.md),
