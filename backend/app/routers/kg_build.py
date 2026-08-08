@@ -428,6 +428,17 @@ Return ONLY valid JSON in this exact shape (no markdown, no commentary):
   "사업이 잘 안 된다" → concepts: 사업), not just the emotion word. Each concept
   is an object:
   - name: the concept/entity name.
+    NEVER a referring phrase. "두 방법", "둘 다", "그것", "이 부분", "위 내용",
+    "전자", "후자" are not concepts — they only mean something inside their own
+    sentence, while a concept node is permanent and shared across the entire
+    graph, so such a name becomes a dead node that can never match anything.
+    Read the OTHER claims and name what the phrase refers to:
+      "나는 멀티플보다 현금 흐름이 중요하다고 봤다" / "결국 둘 다 넣기로 했다"
+        → the second claim's concepts are 멀티플 and 현금 흐름, NOT "둘 다".
+      "결국 두 방법을 모두 적용하기로 했다", after claims about 비교기업 분석 and
+        DCF → concepts 비교기업 분석 and DCF, NOT "두 방법".
+    If the referent genuinely cannot be recovered from the text, use the claim's
+    other nouns; never emit the placeholder itself.
   - importance: 1-5 — how central this concept is to THIS statement (5 = the
     statement is essentially about this concept, 1 = mentioned only in passing).
   - kind: "person" if the name is a PROPER NOUN denoting a specific named entity —
@@ -847,6 +858,63 @@ async def _person_candidates_payload(
     ]
 
 
+# ─── Referring-phrase concepts ────────────────────────────────────────────────
+
+# Phrases that only denote something inside their own sentence. The extraction
+# prompt asks for 1–5 concepts and the response schema enforces minItems=1 (see
+# the 2026-07-03 concept-loss guard), so a claim whose real subject was named in
+# an EARLIER claim — "결국 두 방법을 모두 적용하기로 했다" — leaves the model no
+# way to comply except to emit the placeholder. Committed, it becomes a
+# permanent node that can never match anything and that quizzes can be built
+# from. The prompt now asks for the referent instead; this is the net under it.
+_REFERRING_CONCEPTS = frozenset(
+    {
+        "두 방법", "세 방법", "두 가지", "세 가지", "두 안", "양쪽", "둘 다",
+        "그것", "그거", "이것", "이거", "저것", "저거", "그 부분", "이 부분",
+        "그 점", "이 점", "그 내용", "이 내용", "위 내용", "해당 내용",
+        "그 이야기", "이 이야기", "그 얘기", "이 얘기", "해당 부분",
+        "전자", "후자", "위의 것", "앞서 말한 것",
+        "it", "this", "that", "these", "those", "the former", "the latter",
+        "both", "both ways", "the two", "the above",
+    }
+)
+
+
+def _drop_referring_concepts(claims: list[dict]) -> int:
+    """Strip placeholder concepts in place; returns how many were removed.
+
+    A claim CAN end up with zero concepts here — "결국 둘 다 넣기로 했다" carries
+    nothing else — and that is the intended outcome. _persist_claims still writes
+    the Statement node and its speaker edge; only the CONTEXT edge is skipped. The
+    minItems=1 response schema is untouched, so the wholesale concept loss it
+    guards against remains impossible; this drops only phrases that are
+    provably contentless outside their own sentence.
+    """
+    removed = 0
+    for claim in claims:
+        if not isinstance(claim, dict):
+            continue
+        concepts = [c for c in (claim.get("concepts") or []) if isinstance(c, dict)]
+        kept = [
+            c
+            for c in concepts
+            if (c.get("name") or "").strip().casefold() not in _REFERRING_CONCEPTS
+        ]
+        if len(kept) == len(concepts):
+            continue
+        # concepts_matched is positional — rebuild it against the kept concepts
+        # or every downstream flag shifts onto the wrong name.
+        flags = claim.get("concepts_matched")
+        if isinstance(flags, list) and len(flags) == len(concepts):
+            keep_ids = {id(c) for c in kept}
+            claim["concepts_matched"] = [
+                f for c, f in zip(concepts, flags) if id(c) in keep_ids
+            ]
+        removed += len(concepts) - len(kept)
+        claim["concepts"] = kept
+    return removed
+
+
 # ─── DB-verified concept matching ─────────────────────────────────────────────
 
 async def _verify_concept_matches(
@@ -932,6 +1000,11 @@ async def kg_extract(
             for claim in result.get("claims") or []:
                 if isinstance(claim, dict):
                     claim["speaker"] = speaker
+
+        # ── Drop placeholder concepts before anything indexes them ─────────────
+        _drop_referring_concepts(
+            [c for c in (result.get("claims") or []) if isinstance(c, dict)]
+        )
 
         # ── Re-verify matched flags against actual DB (LLMs hallucinate) ────────
         await _verify_concept_matches(result, session, user.id)
@@ -1756,6 +1829,9 @@ async def extract_statement_graph_draft(
     _require_complete_completion(resp.choices[0])
     raw = resp.choices[0].message.content or "{}"
     result = _parse_llm_json(raw)
+    _drop_referring_concepts(
+        [c for c in (result.get("claims") or []) if isinstance(c, dict)]
+    )
     await _verify_concept_matches(result, session, user_id)
 
     # Build claim dicts — diary and external both emit "claims": [...], and the
