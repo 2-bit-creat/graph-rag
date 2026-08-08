@@ -495,6 +495,13 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
     final fontSize = dense ? 12.5 : 14.0;
     final lineHeight = dense ? 1.3 : 1.45;
     final mutedColor = Theme.of(context).colorScheme.onSurfaceVariant;
+    // RichText does NOT inherit DefaultTextStyle, so a root span built from a
+    // bare TextStyle() drops the app's font family and this one line renders in
+    // the platform default while the rest of the card is Pretendard. Derive
+    // from the theme, exactly as the prompt above does.
+    final baseKoStyle = (Theme.of(context).textTheme.bodyMedium ??
+            const TextStyle())
+        .copyWith(fontSize: fontSize, height: lineHeight, color: mutedColor);
     final spanRe = RegExp(
       "<span\\s+color=['\"]#FFA500['\"][^>]*>(.*?)</span>",
       caseSensitive: false,
@@ -503,8 +510,7 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
     final match = spanRe.firstMatch(raw);
     if (match == null) {
       return Text(raw,
-          style: TextStyle(
-              fontSize: fontSize, height: lineHeight, color: mutedColor));
+          style: baseKoStyle);
     }
     // Older cards used a full-sentence orange span when target alignment was
     // missing. Never present that fallback as if the whole translation were
@@ -522,8 +528,7 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
       final start = sentenceKo.indexOf(targetKo);
       return RichText(
         text: TextSpan(
-          style: TextStyle(
-              fontSize: fontSize, height: lineHeight, color: mutedColor),
+          style: baseKoStyle,
           children: [
             TextSpan(text: sentenceKo.substring(0, start)),
             TextSpan(
@@ -540,8 +545,7 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
     }
     return RichText(
       text: TextSpan(
-        style: TextStyle(
-            fontSize: fontSize, height: lineHeight, color: mutedColor),
+        style: baseKoStyle,
         children: [
           TextSpan(text: raw.substring(0, match.start)),
           TextSpan(
