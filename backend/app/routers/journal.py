@@ -78,6 +78,43 @@ def _schedule_graph_ingest(
         background_tasks.add_task(run_graph_ingest_pipeline, entry_id, user_id)
 
 
+# The list view renders a row per entry; of the whole pipeline trace it reads
+# only the per-step name/error (see mobile journalTraceError + the pipeline
+# panel's offline fallback). Everything else in there is debug bulk — the
+# `flow_layout` canvas geometry, and each step's raw LLM `system_prompt`,
+# `input` and `output`. Measured on a 50-entry account those made
+# `pipeline_trace` 81% of a 240KB response, so a phone paid ~195KB of prompt
+# dumps just to draw a list. Keep the cheap step metadata, drop the bulk; the
+# detail view still gets the full trace from GET /entries/{id}/trace.
+_TRACE_STEP_KEEP = (
+    "step_id",
+    "name",
+    "type",
+    "phase",
+    "status",
+    "error",
+    "model",
+    "latency_ms",
+    "started_at",
+    "ended_at",
+)
+_TRACE_DROP_TOP = ("flow_layout",)
+
+
+def _slim_pipeline_trace(trace: dict | None) -> dict | None:
+    """Strip the debug bulk out of a trace so a list row stays small."""
+    if not isinstance(trace, dict):
+        return trace
+    slim = {k: v for k, v in trace.items() if k not in _TRACE_DROP_TOP}
+    steps = trace.get("steps")
+    if isinstance(steps, list):
+        slim["steps"] = [
+            {k: s[k] for k in _TRACE_STEP_KEEP if k in s} if isinstance(s, dict) else s
+            for s in steps
+        ]
+    return slim
+
+
 async def _entry_out(
     session: AsyncSession,
     user_id: uuid.UUID,
@@ -85,6 +122,7 @@ async def _entry_out(
     *,
     has_graph_nodes: bool | None = None,
     with_speakers: bool = True,
+    slim_trace: bool = False,
 ) -> JournalEntryOut:
     """Journal entry + per-session speaker confirmation status for STT UI.
 
@@ -95,6 +133,8 @@ async def _entry_out(
     which only the detail views actually consume.
     """
     out = JournalEntryOut.model_validate(entry)
+    if slim_trace:
+        out = out.model_copy(update={"pipeline_trace": _slim_pipeline_trace(out.pipeline_trace)})
     trace = entry.pipeline_trace if isinstance(entry.pipeline_trace, dict) else {}
     entry_source = trace.get("entry_source")
     if entry_source is None and entry.audio_url is None:
@@ -596,10 +636,14 @@ async def apply_entry_graph(
 
 @router.get("/entries", response_model=list[JournalEntryOut])
 async def list_entries(
+    # Previously fixed at the crud default, so a client asking for fewer rows
+    # still paid for 50. Bounded so a caller cannot ask the server for the
+    # user's entire history in one response.
+    limit: int = Query(50, ge=1, le=200),
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> list[JournalEntryOut]:
-    entries = await crud.list_journal_entries(session, user.id)
+    entries = await crud.list_journal_entries(session, user.id, limit=limit)
     # One query for the whole list's graph-commit status, and no speaker
     # summaries here — the detail endpoint serves those, and building them per
     # row turned this into dozens of round trips (the "불러오기 실패" timeout).
@@ -611,6 +655,7 @@ async def list_entries(
             e,
             has_graph_nodes=e.id in committed,
             with_speakers=False,
+            slim_trace=True,
         )
         for e in entries
     ]
