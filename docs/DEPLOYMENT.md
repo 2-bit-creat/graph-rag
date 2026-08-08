@@ -21,7 +21,7 @@ Lambda (container image, x86_64)  ←───┘        (not routed through Clo
 | Resource | Value |
 |---|---|
 | CloudFormation stack | `graph-rag-backend` |
-| Lambda Function URL (= `API_BASE_URL`) | `https://u7dslgxujnagqzkhesyvj3sop40dfejb.lambda-url.ap-northeast-2.on.aws` |
+| Lambda Function URL (= `API_BASE_URL`) | `https://6g73u4cqvkrjeybz4i5wczgmn40gsrok.lambda-url.ap-northeast-2.on.aws` (as of 2026-08-08, commit `8e02ad2`) |
 | Web bucket | `graphrag-web-prod-jsy97-248719798440-ap-northeast-2-an` |
 | Web CloudFront (Flutter app) | `https://d2pxpnskssh5n0.cloudfront.net` (dist. `E34UPVZH9U8KG4`) |
 | Media bucket | `graphrag-media-prod-jsy97-248719798440-ap-northeast-2-an` |
@@ -59,6 +59,17 @@ if the function resource is ever replaced — look it up rather than trust a har
 aws cloudformation describe-stack-resource --stack-name graph-rag-backend \
   --logical-resource-id GraphRagFunction --region ap-northeast-2 --profile my-ai-app \
   --query "StackResourceDetail.PhysicalResourceId" --output text
+```
+
+The Function URL in the table above drifts the same way, for the same reason —
+it happened on 2026-08-08 (the value there was stale for at least a few
+deploys before anyone noticed, since nothing exercises it directly outside a
+real client). Look it up instead of trusting the table when it matters:
+
+```bash
+aws cloudformation describe-stacks --stack-name graph-rag-backend \
+  --region ap-northeast-2 --profile my-ai-app \
+  --query "Stacks[0].Outputs[?OutputKey=='FunctionUrl'].OutputValue" --output text
 ```
 
 ## The three-stage workflow
