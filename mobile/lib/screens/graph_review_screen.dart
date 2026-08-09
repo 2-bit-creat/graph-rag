@@ -295,9 +295,29 @@ class _GraphReviewScreenState extends State<GraphReviewScreen> {
                           color: AppColors.accent, size: 20),
                       const SizedBox(width: AppSpacing.sm),
                       Expanded(
-                        child: Text(
-                          tr('graphReview.reviewBanner'),
-                          style: Theme.of(context).textTheme.bodySmall,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              tr('graphReview.reviewBanner'),
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                            const SizedBox(height: AppSpacing.xs),
+                            // The concept gesture legend used to sit under
+                            // every claim card, so a five-claim draft repeated
+                            // the same dense instruction five times. It
+                            // describes the screen, not the card — say it once.
+                            Text(
+                              tr('graphReview.conceptHelpText'),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant),
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -581,15 +601,9 @@ class _ClaimCard extends StatelessWidget {
               ),
             ),
           ),
+          // The gesture legend lives in the page header now — repeating it per
+          // card buried the concepts themselves under boilerplate.
           const SizedBox(height: AppSpacing.sm),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              tr('graphReview.conceptHelpText'),
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ),
-          const SizedBox(height: AppSpacing.xs),
           if (claim.concepts.isEmpty) ...[
             Container(
               padding: const EdgeInsets.symmetric(
