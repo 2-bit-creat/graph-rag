@@ -355,6 +355,11 @@ class _ChatSidebarState extends State<ChatSidebar> {
                         ? title!
                         : tr('sidebar.newRoomDefaultTitle'),
                     subtitle: preview,
+                    // Rooms are auto-titled from their opening message, so a
+                    // habitual opener ("어제 뭐했지?") produces a column of
+                    // identical rows. The date is what actually tells them
+                    // apart, and it works on the rooms that already exist.
+                    stamp: _roomStamp(s['updated_at']?.toString()),
                     active: active,
                     onTap: () => _select(id),
                     onRename: () => _rename(id, title),
@@ -430,10 +435,35 @@ class _ChatSidebarRailState extends State<ChatSidebarRail> {
   }
 }
 
+/// Short "when" label for a room row: a clock today, a weekday this week,
+/// otherwise M/D. Long enough ago and the year matters.
+String? _roomStamp(String? iso) {
+  if (iso == null || iso.isEmpty) return null;
+  final at = DateTime.tryParse(iso)?.toLocal();
+  if (at == null) return null;
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final day = DateTime(at.year, at.month, at.day);
+  final diff = today.difference(day).inDays;
+  if (diff == 0) {
+    return '${at.hour.toString().padLeft(2, '0')}:'
+        '${at.minute.toString().padLeft(2, '0')}';
+  }
+  if (diff == 1) return tr('sidebar.yesterday');
+  if (diff < 7) {
+    // Mon-first, matching DateTime.weekday (1 = Monday).
+    final names = tr('sidebar.weekdaysShort').split(',');
+    if (names.length == 7) return names[at.weekday - 1];
+  }
+  if (at.year != now.year) return '${at.year % 100}.${at.month}.${at.day}';
+  return '${at.month}/${at.day}';
+}
+
 class _RoomTile extends StatelessWidget {
   const _RoomTile({
     required this.title,
     required this.subtitle,
+    required this.stamp,
     required this.active,
     required this.onTap,
     required this.onRename,
@@ -442,6 +472,7 @@ class _RoomTile extends StatelessWidget {
 
   final String title;
   final String? subtitle;
+  final String? stamp;
   final bool active;
   final VoidCallback onTap;
   final VoidCallback onRename;
@@ -483,13 +514,28 @@ class _RoomTile extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            fontSize: 13,
-                            fontWeight:
-                                active ? FontWeight.w700 : FontWeight.w500)),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: active
+                                      ? FontWeight.w700
+                                      : FontWeight.w500)),
+                        ),
+                        if (stamp != null) ...[
+                          const SizedBox(width: 6),
+                          Text(stamp!,
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  color: shell.mutedText,
+                                  fontWeight: FontWeight.w500)),
+                        ],
+                      ],
+                    ),
                     if (subtitle != null && subtitle!.isNotEmpty)
                       Text(subtitle!,
                           maxLines: 1,

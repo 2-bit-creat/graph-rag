@@ -562,6 +562,43 @@ class _SourceDonutState extends State<_SourceDonut> {
     final total = widget.distribution
         .fold<int>(0, (sum, e) => sum + (e['count'] as num).toInt());
 
+    // A ring drawn from one segment is always a full circle: it encodes no
+    // comparison, and the 100% it shows is true by construction. Until there
+    // is a second source to compare against, state the fact instead.
+    if (widget.distribution.length == 1) {
+      final only = widget.distribution.first;
+      return AppSurfaceCard(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md, vertical: AppSpacing.lg),
+          child: Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: _kSegmentColors.first,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  '${only['source'] ?? ''}',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              Text(
+                tr('insight.singleSourceAll',
+                    {'count': '${(only['count'] as num?)?.toInt() ?? total}'}),
+                style: TextStyle(color: context.shell.mutedText, fontSize: 12.5),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final sections = widget.distribution.asMap().entries.map((entry) {
       final i = entry.key;
       final e = entry.value;

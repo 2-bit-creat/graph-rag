@@ -89,7 +89,10 @@ class _MenuScreenState extends State<MenuScreen> {
             const _ThemeModeTile(),
             const SizedBox(height: AppSpacing.xl),
 
-            AppSectionHeader(title: tr('menu.myProfile')),
+            // Not "내 프로필": the hero card directly above already carries
+            // that name, and neither tile below is a profile setting — they
+            // are the vocabulary bank and the study dashboard.
+            AppSectionHeader(title: tr('menu.sectionLearning')),
             const SizedBox(height: AppSpacing.sm),
             AppHubTile(
               icon: Icons.menu_book_rounded,

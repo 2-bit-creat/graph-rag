@@ -430,7 +430,14 @@ class _HeroCard extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        atRisk ? tr('progress.streakAtRisk') : tr('progress.streakOnTrack'),
+                        // With no streak yet there is nothing to continue or
+                        // protect — "오늘도 이어가고 있어요" under a bold 0일
+                        // contradicts the number right above it. Invite a start.
+                        streak <= 0
+                            ? tr('progress.streakNone')
+                            : (atRisk
+                                ? tr('progress.streakAtRisk')
+                                : tr('progress.streakOnTrack')),
                         style: TextStyle(color: Colors.white.withValues(alpha: .84)),
                       ),
                     ],
