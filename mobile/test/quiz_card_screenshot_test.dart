@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:graphrag_mobile/chat/chat_mode_cards.dart';
+import 'package:graphrag_mobile/theme/app_theme.dart';
 import 'package:graphrag_mobile/widgets/quiz/quiz_viewport_scope.dart';
 
 /// Korean renders as empty boxes under the test font, which makes a screenshot
@@ -112,7 +113,10 @@ Widget _harness({
 }) {
   return MaterialApp(
     debugShowCheckedModeBanner: false,
-    theme: ThemeData(brightness: brightness, fontFamily: 'Pretendard'),
+    // The real app theme: several widgets read AppShellTheme off the
+    // context, and a bare ThemeData leaves them with fallback colours
+    // that render nothing.
+    theme: buildAppTheme(brightness: brightness),
     home: MediaQuery(
       data: MediaQueryData(
         size: size,
