@@ -17,11 +17,14 @@ subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
-subprojects {
-    project.evaluationDependsOn(":app")
-}
-
 // Some federated plugins (e.g. desktop_drop 0.5.x) still declare compileSdk 33.
+//
+// MUST be registered before the evaluationDependsOn block below. That block
+// force-evaluates :app while Gradle is still walking the subprojects, so if this
+// one came second it would try to add an afterEvaluate callback to a project
+// that had already been evaluated — which Gradle 9 rejects outright with
+// "Cannot run Project.afterEvaluate(Action) when the project is already
+// evaluated", failing the whole Android build.
 subprojects {
     afterEvaluate {
         plugins.withId("com.android.library") {
@@ -30,6 +33,10 @@ subprojects {
             }
         }
     }
+}
+
+subprojects {
+    project.evaluationDependsOn(":app")
 }
 
 tasks.register<Delete>("clean") {
