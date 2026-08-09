@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Keep in sync with AppColors.graphBgDark in lib/theme/app_theme.dart.
+         The launch window is painted before any Dart runs, so it cannot read
+         the user's stored theme; it uses the app's own default instead. -->
+    <color name="launch_background">#08080C</color>
+</resources>
