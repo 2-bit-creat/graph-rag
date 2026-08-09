@@ -11,6 +11,7 @@ import 'quiz_queue_screen.dart';
 import 'kg_debug_screen.dart';
 import 'learning_progress_screen.dart';
 import 'settings_screen.dart';
+import 'tutor_vocab_screen.dart';
 import 'vocabulary_hub_screen.dart';
 
 /// 계정 · 설정. 내 일기/돌아보기/단어장/퀴즈 큐 같은 자주 쓰는 목적지는 이제
@@ -100,6 +101,18 @@ class _MenuScreenState extends State<MenuScreen> {
               subtitle: '',
               color: AppColors.hubQuiz,
               onTap: () => _open(const VocabularyHubScreen()),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            // Expressions saved from tutor feedback. The chat-centric rework
+            // removed the 학습 탭 this used to launch from and never re-homed
+            // it, so the screen — and the expressions already saved in it —
+            // became unreachable while /tutor/vocab kept serving them.
+            AppHubTile(
+              icon: Icons.school_outlined,
+              title: tr('tutorVocab.pageTitle'),
+              subtitle: tr('menu.tutorVocabSubtitle'),
+              color: AppColors.hubGraph,
+              onTap: () => _open(const TutorVocabScreen()),
             ),
             const SizedBox(height: AppSpacing.sm),
             // 기록 인사이트 used to be its own tile right below this one. Both

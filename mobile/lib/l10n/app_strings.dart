@@ -384,6 +384,7 @@ const Map<String, String> _ko = {
   'menu.normalMode': '일반 모드',
   'menu.myProfile': '내 프로필',
   'menu.sectionLearning': '학습',
+  'menu.tutorVocabSubtitle': '튜터 첨삭에서 담은 표현',
   'menu.myProfileSubtitle': '레벨 · 목표 언어 · 학습 목적 설정',
   // Extra language labels (quiz queue supports more languages than the
   // learnable-target list in settings/kg screens)
@@ -1583,6 +1584,7 @@ const Map<String, String> _en = {
   'menu.normalMode': 'Light mode',
   'menu.myProfile': 'My profile',
   'menu.sectionLearning': 'Learning',
+  'menu.tutorVocabSubtitle': 'Expressions saved from tutor feedback',
   'menu.myProfileSubtitle': 'Level · target languages · learning goals',
   // Extra language labels (quiz queue supports more languages than the
   // learnable-target list in settings/kg screens)
