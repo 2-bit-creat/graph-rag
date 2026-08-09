@@ -54,3 +54,6 @@ backend/static/audio/*.mp3
 
 # Golden-test diff artifacts (regenerated on every failing run)
 mobile/test/failures/
+
+# Android Gradle build output
+mobile/android/build/
