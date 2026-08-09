@@ -290,8 +290,16 @@ class _ExpressionCard extends StatelessWidget {
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.account_tree_outlined, size: 11, color: Colors.grey[500]),
-                              const SizedBox(width: 3),
+                              // account_tree_outlined is a multi-element glyph;
+                              // below ~14px its branches merge and it reads as
+                              // a smudge next to the label rather than as an
+                              // icon. This row is the provenance line — the
+                              // one thing tying an expression back to the
+                              // statement it came from — so it should look
+                              // deliberate.
+                              Icon(Icons.account_tree_outlined,
+                                  size: 14, color: Colors.grey[500]),
+                              const SizedBox(width: 4),
                               Text(
                                 _originLabel(o),
                                 style: TextStyle(fontSize: 11, color: Colors.grey[500]),
