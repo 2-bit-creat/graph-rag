@@ -8,8 +8,15 @@ library;
 ///
 ///   flutter test test/quiz_card_screenshot_test.dart --update-goldens
 ///
-/// The payload below is a real card pulled from POST /quiz/session, not a
-/// hand-written mock, so what renders is what a learner sees.
+///
+/// The generated PNGs are NOT committed (see .gitignore): they render journal
+/// content and this repository is public. There is therefore no baseline in a
+/// fresh clone — run once with --update-goldens to create one locally, then
+/// re-run without it to compare against your own baseline.
+/// The payloads below are synthetic but shaped exactly like a real
+/// POST /quiz/session card — same fields, same Korean/English mix, same
+/// highlight markup. Fixtures never carry a real learner's journal content —
+/// what renders here is what a learner sees, without being anyone's diary.
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -56,23 +63,23 @@ Future<void> _loadAppFont() async {
 
 const _realClozeCard = {
   'quiz_type': 'cloze',
-  'question_ko': '‘보장하는 척합니다’라는 뜻에 맞는 표현은 무엇일까요?',
+  'question_ko': '‘산책하고 싶어지네요’라는 뜻에 맞는 표현은 무엇일까요?',
   'quiz_data': {
-    'prompt_en': 'They ___ quality to customers.',
+    'prompt_en': 'I ___ after dinner.',
     'context_ko':
-        "그들은 고객에게 품질을 <span color='#FFA500'>보장하는 척합니다</span>.",
-    'blank_display': '_ _ _ _ _ _ _   _ _   g _ _ _ _ _ _ _ _',
-    'meaning': '보장하는 척합니다',
-    'surface_form': 'pretend to guarantee',
-    'sentence_en': 'They pretend to guarantee quality to customers.',
-    'sentence_ko': '그들은 고객에게 품질을 보장하는 척합니다.',
+        "저녁을 먹고 나면 <span color='#FFA500'>산책하고 싶어집니다</span>.",
+    'blank_display': '_ _ _ _   _ _ _ _   _   w _ _ _',
+    'meaning': '산책하고 싶어집니다',
+    'surface_form': 'feel like taking a walk',
+    'sentence_en': 'I feel like taking a walk after dinner.',
+    'sentence_ko': '저녁을 먹고 나면 산책하고 싶어집니다.',
     'meaning_parts': [
-      {'native': '척하다', 'target': 'pretend'},
-      {'native': '보장하다', 'target': 'guarantee'},
+      {'native': '~하고 싶다', 'target': 'feel like'},
+      {'native': '산책하다', 'target': 'take a walk'},
     ],
     'hint_ko': '',
-    'canonical_form': 'pretend to guarantee',
-    'accepted_answers': ['pretend to guarantee'],
+    'canonical_form': 'feel like taking a walk',
+    'accepted_answers': ['feel like taking a walk'],
     'language': 'english',
   },
 };
@@ -80,25 +87,24 @@ const _realClozeCard = {
 const _realCompositionCard = {
   'id': 'e5f65d7f-b0b6-41c3-bfcb-5b0b8b9c4ae0',
   'quiz_type': 'composition',
-  'question_ko': 'Carve-outs는 계약서상 풋옵션 권리를 보장하는 척한다.',
-  'question_native': 'Carve-outs는 계약서상 풋옵션 권리를 보장하는 척한다.',
+  'question_ko': '저녁을 먹고 나면 산책하고 싶어집니다.',
+  'question_native': '저녁을 먹고 나면 산책하고 싶어집니다.',
   'quiz_data': {
     'cefr': 'C2',
     'language': 'english',
     'source_label': '진술 노드',
     'model_answers': [
       {
-        'text': 'Carve-outs pretend to guarantee put option rights in the contract.',
-        'note': 'This captures the essence of the original statement.',
+        'text': 'I feel like taking a walk after dinner.',
+        'note': 'Natural and close to the original nuance.',
         'tone': 'neutral',
       },
     ],
     'key_expressions': [
       {
-        'expression': 'pretend to guarantee',
-        'meaning': '계약서상 풋옵션 권리를 보장해 주는 척하다',
-        'example':
-            'Carve-outs pretend to guarantee put option rights in the contract.',
+        'expression': 'feel like -ing',
+        'meaning': '~하고 싶어지다',
+        'example': 'I feel like taking a walk after dinner.',
       },
     ],
   },

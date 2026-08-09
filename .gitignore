@@ -57,3 +57,8 @@ mobile/test/failures/
 
 # Android Gradle build output
 mobile/android/build/
+
+# Golden screenshots are generated locally, never committed: they render real
+# journal content and this repo is public. Regenerate with
+#   QUIZ_SHOT_FONT_DIR=<ttf dir> flutter test <suite> --update-goldens
+mobile/test/screenshots/

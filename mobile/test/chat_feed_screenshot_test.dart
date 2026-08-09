@@ -6,9 +6,14 @@ library;
 ///   QUIZ_SHOT_FONT_DIR=TTF_DIR flutter test \
 ///       test/chat_feed_screenshot_test.dart --update-goldens
 ///
+///
+/// The generated PNGs are NOT committed (see .gitignore): they render journal
+/// content and this repository is public. There is therefore no baseline in a
+/// fresh clone — run once with --update-goldens to create one locally, then
+/// re-run without it to compare against your own baseline.
 /// See quiz_card_screenshot_test.dart for why this exists and why the font has
 /// to be supplied as TTF. Messages below are real rows from
-/// GET /graph/chat/sessions/{id}/messages.
+/// GET /graph/chat/sessions/{id}/messages, with synthetic content.
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -45,16 +50,15 @@ void _silenceMissingPlugin() {
   };
 }
 
-// A real grounded answer: 432 characters citing 13 graph nodes. Long answers
-// over a phone-width sheet are where the feed is most likely to break.
+// Synthetic, but shaped like a real grounded answer: long enough (400+ chars)
+// to exercise wrapping over a phone-width sheet, with cited nodes. Fixtures
+// never carry a real learner's journal content.
 const _assistantAnswer =
-    '어제는 AHP 관련해서 여러 가지 이야기를 나눈 것 같아. 너가 "AHP 가중치 산출 쪽에서 구체적으로 어떤 '
-    '문제가 발생하게 되나요?"라고 물어봤고, 부부장님은 "딜과 산업을 모두 반영하는 전수 개방안을 [1안: 비교안]'
-    '으로 열어두고, AHP 유효성과 운영 효율성을 갖춘 모듈형을 [2안: 최종 제안안]으로 둬서 두 안의 장단점을 '
-    '비교하는 방향으로 보고서를 작성하는 건 어때?"라고 제안했어. 또 딜 영역의 평가항목이나 기준값을 산업마다 '
-    '다르게 설정하면 AHP 가중치 설정에 문제가 생길 수 있다고도 했고, 심사역들에게 산업별로 AHP 설문을 수백 번 '
-    '따로 돌려야 한다고 언급했지. 너는 딜 영역의 산업성 리스크를 차단하는 데 집중하느라 AHP 산식의 수학적 '
-    '유효성이나 심사역들의 현업 운영 피로도는 깊게 고려하지 못했다고 했어. 꽤 바쁘고 중요한 논의가 있었던 것 같네!';
+    '어제는 아침 산책 이야기를 많이 나눴어. 너가 "요즘 아침에 일어나는 게 왜 이렇게 힘들까?"라고 '
+    '물어봤고, 우리는 잠드는 시간이 조금씩 밀린 게 원인일 수 있다는 이야기를 했어. 그래서 저녁 '
+    '먹고 나면 30분 정도 동네를 걷기로 했지. 걷고 나면 잠이 더 잘 온다고 느꼈다고도 했고, 주말에는 '
+    '조금 더 멀리 걸어보고 싶다고 했어. 커피는 오후 세 시 이후로는 마시지 않기로 한 것도 같이 '
+    '정했지. 작은 습관이지만 며칠만 지켜봐도 차이가 보일 것 같네!';
 
 const _nodeIds = [
   '230400b9-0b98-4277-babd-5aaac314013a',
@@ -63,9 +67,9 @@ const _nodeIds = [
 ];
 
 final _nodeById = <String, Map<String, dynamic>>{
-  _nodeIds[0]: {'id': _nodeIds[0], 'name': 'AHP 가중치', 'type': 'Concept'},
-  _nodeIds[1]: {'id': _nodeIds[1], 'name': '부부장님의 모듈형 제안', 'type': 'Statement'},
-  _nodeIds[2]: {'id': _nodeIds[2], 'name': '부부장', 'type': 'Identity'},
+  _nodeIds[0]: {'id': _nodeIds[0], 'name': '아침 산책', 'type': 'Concept'},
+  _nodeIds[1]: {'id': _nodeIds[1], 'name': '저녁 산책 30분 하기로 함', 'type': 'Statement'},
+  _nodeIds[2]: {'id': _nodeIds[2], 'name': '나', 'type': 'Identity'},
 };
 
 const _typeColors = <String, Color>{
@@ -105,7 +109,7 @@ void main() {
 
   Widget panel({bool busy = false}) => GraphChatPanel(
         messages: [
-          GraphChatMessage(role: 'user', content: '어제 뭐했지?'),
+          GraphChatMessage(role: 'user', content: '어제 무슨 얘기 했지?'),
           GraphChatMessage(
             role: 'assistant',
             content: _assistantAnswer,
@@ -119,7 +123,7 @@ void main() {
         onNodeHighlight: (_) {},
         onNodeSelect: (_) {},
         onClearHistory: () {},
-        title: '어제 뭐했지?',
+        title: '어제 무슨 얘기 했지?',
       );
 
   testWidgets('chat feed — grounded answer', (tester) async {
@@ -185,7 +189,7 @@ void main() {
         child: ChatSuggestionRail(
           suggestions: const [
             ChatSuggestion.action('일기 쓰기', 'journal'),
-            ChatSuggestion.prompt('어제 뭐했지?'),
+            ChatSuggestion.prompt('어제 무슨 얘기 했지?'),
             ChatSuggestion.action('단어 퀴즈', 'word'),
             ChatSuggestion.action('작문 퀴즈', 'composition'),
             ChatSuggestion.prompt('이번 주에 배운 표현 정리해줘'),
