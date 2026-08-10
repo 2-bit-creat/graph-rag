@@ -125,7 +125,7 @@ async def delete_me(
     return {"status": "deleted"}
 
 
-def _handle_from_email(email: str) -> str:
+def handle_from_email(email: str) -> str:
     """Reverse the /auth/simple email encoding back to the handle the user
     actually typed. `dev@local` is the reserved "main" space."""
     if email == DEV_EMAIL:
@@ -167,7 +167,7 @@ async def list_accounts(
 
     return [
         AccountSummaryOut(
-            handle=_handle_from_email(u.email),
+            handle=handle_from_email(u.email),
             created_at=u.created_at,
             journal_count=journal_counts.get(u.id, 0),
             node_count=node_counts.get(u.id, 0),

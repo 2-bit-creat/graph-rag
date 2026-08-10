@@ -1,4 +1,4 @@
-# MyLife English — GraphRAG Language Platform
+# Daylog — GraphRAG Language Platform
 
 Flutter (mobile/web) + FastAPI backend. Personalized daily English learning from Korean voice journals.
 

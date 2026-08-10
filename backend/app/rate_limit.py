@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import get_settings
 from .models import User
+from .quiz_progress import user_timezone_name
 
 # Counter names. Endpoints that share a budget share a kind — the three quiz
 # generation routes are one wallet, because they cost the same thing.
@@ -34,13 +35,22 @@ KIND_STT = "stt"
 ALL_KINDS = (KIND_QUIZ_GEN, KIND_KG_EXTRACT, KIND_OCR, KIND_CHAT, KIND_STT)
 
 
-def local_day(now: datetime | None = None) -> date:
-    """Today's date in the app's configured timezone.
+def local_day(now: datetime | None = None, *, user: User | None = None) -> date:
+    """Today's date at the boundary that resets this learner's quota.
 
     Quotas that reset at UTC midnight reset at 9am in Seoul — mid-morning, in
     the middle of a study session. Reset at local midnight instead.
+
+    ``user`` picks the learner's own zone via
+    :func:`quiz_progress.user_timezone_name`, which streaks, the daily goal and
+    the XP cap already use. Without it a learner outside Seoul saw their streak
+    roll over at their midnight while the quota kept running on Seoul's — two
+    different "days" inside one session. Callers that have no User (and the
+    tests that pin the boundary) fall back to the configured zone.
     """
-    tz = ZoneInfo(get_settings().chat_timezone)
+    tz = ZoneInfo(
+        user_timezone_name(user) if user is not None else get_settings().chat_timezone
+    )
     moment = now.astimezone(tz) if now is not None else datetime.now(tz)
     return moment.date()
 
@@ -100,7 +110,7 @@ async def consume(
 
     result = await session.execute(
         _INCREMENT_SQL,
-        {"user_id": user.id, "day": local_day(), "kind": kind},
+        {"user_id": user.id, "day": local_day(user=user), "kind": kind},
     )
     used = int(result.scalar_one())
     # The counter must survive the request even when the handler later raises,
@@ -122,7 +132,7 @@ async def remaining(
             "SELECT kind, count FROM usage_counters "
             "WHERE user_id = :user_id AND day = :day"
         ),
-        {"user_id": user_id, "day": local_day()},
+        {"user_id": user_id, "day": local_day(user=user)},
     )
     used_by_kind = {row[0]: int(row[1]) for row in rows}
 

@@ -107,6 +107,9 @@ class _ChatHomeShellState extends State<ChatHomeShell> {
       final profile = await apiClient.getUserProfile();
       await appLocaleController
           .setFromNativeLanguage(profile['native_language']?.toString());
+      // The server decides who sees the operator/developer tools; the menu only
+      // renders that answer.
+      accountController.setOperator(profile['is_operator'] == true);
       await _syncTimezone(profile['timezone']?.toString());
     } catch (_) {
       // Non-fatal — keep the persisted locale.

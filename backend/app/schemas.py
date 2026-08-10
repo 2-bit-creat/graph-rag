@@ -725,6 +725,10 @@ class LearningProfileOut(BaseModel):
     # Per-counter {used, limit, remaining} for today. `limit`/`remaining` are
     # null when that counter is unlimited for this tier.
     daily_quota: dict[str, dict[str, int | None]] = {}
+    # Whether this account may open the operator/developer tools (quiz queue,
+    # pipeline traces, KG debug, account administration). Server-decided so the
+    # client cannot grant itself access by choosing a handle.
+    is_operator: bool = False
 
 
 class QuizQueueItemOut(BaseModel):

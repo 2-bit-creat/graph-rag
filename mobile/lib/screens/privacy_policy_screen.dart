@@ -125,19 +125,58 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
     bool italic = false,
     bool mono = false,
   }) {
+    final base = TextStyle(
+      color: color,
+      fontSize: size,
+      fontWeight: weight,
+      height: 1.5,
+      fontStyle: italic ? FontStyle.italic : FontStyle.normal,
+      fontFamily: mono ? 'monospace' : null,
+    );
     return Padding(
       padding: EdgeInsets.only(top: top, bottom: 2),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: color,
-          fontSize: size,
-          fontWeight: weight,
-          height: 1.5,
-          fontStyle: italic ? FontStyle.italic : FontStyle.normal,
-          fontFamily: mono ? 'monospace' : null,
-        ),
-      ),
+      // Table rows are already monospaced on purpose — leave their pipes and
+      // backticks byte-for-byte rather than reflowing them as inline markup.
+      child: mono
+          ? Text(text, style: base)
+          : Text.rich(TextSpan(children: _inlineSpans(text, base)), style: base),
     );
+  }
+
+  /// The line renderer above handles block syntax (`#`, `>`, tables) but used
+  /// to emit every line as literal text, so the policy's inline `**bold**` and
+  /// `` `code` `` markers were shown to the reader verbatim — the legal copy
+  /// arrived looking like unrendered source. This walks the two inline forms
+  /// the served document actually uses and turns them into real styling.
+  static final _inlinePattern = RegExp(r'\*\*(.+?)\*\*|`(.+?)`', dotAll: true);
+
+  static List<InlineSpan> _inlineSpans(String text, TextStyle base) {
+    final spans = <InlineSpan>[];
+    var cursor = 0;
+    for (final m in _inlinePattern.allMatches(text)) {
+      if (m.start > cursor) {
+        spans.add(TextSpan(text: text.substring(cursor, m.start)));
+      }
+      final bold = m.group(1);
+      spans.add(
+        bold != null
+            ? TextSpan(
+                text: bold,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              )
+            : TextSpan(
+                text: m.group(2),
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: base.fontSize == null ? null : base.fontSize! - 0.5,
+                ),
+              ),
+      );
+      cursor = m.end;
+    }
+    if (cursor < text.length) {
+      spans.add(TextSpan(text: text.substring(cursor)));
+    }
+    return spans;
   }
 }

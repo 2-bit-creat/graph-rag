@@ -69,6 +69,13 @@ class Settings(BaseSettings):
     # or transcripts, so they stay ON in production — the menu exposes them in
     # release web builds and gating them on debug is what made them 404.
     operator_tools_enabled: bool = True
+    # Handles allowed to see the operator/developer tools. The client used to
+    # decide this itself with `handle == 'main'`, which meant anyone who signed
+    # in with that handle got pipeline traces and account administration — the
+    # gate lived on the wrong side of the network. The server now answers it
+    # (LearningProfileOut.is_operator) and the app only renders the answer.
+    # Comma-separated; empty disables the tools for everyone.
+    operator_handles: str = "main"
     # Debug artifacts older than this are swept at startup (0 disables the sweep).
     debug_runs_retention_days: int = 7
     s3_bucket: str = ""
@@ -231,6 +238,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def operator_handle_list(self) -> list[str]:
+        return [h.strip().lower() for h in self.operator_handles.split(",") if h.strip()]
 
     @property
     def is_production(self) -> bool:

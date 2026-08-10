@@ -4,4 +4,7 @@
          The launch window is painted before any Dart runs, so it cannot read
          the user's stored theme; it uses the app's own default instead. -->
     <color name="launch_background">#08080C</color>
+    <!-- Adaptive-icon background. AppColors.hubGraph — the same indigo the
+         in-app hub mark uses on the entry and loading screens. -->
+    <color name="ic_launcher_background">#4F46E5</color>
 </resources>

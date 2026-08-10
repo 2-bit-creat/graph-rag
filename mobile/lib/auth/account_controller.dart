@@ -36,6 +36,21 @@ class AccountController extends ChangeNotifier {
   bool get needsConsent => hasAccount && _consentKnown && !_consented;
   bool get speakerIdConsent => _speakerIdConsent;
 
+  // Whether this account may open the operator/developer tools. The answer
+  // comes from the server (LearningProfileOut.is_operator); the app used to
+  // decide it locally with `current == 'main'`, so anyone who signed in under
+  // that handle got pipeline traces and account administration. Defaults to
+  // false so the tools stay hidden until the server has said otherwise.
+  bool _isOperator = false;
+  bool get isOperator => hasAccount && _isOperator;
+
+  /// Records the server's answer for the account that is currently entered.
+  void setOperator(bool value) {
+    if (_isOperator == value) return;
+    _isOperator = value;
+    notifyListeners();
+  }
+
   Future<void> load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -128,6 +143,9 @@ class AccountController extends ChangeNotifier {
     _consentKnown = false;
     _consented = false;
     _speakerIdConsent = false;
+    // Operator access belongs to the account that was entered, so switching or
+    // signing out must drop it rather than carry it into the next space.
+    _isOperator = false;
   }
 
   /// Fetch consent state for the current account; never locks the user out on a

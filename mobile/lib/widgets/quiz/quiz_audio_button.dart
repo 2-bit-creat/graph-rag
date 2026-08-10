@@ -150,11 +150,23 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
     }());
   }
 
+  /// Best-effort warm-up, exactly like [_primeResolved]: a clip that fails to
+  /// prefetch must not surface here.
+  ///
+  /// Two call sites fire this as `unawaited(prepare())`, so a throw had no
+  /// handler at all — a slow TTS fetch hitting [_loadTimeout] crashed out as
+  /// `Unhandled Exception: TimeoutException` while the learner was mid-card.
+  /// The awaited call site ([playCorrectSequence]) was worse: it aborted the
+  /// whole playback sequence. Swallowing here is safe because the real fetch
+  /// happens again inside [_playResolved], which already reports a timeout to
+  /// the learner as a snackbar.
   Future<void> prepare() async {
     final urls = [widget.audioUrl, widget.answerAudioUrl]
         .map(resolveMediaUrl)
         .whereType<String>();
-    await Future.wait(urls.map(_warmResolved));
+    await Future.wait(
+      urls.map((url) => _warmResolved(url).catchError((_) {})),
+    );
   }
 
   Future<void> _playResolved(
@@ -220,7 +232,9 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
 
   static Future<void> _warmResolved(String resolved) {
     if (kIsWeb) {
-      return _webWarmups.putIfAbsent(resolved, () async {
+      final pending = _webWarmups[resolved];
+      if (pending != null) return pending;
+      final warm = () async {
         await _cacheDio.get<List<int>>(
           resolved,
           options: Options(
@@ -228,16 +242,32 @@ class QuizAudioButtonState extends State<QuizAudioButton> {
             followRedirects: true,
           ),
         ).timeout(_loadTimeout);
+      }();
+      _webWarmups[resolved] = warm;
+      // Same poisoned-cache reasoning as _nativeCachedPath.
+      return warm.catchError((Object error) {
+        _webWarmups.remove(resolved);
+        throw error;
       });
     }
     return _nativeCachedPath(resolved).then((_) {});
   }
 
+  /// Memoised so two buttons racing for the same clip share one download.
+  ///
+  /// A *failed* future must not stay memoised: the map is static and lives for
+  /// the whole process, so one timed-out fetch used to poison that URL for the
+  /// rest of the session — every later tap re-awaited the same rejected future
+  /// and reported a failure without ever retrying the network.
   static Future<String> _nativeCachedPath(String resolved) {
-    return _nativeCacheLoads.putIfAbsent(
-      resolved,
-      () => _downloadToCache(resolved),
-    );
+    final pending = _nativeCacheLoads[resolved];
+    if (pending != null) return pending;
+    final load = _downloadToCache(resolved);
+    _nativeCacheLoads[resolved] = load;
+    return load.catchError((Object error) {
+      _nativeCacheLoads.remove(resolved);
+      throw error;
+    });
   }
 
   static Future<String> _downloadToCache(String resolved) async {

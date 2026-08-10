@@ -38,9 +38,11 @@ class ClozeQuizCard extends StatefulWidget {
 
   /// externalInput only: fired after the hint or "정답 보기" buttons are
   /// tapped — both steal keyboard focus from the shared chat composer, which
-  /// is the only place this mode actually accepts typing. The callback both
-  /// clears a stale mismatched attempt (so a hint isn't hidden behind it) and
-  /// returns focus to the composer so typing keeps working afterward.
+  /// is the only place this mode actually accepts typing. The callback returns
+  /// focus to the composer so typing keeps working afterward. It must NOT
+  /// clear the composer: the draft and the hint now share the blank (see
+  /// [ClozeQuizCardState._hintGhost]), and clearing it discarded whatever the
+  /// learner had already typed.
   final VoidCallback? onHintRequested;
 
   @override
@@ -162,6 +164,25 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
   /// already matched (live, externalInput mode only) turns green; the word
   /// currently being typed shows the live draft text plus a blinking cursor
   /// and grows if the attempt runs longer than the real word.
+  /// The ghosted part of a hint, given what the learner has already typed.
+  ///
+  /// Returns null when there is nothing useful left to show — no hint, or the
+  /// draft already spells the hint out — so the slot does not render an empty
+  /// or duplicated fragment.
+  static String? _hintGhost(String display, String? hint) {
+    if (hint == null || hint.isEmpty) return null;
+    if (display.isEmpty) return hint;
+    final typed = display.toLowerCase();
+    final target = hint.toLowerCase();
+    if (typed == target) return null;
+    // Prefix → show only the tail, so the slot reads as one word.
+    if (target.startsWith(typed)) return hint.substring(display.length);
+    // A level-1 hint is just the word's opening character (the 초성 for Korean);
+    // once the learner has typed anything it tells them nothing new.
+    if (hint.length <= 1) return null;
+    return ' · $hint';
+  }
+
   Widget _wordSlot({
     required String display,
     required String targetWord,
@@ -182,7 +203,17 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
     final width =
         ((sizingLength * (dense ? 8.0 : 9.5) + (dense ? 10.0 : 12.0)) * scale)
             .clamp(dense ? 24.0 : 30.0, dense ? 104.0 : 124.0);
-    final showHint = active && display.isEmpty && hintText != null;
+    // The hint sits *beside* the draft rather than replacing it. Rendering the
+    // two exclusively is what forced _requestWordQuizHint to wipe the composer
+    // first, so asking for a hint threw away whatever the learner had already
+    // typed into this blank.
+    //
+    // When the draft is a prefix of the hint, only the missing tail is ghosted
+    // so the slot reads as an inline completion ("inv" + "estors'"). Otherwise
+    // the whole hint follows a thin separator, which keeps a wrong guess and
+    // the hint legible side by side.
+    final ghost = _hintGhost(display, hintText);
+    final showHint = active && ghost != null;
     return InkWell(
       onTap: widget.externalInput ? null : () => _focusNode.requestFocus(),
       borderRadius: BorderRadius.circular(8),
@@ -224,10 +255,10 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
                         fontWeight: FontWeight.w700,
                         fontSize: (dense ? 14 : 16) * scale,
                       ),
-                    )
-                  else if (showHint)
+                    ),
+                  if (showHint)
                     Text(
-                      hintText,
+                      ghost,
                       style: TextStyle(
                         color: scheme.primary.withValues(alpha: 0.45),
                         fontWeight: FontWeight.w700,

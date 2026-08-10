@@ -1209,9 +1209,11 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   void _requestWordQuizHint() {
     if (!chatSession.wordQuizUsesComposer || chatSession.wordQuizSolved) return;
     final keepComposerFocused = _chatInputFocusNode.hasFocus;
-    // Clearing the shared composer synchronously drives updateClozeDraft('')
-    // through its listener, so only the active blank loses its live draft.
-    _chatInputController.clear();
+    // The composer is deliberately NOT cleared here. It used to be, because the
+    // blank rendered its draft and its hint exclusively and the hint would have
+    // been hidden behind the draft — so asking for a hint silently threw away
+    // whatever the learner had typed into that blank. The slot now draws the
+    // hint beside the draft (ClozeQuizCard._hintGhost), so both survive.
     _clozeCardKey.currentState?.requestHint();
     // TextFieldTapRegion prevents the normal outside-tap unfocus. Reassert the
     // existing focus synchronously as a fallback for mobile web engines that

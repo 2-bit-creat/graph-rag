@@ -1,4 +1,4 @@
-# MyLife English — Flutter App
+# Daylog — Flutter App
 
 GraphRAG-based personalized daily English learning client.
 

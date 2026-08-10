@@ -176,7 +176,25 @@ async def get_profile(
         # Surfaced so the client can warn before a generation attempt fails.
         # Learning that the quota is gone from a 429 is learning it too late.
         daily_quota=await rate_limit_remaining(session, user.id, user),
+        is_operator=_is_operator(user),
     )
+
+
+def _is_operator(user: User) -> bool:
+    """Whether this account may open the operator/developer tools.
+
+    Two gates, both server-side: the deployment must have the tools enabled at
+    all, and the handle must be on the allow-list. The app previously decided
+    this locally by comparing the handle to 'main', so signing in with that
+    handle was enough to reach pipeline traces and account administration.
+    """
+    from .auth import handle_from_email
+
+    settings = get_settings()
+    if not settings.operator_tools_enabled:
+        return False
+    handle = handle_from_email(user.email or "").strip().lower()
+    return bool(handle) and handle in settings.operator_handle_list
 
 
 async def _ensure_cloze_audio(session: AsyncSession, quizzes: list) -> None:

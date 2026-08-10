@@ -30,10 +30,6 @@ class MenuScreen extends StatefulWidget {
 class _MenuScreenState extends State<MenuScreen> {
   bool _devToolsExpanded = false;
 
-  // Quiz 큐와 파이프라인 진단은 운영에서 실제 학습 품질을 확인·복구하는
-  // 도구다. kDebugMode로 감싸면 release web 빌드에서 통째로 사라진다.
-  static const bool _showOperationalTools = true;
-
   void _open(Widget screen) {
     Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
   }
@@ -73,6 +69,15 @@ class _MenuScreenState extends State<MenuScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // The operator gate is answered asynchronously by the server, so this
+    // screen has to rebuild when that answer lands (or is cleared on switch).
+    return ListenableBuilder(
+      listenable: accountController,
+      builder: (context, _) => _buildScaffold(context),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(tr('menu.accountSettingsTitle'))),
       body: SingleChildScrollView(
@@ -153,13 +158,14 @@ class _MenuScreenState extends State<MenuScreen> {
             const SizedBox(height: AppSpacing.xl),
 
             // 설정 진입점은 상단 프로필 헤더가 겸한다(중복 타일 제거).
-            // ── 개발자 도구 (접힘, main 계정 전용) ────────────────────────
-            // 파이프라인/KG 원본 트레이스와 아티팩트를 노출하므로 다른 사람이
-            // 만든(초대된) 계정에는 보이지 않게 main으로 제한한다. kDebugMode로
-            // 감싸면 release web 빌드에서 사라져 배포 환경에선 운영진(main)조차
-            // 학습 품질 진단·복구를 못 하게 되므로 그 대신 계정으로 게이팅한다.
-            if (_showOperationalTools &&
-                accountController.current == 'main') ...[
+            // ── 개발자 도구 (접힘, 운영 계정 전용) ────────────────────────
+            // 파이프라인/KG 원본 트레이스와 아티팩트를 노출하므로 아무 계정에나
+            // 보이면 안 된다. kDebugMode로 감싸면 release 빌드에서 사라져
+            // 배포 환경에선 운영진조차 학습 품질 진단·복구를 못 하므로, 대신
+            // 서버가 내려주는 판단(LearningProfileOut.is_operator)으로 게이팅한다.
+            // 앱이 핸들을 직접 비교하던 시절에는 'main'으로 로그인하기만 하면
+            // 누구나 이 도구에 닿을 수 있었다.
+            if (accountController.isOperator) ...[
               Material(
                 color: Colors.transparent,
                 child: InkWell(
@@ -218,8 +224,10 @@ class _MenuScreenState extends State<MenuScreen> {
                     ),
                   ),
                 ),
-                // main만 계정을 만들고 지운다. kDebugMode로 감싸면 release web
-                // 빌드에서 사라져 배포 환경에선 계정을 아예 관리할 수 없었다.
+                // 계정 관리는 다른 사람의 공간까지 열거·삭제하므로 운영 계정
+                // 중에서도 예약 핸들 'main'에만 보인다. 서버도 같은 규칙을
+                // 강제하므로(auth.require_main_account → 403) 이 조건은 헛된
+                // 진입점을 감추는 용도다.
                 if (accountController.current == 'main') ...[
                   const SizedBox(height: AppSpacing.sm),
                   AppHubTile(

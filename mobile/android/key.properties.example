@@ -1,0 +1,19 @@
+# Release signing credentials for Daylog.
+#
+# Copy to android/key.properties and fill in. That file is gitignored and must
+# never be committed — anyone holding it can publish updates as you.
+#
+# Create the upload keystore once (keep the .jks and these passwords backed up
+# somewhere you will still have in five years; losing them means you can never
+# update the app on Play again):
+#
+#   keytool -genkey -v -keystore %USERPROFILE%\daylog-upload.jks \
+#           -storetype JKS -keyalg RSA -keysize 2048 -validity 10000 \
+#           -alias daylog-upload
+#
+# storeFile is resolved relative to android/app/, so an absolute path is safest.
+
+storeFile=C:/Users/<you>/daylog-upload.jks
+storePassword=
+keyAlias=daylog-upload
+keyPassword=

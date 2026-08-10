@@ -1286,7 +1286,10 @@ class _ClaimCard extends StatelessWidget {
         ? '${c.name} ${tr('graphReview.suggestedSuffix', {'name': c.resName ?? ''})}'
         : linked
             ? '${c.name} ${tr('graphReview.linkedSuffix', {'name': c.resName ?? ''})}'
-            : '${c.name} · ${c.importance}';
+            // Importance already reads off the avatar badge (and its tint).
+            // Repeating it as a "· 5" suffix showed the same number twice on
+            // one chip and pushed longer concept names into an ellipsis.
+            : c.name;
     return GestureDetector(
       onLongPress: () {
         c.kind = 'person';
