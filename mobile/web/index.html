@@ -112,13 +112,17 @@
       Only Flutter's should be visible. The element stays fully functional; it
       just stops drawing. Flutter's own colours are set in
       lib/theme/app_theme.dart (textSelectionTheme).
+
+      Each selector gets its OWN rule on purpose. A comma-separated group is
+      discarded in full if a browser fails to parse any one of its selectors, so
+      pairing ::selection with the -moz- prefixed spelling meant Chromium and
+      WebKit dropped both and this whole fix silently did nothing.
     */
-    .flt-text-editing::selection,
-    .flt-text-editing::-moz-selection,
-    flt-text-editing-host *::selection,
-    flt-glass-pane *::selection {
-      background: transparent;
-    }
+    .flt-text-editing::selection { background: transparent; }
+    .flt-text-editing *::selection { background: transparent; }
+    flt-text-editing-host *::selection { background: transparent; }
+    /* Firefox only — must stay separate, see above. */
+    .flt-text-editing::-moz-selection { background: transparent; }
     /* The DOM element would otherwise draw a second caret beside Flutter's. */
     .flt-text-editing { caret-color: transparent; }
     /* iOS Safari's grey flash when a tap lands on the editable overlay. */
