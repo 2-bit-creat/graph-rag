@@ -23,7 +23,10 @@ from .temporal import parse_time_window
 AnswerIntent = Literal[
     "episodic_recall", "entity_recall", "topic_search", "comparison", "summary", "learning"
 ]
-Retriever = Literal["temporal_sql", "entity_exact", "lexical", "dense", "graph", "learning_state"]
+Retriever = Literal[
+    "temporal_sql", "entity_exact", "lexical", "dense", "graph", "learning_state",
+    "graph_overview",
+]
 
 
 class PlanTime(BaseModel):
@@ -123,6 +126,12 @@ Choose only retrievers needed for the question:
 - dense for semantic topic matching
 - graph for connected memory expansion
 - learning_state only for an explicit learning/review request
+- graph_overview for questions ABOUT the collection itself rather than about
+  anything recorded in it: what is in my graph, how much have I written, which
+  topics or people come up most, how far back does it go. These match no single
+  memory, so the similarity retrievers return nothing for them. When you choose
+  graph_overview it may stand alone — do not pad the plan with dense/graph
+  unless the question ALSO asks about a specific memory.
 Use hard time constraints only when the user explicitly asks for a period. A date supplied
 by the system as LOCKED_TIME is authoritative: include it unchanged and never widen or move it.
 Leave event_status empty unless the question is itself about an event's status ("what got
@@ -201,8 +210,9 @@ async def create_search_plan(message: str, *, now: datetime, tz: ZoneInfo, clien
         raw = (response.choices[0].message.content or "{}").strip()
         parsed = json.loads(raw)
         plan = _lock_time(SearchPlan.model_validate(parsed), locked)
-        # A pure temporal SQL plan has no need for embedding or reranking.
-        if plan.retrievers == ["temporal_sql"]:
+        # A pure temporal SQL plan has no need for embedding or reranking, and
+        # neither does a pure overview plan — its whole answer is SQL aggregates.
+        if plan.retrievers in (["temporal_sql"], ["graph_overview"]):
             plan.fusion = "none"
             plan.rerank = False
         return PlannedQuery(plan=plan, status="ok", locked_time=locked, raw_plan=parsed)

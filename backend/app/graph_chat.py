@@ -30,6 +30,7 @@ from .crud import (
     find_statements_by_time_window,
     user_has_alias_embeddings,
 )
+from .graph_overview import safe_graph_overview
 from .graph_retrieval import RankedContext, build_ranked_context
 from .query_planner import PlannedQuery, create_search_plan
 from .models import Node, User
@@ -439,6 +440,19 @@ async def graph_chat_answer(
         context = time_window_label or ""
         referenced_node_ids = [str(n.id) for n in temporal_seeds]
 
+    # A question about the collection itself ("내 그래프에 뭐가 있어?") is similar
+    # to no single Statement, so the retrievers above legitimately find nothing
+    # and `context` is empty — which the prompt then renders as "기억이 없습니다".
+    # The aggregates answer it instead. Prepended, so a mixed question reads
+    # global-then-specific. referenced_node_ids is deliberately NOT extended:
+    # an overview cites no particular memory, and the graph minimap must keep
+    # meaning "these are the nodes this answer came from".
+    overview = ""
+    if "graph_overview" in plan.retrievers:
+        overview = await safe_graph_overview(session, user.id)
+        if overview:
+            context = "\n\n".join(part for part in (overview, context) if part)
+
     from .languages import label as _language_label
 
     native_label = _language_label(native_language, default="korean")
@@ -477,6 +491,7 @@ async def graph_chat_answer(
             "lexical": len(lexical_seeds),
             "entity": len(speaker_seeds),
             "dense": len(embedding_seeds),
+            "graph_overview": 1 if overview else 0,
             "after_hard_filters": len(seeds),
             "context_packages": len(ranked.packages),
         },
