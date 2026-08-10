@@ -101,52 +101,28 @@
     body { position: fixed; top: 0; left: 0; right: 0; bottom: 0; }
 
     /*
-      Flutter web lays an invisible <input>/<textarea> over every text field so
-      the BROWSER can resolve taps and drags (see the font notes above). That
-      element is a real editable, so the browser paints its own selection
-      highlight on it — on top of the one CanvasKit already painted. Dragging
-      across a word showed both at once: the theme's purple from Flutter and the
-      platform's grey from the browser, offset from each other because the two
-      layouts round differently.
+      NOTE ON THE TEXT-SELECTION OVERLAY — read before adding CSS here again.
 
-      Only Flutter's should be visible. The element stays fully functional; it
-      just stops drawing. Flutter's own colours are set in
-      lib/theme/app_theme.dart (textSelectionTheme).
+      Flutter web lays an invisible <textarea> over every text field so the
+      BROWSER can resolve taps, drive the IME, and back Cut/Copy/Paste. Because
+      it is a real editable, the browser also paints its own selection highlight
+      on it, on top of the one CanvasKit painted — the doubled purple/grey
+      selection, misaligned because the overlay does not follow the field scroll.
 
-      Each selector gets its OWN rule on purpose. A comma-separated group is
-      discarded in full if a browser fails to parse any one of its selectors, so
-      pairing ::selection with the -moz- prefixed spelling meant Chromium and
-      WebKit dropped both and this whole fix silently did nothing.
+      Two attempts at hiding it from here have been reverted:
+
+        * ::selection { background: transparent } — parses fine, works on
+          desktop, and is IGNORED by WebKit on form controls, so it does
+          nothing on the iPhone where the problem was reported.
+        * opacity: 0 — did hide it, and broke pasting. iOS treats a zero-opacity
+          editable as not visible and will not attach the Cut/Copy/Paste callout
+          to it, so the overlay stopped doing the job it exists for.
+
+      The overlay is load-bearing. Do not hide, resize, or user-select:none it.
+      The real defect is that the overlay and the canvas lay the same text out
+      differently (the caret also lands on the wrong character); fix that
+      alignment instead of trying to paint over the symptom.
     */
-    .flt-text-editing::selection { background: transparent; }
-    .flt-text-editing *::selection { background: transparent; }
-    flt-text-editing-host *::selection { background: transparent; }
-    /* Firefox only — must stay separate, see above. */
-    .flt-text-editing::-moz-selection { background: transparent; }
-    /*
-      ...and the one that actually settles it on iOS. WebKit ignores author
-      ::selection on form controls, so the rules above are honoured on desktop
-      and quietly skipped on iPhone, which is where the doubled highlight was
-      reported and stayed after they started parsing correctly.
-
-      Flutter already draws NOTHING visible in this element: it sets
-      color/background/caret-color to transparent (see _setStaticStyleAttributes
-      in the engine's text_editing.dart). The selection highlight is the single
-      thing it still paints, and it is painted in the wrong place — the overlay
-      does not track the field's scroll, which is why the grey block slid away
-      from the purple one while scrolling. Taking the whole element out of the
-      paint pass removes it and costs nothing that was ever meant to be seen.
-
-      opacity does not affect hit-testing, so the element keeps doing its real
-      jobs: resolving taps, feeding the IME, and backing Cut/Copy/Paste. The
-      !important is required to beat Flutter's inline opacity:1.
-    */
-    .flt-text-editing { opacity: 0 !important; }
-    /* The DOM element would otherwise draw a second caret beside Flutter's. */
-    .flt-text-editing { caret-color: transparent; }
-    /* iOS Safari's grey flash when a tap lands on the editable overlay. */
-    .flt-text-editing,
-    flt-text-editing-host { -webkit-tap-highlight-color: transparent; }
 
     /*
       Engine boot (CanvasKit + Dart init) runs for several seconds before
