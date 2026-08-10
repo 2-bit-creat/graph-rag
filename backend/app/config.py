@@ -76,6 +76,18 @@ class Settings(BaseSettings):
     # (LearningProfileOut.is_operator) and the app only renders the answer.
     # Comma-separated; empty disables the tools for everyone.
     operator_handles: str = "main"
+    # Knowledge-graph extraction must not silently lose sentences. After the LLM
+    # responds, the concatenated claim statements are measured against the source
+    # with precision_text.native_ngram_coverage; below this the extractor spends
+    # ONE repair call naming the sentences it dropped.
+    #
+    # 0.85 sits between the two things the score has to tell apart: dropping one
+    # sentence of four costs roughly 25% of the source bigrams, while legitimate
+    # filler removal and 어미 normalisation cost under 10%. (quiz_bundle's 0.72 is
+    # a different comparison — one sentence against one sentence — and is too
+    # permissive here.) Short entries are skipped: n-gram ratios are noisy on them.
+    kg_extract_coverage_min: float = 0.85
+    kg_extract_coverage_min_chars: int = 60
     # Debug artifacts older than this are swept at startup (0 disables the sweep).
     debug_runs_retention_days: int = 7
     s3_bucket: str = ""
@@ -187,6 +199,12 @@ class Settings(BaseSettings):
     graph_chat_planner_max_tokens: int = 350
     chat_timezone: str = "Asia/Seoul"
     graph_chat_temporal_seed_limit: int = 12
+    # graph_overview retriever: meta questions ("내 그래프에 뭐가 있어?", "요즘 자주
+    #말한 주제는?") match no single Statement within graph_chat_max_distance, so
+    # every one of them used to answer "관련된 기억이 없습니다". These cap the
+    # aggregate rows that retriever puts in front of the model.
+    graph_chat_overview_top_concepts: int = 8
+    graph_chat_overview_top_speakers: int = 6
     graph_chat_summary_enabled: bool = True
     graph_chat_summary_batch: int = 8
     graph_chat_summary_max_tokens: int = 600

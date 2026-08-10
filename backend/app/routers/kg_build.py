@@ -43,6 +43,7 @@ from ..entity_types import (
 )
 from ..journal_pipeline import transcribe_audio
 from ..models import JournalEntry, JournalGraphLink, Node, SpeakerProfile, User
+from ..text_coverage import native_ngram_coverage, split_statement_units
 from ..speaker_diarization import SpeakerSegment, diarize_audio
 from ..storage import save_audio_workfile
 from ..temporal import EVENT_STATUSES, resolve_event_temporal
@@ -337,9 +338,16 @@ _CONTENT_TYPE_GUIDANCE: dict[str, str] = {
 def _content_type_guidance_block(content_type: str) -> str:
     table = "\n".join(f"- {name}: {rules}" for name, rules in _CONTENT_TYPE_GUIDANCE.items())
     focus = _CONTENT_TYPE_GUIDANCE.get(content_type, "")
+    # NOT "above all else". That wording turned this table into a filter: a diary
+    # sentence about something outside its list (a data-usage number, a bill, a
+    # commute time) scored below the listed items and was dropped from the output
+    # entirely. The table decides how claims are SPLIT and TITLED — never whether
+    # a sentence survives.
     focus_line = (
-        f'\nThis text\'s content_type is "{content_type}" — prioritize extracting the '
-        f"items listed for it above all else."
+        f'\nThis text\'s content_type is "{content_type}" — use the items listed for it as '
+        "the primary axis for deciding where one claim ends and the next begins, and for "
+        "writing each claim's title. This is a priority order, NOT a filter: content that "
+        "falls outside the list must still appear in some claim's statement."
         if focus
         else ""
     )
@@ -398,12 +406,23 @@ Return ONLY valid JSON in this exact shape (no markdown, no commentary):
   Never force everything into 1 claim just because there is only one speaker, and
   never fragment a single coherent thought into multiple claims just to pad the count.
 
+[COVERAGE — NOTHING MAY BE DROPPED]
+- Every proposition in the source text MUST appear in exactly one claim's "statement".
+- Before you answer, re-read the source sentence by sentence and confirm that each
+  one's content is present somewhere in your output. A sentence that fits none of
+  your existing claims means you need ANOTHER claim, not that the sentence can go.
+- Never keep only the opening sentence of a topic and discard the rest of it.
+- Do not repeat the same proposition across two claims either.
+
 {_content_type_guidance_block(content_type)}
 
 [FIELDS]
 {speaker_rule}
 - title: 5–7 {native_label} words capturing the essence of this claim. Used as the graph node label.
-- statement: 1–2 clean {native_label} sentences (remove filler, preserve full meaning).
+- statement: one self-contained {native_label} statement carrying this claim's FULL
+  content. Use as many sentences as the claim actually needs — there is NO sentence
+  limit. Remove only filler (어…, 음…, stutters, verbatim repetition); never drop a
+  fact, number, time, or consequence, and never truncate to the first sentence.
 - event_time_text: copy only the phrase that states when this event happened
   (for example "어제", "지난주 월요일", "tomorrow"). Never invent a date.
 - temporal_precision: use "relative" for expressions relative to the entry,
@@ -618,6 +637,134 @@ def _require_complete_completion(choice: Any) -> None:
         )
     if reason == "content_filter":
         raise ValueError("LLM refused the content (content_filter)")
+
+
+# ─── Source-coverage guard ────────────────────────────────────────────────────
+#
+# The prompt asks for every proposition to survive into some claim's statement.
+# It is a request, and a model that has decided an entry is "about" one thing
+# will still answer with that thing's first sentence and drop the rest. This
+# measures what actually came back and spends one repair call when it is short.
+#
+# A statement-level check, not a word-level one: native_ngram_coverage tolerates
+# 어미 changes and filler removal (small tail edits) while a whole missing clause
+# takes a large share of the source bigrams with it. See kg_extract_coverage_min.
+
+# A source unit counts as covered well below the whole-entry threshold — partial
+# rephrasing of one sentence is normal, wholesale absence is not.
+_UNIT_COVERED_MIN = 0.6
+
+
+def _claim_statements(result: Any) -> list[str]:
+    """Every non-empty statement string in an extraction result, in order."""
+    if not isinstance(result, dict):
+        return []
+    return [
+        text
+        for claim in (result.get("claims") or [])
+        if isinstance(claim, dict) and (text := (claim.get("statement") or "").strip())
+    ]
+
+
+def _coverage_report(source: str, result: Any) -> dict[str, Any] | None:
+    """Score how much of ``source`` survived, and name what did not.
+
+    Returns None when the entry is too short for the n-gram ratio to mean
+    anything — see ``kg_extract_coverage_min_chars``.
+    """
+    text = (source or "").strip()
+    if len(re.sub(r"\s+", "", text)) < get_settings().kg_extract_coverage_min_chars:
+        return None
+    statements = _claim_statements(result)
+    joined = " ".join(statements)
+    uncovered = [
+        unit
+        for unit in split_statement_units(text)
+        if native_ngram_coverage(unit, joined) < _UNIT_COVERED_MIN
+    ]
+    return {
+        "score": round(native_ngram_coverage(text, joined), 4),
+        "uncovered": uncovered,
+        "claims": len(statements),
+    }
+
+
+def _coverage_repair_prompt(report: dict[str, Any], native_label: str) -> str:
+    missing = "\n".join(f"- {unit}" for unit in report["uncovered"])
+    return (
+        "Your extraction dropped content from the source text. These source "
+        f"sentences do not appear in any claim's statement:\n{missing}\n\n"
+        "Return the COMPLETE JSON again, corrected. Rules for the correction:\n"
+        "- Do not delete any existing claim and do not change any claim's speaker.\n"
+        "- Put each missing sentence's content into the claim it belongs to by "
+        "extending that claim's statement, or add a new claim for it when it "
+        "belongs to none.\n"
+        f"- Statements stay in {native_label}. Keep every fact, number and time "
+        "from the missing sentences.\n"
+        "- Do not repeat the same proposition in two claims."
+    )
+
+
+async def _ensure_source_coverage(
+    *,
+    source: str,
+    result: Any,
+    raw: str,
+    system_prompt: str,
+    user_prompt: str,
+    native_language: str,
+    model: str,
+) -> tuple[Any, dict[str, Any] | None]:
+    """Repair an extraction that lost source content. At most one extra call.
+
+    Returns ``(result, coverage)``. ``coverage`` rides along to the caller so a
+    still-incomplete extraction is visible in the run log and the pipeline trace
+    rather than looking like a clean success.
+
+    Deliberately does NOT synthesise claims from the missing sentences: a claim
+    with no title, concepts or temporal fields would pollute the graph worse than
+    the omission does. The human review UI is the real backstop.
+    """
+    report = _coverage_report(source, result)
+    if report is None:
+        return result, None
+    threshold = get_settings().kg_extract_coverage_min
+    if report["score"] >= threshold and not report["uncovered"]:
+        return result, report
+
+    # Local import for the same reason _build_extraction_system_prompt does it.
+    from ..tutor import _lang_label
+
+    native_label = _lang_label(native_language)
+    try:
+        repaired_resp = await _llm_client().chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+                {"role": "assistant", "content": raw},
+                {"role": "user", "content": _coverage_repair_prompt(report, native_label)},
+            ],
+            temperature=0.1,
+            response_format=_EXTRACTION_RESPONSE_FORMAT,
+        )
+        _require_complete_completion(repaired_resp.choices[0])
+        repaired = _parse_llm_json(repaired_resp.choices[0].message.content or "{}")
+    except Exception as exc:  # noqa: BLE001 — a failed repair must not lose the draft
+        logger.warning("kg_extract coverage repair failed: %s", exc)
+        return result, {**report, "repaired": False}
+
+    repaired_report = _coverage_report(source, repaired)
+    # Never accept a repair that covers less than what it replaced. A model asked
+    # to add content can restructure and drop something else on the way.
+    if repaired_report is None or repaired_report["score"] < report["score"]:
+        logger.warning(
+            "kg_extract coverage repair regressed (%.3f -> %s); keeping original",
+            report["score"],
+            None if repaired_report is None else f"{repaired_report['score']:.3f}",
+        )
+        return result, {**report, "repaired": False}
+    return repaired, {**repaired_report, "repaired": True}
 
 
 # ─── Person-mention enrichment (draft review) ─────────────────────────────────
@@ -994,6 +1141,18 @@ async def kg_extract(
         raw = resp.choices[0].message.content or "{}"
         result = _parse_llm_json(raw)
 
+        # Before anything downstream reshapes the claims: check that the entry's
+        # sentences actually survived, and spend one repair call if they did not.
+        result, coverage = await _ensure_source_coverage(
+            source=body.text,
+            result=result,
+            raw=raw,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            native_language=native_language,
+            model=settings.openai_model,
+        )
+
         # Diary mode: never trust the LLM's speaker field — it's fixed.
         # speaker_matched is recomputed against the DB just below anyway.
         if body.mode == "diary":
@@ -1016,11 +1175,18 @@ async def kg_extract(
         result["person_candidates"] = await _person_candidates_payload(session, user.id)
 
         latency_ms = int((time.monotonic() - t0) * 1000)
+        # A draft that still lost sentences after its repair attempt is NOT "ok".
+        # Naming it in the run log is what makes the loss findable later; the
+        # reviewer's own eyes on the draft are the safety net in the moment.
+        incomplete = bool(coverage and not coverage.get("repaired") and coverage["uncovered"])
+        if coverage is not None:
+            result["coverage"] = coverage
         _log_run({
             "run_id": run_id,
             "mode": body.mode,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "status": "ok",
+            "status": "low_coverage" if incomplete else "ok",
+            "coverage": coverage,
             "latency_ms": latency_ms,
             "token_in": resp.usage.prompt_tokens if resp.usage else None,
             "token_out": resp.usage.completion_tokens if resp.usage else None,
@@ -1769,8 +1935,9 @@ async def extract_statement_graph_draft(
         system_prompt = _build_extraction_system_prompt(
             content_type=context_type, fixed_speaker=speaker_name, native_language=native_language
         )
+        extraction_source = diary_text or labeled_text
         user_prompt = _diary_user_prompt(
-            diary_text or labeled_text,
+            extraction_source,
             speaker_name,
             existing_names,
             header="Source text",
@@ -1807,12 +1974,17 @@ async def extract_statement_graph_draft(
         system_prompt = _build_extraction_system_prompt(
             content_type=context_type, fixed_speaker=speaker_name, native_language=native_language
         )
-        user_prompt = _diary_user_prompt(diary_text or labeled_text, speaker_name, existing_names)
+        extraction_source = diary_text or labeled_text
+        user_prompt = _diary_user_prompt(extraction_source, speaker_name, existing_names)
     else:
         context_type = source_category
         system_prompt = _build_extraction_system_prompt(
             content_type=context_type, fixed_speaker=None, native_language=native_language
         )
+        # Multi-speaker text is labelled per turn; the coverage guard measures the
+        # corrected transcript when there is one, since that is what the prompt
+        # tells the model to extract from.
+        extraction_source = clean_text or labeled_text
         user_prompt = _external_user_prompt(
             labeled_text, source_category, existing_names, corrected_text=clean_text
         )
@@ -1829,6 +2001,17 @@ async def extract_statement_graph_draft(
     _require_complete_completion(resp.choices[0])
     raw = resp.choices[0].message.content or "{}"
     result = _parse_llm_json(raw)
+    # Same guard as the paste path: the entry's later sentences must not vanish
+    # between the cleaned transcript and the claims the reviewer is shown.
+    result, coverage = await _ensure_source_coverage(
+        source=extraction_source,
+        result=result,
+        raw=raw,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        native_language=native_language,
+        model=settings.openai_model,
+    )
     _drop_referring_concepts(
         [c for c in (result.get("claims") or []) if isinstance(c, dict)]
     )
@@ -1911,6 +2094,10 @@ async def extract_statement_graph_draft(
         # "그래프 드래프트" node shows the actual system_prompt/input the LLM used.
         "system_prompt": system_prompt,
         "user_prompt": user_prompt,
+        # How much of the source survived into the claims above, and which source
+        # sentences did not (see _ensure_source_coverage). None for entries too
+        # short to score. Carried into the trace so a silent loss is findable.
+        "coverage": coverage,
     }
 
 

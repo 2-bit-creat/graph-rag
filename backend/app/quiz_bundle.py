@@ -35,6 +35,7 @@ from .language_packs import native_quiz_pack, pair_rules, target_pack
 from .level_guidelines import cefr_label, get_level_band
 from .models import Quiz, User
 from .pipeline_trace import PipelineTracer
+from .text_coverage import native_ngram_coverage, split_statement_units
 from .quiz_audio_engine import synthesize_quiz_audio_assets
 from .quiz_generator import (
     _LANG_DISPLAY_NAMES,
@@ -338,46 +339,11 @@ def _build_cloze_qa_system_prompt(native_label: str, target_label: str) -> str:
     )
 
 
-def _split_statement_units(text: str) -> list[str]:
-    """Split a Statement into stable composition prompts without inventing text."""
-    cleaned = re.sub(r"[ \t]+", " ", (text or "").strip())
-    if not cleaned:
-        return []
-    units = [
-        part.strip()
-        for part in re.split(r"(?<=[.!?。！？])\s+|[\r\n]+", cleaned)
-        if part.strip()
-    ]
-    # A long diary sentence often carries two independently teachable actions
-    # separated by a comma even though it has only one final period.
-    if len(units) == 1 and len(re.sub(r"\s+", "", cleaned)) >= 45 and "," in cleaned:
-        comma_units = [part.strip() for part in cleaned.split(",") if part.strip()]
-        if 2 <= len(comma_units) <= 4 and all(
-            len(re.sub(r"\s+", "", part)) >= 12 for part in comma_units
-        ):
-            units = comma_units
-    return units or [cleaned]
-
-
-def _native_ngram_coverage(source: str, candidate: str, *, size: int = 2) -> float:
-    """Approximate semantic preservation without pretending to translate.
-
-    Korean inflection changes only a small tail, while dropping a proposition
-    removes many character n-grams. This catches planner summaries such as
-    omitting "travel schedule" from a longer source span.
-    """
-    def compact(value: str) -> str:
-        return "".join(re.findall(r"[A-Za-z0-9가-힣]", value.casefold()))
-
-    left = compact(source)
-    right = compact(candidate)
-    if not left:
-        return 1.0
-    if len(left) < size:
-        return 1.0 if left in right else 0.0
-    source_grams = {left[index:index + size] for index in range(len(left) - size + 1)}
-    candidate_grams = {right[index:index + size] for index in range(max(0, len(right) - size + 1))}
-    return len(source_grams & candidate_grams) / max(1, len(source_grams))
+# Both now live in ``precision_text`` so the knowledge-graph extractor can reuse
+# them without importing this module's language packs, TTS and OpenAI client.
+# Kept under their original private names: every call site below is unchanged.
+_split_statement_units = split_statement_units
+_native_ngram_coverage = native_ngram_coverage
 
 
 def _composition_prompt_for_segment(segment: dict[str, Any]) -> str:
