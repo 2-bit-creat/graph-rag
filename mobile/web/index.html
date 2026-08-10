@@ -101,6 +101,31 @@
     body { position: fixed; top: 0; left: 0; right: 0; bottom: 0; }
 
     /*
+      Flutter web lays an invisible <input>/<textarea> over every text field so
+      the BROWSER can resolve taps and drags (see the font notes above). That
+      element is a real editable, so the browser paints its own selection
+      highlight on it — on top of the one CanvasKit already painted. Dragging
+      across a word showed both at once: the theme's purple from Flutter and the
+      platform's grey from the browser, offset from each other because the two
+      layouts round differently.
+
+      Only Flutter's should be visible. The element stays fully functional; it
+      just stops drawing. Flutter's own colours are set in
+      lib/theme/app_theme.dart (textSelectionTheme).
+    */
+    .flt-text-editing::selection,
+    .flt-text-editing::-moz-selection,
+    flt-text-editing-host *::selection,
+    flt-glass-pane *::selection {
+      background: transparent;
+    }
+    /* The DOM element would otherwise draw a second caret beside Flutter's. */
+    .flt-text-editing { caret-color: transparent; }
+    /* iOS Safari's grey flash when a tap lands on the editable overlay. */
+    .flt-text-editing,
+    flt-text-editing-host { -webkit-tap-highlight-color: transparent; }
+
+    /*
       Engine boot (CanvasKit + Dart init) runs for several seconds before
       Flutter paints anything, and an empty <body> spent all of it as a blank
       white page that then flipped to the dark app. Paint the app's own

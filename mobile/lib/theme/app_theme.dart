@@ -235,6 +235,17 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
     // painted something else. See the notes in pubspec.yaml and web/index.html.
     fontFamily: 'Pretendard',
     textTheme: textTheme,
+    // Stated rather than inherited from the seed colour. On web the browser
+    // ALSO paints its own selection on the invisible DOM element Flutter puts
+    // over each field, so a drag showed two overlapping highlights — Flutter's
+    // purple and the browser's grey — in slightly different places. The CSS in
+    // web/index.html suppresses the browser's; this owns what remains, and
+    // fixes the light/dark contrast of the handles and caret at the same time.
+    textSelectionTheme: TextSelectionThemeData(
+      cursorColor: scheme.primary,
+      selectionColor: scheme.primary.withValues(alpha: isDark ? 0.42 : 0.26),
+      selectionHandleColor: scheme.primary,
+    ),
     appBarTheme: AppBarTheme(
       elevation: 0,
       scrolledUnderElevation: 0.5,
