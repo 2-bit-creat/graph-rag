@@ -537,6 +537,14 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
       });
 
   Future<void> _confirm() async {
+    // Re-entrancy guard, and it has to be the FIRST thing here. _submitting used
+    // to be set only on the direct-API path further down, so the two hand-off
+    // paths (compose session / journal task) never set it at all and left the
+    // button live — a second tap sent a second commit for an entry that was
+    // already committed. The server refuses that with 409 graph_locked, so the
+    // graph itself was never doubled, but the controllers turn any failure into
+    // "그래프 확정 실패": the user saw their diary fail right after it succeeded.
+    if (_submitting) return;
     final claims = _claims
         .map((c) => c.toMap())
         .where((m) => (m['statement'] as String).isNotEmpty)
