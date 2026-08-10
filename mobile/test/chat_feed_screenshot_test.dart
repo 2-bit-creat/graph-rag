@@ -121,6 +121,7 @@ void main() {
         nodeById: _nodeById,
         scrollController: ScrollController(),
         onNodeHighlight: (_) {},
+        onNodeFocus: (_) {},
         onNodeSelect: (_) {},
         onClearHistory: () {},
         title: '어제 무슨 얘기 했지?',

@@ -1014,7 +1014,14 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
       final wp = layout.positions[id];
       if (wp == null) continue;
       final tint = _nodeColors[id] ?? const Color(0xFF888888);
-      final bright = Color.lerp(tint, Colors.white, 0.55)!;
+      // "Brighter than the node" only reads as a spark against a dark canvas.
+      // The light canvas is near-white (see the gradient in paint()), so lerping
+      // toward white painted a white flash on a white background — the tap on a
+      // cited node looked like it had done nothing at all. Move AWAY from the
+      // background in whichever direction that is.
+      final bright = _darkCanvas
+          ? Color.lerp(tint, Colors.white, 0.55)!
+          : Color.lerp(tint, Colors.black, 0.30)!;
       final r = (layout.nodeRadii[id] ?? kGraphNodeRadius) * adaptive;
 
       // 밝아진 코어 (블러 글로우).

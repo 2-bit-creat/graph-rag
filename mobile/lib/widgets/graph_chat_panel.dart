@@ -31,6 +31,7 @@ class GraphChatPanel extends StatelessWidget {
     required this.nodeById,
     required this.scrollController,
     required this.onNodeHighlight,
+    required this.onNodeFocus,
     required this.onNodeSelect,
     required this.onClearHistory,
     this.title,
@@ -48,6 +49,10 @@ class GraphChatPanel extends StatelessWidget {
   final Map<String, Map<String, dynamic>> nodeById;
   final ScrollController scrollController;
   final void Function(Set<String> nodeIds) onNodeHighlight;
+
+  /// Tapping a source card: put the camera on THAT node and leave it selected.
+  /// Distinct from [onNodeSelect], which also opens the inspector sheet.
+  final void Function(Map<String, dynamic> node) onNodeFocus;
   final void Function(Map<String, dynamic> node) onNodeSelect;
   final VoidCallback onClearHistory;
 
@@ -241,9 +246,18 @@ class GraphChatPanel extends StatelessWidget {
             ],
             typeColors: typeColors,
             onNodeTap: (node) {
+              // Spark every node this answer cited, so the tap also shows what
+              // else it drew on...
               final ids =
                   m.referencedNodeIds.where(nodeById.containsKey).toSet();
               if (ids.isNotEmpty) onNodeHighlight(ids);
+              // ...but put the camera on the ONE that was tapped. Fitting the
+              // whole cited set was the old behaviour and it zoomed OUT when
+              // those nodes were spread across the graph (focusOnNodes clamps
+              // its fit as low as 0.3), which is the opposite of "show me where
+              // this is". Selecting it also leaves a ring behind after the
+              // 1.4s spark expires.
+              onNodeFocus(node);
             },
             onNodeOpen: onNodeSelect,
           );
