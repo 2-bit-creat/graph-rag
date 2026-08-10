@@ -331,6 +331,10 @@ class CompositionDrillCard extends StatefulWidget {
 }
 
 class _CompositionDrillCardState extends State<CompositionDrillCard> {
+  // A fresh card is a new widget instance (the parent keys it by quiz id),
+  // so this always starts hidden for a new sentence.
+  bool _hintsRevealed = false;
+
   @override
   Widget build(BuildContext context) {
     final qd =
@@ -340,6 +344,10 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
                 ?.toString() ??
             '';
     final glossary = (qd['glossary'] as List?) ?? [];
+    final hints = ((qd['hints'] as List?) ?? [])
+        .whereType<Map>()
+        .where((h) => (h['note']?.toString() ?? '').isNotEmpty)
+        .toList();
     final fb = widget.feedback;
 
     return _CardShell(
@@ -370,6 +378,54 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
                   ),
               ],
             ),
+          ],
+          if (hints.isNotEmpty && fb == null) ...[
+            const SizedBox(height: 8),
+            if (!_hintsRevealed)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => setState(() => _hintsRevealed = true),
+                  icon: const Icon(Icons.lightbulb_outline_rounded, size: 16),
+                  label: Text(tr('chat.compositionHintsShow')),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              )
+            else
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final h in hints.take(3))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.lightbulb_outline_rounded,
+                              size: 14, color: AppColors.textMuted),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              [
+                                h['note']?.toString() ?? '',
+                                if ((h['snippet']?.toString() ?? '')
+                                    .isNotEmpty)
+                                  '"${h['snippet']}"',
+                              ].where((v) => v.isNotEmpty).join('  '),
+                              style: TextStyle(
+                                  fontSize: 12.5,
+                                  color: AppColors.textMuted),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
           ],
           const SizedBox(height: 10),
           if (fb == null)
