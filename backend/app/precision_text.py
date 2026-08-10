@@ -30,9 +30,15 @@ def _pre_slice_bare_speaker_lines(paragraph_text: str) -> list[dict[str, str]]:
     """Heuristic fallback for un-bracketed "이름: 내용" dialogue pastes.
 
     산문 속 콜론("결심: …", "주의: …", URL)을 대화로 오인하지 않도록 보수적으로:
-    ① 서로 다른 화자 2명 이상, ② 한 화자가 2번 이상 말하거나(멀티턴) 매칭 4줄 이상,
-    ③ 비어있지 않은 줄의 60% 이상이 매칭될 때만 대화로 인정. 산문의 섹션 헤더는
-    반복되지 않아 걸러진다. 미분리로 남아도 화자 확인 UI에서 지정 가능.
+    ① 서로 다른 화자 2명 이상, ② **화자당 평균 2턴 이상**, ③ 비어있지 않은 줄의
+    60% 이상이 매칭될 때만 대화로 인정. 미분리로 남아도 화자 확인 UI에서 지정 가능.
+
+    ②가 이 함수의 핵심 판별식이다. 대화는 소수의 화자가 번갈아 **반복** 등장하지만,
+    용어사전·강의노트("약정액: …", "설정액: …", "ROE: …")는 줄마다 새 이름이 나온다.
+    예전 조건은 "한 화자가 2번 이상 OR 매칭 4줄 이상"이었는데, 뒤쪽 우회로 때문에
+    한 번도 반복되지 않는 24줄짜리 금융 용어 정리가 화자 23명짜리 대화로 잘려
+    개념 하나하나가 Identity 노드로 그래프에 박혔다. 평균 턴 수는 그 둘을 정확히
+    가른다 — 2인 대화 20줄이면 10턴/인, 용어사전 24줄이면 1.04턴/인.
     """
     raw_lines = [l.strip() for l in paragraph_text.splitlines() if l.strip()]
     parsed: list[dict[str, str]] = []
@@ -51,8 +57,12 @@ def _pre_slice_bare_speaker_lines(paragraph_text: str) -> list[dict[str, str]]:
     counts: dict[str, int] = {}
     for p in parsed:
         counts[p["speaker"]] = counts.get(p["speaker"], 0) + 1
-    multi_turn = any(c >= 2 for c in counts.values()) or matched >= 4
-    if len(counts) >= 2 and multi_turn and matched * 5 >= len(raw_lines) * 3:
+    # 화자당 평균 2턴 이상. 대화에서는 자연스럽게 성립하고, 줄마다 새 용어가 오는
+    # 정의 목록에서는 절대 성립하지 않는다. 애매하면 대화가 아니라고 본다 —
+    # 놓쳤을 때의 비용(사용자가 화자 확인 UI에서 지정)이 잘못 잘랐을 때의 비용
+    # (지식그래프에 가짜 인물 노드 수십 개)보다 훨씬 싸다.
+    recurring_enough = matched >= len(counts) * 2
+    if len(counts) >= 2 and recurring_enough and matched * 5 >= len(raw_lines) * 3:
         return parsed
     return []
 
