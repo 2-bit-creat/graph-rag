@@ -123,6 +123,25 @@
     flt-text-editing-host *::selection { background: transparent; }
     /* Firefox only — must stay separate, see above. */
     .flt-text-editing::-moz-selection { background: transparent; }
+    /*
+      ...and the one that actually settles it on iOS. WebKit ignores author
+      ::selection on form controls, so the rules above are honoured on desktop
+      and quietly skipped on iPhone, which is where the doubled highlight was
+      reported and stayed after they started parsing correctly.
+
+      Flutter already draws NOTHING visible in this element: it sets
+      color/background/caret-color to transparent (see _setStaticStyleAttributes
+      in the engine's text_editing.dart). The selection highlight is the single
+      thing it still paints, and it is painted in the wrong place — the overlay
+      does not track the field's scroll, which is why the grey block slid away
+      from the purple one while scrolling. Taking the whole element out of the
+      paint pass removes it and costs nothing that was ever meant to be seen.
+
+      opacity does not affect hit-testing, so the element keeps doing its real
+      jobs: resolving taps, feeding the IME, and backing Cut/Copy/Paste. The
+      !important is required to beat Flutter's inline opacity:1.
+    */
+    .flt-text-editing { opacity: 0 !important; }
     /* The DOM element would otherwise draw a second caret beside Flutter's. */
     .flt-text-editing { caret-color: transparent; }
     /* iOS Safari's grey flash when a tap lands on the editable overlay. */
