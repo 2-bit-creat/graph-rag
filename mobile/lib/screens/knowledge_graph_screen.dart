@@ -1225,6 +1225,15 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     }
   }
 
+  /// "3 / 8" position within the loaded quiz queue, or null when there is
+  /// nothing to count against (queue not loaded yet, or already exhausted).
+  String? _quizProgressLabel() {
+    final position = chatSession.quizPosition;
+    final total = chatSession.quizTotal;
+    if (position == null || total == null) return null;
+    return '$position / $total';
+  }
+
   /// Feature cards that live INSIDE the chat scroll so they grow with content and
   /// scroll up with the conversation — distill draft and the active quiz card.
   Widget? _chatListFooter() {
@@ -1247,6 +1256,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           busy: chatSession.busy,
           onNext: chatSession.nextQuiz,
           onExit: _exitInputMode,
+          progress: _quizProgressLabel(),
         );
       case ChatMode.quizWord:
         final quiz = chatSession.activeQuiz;
@@ -1275,6 +1285,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
             }
             setState(() => _wordQuizContentHeight = height);
           },
+          progress: _quizProgressLabel(),
         );
       case ChatMode.journal:
         // Composing now happens directly in the docked input pill (see

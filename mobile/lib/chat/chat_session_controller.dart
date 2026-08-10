@@ -100,6 +100,13 @@ class ChatSessionController extends ChangeNotifier {
   bool get quizExhausted =>
       _quizItems.isNotEmpty && _quizIndex >= _quizItems.length;
 
+  /// 1-based position of the active card within the loaded queue, and the
+  /// queue's current size — e.g. "3 / 8". Null once the queue is exhausted
+  /// (nothing meaningful to count against) or before anything has loaded.
+  int? get quizPosition =>
+      _quizIndex < _quizItems.length ? _quizIndex + 1 : null;
+  int? get quizTotal => _quizItems.isEmpty ? null : _quizItems.length;
+
   // Distill getters
   List<Map<String, dynamic>> get distillSentences =>
       List.unmodifiable(_distillSentences);

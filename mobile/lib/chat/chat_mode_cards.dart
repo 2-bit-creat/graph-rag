@@ -15,6 +15,7 @@ class _CardShell extends StatelessWidget {
   const _CardShell({
     required this.child,
     this.title,
+    this.progress,
     this.onClose,
     this.fillKeyboardViewport = false,
     this.onContentHeightChanged,
@@ -22,6 +23,10 @@ class _CardShell extends StatelessWidget {
 
   final Widget child;
   final String? title;
+
+  /// Short "3 / 8" style position within the current quiz queue, shown next
+  /// to the close button. Null hides it (e.g. while the queue is refilling).
+  final String? progress;
   final VoidCallback? onClose;
   final bool fillKeyboardViewport;
   final ValueChanged<double>? onContentHeightChanged;
@@ -74,6 +79,18 @@ class _CardShell extends StatelessWidget {
                     style: const TextStyle(
                         fontSize: 13, fontWeight: FontWeight.w700)),
               ),
+              if (progress != null) ...[
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: Text(
+                    progress!,
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: context.shell.mutedText),
+                  ),
+                ),
+              ],
               if (onClose != null)
                 InkWell(
                   onTap: onClose,
@@ -297,6 +314,7 @@ class CompositionDrillCard extends StatefulWidget {
     required this.busy,
     required this.onNext,
     required this.onExit,
+    this.progress,
   });
 
   final Map<String, dynamic> quiz;
@@ -304,6 +322,9 @@ class CompositionDrillCard extends StatefulWidget {
   final bool busy;
   final VoidCallback onNext;
   final VoidCallback onExit;
+
+  /// Short "3 / 8" style position within the current quiz queue.
+  final String? progress;
 
   @override
   State<CompositionDrillCard> createState() => _CompositionDrillCardState();
@@ -323,6 +344,7 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
 
     return _CardShell(
       title: tr('chat.compositionQuizTitle'),
+      progress: widget.progress,
       onClose: widget.onExit,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -504,9 +526,13 @@ class WordQuizCard extends StatefulWidget {
     this.onClozeHintRequested,
     this.clozeCardKey,
     this.onContentHeightChanged,
+    this.progress,
   });
 
   final Map<String, dynamic> quiz;
+
+  /// Short "3 / 8" style position within the current quiz queue.
+  final String? progress;
 
   /// Grades the answer and returns the raw result (or null on error).
   final Future<Map<String, dynamic>?> Function({
@@ -626,6 +652,7 @@ class _WordQuizCardState extends State<WordQuizCard> {
 
     return _CardShell(
       title: tr('chat.wordQuizTitle'),
+      progress: widget.progress,
       onClose: widget.onExit,
       fillKeyboardViewport: true,
       onContentHeightChanged: widget.onContentHeightChanged,
