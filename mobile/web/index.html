@@ -97,8 +97,24 @@
       width: 100%;
       overflow: hidden;
       overscroll-behavior: none;
+      /*
+        Mobile WebKit inflates text inside DOM elements on its own ("text
+        autosizing"). CanvasKit is not a DOM element and is never inflated — but
+        the invisible <textarea> Flutter lays over every field IS one. When the
+        two disagree about how wide the same string is, the browser resolves a
+        tap to a different character than the canvas painted there: the caret
+        lands right of where it was pressed, drifting further along the line,
+        and the two selection rectangles stop lining up.
+
+        Pinning it makes both sides measure the same text. WebKit-only
+        behaviour, which is why none of this ever reproduced on desktop.
+      */
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
     }
     body { position: fixed; top: 0; left: 0; right: 0; bottom: 0; }
+    /* The overlay is a separate element; autosizing has to be pinned there too. */
+    .flt-text-editing { -webkit-text-size-adjust: 100% !important; text-size-adjust: 100% !important; }
 
     /*
       NOTE ON THE TEXT-SELECTION OVERLAY — read before adding CSS here again.
