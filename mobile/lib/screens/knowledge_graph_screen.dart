@@ -146,6 +146,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   bool _lastDistillLoading = false;
   bool _lastWordQuizSolved = false;
   String? _lastActiveQuizId;
+  /// Which chat room is on screen — see _onChatSessionSwitched. Null until the
+  /// first room loads, so opening the app is not mistaken for a room switch.
+  String? _lastSessionId;
   ComposePhase? _prevJournalPhase;
   ComposePhase? _prevComposePhase;
   String? _prevJournalGraphStatus;
@@ -174,20 +177,23 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   /// 항상 "현재 살아있는" 컨트롤러를 대상으로 해야 한다.
   ScrollController? _activeChatScrollController;
 
-  /// 입력바 높이 근사치 기반 최소 시트 크기(상태 C) — 정확한 픽셀 측정 대신
-  /// 넉넉한 상수 사용, snap:true 물리가 오차를 흡수한다.
+  /// 최소 시트 크기(상태 C) — 도킹된 입력바 실측 높이 기준.
   ///
   /// [handleClearance]만큼 여유를 더 얹는다 — 이게 없으면 시트를 끝까지
   /// 내렸을 때 드래그 핸들(회색 바)이 시트 밖에 독립적으로 도킹된 입력바
   /// 뒤로 완전히 가려져 "최소화해도 잡을 손잡이가 안 보이는" 상태가 된다.
   /// 최소 높이를 입력바 높이보다 더 크게 잡아, 핸들이 항상 입력바 위로
   /// 분명한 간격을 두고 보이도록 한다.
+  ///
+  /// 여기서 [_inputBarHeight] 실측값을 쓰는 것이 핵심이다. 예전에는 64.0
+  /// 상수였는데, 새 채팅은 메시지가 비어 제안 칩 레일이 입력바에 붙으므로
+  /// (see _buildPersistentInputBar) 실제 높이가 그 상수를 훌쩍 넘는다. 그
+  /// 차이만큼 시트가 입력바 아래로 내려가, 정확히 이 주석이 막으려던 상태 —
+  /// 새 채팅을 열면 손잡이가 아예 안 보이는 상태 — 가 됐다.
   double _sheetMinChildSize(BuildContext context, double graphAreaHeight) {
-    const inputBarApproxHeight = 64.0;
     const handleClearance = 32.0;
-    final minPx = inputBarApproxHeight +
-        handleClearance +
-        MediaQuery.paddingOf(context).bottom;
+    final minPx =
+        _inputBarHeight + handleClearance + MediaQuery.paddingOf(context).bottom;
     if (graphAreaHeight <= 0) return 0.08;
     return (minPx / graphAreaHeight).clamp(0.06, _sheetDefaultSize - 0.02);
   }
@@ -338,7 +344,13 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       nodeById: nodeById,
       scrollController: scrollController,
       title: (chatSession.activeSession?['title'] as String?)?.trim(),
-      onNodeHighlight: nodeById.isEmpty ? (_) {} : _highlightNodes,
+      // The spark marks every cited node; _selectNode aims the camera at the
+      // tapped one, so this must not aim it too.
+      onNodeHighlight: nodeById.isEmpty
+          ? (_) {}
+          : (ids) => _highlightNodes(ids, moveCamera: false),
+      // Tap = go there and stay selected; "열기" = that plus the full inspector.
+      onNodeFocus: nodeById.isEmpty ? (_) {} : (node) => _selectNode(node),
       onNodeSelect: nodeById.isEmpty
           ? (_) {}
           : (node) => _selectNode(node, showSheet: true),
@@ -604,11 +616,44 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     }));
   }
 
+  /// Entering a different chat room resets the two things that are properties of
+  /// the room being READ, not of the app: how tall the sheet is, and who holds
+  /// the keyboard.
+  ///
+  /// Neither used to happen. A sheet dragged down to its minimum stayed there
+  /// (`_chatManuallySized` latches on drag and nothing cleared it), so opening a
+  /// new chat showed a sliver behind the input bar. And focus was simply lost —
+  /// the sidebar that created the room closed and took the keyboard with it,
+  /// while the reflow below only re-focuses after a reply lands, never on a new
+  /// room. That is the "새 채팅 후 키보드가 안 올라온다" report.
+  void _onChatSessionSwitched() {
+    final id = chatSession.activeSession?['id']?.toString();
+    if (id == _lastSessionId) return;
+    final isFirstRoomOfSession = _lastSessionId == null;
+    _lastSessionId = id;
+    if (isFirstRoomOfSession) return; // opening the app, not switching rooms
+
+    setState(() {
+      _chatManuallySized = false;
+      _chatExpandedForInput = false;
+      // Back to the last height the user actually chose, not to whatever
+      // minimum they left the previous room at.
+      _chatSheetSize = _chatRestoredSize > _sheetDefaultSize
+          ? _chatRestoredSize
+          : _sheetDefaultSize;
+    });
+    // unfocus-then-refocus, not a bare requestFocus: on iOS Safari the node can
+    // still believe it is focused while the browser has thrown the editable DOM
+    // element away, and only recreating the connection brings the keyboard back.
+    _restoreComposerFocusAfterBuild();
+  }
+
   void _onChatChanged() {
     if (chatSession.messages.length != _lastMsgCount) {
       _lastMsgCount = chatSession.messages.length;
       _scrollChatToBottom();
     }
+    _onChatSessionSwitched();
     final mode = chatSession.mode;
     // Entering journal mode (incl. from the timeline "+", which returns home
     // and flips the mode) — make sure the chat is showing and scroll to the
@@ -1371,7 +1416,12 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     return null;
   }
 
-  void _highlightNodes(Set<String> nodeIds) {
+  /// Spark [nodeIds] and peek the graph through the chat.
+  ///
+  /// [moveCamera] is false when the caller is about to aim the camera itself.
+  /// Both moving at once meant two overlapping 380ms glides — fit-the-whole-set
+  /// followed by centre-on-one — which read as the graph lurching away and back.
+  void _highlightNodes(Set<String> nodeIds, {bool moveCamera = true}) {
     _chatPeekTimer?.cancel();
     setState(() {
       _glowIds = nodeIds;
@@ -1381,7 +1431,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       // the chat on normal web/desktop layouts.
       _chatPeekThrough = true;
     });
-    _canvasKey.currentState?.focusOnNodes(nodeIds);
+    if (moveCamera) _canvasKey.currentState?.focusOnNodes(nodeIds);
     // Let the user see the graph pan and glow, then restore the chat
     // automatically so the interaction never needs a second tap.
     _chatPeekTimer = Timer(const Duration(milliseconds: 1600), () {

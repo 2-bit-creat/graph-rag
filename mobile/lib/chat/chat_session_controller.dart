@@ -250,6 +250,9 @@ class ChatSessionController extends ChangeNotifier {
     _activeId = id;
     _mode = ChatMode.normal;
     _messages.clear();
+    // Same reason as newSession: a reply still in flight for the room we just
+    // left must not hold this room's composer readOnly.
+    _busy = false;
     _loadingMessages = true;
     notifyListeners();
     await _loadMessages();
@@ -282,6 +285,11 @@ class ChatSessionController extends ChangeNotifier {
       _activeId = s['id'].toString();
       _mode = ChatMode.normal;
       _messages.clear();
+      // A new room has nothing in flight. Leaving this set (the previous room
+      // was still waiting on a reply) left the composer readOnly here, so the
+      // fresh chat could not be typed into and its keyboard never came up —
+      // sendMessage's askedIn guard is what makes dropping the flag safe.
+      _busy = false;
       notifyListeners();
     } catch (e) {
       errors.value = _clean(e);
@@ -599,11 +607,23 @@ class ChatSessionController extends ChangeNotifier {
   Future<void> sendMessage(String text) async {
     await _ensureSession();
     if (_activeId == null) return;
+    // The room this answer belongs to. A reply can take several seconds, and
+    // the user is free to open a different chat while it is in flight — without
+    // this, the answer was appended to whatever room happened to be on screen
+    // when it landed, so a brand-new chat could open already holding a reply to
+    // a question asked somewhere else.
+    final askedIn = _activeId!;
     _busy = true;
     _messages.add(GraphChatMessage(role: 'user', content: text));
     notifyListeners();
     try {
-      final resp = await apiClient.sendChatMessage(_activeId!, text);
+      final resp = await apiClient.sendChatMessage(askedIn, text);
+      if (_activeId != askedIn) {
+        // Nothing is lost: the server persisted both turns in `askedIn`, so
+        // reopening that room replays them.
+        unawaited(loadSessions());
+        return;
+      }
       final answer = resp['answer']?.toString() ?? '';
       final referenced = ((resp['referenced_node_ids'] as List?) ?? [])
           .map((e) => e.toString())
