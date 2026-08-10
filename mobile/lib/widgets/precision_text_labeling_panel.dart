@@ -101,8 +101,14 @@ _ParsedDialogue? _parseDialogueLines(String text) {
   for (final e in lines) {
     counts[e.key] = (counts[e.key] ?? 0) + 1;
   }
-  final multiTurn = counts.values.any((c) => c >= 2) || matched >= 4;
-  if (counts.length >= 2 && multiTurn && matched * 5 >= rawLines.length * 3) {
+  // 화자당 평균 2턴 이상. 세 번째 사본이다 — mention_editor_core.dart 와
+  // backend/app/precision_text.py 의 같은 판별식과 반드시 함께 움직여야 한다.
+  // "매칭 4줄 이상"이라는 옛 우회로 때문에 용어 정의 목록이 화자 수십 명짜리
+  // 대화로 잘렸다.
+  final recurringEnough = matched >= counts.length * 2;
+  if (counts.length >= 2 &&
+      recurringEnough &&
+      matched * 5 >= rawLines.length * 3) {
     return _ParsedDialogue(lines);
   }
   return null;

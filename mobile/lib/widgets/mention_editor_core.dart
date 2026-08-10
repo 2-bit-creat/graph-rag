@@ -152,8 +152,21 @@ ParsedDialogue? parseDialogueLines(String text) {
   for (final e in lines) {
     counts[e.key] = (counts[e.key] ?? 0) + 1;
   }
-  final multiTurn = counts.values.any((c) => c >= 2) || matched >= 4;
-  if (counts.length >= 2 && multiTurn && matched * 5 >= rawLines.length * 3) {
+  // 화자당 평균 2턴 이상이어야 대화로 인정한다. 대화는 소수의 화자가 번갈아
+  // 반복 등장하지만, 용어사전·강의노트("약정액: …", "설정액: …", "ROE: …")는
+  // 줄마다 새 이름이 나온다.
+  //
+  // 예전 조건은 "한 화자가 2번 이상 OR 매칭 4줄 이상"이었는데, 뒤쪽 우회로는
+  // 문서가 길기만 하면 통과한다 — 즉 대화임을 뜻하는 유일한 신호인 '반복'을
+  // 건너뛸 수 있었다. 그 결과 24줄짜리 금융 용어 정리가 화자 23명짜리 대화로
+  // 잘려 개념 하나하나가 그래프에 인물 노드로 박혔다.
+  //
+  // 같은 판별식이 backend/app/precision_text.py 에도 있다. 둘 다 고쳐야 한다 —
+  // 클라이언트가 먼저 잘라서 보내면 서버 쪽 가드는 볼 기회조차 없다.
+  final recurringEnough = matched >= counts.length * 2;
+  if (counts.length >= 2 &&
+      recurringEnough &&
+      matched * 5 >= rawLines.length * 3) {
     return ParsedDialogue(lines);
   }
   return null;
