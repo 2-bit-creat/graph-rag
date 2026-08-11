@@ -14,6 +14,7 @@ import '../l10n/languages.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart';
 import '../utils/image_file_import.dart';
+import '../utils/keep_keyboard_on_tap.dart';
 import '../utils/statement_display.dart';
 import '../widgets/graph_chat_panel.dart';
 import '../widgets/graph_inspector_panel.dart';
@@ -125,6 +126,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   final _journalFieldKey = GlobalKey<MentionAutocompleteFieldState>();
   final _chatInputFocusNode = FocusNode();
   final _clozeCardKey = GlobalKey<ClozeQuizCardState>();
+
+  /// So the word-quiz hint button's on-screen rect can be published to the DOM
+  /// focus guard — see the note on [_wordQuizComposerActions].
+  final _wordQuizHintButtonKey = GlobalKey();
 
   /// Measured height of the docked composer, so the feed can pad its tail by
   /// exactly that much.
@@ -648,6 +653,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     }
     _chatInputController.removeListener(_onChatInputChanged);
     _chatInputFocusNode.removeListener(_onChatFocusChanged);
+    if (_hintButtonRectPublished) keepKeyboardOverRect(null);
     _chatInputController.dispose();
     _chatInputFocusNode.dispose();
     _chatScrollController.dispose();
@@ -1282,12 +1288,37 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     }
   }
 
+  /// Whether the last build published a rect for the hint button — so the
+  /// transition to hidden (quiz solved, mode exited) can clear it exactly
+  /// once, rather than on every build that finds nothing to show.
+  bool _hintButtonRectPublished = false;
+
   Widget? _wordQuizComposerActions() {
     if (chatSession.mode != ChatMode.quizWord ||
         !chatSession.wordQuizUsesComposer ||
         chatSession.wordQuizSolved) {
+      if (_hintButtonRectPublished) {
+        _hintButtonRectPublished = false;
+        keepKeyboardOverRect(null);
+      }
       return null;
     }
+    // Same DOM issue as the @ picker (see keep_keyboard_on_tap.dart): this
+    // button is canvas pixels, not a real element, so tapping it used to blur
+    // the hidden <textarea> and take the keyboard down mid-answer. Reasserting
+    // focus after the fact (the previous fix, still below as a belt) only
+    // covered engines where the blur was transient; on the ones where it was
+    // not, the keyboard closed and reopening it took a second tap. Publishing
+    // this button's rect so index.html's listener never lets the press reach
+    // the textarea is the actual fix; re-focusing stays as a harmless backstop.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final box = _wordQuizHintButtonKey.currentContext?.findRenderObject()
+          as RenderBox?;
+      if (box == null || !box.hasSize) return;
+      _hintButtonRectPublished = true;
+      keepKeyboardOverRect(box.localToGlobal(Offset.zero) & box.size);
+    });
     return Row(
       mainAxisSize: MainAxisSize.min,
       mainAxisAlignment: MainAxisAlignment.end,
@@ -1296,6 +1327,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           button: true,
           label: tr('clozeCard.letterHint'),
           child: GestureDetector(
+            key: _wordQuizHintButtonKey,
             behavior: HitTestBehavior.opaque,
             onTap: _requestWordQuizHint,
             child: Container(
@@ -1334,11 +1366,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     // whatever the learner had typed into that blank. The slot now draws the
     // hint beside the draft (ClozeQuizCard._hintGhost), so both survive.
     _clozeCardKey.currentState?.requestHint();
-    // TextFieldTapRegion prevents the normal outside-tap unfocus. Reassert the
-    // existing focus synchronously as a fallback for mobile web engines that
-    // briefly blur Flutter's hidden editable element while handling the tap.
-    // Do not focus an already-unfocused composer: a hint viewed while reviewing
-    // the card should not unexpectedly summon the keyboard.
+    // Belt to the DOM guard above: reassert focus in case some engine still
+    // blurred anyway. A no-op once the guard is doing its job.
     if (keepComposerFocused) {
       _chatInputFocusNode.requestFocus();
     }
