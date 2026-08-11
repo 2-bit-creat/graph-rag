@@ -952,7 +952,14 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
       text: replaced,
       selection: TextSelection.collapsed(offset: ctx.at + normalized.length + 2),
     );
-    _focusNode.requestFocus();
+    // Only when focus was actually lost. An unconditional requestFocus() on a
+    // node that already has it is not free on Flutter web: it re-runs the
+    // focus path, and this file's neighbours already record that doing so on
+    // iOS Safari can leave a focus node without a live native input connection
+    // (see the notes in knowledge_graph_screen around TextInput.show). Nothing
+    // needs it in the common case — the picker sits in a TextFieldTapRegion, so
+    // choosing a row never took focus away to begin with.
+    if (!_focusNode.hasFocus) _focusNode.requestFocus();
   }
 
   /// One backspace on a just-selected token reopens it as an editable query,
