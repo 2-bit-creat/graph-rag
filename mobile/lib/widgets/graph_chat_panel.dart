@@ -1053,29 +1053,14 @@ class _InputBarState extends State<_InputBar> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-          if (widget.onModeSelected != null)
+          // Journal mode carries four controls (+, mic, attach, expand) plus
+          // send. Sharing one row with them left the field about half the
+          // screen — too narrow for Korean prose, which then wrapped every few
+          // words. In journal mode the controls move to their own row below and
+          // the field takes the full width; chat mode keeps the single row,
+          // where one leading button costs nothing.
+          if (!journalMode && widget.onModeSelected != null)
             _ModeMenuButton(onSelected: widget.onModeSelected!),
-          if (journalMode) ...[
-            _CompactIconButton(
-              tooltip: recording
-                  ? tr('chat.micTooltipStop')
-                  : tr('chat.micTooltipStart'),
-              icon: recording ? Icons.stop_rounded : Icons.mic_none_rounded,
-              active: recording,
-              onTap: _journalSaving ? null : _toggleMic,
-            ),
-            _CompactIconButton(
-              tooltip: tr('chat.attachAudioTooltip'),
-              icon: Icons.attach_file_rounded,
-              onTap: _journalSaving || recording ? null : _pickFile,
-            ),
-            if (_longDraft)
-              _CompactIconButton(
-                tooltip: tr('chat.expandEditorTooltip'),
-                icon: Icons.open_in_full_rounded,
-                onTap: _journalSaving ? null : _openFullEditor,
-              ),
-          ],
           Expanded(
             child: journalMode
                 // Grows to a cap, then scrolls — ordinary composer behavior.
@@ -1152,21 +1137,54 @@ class _InputBarState extends State<_InputBar> {
                     ),
                   ),
           ),
-              const SizedBox(width: AppSpacing.xs),
-              _SendButton(
-                enabled: journalMode ? (canType && !recording) : canType,
-                busy: journalMode && _journalSaving,
-                onSend: () {
-                  HapticFeedback.lightImpact();
-                  if (journalMode) {
-                    _saveJournal();
-                  } else {
+              if (!journalMode) ...[
+                const SizedBox(width: AppSpacing.xs),
+                _SendButton(
+                  enabled: canType,
+                  busy: false,
+                  onSend: () {
+                    HapticFeedback.lightImpact();
                     widget.onSend(widget.controller.text);
-                  }
-                },
-              ),
+                  },
+                ),
+              ],
             ],
           ),
+          if (journalMode)
+            Row(
+              children: [
+                if (widget.onModeSelected != null)
+                  _ModeMenuButton(onSelected: widget.onModeSelected!),
+                _CompactIconButton(
+                  tooltip: recording
+                      ? tr('chat.micTooltipStop')
+                      : tr('chat.micTooltipStart'),
+                  icon: recording ? Icons.stop_rounded : Icons.mic_none_rounded,
+                  active: recording,
+                  onTap: _journalSaving ? null : _toggleMic,
+                ),
+                _CompactIconButton(
+                  tooltip: tr('chat.attachAudioTooltip'),
+                  icon: Icons.attach_file_rounded,
+                  onTap: _journalSaving || recording ? null : _pickFile,
+                ),
+                if (_longDraft)
+                  _CompactIconButton(
+                    tooltip: tr('chat.expandEditorTooltip'),
+                    icon: Icons.open_in_full_rounded,
+                    onTap: _journalSaving ? null : _openFullEditor,
+                  ),
+                const Spacer(),
+                _SendButton(
+                  enabled: canType && !recording,
+                  busy: _journalSaving,
+                  onSend: () {
+                    HapticFeedback.lightImpact();
+                    _saveJournal();
+                  },
+                ),
+              ],
+            ),
         ],
       ),
     );

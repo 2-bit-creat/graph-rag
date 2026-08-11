@@ -13,8 +13,14 @@ import '../utils/graph_layout.dart' show isSpeakerLikeType, isStatementHeadType;
 // 추출 품질이 급격히 떨어지는 지점 이전으로 캡 (백엔드 JournalTextEntryRequest와 동일).
 const kMaxJournalTextChars = 4000;
 
-/// One familiar link color keeps mentions calm and readable, like Slack, while
-/// speaker-specific colors remain available in pickers and graph views.
+/// Mentions used to render in one flat link blue, Slack-style, with per-speaker
+/// colors reserved for pickers and graph views. That was decided before color
+/// carried meaning: now a speaker's hue runs from the composer through the
+/// speaker bar to the graph, and painting every mention the same blue broke the
+/// thread exactly where the learner is deciding who said what — "@하승목" and
+/// "@나" were the same color in the very text that distinguishes them.
+///
+/// Kept only as the fallback for a mention whose speaker has no color yet.
 const kMentionLinkColor = Color(0xFF1264A3);
 
 /// A single space separates words in a name; extra or trailing whitespace does
@@ -367,7 +373,7 @@ class MentionStyledController extends TextEditingController {
       // with "@이름:", which is why placing the caret was worst near the left.
       spans.add(TextSpan(
         text: full.substring(h.start, h.end),
-        style: style?.copyWith(color: kMentionLinkColor),
+        style: style?.copyWith(color: colorOf(h.name)),
       ));
       segColor = null;
       idx = h.end;

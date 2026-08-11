@@ -421,6 +421,36 @@ async def recommend_speaker_node(
     profile, profile_id = await get_entry_speaker_embedding(
         session, journal_entry_id, speaker_label
     )
+
+    # '나' resolves to the canonical self node, exactly as
+    # build_speaker_summaries_for_entry does. The two paths used to disagree:
+    # the summary marked '나' confirmed, but this one had no case for it, so
+    # tapping the '나' chip asked "「나」 화자가 누구인가요?" and offered "새 정체성
+    # 등록" as the primary action. Taking it would have minted a second identity
+    # for the diary owner and split their own statements across two nodes.
+    #
+    # Reassigning '나' to a real person stays possible — that is the
+    # `already_confirmed` branch's secondary action, and the summary builder
+    # already honours the result. It is just no longer the suggestion.
+    if speaker_label == "나":
+        self_node = await crud.get_self_node(session, user_id)
+        if self_node is not None:
+            return SpeakerRecommendResult(
+                recommended_node=None,
+                speaker_profile_id=profile_id,
+                session_speaker_label=speaker_label,
+                already_confirmed=True,
+                confirmed_node=RecommendedNode(
+                    id=self_node.id,
+                    name=self_node.name,
+                    type=normalize_entity_type(self_node.type),
+                ),
+                above_threshold=True,
+                person_nodes=await _list_person_nodes(
+                    session, user_id, exclude_node_ids={self_node.id}
+                ),
+            )
+
     if profile is None:
         return SpeakerRecommendResult(
             recommended_node=None,

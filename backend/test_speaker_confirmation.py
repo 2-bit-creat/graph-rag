@@ -338,6 +338,76 @@ async def test_build_summary_linked_profile_suggested_not_confirmed():
     assert summaries[0].suggested_node.name == "장세영"
 
 
+async def test_recommend_for_na_resolves_to_the_self_node():
+    """Tapping the '나' chip must not offer to mint a second self.
+
+    build_speaker_summaries_for_entry has always resolved '나' to the canonical
+    self node, but recommend_speaker_node had no case for it. The sheet asked
+    "「나」 화자가 누구인가요?" and put "새 정체성 등록" first — one tap from
+    splitting the diary owner's own statements across two identities.
+    """
+    from app.speaker_confirmation import recommend_speaker_node
+
+    user_id = uuid.uuid4()
+    entry_id = uuid.uuid4()
+    self_node_id = uuid.uuid4()
+
+    self_node = MagicMock()
+    self_node.id = self_node_id
+    self_node.user_id = user_id
+    self_node.name = "나"
+    self_node.type = "Person"
+
+    session = AsyncMock()
+    with patch(
+        "app.speaker_confirmation.crud.get_journal_entry",
+        new=AsyncMock(return_value=MagicMock()),
+    ), patch(
+        "app.speaker_confirmation.get_entry_speaker_embedding",
+        # A text entry has no voice embedding — the path that used to fall
+        # through to "who is this?".
+        new=AsyncMock(return_value=(None, None)),
+    ), patch(
+        "app.speaker_confirmation.crud.get_self_node",
+        new=AsyncMock(return_value=self_node),
+    ), patch(
+        "app.speaker_confirmation._list_person_nodes",
+        new=AsyncMock(return_value=[]),
+    ):
+        result = await recommend_speaker_node(session, user_id, entry_id, "나")
+
+    assert result.already_confirmed is True
+    assert result.confirmed_node is not None
+    assert result.confirmed_node.id == self_node_id
+    # Nothing to "recommend" — it is already settled.
+    assert result.recommended_node is None
+
+
+async def test_recommend_for_other_labels_still_asks():
+    """Only '나' is special. A named speaker keeps the normal resolution flow —
+    registering a new identity stays available for genuine homonyms."""
+    from app.speaker_confirmation import recommend_speaker_node
+
+    user_id = uuid.uuid4()
+    session = AsyncMock()
+    with patch(
+        "app.speaker_confirmation.crud.get_journal_entry",
+        new=AsyncMock(return_value=MagicMock()),
+    ), patch(
+        "app.speaker_confirmation.get_entry_speaker_embedding",
+        new=AsyncMock(return_value=(None, None)),
+    ), patch(
+        "app.speaker_confirmation.crud.get_self_node",
+        new=AsyncMock(return_value=MagicMock()),
+    ):
+        result = await recommend_speaker_node(
+            session, user_id, uuid.uuid4(), "하승목"
+        )
+
+    assert result.already_confirmed is False
+    assert result.confirmed_node is None
+
+
 async def test_confirm_rejecting_voice_match_forks_profile_without_merging():
     from app.speaker_confirmation import confirm_speaker_identity
 
