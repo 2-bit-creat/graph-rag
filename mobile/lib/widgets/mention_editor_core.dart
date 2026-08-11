@@ -57,10 +57,17 @@ class MentionHit {
 
 /// @ 팝업 후보: 세션에서 만든 배지 + 지식그래프의 화자·출처 노드.
 class SpeakerOption {
-  const SpeakerOption(this.name, {this.isSource = false});
+  const SpeakerOption(this.name, {this.isSource = false, this.weight = 0});
 
   final String name;
   final bool isSource;
+
+  /// 그래프에서 이 정체성에 닿는 간선 수 — 많이 언급되고 많이 연결된 정도.
+  ///
+  /// 알파벳 정렬은 자주 쓰는 이름을 목록 아래로 밀어낸다. 이름을 다 치기 전에
+  /// 고르는 것이 팝업의 목적이므로, 순서는 관련도여야 한다. 세션 배지는 0 —
+  /// 이 글에 이미 등장한 화자라 가중치와 무관하게 언제나 맨 앞이다.
+  final int weight;
 }
 
 /// "[이름]: …" 형식 붙여넣기 지원 — 백엔드 pre_slice와 같은 규칙.
@@ -581,6 +588,11 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
   bool _popupCanCreate = false;
   static const _maxVisibleMentionRows = 5;
 
+  /// Rows shown for a bare "@", before there is anything to filter on. Short on
+  /// purpose: it is a shortcut to the usual suspects, and a longer list just
+  /// costs a scan the learner could have skipped by typing one more character.
+  static const _maxIdlePopupRows = 3;
+
   /// 팝업에서 ↑↓로 고른 위치 (options 다음 한 칸은 "새 화자 만들기").
   int _optionCursor = 0;
 
@@ -713,10 +725,41 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
         [..._badges, ..._graphSpeakers.map((o) => o.name)],
       );
 
+  /// Test seams for the popup ranking.
+  ///
+  /// The candidate list is half network (graph identities) and half local
+  /// state, and the ordering rule is the part worth protecting. These let a
+  /// test supply the graph half directly instead of standing up a fake API, so
+  /// the ranking is checked against the real `_computeMentionOptions`.
+  @visibleForTesting
+  void debugSetGraphSpeakers(List<SpeakerOption> options) {
+    if (mounted) setState(() => _graphSpeakers = options);
+  }
+
+  @visibleForTesting
+  List<SpeakerOption> debugMentionOptions(String partial) =>
+      _computeMentionOptions(partial);
+
   Future<void> _loadGraphSpeakers() async {
     try {
       final graph = await apiClient.getGraph();
       final nodes = graph['nodes'] as List<dynamic>? ?? [];
+
+      // Relevance = how connected the identity is. /graph already ships the
+      // edges, so the degree is a local count — no extra endpoint, and it
+      // covers both senses of "important": a person mentioned in many
+      // statements and one wired into many concepts both score high.
+      final degree = <String, int>{};
+      for (final raw in graph['edges'] as List<dynamic>? ?? []) {
+        if (raw is! Map) continue;
+        for (final key in const ['source_id', 'target_id']) {
+          final id = raw[key]?.toString();
+          if (id != null && id.isNotEmpty) {
+            degree[id] = (degree[id] ?? 0) + 1;
+          }
+        }
+      }
+
       final seen = <String>{};
       final out = <SpeakerOption>[];
       for (final raw in nodes) {
@@ -725,9 +768,15 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
         if (!isStatementHeadType(type)) continue;
         final name = normalizeMentionName(raw['name']?.toString() ?? '');
         if (name.isEmpty || name == '나' || !seen.add(name)) continue;
-        out.add(SpeakerOption(name, isSource: !isSpeakerLikeType(type)));
+        out.add(SpeakerOption(
+          name,
+          isSource: !isSpeakerLikeType(type),
+          weight: degree[raw['id']?.toString()] ?? 0,
+        ));
       }
-      out.sort((a, b) => a.name.compareTo(b.name));
+      // Deliberately unsorted: _computeMentionOptions owns the ordering, and
+      // splitting that rule across two places is how a popup starts disagreeing
+      // with itself depending on which path filled the list.
       if (mounted) setState(() => _graphSpeakers = out);
     } catch (_) {
       // 그래프가 아직 없거나 실패해도 입력은 정상 동작해야 한다.
@@ -811,41 +860,54 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     return true;
   }
 
-  /// 팝업 후보: 기존 화자를 먼저 보여 주고, 입력하면 접두 일치 → 포함
-  /// 일치 순으로 정렬한다. 화면에는 최대 다섯 줄만 렌더링한다.
+  /// 팝업 후보 — 두 국면으로 나뉜다.
+  ///
+  /// **@만 친 직후**: 아직 아무 단서도 없으므로 "그때그때 가장 그럴듯한 사람"을
+  /// 짧게 보여 준다. 이 글에 이미 등장한 화자가 먼저고(방금 쓴 사람보다 관련도
+  /// 높은 후보는 없다), 남는 자리는 그래프에서 가장 많이 연결된 정체성으로
+  /// 채운다. 세 줄까지 — 목록이 아니라 지름길이다.
+  ///
+  /// **이름을 치기 시작한 뒤**: 단서가 생겼으므로 그것을 우선한다. 접두 일치가
+  /// 부분 일치보다 앞서고, 같은 등급 안에서는 다시 관련도(세션 배지 → 연결 수)
+  /// 순이다. `@하` 를 치면 '하'로 시작하는 정체성이 연결 많은 순으로 올라온다.
   List<SpeakerOption> _computeMentionOptions(String partial) {
     final q = _mentionNameKey(partial);
     final seen = <String>{};
-    final candidates = <SpeakerOption>[];
+    final session = <SpeakerOption>[];
     for (final name in _badges) {
-      if (seen.add(name)) candidates.add(SpeakerOption(name));
+      if (seen.add(_mentionNameKey(name))) session.add(SpeakerOption(name));
     }
-    for (final opt in _graphSpeakers) {
-      if (seen.add(opt.name)) candidates.add(opt);
+    final fromGraph = <SpeakerOption>[];
+    for (final option in _graphSpeakers) {
+      if (seen.add(_mentionNameKey(option.name))) fromGraph.add(option);
     }
 
-    final matches = candidates
-        .where((option) =>
-            q.isEmpty || _mentionNameKey(option.name).contains(q))
+    if (q.isEmpty) {
+      fromGraph.sort((a, b) {
+        final byWeight = b.weight.compareTo(a.weight);
+        return byWeight != 0 ? byWeight : a.name.compareTo(b.name);
+      });
+      return [...session, ...fromGraph].take(_maxIdlePopupRows).toList();
+    }
+
+    final matches = [...session, ...fromGraph]
+        .where((option) => _mentionNameKey(option.name).contains(q))
         .toList();
     matches.sort((a, b) {
-      int rank(SpeakerOption option) {
-        if (q.isEmpty) return _badges.contains(option.name) ? 0 : 1;
-        return _mentionNameKey(option.name).startsWith(q) ? 0 : 1;
-      }
-
-      final rankComparison = rank(a).compareTo(rank(b));
-      if (rankComparison != 0) return rankComparison;
-      final badgeComparison = (_badges.contains(b.name) ? 1 : 0)
+      int rank(SpeakerOption option) =>
+          _mentionNameKey(option.name).startsWith(q) ? 0 : 1;
+      final byRank = rank(a).compareTo(rank(b));
+      if (byRank != 0) return byRank;
+      final byBadge = (_badges.contains(b.name) ? 1 : 0)
           .compareTo(_badges.contains(a.name) ? 1 : 0);
-      if (badgeComparison != 0) return badgeComparison;
+      if (byBadge != 0) return byBadge;
+      final byWeight = b.weight.compareTo(a.weight);
+      if (byWeight != 0) return byWeight;
       return a.name.compareTo(b.name);
     });
 
     // A typed, new name needs one row for its create action.
-    final limit =
-        q.isEmpty ? _maxVisibleMentionRows : _maxVisibleMentionRows - 1;
-    return matches.take(limit).toList();
+    return matches.take(_maxVisibleMentionRows - 1).toList();
   }
 
   /// 생성과 동시에 적용: 배지 등록 + 본문 삽입 한 번에.
@@ -1066,9 +1128,14 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
               label: _popupOptions[i].name == '나'
                   ? selfSpeakerLabel
                   : _popupOptions[i].name,
-              trailing: !_badges.contains(_popupOptions[i].name)
-                  ? tr('mention.fromGraphTrailing')
-                  : null,
+              // The connection count is why this row sits where it does —
+              // showing it makes the ordering explicable instead of arbitrary.
+              trailing: _badges.contains(_popupOptions[i].name)
+                  ? null
+                  : _popupOptions[i].weight > 0
+                      ? tr('mention.connectionsTrailing',
+                          {'count': '${_popupOptions[i].weight}'})
+                      : tr('mention.fromGraphTrailing'),
               selected: i == _optionCursor,
               onTap: () => _applyMention(_popupOptions[i].name),
               onHover: () => setState(() => _optionCursor = i),
