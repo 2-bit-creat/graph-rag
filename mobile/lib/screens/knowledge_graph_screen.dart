@@ -420,7 +420,21 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
               c.hasClients &&
               c.position.maxScrollExtent - c.position.pixels < 24;
           setState(() => _inputBarHeight = size.height);
-          if (grew && wasAtBottom) {
+          // Not while the composer is focused. The pin jumpTo()s the feed every
+          // 16ms for a quarter second, and on iOS Safari that scroll churn
+          // takes the keyboard down with it — the field keeps Flutter-side
+          // focus but loses the native input connection behind it.
+          //
+          // It reproduced exactly where the composer can still grow: picking a
+          // speaker on lines 1-3 dismissed the keyboard, line 4 onwards did
+          // not, because past the height cap the field scrolls internally, the
+          // measured height stops changing, and this never runs.
+          //
+          // Nothing is lost by skipping it. The pin exists so a grown bar does
+          // not hide the feed's last message — a reading concern. Someone mid
+          // sentence is looking at what they are typing, and the feed is
+          // re-pinned on the next focus change anyway (_onChatFocusChanged).
+          if (grew && wasAtBottom && !_chatInputFocusNode.hasFocus) {
             _pinChatToBottom(window: const Duration(milliseconds: 260));
           }
         },
