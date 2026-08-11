@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderProxyBox;
@@ -587,12 +588,14 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
   ({int at, String token})? _completedMention;
   List<SpeakerOption> _popupOptions = const [];
   bool _popupCanCreate = false;
-  static const _maxVisibleMentionRows = 5;
-
-  /// Rows shown for a bare "@", before there is anything to filter on. Short on
-  /// purpose: it is a shortcut to the usual suspects, and a longer list just
-  /// costs a scan the learner could have skipped by typing one more character.
-  static const _maxIdlePopupRows = 3;
+  /// How many candidates the picker will hold. Only ~3.5 rows are visible; the
+  /// rest are a scroll away, so this is about reach, not screen space.
+  ///
+  /// The first three matter most — they are what the eye reads without moving —
+  /// which is why the ranking puts the draft's own speakers and the
+  /// best-connected identities there. The tail exists so a name that ranks
+  /// fourth is still reachable without typing it out.
+  static const _maxMentionCandidates = 20;
 
   /// 팝업에서 ↑↓로 고른 위치 (options 다음 한 칸은 "새 화자 만들기").
   int _optionCursor = 0;
@@ -806,13 +809,32 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     }
     _lastText = widget.initialText;
     _lastDirty = widget.initialText.trim().isNotEmpty;
+    _focusNode.addListener(_onFocusChanged);
     unawaited(_loadGraphSpeakers());
+  }
+
+  /// Close the picker when the field stops being edited.
+  ///
+  /// The popup's visibility was derived from the caret sitting after an "@" and
+  /// nothing else, so tapping away — or dismissing the keyboard — left it
+  /// floating over the graph with no field behind it. Taps inside the popup do
+  /// not reach here: it is wrapped in a [TextFieldTapRegion], which is what
+  /// keeps picking a row from blurring the field first.
+  void _onFocusChanged() {
+    if (_focusNode.hasFocus) return;
+    _mentionCtx = null;
+    _completedMention = null;
+    _popupOptions = const <SpeakerOption>[];
+    _popupCanCreate = false;
+    _popupController.hide();
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
     _controller.removeListener(_onTextChanged);
     _controller.dispose();
+    _focusNode.removeListener(_onFocusChanged);
     if (_ownsFocusNode) _focusNode.dispose();
     _scroll.dispose();
     super.dispose();
@@ -891,7 +913,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
         final byWeight = b.weight.compareTo(a.weight);
         return byWeight != 0 ? byWeight : a.name.compareTo(b.name);
       });
-      return [...session, ...fromGraph].take(_maxIdlePopupRows).toList();
+      return [...session, ...fromGraph].take(_maxMentionCandidates).toList();
     }
 
     final matches = [...session, ...fromGraph]
@@ -911,7 +933,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     });
 
     // A typed, new name needs one row for its create action.
-    return matches.take(_maxVisibleMentionRows - 1).toList();
+    return matches.take(_maxMentionCandidates - 1).toList();
   }
 
   /// 생성과 동시에 적용: 배지 등록 + 본문 삽입 한 번에.
@@ -1158,7 +1180,15 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
               ),
             ),
         ];
-        final popupHeight = popupRows.length * 48.0;
+        // Grows with its rows up to three and a half, then scrolls. The half
+        // row is the affordance: a list cut exactly at a row boundary reads as
+        // complete. This is still content-sized below the cap — the warning
+        // below is about a FIXED height, which produced a tall empty panel when
+        // there were only one or two candidates.
+        const rowHeight = 48.0;
+        final popupHeight =
+            math.min(popupRows.length * rowHeight, rowHeight * 3.5);
+        final scrolls = popupRows.length * rowHeight > popupHeight;
         final popupContent = SizedBox(
           width: _popupWidth,
           height: popupHeight,
@@ -1178,9 +1208,14 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
               ),
               // Never give the overlay a fixed scroll viewport. A fixed height
               // combined with an upward anchor was what produced the large
-              // empty panel when the diary had accumulated many speakers.
-              child:
-                  Column(mainAxisSize: MainAxisSize.min, children: popupRows),
+              // empty panel when the diary had accumulated many speakers. The
+              // cap above is not that: it only bites once the rows exceed it.
+              child: scrolls
+                  ? ListView(
+                      padding: EdgeInsets.zero,
+                      children: popupRows,
+                    )
+                  : Column(mainAxisSize: MainAxisSize.min, children: popupRows),
             ),
           ),
         );
@@ -1208,11 +1243,16 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
                 // OverlayPortal gives its child the whole overlay's loose
                 // bounds. Align with size factors prevents that height from
                 // becoming the popup's own height before it is anchored up.
-                child: Align(
-                  alignment: Alignment.bottomLeft,
-                  widthFactor: 1,
-                  heightFactor: 1,
-                  child: popupContent,
+                // Taps inside the picker must not blur the field — that blur is
+                // what [_onFocusChanged] closes the popup on, so without this a
+                // tap would dismiss the list before the row could act on it.
+                child: TextFieldTapRegion(
+                  child: Align(
+                    alignment: Alignment.bottomLeft,
+                    widthFactor: 1,
+                    heightFactor: 1,
+                    child: popupContent,
+                  ),
                 ),
               );
             },

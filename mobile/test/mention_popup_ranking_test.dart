@@ -39,14 +39,18 @@ void main() {
     SpeakerOption('가나다', weight: 1),
   ];
 
-  testWidgets('a bare @ offers the best-connected identities, three at most',
+  // Only about three and a half rows are visible; the rest are a scroll away.
+  // What matters is that the three the eye lands on are the right three.
+  testWidgets('a bare @ leads with the best-connected identities',
       (tester) async {
     final field = await _pump(tester, graphSpeakers: graph);
 
     final options = field.debugMentionOptions('');
-    expect(options.length, 3);
     // '나' is a session badge and always leads; the rest come by weight.
-    expect(options.map((o) => o.name).toList(), ['나', '강민지', '하승목']);
+    expect(options.map((o) => o.name).take(3).toList(),
+        ['나', '강민지', '하승목']);
+    // The tail stays reachable rather than being dropped.
+    expect(options.map((o) => o.name), contains('가나다'));
   });
 
   testWidgets('speakers already used in this draft outrank the graph',
@@ -80,11 +84,16 @@ void main() {
         reason: 'prefix wins even against a far more connected substring hit');
   });
 
-  testWidgets('the idle list never exceeds three even with many identities',
+  testWidgets('a large graph is capped, and capped from the bottom of the rank',
       (tester) async {
     final field = await _pump(tester, graphSpeakers: [
-      for (var i = 0; i < 20; i++) SpeakerOption('사람$i', weight: 20 - i),
+      for (var i = 0; i < 60; i++) SpeakerOption('사람$i', weight: 60 - i),
     ]);
-    expect(field.debugMentionOptions('').length, 3);
+
+    final names = field.debugMentionOptions('').map((o) => o.name).toList();
+    expect(names.length, lessThanOrEqualTo(20));
+    // Truncation must drop the least connected, never the most.
+    expect(names.take(3).toList(), ['나', '사람0', '사람1']);
+    expect(names, isNot(contains('사람59')));
   });
 }

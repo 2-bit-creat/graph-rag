@@ -15,7 +15,6 @@ import 'chat_suggestion_rail.dart';
 import 'journal_progress_card.dart';
 import 'mention_editor_core.dart';
 import 'quiz/quiz_viewport_scope.dart';
-import 'speaker_bar.dart';
 import 'thinking_orbs.dart';
 
 /// 지식그래프 화면 위에 떠 있는 바텀시트 형태의 대화 패널 (헤더 + 메시지 피드만).
@@ -783,41 +782,18 @@ class _InputBarState extends State<_InputBar> {
   void _onJournalTextChanged(String text) {
     final long = text.length >= _longDraftChars;
     if (long != _longDraft) setState(() => _longDraft = long);
-    _refreshComposerSpeakers();
     _followCaretWhileTyping();
-  }
-
-  /// Live (화자, 턴 수) for the bar above the composer.
-  List<MapEntry<String, int>> _composerTurns = const [];
-
-  /// Recompute only when the split actually changed.
-  ///
-  /// This runs on every keystroke, and the composer is the one place in this
-  /// tree where a needless rebuild is expensive — see the caret notes in
-  /// [MentionStyledController]. Typing inside one speaker's block changes no
-  /// chip, so the common case must not call setState at all.
-  void _refreshComposerSpeakers() {
-    final field = _mentionFieldKey.currentState;
-    if (field == null) return;
-    final next = speakerTurns(segmentsFromMentionField(field));
-    if (next.length == _composerTurns.length) {
-      var same = true;
-      for (var i = 0; i < next.length; i++) {
-        if (next[i].key != _composerTurns[i].key ||
-            next[i].value != _composerTurns[i].value) {
-          same = false;
-          break;
-        }
-      }
-      if (same) return;
-    }
-    if (mounted) setState(() => _composerTurns = next);
   }
 
   /// The composer's speaker chip — correction at the point it is still free.
   ///
   /// After a save, fixing a speaker means touching an entry that may already
   /// have a graph draft behind it. Here it is only text.
+  ///
+  /// Currently unreachable: the bar that opened it lived inside the pill and
+  /// had to come out (see the note in build). Kept, with its tested text
+  /// rewrites, for whatever surfaces the draft's speakers next.
+  // ignore: unused_element
   Future<void> _openComposerSpeakerSheet(String name) async {
     final field = _mentionFieldKey.currentState;
     if (field == null) return;
@@ -856,7 +832,6 @@ class _InputBarState extends State<_InputBar> {
 
     if (action == 'dissolve') {
       field.setText(dissolveMentionInText(field.text, name));
-      _refreshComposerSpeakers();
       return;
     }
 
@@ -866,9 +841,9 @@ class _InputBarState extends State<_InputBar> {
     // an unregistered name is not a mention.
     field.ensureSpeaker(renamed);
     field.setText(renameMentionInText(field.text, name, renamed));
-    _refreshComposerSpeakers();
   }
 
+  // ignore: unused_element
   Future<String?> _promptSpeakerName(String current) async {
     final controller = TextEditingController(text: current);
     final result = await showDialog<String>(
@@ -896,47 +871,6 @@ class _InputBarState extends State<_InputBar> {
     controller.dispose();
     final name = normalizeMentionName(result ?? '');
     return (name.isEmpty || name == current) ? null : name;
-  }
-
-  /// Fixed height for the composer's speaker row.
-  ///
-  /// The slot is always present in journal mode, empty until there are two
-  /// speakers to show. Reserving it is not cosmetic: the pill's height is
-  /// measured and fed back as the feed's bottom inset with a full-screen
-  /// setState, so a row that appears mid-typing relayouts everything under it —
-  /// which is what made the composer flicker and slide off the bottom when a
-  /// speaker was picked.
-  static const _composerSpeakerBarHeight = 28.0;
-
-  Widget _composerSpeakerBar() {
-    // One speaker is just text — a bar that always says "나 · 1" is noise.
-    final show = _composerTurns.length >= 2;
-    final order = show
-        ? speakerColorOrder(_composerTurns.map((e) => e.key))
-        : const <String>[];
-    return SizedBox(
-      height: _composerSpeakerBarHeight,
-      child: !show
-          ? null
-          : Padding(
-              padding: const EdgeInsets.only(left: 4, right: 4, bottom: 6),
-              child: SpeakerBar(
-                dense: true,
-                showLabel: false,
-                chips: [
-                  for (final entry in _composerTurns)
-                    SpeakerChipData(
-                      label: entry.key,
-                      displayName:
-                          entry.key == '나' ? selfSpeakerLabel : entry.key,
-                      turns: entry.value,
-                      color: colorForSpeaker(entry.key, order),
-                      onTap: () => _openComposerSpeakerSheet(entry.key),
-                    ),
-                ],
-              ),
-            ),
-    );
   }
 
   /// The field no longer scrolls itself, so typing past the cap would run off
@@ -1065,12 +999,14 @@ class _InputBarState extends State<_InputBar> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // The pill's height feeds MeasureSize, which setStates the whole
-          // screen on every change (knowledge_graph_screen). A bar that
-          // appears and disappears therefore drives a relayout loop — the
-          // flicker seen when a speaker was picked. It keeps a constant height
-          // instead, so picking a speaker fills a slot that was already there.
-          if (journalMode) _composerSpeakerBar(),
+          // NO speaker bar here. Two attempts to put one inside the pill both
+          // made the composer flicker and drop under the keyboard when a
+          // speaker was picked: the pill's height is measured and fed back as
+          // the feed's bottom inset through a full-screen setState, and on iOS
+          // Safari that lands in the middle of the visualViewport inset the
+          // keyboard is already driving. Reserving a constant height was not
+          // enough either. Whatever shows the draft's speakers has to live
+          // outside this measured pill — see _composerSpeakerBar's note.
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
