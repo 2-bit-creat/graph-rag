@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
+import 'mention_editor_core.dart' show colorForSpeaker;
 
 /// Review and correct OCR output before it becomes graph input.
 ///
@@ -45,6 +46,34 @@ class OcrReviewSheet extends StatefulWidget {
   State<OcrReviewSheet> createState() => _OcrReviewSheetState();
 }
 
+/// One recognised speaker, in the color it will wear in the composer.
+class _SpeakerPill extends StatelessWidget {
+  const _SpeakerPill({required this.name, required this.color});
+
+  final String name;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
+      child: Text(
+        name == '나' ? selfSpeakerLabel : name,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: color,
+        ),
+      ),
+    );
+  }
+}
+
 class _OcrReviewSheetState extends State<OcrReviewSheet> {
   late final TextEditingController _controller =
       TextEditingController(text: widget.initialText);
@@ -73,22 +102,27 @@ class _OcrReviewSheetState extends State<OcrReviewSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Text(tr('ocr.reviewTitle'), style: theme.textTheme.titleMedium),
-              const Spacer(),
-              if (widget.speakers.isNotEmpty)
-                Text(
-                  tr('ocr.speakersLabel', {
-                    'count': '${widget.speakers.length}',
-                    'names': widget.speakers.join(', '),
-                  }),
-                  style: theme.textTheme.labelSmall
-                      ?.copyWith(color: AppColors.textMuted),
-                ),
-            ],
-          ),
+          Text(tr('ocr.reviewTitle'), style: theme.textTheme.titleMedium),
           const SizedBox(height: AppSpacing.sm),
+          // The speakers the photo produced, in the colors they will carry in
+          // the composer and on the graph. Text alone ("화자 2명 인식: 제니, 나")
+          // makes the reader match names to "@제니:" prefixes by eye; the color
+          // is the thread that survives into the composer badges, so showing it
+          // here is what makes a wrong split obvious at a glance.
+          if (widget.speakers.isNotEmpty) ...[
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                for (final name in widget.speakers)
+                  _SpeakerPill(
+                    name: name,
+                    color: colorForSpeaker(name, widget.speakers),
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+          ],
           // Unconditional, unlike the old confidence-gated warning. A vision
           // model returns no calibrated per-line score to gate on, and its own
           // stated confidence is not that measurement — so the honest UI says
