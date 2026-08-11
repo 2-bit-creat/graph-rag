@@ -11,6 +11,7 @@ import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart'
     show isSpeakerAssignableType, isSpeakerLikeType;
+import '../utils/keep_keyboard_on_tap.dart';
 
 // 추출 품질이 급격히 떨어지는 지점 이전으로 캡 (백엔드 JournalTextEntryRequest와 동일).
 const kMaxJournalTextChars = 4000;
@@ -568,6 +569,10 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
   final _scroll = ScrollController();
   final _popupLink = LayerLink();
   final _popupController = OverlayPortalController();
+
+  /// The picker's own box, so its on-screen rectangle can be published to the
+  /// DOM guard that keeps a tap on it from blurring the field.
+  final _popupBoxKey = GlobalKey();
   static const _contentPadding =
       EdgeInsets.symmetric(horizontal: 12, vertical: 12);
   static const _popupWidth = 240.0;
@@ -691,8 +696,10 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     }
     if (showPopup) {
       _popupController.show();
+      _publishPopupRect();
     } else {
       _popupController.hide();
+      keepKeyboardOverRect(null);
     }
 
     final popupChanged = _mentionCtx?.at != prevCtx?.at ||
@@ -827,11 +834,29 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     _popupOptions = const <SpeakerOption>[];
     _popupCanCreate = false;
     _popupController.hide();
+    keepKeyboardOverRect(null);
     if (mounted) setState(() {});
+  }
+
+  /// Tell the DOM guard where the picker is, once it has actually been laid
+  /// out. Its position follows the caret, so this is republished on every
+  /// change rather than measured once.
+  void _publishPopupRect() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_popupController.isShowing) {
+        keepKeyboardOverRect(null);
+        return;
+      }
+      final box = _popupBoxKey.currentContext?.findRenderObject() as RenderBox?;
+      if (box == null || !box.hasSize) return;
+      keepKeyboardOverRect(box.localToGlobal(Offset.zero) & box.size);
+    });
   }
 
   @override
   void dispose() {
+    // A rect left behind would swallow presses over empty screen.
+    keepKeyboardOverRect(null);
     _controller.removeListener(_onTextChanged);
     _controller.dispose();
     _focusNode.removeListener(_onFocusChanged);
@@ -1197,6 +1222,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
             math.min(popupRows.length * rowHeight, rowHeight * 3.5);
         final scrolls = popupRows.length * rowHeight > popupHeight;
         final popupContent = SizedBox(
+          key: _popupBoxKey,
           width: _popupWidth,
           height: popupHeight,
           child: Material(

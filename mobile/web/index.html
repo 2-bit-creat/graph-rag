@@ -192,6 +192,52 @@
     }
   </script>
   <script>
+    // Keep the keyboard up while the user taps a Flutter-drawn overlay.
+    //
+    // The focused text field is backed by a real invisible <textarea>; that
+    // element owns the browser's focus and therefore the keyboard. Everything
+    // Flutter paints — including the @-mention picker — is pixels on a <canvas>,
+    // so pressing one is, to the browser, a press outside the textarea: it
+    // blurs, and iOS takes the keyboard down mid-sentence. Confirmed by
+    // elimination — choosing the same row with the Enter key never closed it,
+    // only tapping it did.
+    //
+    // Cancelling the default action of that press is what keeps focus where it
+    // is. It has to run in the CAPTURE phase, because the focus move is the
+    // browser's default for this event rather than something Flutter does.
+    // preventDefault() does not stop Flutter from seeing the event, so the tap
+    // still selects the row.
+    //
+    // Scoped to one published rectangle, set only while such an overlay is open
+    // (lib/utils/keep_keyboard_on_tap.dart). Anywhere else presses behave
+    // normally — tapping the page still dismisses the keyboard, which is what a
+    // tap outside is supposed to do.
+    (function () {
+      var rect = null;
+      window.__keepKeyboardOverRect = function (left, top, right, bottom) {
+        rect = (left === null || left === undefined)
+          ? null
+          : { left: left, top: top, right: right, bottom: bottom };
+      };
+      function inside(e) {
+        if (!rect) return false;
+        var x = e.clientX, y = e.clientY;
+        if (x === undefined && e.touches && e.touches.length) {
+          x = e.touches[0].clientX;
+          y = e.touches[0].clientY;
+        }
+        if (x === undefined) return false;
+        return x >= rect.left && x <= rect.right
+            && y >= rect.top && y <= rect.bottom;
+      }
+      ['pointerdown', 'mousedown', 'touchstart'].forEach(function (type) {
+        window.addEventListener(type, function (e) {
+          if (inside(e) && e.cancelable) e.preventDefault();
+        }, { capture: true, passive: false });
+      });
+    })();
+  </script>
+  <script>
     // Belt to the CSS brace: if Safari scrolls the layout viewport anyway, put
     // it straight back. Cheap, and only fires while the keyboard animates.
     if (window.visualViewport) {
