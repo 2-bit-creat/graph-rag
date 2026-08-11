@@ -127,8 +127,18 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   final _clozeCardKey = GlobalKey<ClozeQuizCardState>();
 
   /// Measured height of the docked composer, so the feed can pad its tail by
-  /// exactly that much. 0 in journal mode, where the composer moves inline.
-  double _inputBarHeight = 96;
+  /// exactly that much.
+  ///
+  /// A notifier, not a field behind setState. The composer's height changes as
+  /// the draft wraps, and rebuilding this whole screen for that also rebuilt
+  /// the composer — which on iOS Safari drops the field's native input
+  /// connection, so the keyboard closed mid-sentence while Flutter still
+  /// believed the field was focused. Picking a speaker hit it every time
+  /// because inserting "@이름 " is what pushes the text onto the next line.
+  ///
+  /// Only the parts that actually read the height listen now, and none of them
+  /// contain the field.
+  final _inputBarHeight = ValueNotifier<double>(96);
 
   /// Runs while [_pinChatToBottom] keeps the feed glued to its tail.
   Timer? _bottomPinTimer;
@@ -197,8 +207,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   /// 새 채팅을 열면 손잡이가 아예 안 보이는 상태 — 가 됐다.
   double _sheetMinChildSize(BuildContext context, double graphAreaHeight) {
     const handleClearance = 32.0;
-    final minPx =
-        _inputBarHeight + handleClearance + MediaQuery.paddingOf(context).bottom;
+    final minPx = _inputBarHeight.value +
+        handleClearance +
+        MediaQuery.paddingOf(context).bottom;
     if (graphAreaHeight <= 0) return 0.08;
     return (minPx / graphAreaHeight).clamp(0.06, _sheetDefaultSize - 0.02);
   }
@@ -342,6 +353,28 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     Map<String, Color> typeColors = const {},
     Map<String, Map<String, dynamic>> nodeById = const {},
   }) {
+    // Only the feed rebuilds when the composer's height changes. The composer
+    // is a sibling of this subtree (_buildPersistentInputBar), so it stays put
+    // — which is the point: rebuilding it is what closed the keyboard.
+    return ValueListenableBuilder<double>(
+      valueListenable: _inputBarHeight,
+      builder: (context, barHeight, _) => _graphChatPanel(
+        scrollController: scrollController,
+        graphAreaHeight: graphAreaHeight,
+        typeColors: typeColors,
+        nodeById: nodeById,
+        listBottomInset: barHeight,
+      ),
+    );
+  }
+
+  Widget _graphChatPanel({
+    required ScrollController scrollController,
+    required double graphAreaHeight,
+    required Map<String, Color> typeColors,
+    required Map<String, Map<String, dynamic>> nodeById,
+    required double listBottomInset,
+  }) {
     return GraphChatPanel(
       messages: chatSession.messages,
       busy: chatSession.busy,
@@ -362,7 +395,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       onClearHistory: _deleteActiveRoom,
       listFooter: _chatListFooter(),
       quizMode: _isQuizMode,
-      listBottomInset: _inputBarHeight,
+      listBottomInset: listBottomInset,
       onHandleDragUpdate: (delta) {
         if (graphAreaHeight <= 0) return;
         _chatExpandedForInput = false;
@@ -381,7 +414,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
                 .clamp(quizReadViewportMin, quizReadViewportMax)
                 .toDouble();
         final wordQuizMin =
-            ((readableQuizHeight + _inputBarHeight + quizChromeReserve) /
+            ((readableQuizHeight + _inputBarHeight.value + quizChromeReserve) /
                     graphAreaHeight)
                 .clamp(standardMin, _sheetFocusSize)
                 .toDouble();
@@ -409,8 +442,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       bottom: 0,
       child: MeasureSize(
         onChange: (size) {
-          if (!mounted || size.height == _inputBarHeight) return;
-          final grew = size.height > _inputBarHeight;
+          if (!mounted || size.height == _inputBarHeight.value) return;
+          final grew = size.height > _inputBarHeight.value;
           // Sampled before the rebuild: the feed's tail padding is derived
           // from this height, so a bar that grows (the suggestion rail
           // appearing, the input wrapping to a second line) pushes the tail
@@ -419,7 +452,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           final wasAtBottom = c != null &&
               c.hasClients &&
               c.position.maxScrollExtent - c.position.pixels < 24;
-          setState(() => _inputBarHeight = size.height);
+          _inputBarHeight.value = size.height;
           // Not while the composer is focused. The pin jumpTo()s the feed every
           // 16ms for a quarter second, and on iOS Safari that scroll churn
           // takes the keyboard down with it — the field keeps Flutter-side
@@ -543,14 +576,18 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
             ),
             _buildChatSheet(graphAreaHeight,
                 typeColors: typeColors, nodeById: nodeById),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              // The panel itself is intentionally translucent. The mask must
-              // be wider and end in an opaque version of that color, otherwise
-              // the final bubble still ghosts through above the composer.
-              height: _inputBarHeight + 56,
+            ValueListenableBuilder<double>(
+              valueListenable: _inputBarHeight,
+              builder: (context, barHeight, child) => Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                // The panel itself is intentionally translucent. The mask must
+                // be wider and end in an opaque version of that color, otherwise
+                // the final bubble still ghosts through above the composer.
+                height: barHeight + 56,
+                child: child!,
+              ),
               child: IgnorePointer(
                 child: DecoratedBox(
                   decoration: BoxDecoration(
@@ -614,6 +651,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     _chatInputController.dispose();
     _chatInputFocusNode.dispose();
     _chatScrollController.dispose();
+    _inputBarHeight.dispose();
     super.dispose();
   }
 
