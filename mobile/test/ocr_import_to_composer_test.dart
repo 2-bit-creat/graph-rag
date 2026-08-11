@@ -41,6 +41,28 @@ void main() {
     );
   });
 
+  // Why OCR must emit the colon even though a hand-typed mention does not need
+  // one: typing registers the badge when the learner picks it from the popup,
+  // but imported text has no popup to pick from, so the only thing that can
+  // register a name is the "@이름:" line shape.
+  //
+  // Without the colon the import fails quietly, which is the worst shape of
+  // failure — 제니 is never registered, her line falls to 나 as the text before
+  // the first live mention, and "@제니" survives as literal characters inside
+  // 나's own statement.
+  testWidgets('a colonless import loses the speaker instead of erroring',
+      (tester) async {
+    final field = await _pumpField(tester);
+
+    field.setText('@제니 내일 몇 시에 만날까\n@나 7시 이후면 아무 때나');
+    await tester.pumpAndSettle();
+
+    expect(field.badges, ['나'], reason: '제니 was never registered');
+    final labeled = labeledTextFromMentionField(field);
+    expect(labeled, isNot(contains('[제니]')));
+    expect(labeled, contains('@제니'), reason: 'it survives as raw text');
+  });
+
   testWidgets('imported plain text belongs to 나 and invents no speakers',
       (tester) async {
     final field = await _pumpField(tester);
