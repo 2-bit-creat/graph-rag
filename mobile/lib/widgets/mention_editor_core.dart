@@ -8,7 +8,8 @@ import 'package:flutter/services.dart'
 import '../api/client.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
-import '../utils/graph_layout.dart' show isSpeakerLikeType, isStatementHeadType;
+import '../utils/graph_layout.dart'
+    show isSpeakerAssignableType, isSpeakerLikeType;
 
 // 추출 품질이 급격히 떨어지는 지점 이전으로 캡 (백엔드 JournalTextEntryRequest와 동일).
 const kMaxJournalTextChars = 4000;
@@ -765,7 +766,10 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
       for (final raw in nodes) {
         if (raw is! Map) continue;
         final type = raw['type']?.toString();
-        if (!isStatementHeadType(type)) continue;
+        // Person ∪ Source ∪ Identity. Filtering on isStatementHeadType dropped
+        // the whole Identity category — which is what most new mentions are
+        // typed as — so the picker showed almost nothing on a real graph.
+        if (!isSpeakerAssignableType(type)) continue;
         final name = normalizeMentionName(raw['name']?.toString() ?? '');
         if (name.isEmpty || name == '나' || !seen.add(name)) continue;
         out.add(SpeakerOption(

@@ -952,6 +952,33 @@ bool isStatementHeadType(String? raw) {
   return canonicalEntityType(raw ?? '').toLowerCase() == 'source';
 }
 
+/// 그 밖의 지속적 정체성 — 반려동물·단체 등. Person도 Source도 아니지만 화자가
+/// 될 수 있는 것들. 백엔드 entity_types.py 의 `_IDENTITY_EXTRA` 와 같은 집합.
+const _kIdentityExtraTypes = <String>{
+  'identity',
+  'animal',
+  'pet',
+  'organization',
+  'group',
+  '개체',
+  '동물',
+  '단체',
+};
+
+/// 화자로 지정할 수 있는 정체성 전체 — Person ∪ Source ∪ Identity.
+///
+/// 백엔드 `is_identity_type`의 클라이언트 짝이다. 거기 주석대로 "any identity in
+/// this whole category can be a segment's 화자". 화자 피커는 반드시 이것을 써야
+/// 한다 — [isStatementHeadType]은 Person/Source만 참이라, 그것으로 거르면 새 언급
+/// 대부분이 갖는 Identity 타입(마야=고양이 같은)이 목록에서 통째로 빠진다.
+///
+/// 캔버스 계층 계산은 계속 [isStatementHeadType]을 쓴다. 둘은 목적이 다르다:
+/// 하나는 "무엇이 진술의 머리인가", 다른 하나는 "누가 화자가 될 수 있는가".
+bool isSpeakerAssignableType(String? raw) {
+  if (isStatementHeadType(raw)) return true;
+  return _kIdentityExtraTypes.contains(canonicalEntityType(raw ?? '').toLowerCase());
+}
+
 // ---------------------------------------------------------------------------
 // 화자 숨김(Speaker-to-Color) 모드
 //

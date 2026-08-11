@@ -7,7 +7,8 @@ import 'package:flutter/services.dart'
 import '../api/client.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
-import '../utils/graph_layout.dart' show isSpeakerLikeType, isStatementHeadType;
+import '../utils/graph_layout.dart'
+    show isSpeakerAssignableType, isSpeakerLikeType;
 import '../widgets/app_ui.dart';
 import 'mention_editor_core.dart' show colorForSpeaker, speakerTurns;
 import 'speaker_bar.dart';
@@ -354,7 +355,8 @@ class _PrecisionTextLabelingPanelState
       for (final raw in nodes) {
         if (raw is! Map) continue;
         final type = raw['type']?.toString();
-        if (!isStatementHeadType(type)) continue;
+        // Person ∪ Source ∪ Identity — same picker scope as the chat composer.
+        if (!isSpeakerAssignableType(type)) continue;
         final name = raw['name']?.toString().trim() ?? '';
         if (name.isEmpty || name == '나' || !seen.add(name)) continue;
         out.add(_SpeakerOption(name, isSource: !isSpeakerLikeType(type)));

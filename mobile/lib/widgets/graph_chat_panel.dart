@@ -898,26 +898,44 @@ class _InputBarState extends State<_InputBar> {
     return (name.isEmpty || name == current) ? null : name;
   }
 
+  /// Fixed height for the composer's speaker row.
+  ///
+  /// The slot is always present in journal mode, empty until there are two
+  /// speakers to show. Reserving it is not cosmetic: the pill's height is
+  /// measured and fed back as the feed's bottom inset with a full-screen
+  /// setState, so a row that appears mid-typing relayouts everything under it —
+  /// which is what made the composer flicker and slide off the bottom when a
+  /// speaker was picked.
+  static const _composerSpeakerBarHeight = 28.0;
+
   Widget _composerSpeakerBar() {
     // One speaker is just text — a bar that always says "나 · 1" is noise.
-    if (_composerTurns.length < 2) return const SizedBox.shrink();
-    final order = speakerColorOrder(_composerTurns.map((e) => e.key));
-    return Padding(
-      padding: const EdgeInsets.only(left: 4, right: 4, bottom: 6),
-      child: SpeakerBar(
-        dense: true,
-        chips: [
-          for (final entry in _composerTurns)
-            SpeakerChipData(
-              label: entry.key,
-              displayName:
-                  entry.key == '나' ? selfSpeakerLabel : entry.key,
-              turns: entry.value,
-              color: colorForSpeaker(entry.key, order),
-              onTap: () => _openComposerSpeakerSheet(entry.key),
+    final show = _composerTurns.length >= 2;
+    final order = show
+        ? speakerColorOrder(_composerTurns.map((e) => e.key))
+        : const <String>[];
+    return SizedBox(
+      height: _composerSpeakerBarHeight,
+      child: !show
+          ? null
+          : Padding(
+              padding: const EdgeInsets.only(left: 4, right: 4, bottom: 6),
+              child: SpeakerBar(
+                dense: true,
+                showLabel: false,
+                chips: [
+                  for (final entry in _composerTurns)
+                    SpeakerChipData(
+                      label: entry.key,
+                      displayName:
+                          entry.key == '나' ? selfSpeakerLabel : entry.key,
+                      turns: entry.value,
+                      color: colorForSpeaker(entry.key, order),
+                      onTap: () => _openComposerSpeakerSheet(entry.key),
+                    ),
+                ],
+              ),
             ),
-        ],
-      ),
     );
   }
 
@@ -1047,20 +1065,38 @@ class _InputBarState extends State<_InputBar> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Above the pill, not inside it: this answers "how many speakers am I
-          // about to create", which until now was only visible after saving.
+          // The pill's height feeds MeasureSize, which setStates the whole
+          // screen on every change (knowledge_graph_screen). A bar that
+          // appears and disappears therefore drives a relayout loop — the
+          // flicker seen when a speaker was picked. It keeps a constant height
+          // instead, so picking a speaker fills a slot that was already there.
           if (journalMode) _composerSpeakerBar(),
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-          // Journal mode carries four controls (+, mic, attach, expand) plus
-          // send. Sharing one row with them left the field about half the
-          // screen — too narrow for Korean prose, which then wrapped every few
-          // words. In journal mode the controls move to their own row below and
-          // the field takes the full width; chat mode keeps the single row,
-          // where one leading button costs nothing.
-          if (!journalMode && widget.onModeSelected != null)
-            _ModeMenuButton(onSelected: widget.onModeSelected!),
+              if (widget.onModeSelected != null)
+                _ModeMenuButton(onSelected: widget.onModeSelected!),
+              if (journalMode) ...[
+                _CompactIconButton(
+                  tooltip: recording
+                      ? tr('chat.micTooltipStop')
+                      : tr('chat.micTooltipStart'),
+                  icon: recording ? Icons.stop_rounded : Icons.mic_none_rounded,
+                  active: recording,
+                  onTap: _journalSaving ? null : _toggleMic,
+                ),
+                _CompactIconButton(
+                  tooltip: tr('chat.attachAudioTooltip'),
+                  icon: Icons.attach_file_rounded,
+                  onTap: _journalSaving || recording ? null : _pickFile,
+                ),
+                if (_longDraft)
+                  _CompactIconButton(
+                    tooltip: tr('chat.expandEditorTooltip'),
+                    icon: Icons.open_in_full_rounded,
+                    onTap: _journalSaving ? null : _openFullEditor,
+                  ),
+              ],
           Expanded(
             child: journalMode
                 // Grows to a cap, then scrolls — ordinary composer behavior.
@@ -1137,54 +1173,21 @@ class _InputBarState extends State<_InputBar> {
                     ),
                   ),
           ),
-              if (!journalMode) ...[
-                const SizedBox(width: AppSpacing.xs),
-                _SendButton(
-                  enabled: canType,
-                  busy: false,
-                  onSend: () {
-                    HapticFeedback.lightImpact();
+              const SizedBox(width: AppSpacing.xs),
+              _SendButton(
+                enabled: journalMode ? (canType && !recording) : canType,
+                busy: journalMode && _journalSaving,
+                onSend: () {
+                  HapticFeedback.lightImpact();
+                  if (journalMode) {
+                    _saveJournal();
+                  } else {
                     widget.onSend(widget.controller.text);
-                  },
-                ),
-              ],
+                  }
+                },
+              ),
             ],
           ),
-          if (journalMode)
-            Row(
-              children: [
-                if (widget.onModeSelected != null)
-                  _ModeMenuButton(onSelected: widget.onModeSelected!),
-                _CompactIconButton(
-                  tooltip: recording
-                      ? tr('chat.micTooltipStop')
-                      : tr('chat.micTooltipStart'),
-                  icon: recording ? Icons.stop_rounded : Icons.mic_none_rounded,
-                  active: recording,
-                  onTap: _journalSaving ? null : _toggleMic,
-                ),
-                _CompactIconButton(
-                  tooltip: tr('chat.attachAudioTooltip'),
-                  icon: Icons.attach_file_rounded,
-                  onTap: _journalSaving || recording ? null : _pickFile,
-                ),
-                if (_longDraft)
-                  _CompactIconButton(
-                    tooltip: tr('chat.expandEditorTooltip'),
-                    icon: Icons.open_in_full_rounded,
-                    onTap: _journalSaving ? null : _openFullEditor,
-                  ),
-                const Spacer(),
-                _SendButton(
-                  enabled: canType && !recording,
-                  busy: _journalSaving,
-                  onSend: () {
-                    HapticFeedback.lightImpact();
-                    _saveJournal();
-                  },
-                ),
-              ],
-            ),
         ],
       ),
     );
