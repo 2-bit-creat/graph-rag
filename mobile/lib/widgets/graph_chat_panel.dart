@@ -365,6 +365,7 @@ class ChatInputBar extends StatelessWidget {
     this.inputEnabled = true,
     this.inputHint = 'Say anything…', // always overridden by callers via tr()
     this.journalMode = false,
+    this.journalFieldKey,
     this.inputFocusNode,
     this.suggestions = const [],
     this.onSuggestionPrompt,
@@ -398,6 +399,11 @@ class ChatInputBar extends StatelessWidget {
   /// mic/attach pair appears next to send. Only the surface swaps; there is
   /// never a second input competing with this one.
   final bool journalMode;
+
+  /// Lets the screen reach the journal field itself — [inputController] does
+  /// not reach it, because the mention field owns a [MentionStyledController]
+  /// that renders the badges. Used to drop OCR text into the composer.
+  final GlobalKey<MentionAutocompleteFieldState>? journalFieldKey;
 
   /// Owned by the screen so it can re-request focus after a tap elsewhere
   /// in the tree (e.g. a quiz card's "다음 문제" button) steals it away.
@@ -473,6 +479,7 @@ class ChatInputBar extends StatelessWidget {
                   enabled: inputEnabled,
                   hint: inputHint,
                   journalMode: journalMode,
+                  journalFieldKey: journalFieldKey,
                   onSend: onSend,
                   onModeSelected: onModeSelected,
                   focusNode: inputFocusNode,
@@ -497,6 +504,7 @@ class _InputBar extends StatefulWidget {
     required this.onSend,
     required this.onModeSelected,
     this.journalMode = false,
+    this.journalFieldKey,
     this.focusNode,
   });
 
@@ -512,6 +520,10 @@ class _InputBar extends StatefulWidget {
   /// entry instead of calling [onSend].
   final bool journalMode;
 
+  /// Supplied by the screen when it needs to write into the journal field
+  /// (OCR import). Null everywhere else, and then the private key below is used.
+  final GlobalKey<MentionAutocompleteFieldState>? journalFieldKey;
+
   /// Owned by the screen (not this widget) so it can be re-requested after
   /// an action elsewhere in the tree — e.g. tapping a quiz card's "다음
   /// 문제" button — steals focus away from the composer.
@@ -526,7 +538,13 @@ class _InputBarState extends State<_InputBar> {
   FocusNode get _focusNode =>
       widget.focusNode ?? (_ownedFocusNode ??= FocusNode());
 
-  final _mentionFieldKey = GlobalKey<MentionAutocompleteFieldState>();
+  final _ownedMentionFieldKey = GlobalKey<MentionAutocompleteFieldState>();
+
+  /// The screen's key wins when it supplied one, so both it and this widget
+  /// address the same field rather than two keys fighting over one element.
+  GlobalKey<MentionAutocompleteFieldState> get _mentionFieldKey =>
+      widget.journalFieldKey ?? _ownedMentionFieldKey;
+
   AudioRecordController? _recorder;
   bool _journalSaving = false;
 

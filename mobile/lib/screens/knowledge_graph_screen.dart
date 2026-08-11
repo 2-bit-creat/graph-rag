@@ -19,6 +19,7 @@ import '../widgets/graph_chat_panel.dart';
 import '../widgets/graph_inspector_panel.dart';
 import '../widgets/knowledge_graph_canvas.dart';
 import '../widgets/measure_size.dart';
+import '../widgets/mention_editor_core.dart' show MentionAutocompleteFieldState;
 import '../widgets/ocr_review_sheet.dart';
 import '../widgets/ontology_settings_sheet.dart';
 import '../widgets/quiz/cloze_quiz_card.dart';
@@ -118,6 +119,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
 
   // ── 그래프 대화 (전역 chatSession 컨트롤러 구독) ─────────────────────────
   final _chatInputController = TextEditingController();
+
+  /// Reaches the journal composer's mention field — the only way to put text
+  /// there, since that field owns its own controller (see ChatInputBar).
+  final _journalFieldKey = GlobalKey<MentionAutocompleteFieldState>();
   final _chatInputFocusNode = FocusNode();
   final _clozeCardKey = GlobalKey<ClozeQuizCardState>();
 
@@ -430,6 +435,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           inputEnabled: _inputEnabled,
           inputHint: _inputHint,
           journalMode: _isJournalMode,
+          journalFieldKey: _journalFieldKey,
           inputFocusNode: _chatInputFocusNode,
           suggestions: _quizStarting
               ? const []
@@ -1021,10 +1027,22 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
 
   // ── 사진에서 글자 가져오기 (OCR) ──────────────────────────────────────────
 
-  /// Photo → text → the composer. Stops there deliberately: the learner edits
-  /// the recognised text and drives the normal extract/commit flow themselves,
-  /// so a misread word never becomes a graph claim silently.
+  /// Photo → text → the journal composer. Stops there deliberately: the learner
+  /// edits the recognised text and drives the normal extract/commit flow
+  /// themselves, so a misread word never becomes a graph claim silently.
+  ///
+  /// A chat screenshot comes back as "@이름: 발화" lines, which register as
+  /// speaker badges the moment they land in the field. Anything else comes back
+  /// as plain text and belongs to 나 until the learner says otherwise — the
+  /// composer never guesses a speaker from punctuation.
   Future<void> _importFromPhoto() async {
+    // Same gate as the 'journal' menu action: this ends in journal mode, and
+    // finding that out after the OCR call would waste a paid request.
+    if (journalTask.systemProcessing) {
+      _snack(tr('kg.journalBusySnackbar'));
+      return;
+    }
+
     final picked = await pickImageFile();
     if (!mounted || picked.isCancelled) return;
 
@@ -1065,17 +1083,21 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     final confirmed = await OcrReviewSheet.show(
       context,
       initialText: text,
-      meanConfidence: (result['mean_confidence'] as num?)?.toDouble(),
-      lowConfidence: result['low_confidence'] == true,
+      speakers: (result['speakers'] as List?)?.map((e) => '$e').toList() ??
+          const <String>[],
     );
     if (!mounted || confirmed == null || confirmed.isEmpty) return;
 
     _ensureChatVisible();
-    _chatInputController.text = confirmed;
-    _chatInputController.selection = TextSelection.collapsed(
-      offset: confirmed.length,
-    );
-    _chatInputFocusNode.requestFocus();
+    _activateInputMode();
+    chatSession.enterJournalMode();
+    // The mention field is built by the rebuild that journal mode triggers, so
+    // its state does not exist yet on this frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _journalFieldKey.currentState?.setText(confirmed);
+      _chatInputFocusNode.requestFocus();
+    });
   }
 
   void _snack(String message) {

@@ -141,7 +141,7 @@ class Settings(BaseSettings):
     free_tier_review_days: int = 7
 
     # Per-user daily call ceilings on the endpoints that spend money (LLM,
-    # Whisper, Textract). Enforced by app/rate_limit.py. A missing key or a
+    # Whisper). Enforced by app/rate_limit.py. A missing key or a
     # negative value means unlimited, so a deployment can disable one counter
     # without a code change. Override via env as JSON, e.g.
     #   DAILY_LIMITS_FREE='{"quiz_gen": 5, "ocr": 3}'

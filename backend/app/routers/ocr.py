@@ -1,4 +1,4 @@
-"""Image → plain text via AWS Textract.
+"""Image → text (and, for chat screenshots, speaker labels) via a vision LLM.
 
 Deliberately a *standalone* step rather than a leg of the knowledge-graph
 pipeline. `/kg/extract` already spends most of a 120s Lambda budget inside one
@@ -9,11 +9,40 @@ claim is drafted from it — the same human-in-the-loop shape the KG flow alread
 uses for extract → review → commit.
 
 The caller therefore does: POST /ocr/image → edit → POST /kg/extract.
+
+Why a vision model and not a dedicated OCR API
+----------------------------------------------
+This used to call AWS Textract. Textract does not support Korean — its language
+list is English/Spanish/Italian/Portuguese/French/German — which is the wrong
+engine for a Korean journal. Once the engine had to change anyway, the vision
+model won on two counts beyond language:
+
+  * Cost is not the deciding factor at this volume. A 1080×2400 screenshot is
+    ~1,445 image tokens on gpt-4o-mini, ≈$0.004 including output, against
+    $0.0015/page for a dedicated OCR API. At a thousand photos a month that is
+    $3.80 vs $1.50 — a rounding error either way. (Note that gpt-4o-mini is not
+    cheaper *per image* than gpt-4o: OpenAI inflates mini's image token count so
+    the dollar price per image matches.)
+  * The same call does speaker attribution. A dedicated OCR API returns text and
+    boxes; turning bubble geometry into speakers would be our own brittle
+    threshold code, and no off-the-shelf library does it.
+
+What this endpoint may NOT do is invent structure. Speakers come back only when
+the image really is a conversation, and `build_labeled_text` re-checks that in
+Python rather than trusting the model's own flag — see its docstring.
+
+The one thing lost with Textract is a calibrated per-line confidence score, so
+the "인식률 87%" badge is gone. A model's self-reported confidence is not the
+same measurement and is not worth showing as if it were; the review sheet now
+warns unconditionally instead.
 """
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
+import re
 import uuid
 from functools import lru_cache
 
@@ -29,13 +58,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ocr", tags=["ocr"])
 
-# Textract's synchronous API accepts 10MB, but the bytes also have to survive a
-# Lambda request payload and are billed per page — 5MB is well past what a phone
-# photo of a page needs after client-side downscaling.
+# The bytes have to survive a Lambda request payload and inflate ~4/3 again as
+# base64 on the way to OpenAI — 5MB is well past what a phone photo of a page
+# needs after client-side downscaling.
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
-# Textract DetectDocumentText synchronously supports JPEG/PNG only (TIFF/PDF are
-# async-only). WEBP is rejected here rather than at AWS so the error is useful.
+# JPEG/PNG only. The vision model accepts more, but the magic-number gate below
+# is what actually keeps junk out, and it can only vouch for formats it knows.
 _ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/jpg", "image/png"}
 
 # Content-Type is client-supplied, so the real gate is the magic number.
@@ -44,8 +73,60 @@ _MAGIC_PREFIXES: tuple[tuple[bytes, str], ...] = (
     (b"\x89PNG\r\n\x1a\n", "image/png"),
 )
 
-# Below this the client shows a "check the text" warning rather than trusting it.
-LOW_CONFIDENCE_THRESHOLD = 85.0
+# Must match the client's mention regex (mention_editor_core.dart,
+# `_atLineRe`): first character a letter or hangul, then up to 19 more from a
+# restricted set. A name this side accepts but that side won't match would land
+# in the composer as literal "@이름:" text with no badge behind it.
+_SPEAKER_NAME_RE = re.compile(r"^[A-Za-z가-힣][A-Za-z0-9가-힣 ._-]{0,19}$")
+
+_SYSTEM_PROMPT = """\
+너는 이미지에서 글자를 읽어내는 OCR이다. 두 가지 일만 한다.
+
+1. 이미지에 보이는 글자를 그대로 옮긴다.
+   - 번역·요약·교정·보충을 하지 않는다. 오타도 보이는 대로 옮긴다.
+   - 읽는 순서와 줄 구분을 유지한다.
+   - 글자가 없으면 lines를 빈 배열로 둔다.
+
+2. 이 이미지가 '화자가 구분되는 대화'인지 판단한다.
+   - 대화인 경우(메신저·채팅 캡처처럼 말풍선과 보낸 사람이 보이는 경우)에만
+     is_conversation을 true로 하고, 각 줄의 speaker에 화면에 보이는 이름을 넣는다.
+   - 캡처를 찍은 본인의 말풍선(대개 오른쪽 정렬, 이름이 따로 표시되지 않음)은
+     speaker를 "나"로 한다.
+   - 그 외에는 모두 is_conversation을 false로 하고 speaker를 빈 문자열로 둔다.
+     문서·필기·기사·책·강의자료·용어 정리·영수증·표는 대화가 아니다.
+
+절대 하지 말 것: 콜론이 있다는 이유로 화자를 만들어내는 것.
+"약정액: LP가 출자하기로 약속한 금액" 에서 "약정액"은 용어이지 사람이 아니다.
+화자 이름은 화면에 발신자로 표시된 것만 쓴다. 확신이 없으면 대화가 아니라고 답한다.
+"""
+
+_OCR_RESPONSE_FORMAT: dict = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "ocr_result",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "is_conversation": {"type": "boolean"},
+                "lines": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "speaker": {"type": "string"},
+                            "text": {"type": "string"},
+                        },
+                        "required": ["speaker", "text"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["is_conversation", "lines"],
+            "additionalProperties": False,
+        },
+    },
+}
 
 
 def sniff_image_type(data: bytes) -> str | None:
@@ -57,80 +138,107 @@ def sniff_image_type(data: bytes) -> str | None:
 
 
 @lru_cache
-def _textract_client():
+def _llm_client():
     """Module-level client so warm Lambda containers skip the handshake.
 
-    Retries are ON here, unlike the LLM clients elsewhere in this codebase.
-    Textract answers in ~1-3s, so a couple of adaptive retries against a
-    throttling response fit comfortably inside the request budget — the reason
-    `/kg/extract` sets max_retries=0 does not apply.
+    One retry, unlike `/kg/extract`'s zero. That endpoint runs extraction inside
+    the request and has to leave room to record a failure inside 120s; this one
+    is a single short vision call with nothing to clean up afterwards, so a
+    retry against a throttling response still fits comfortably.
     """
-    import boto3
-    from botocore.config import Config
+    from openai import AsyncOpenAI
 
     settings = get_settings()
-    return boto3.client(
-        "textract",
-        region_name=settings.s3_region,
-        config=Config(
-            retries={"max_attempts": 3, "mode": "adaptive"},
-            connect_timeout=3,
-            read_timeout=25,
-        ),
+    return AsyncOpenAI(
+        api_key=settings.openai_api_key,
+        timeout=settings.openai_timeout_sec,
+        max_retries=1,
     )
 
 
-def extract_lines(blocks: list[dict]) -> tuple[str, float | None]:
-    """Flatten Textract blocks into reading-order text plus mean confidence.
+def _sanitize_speaker(raw: object) -> str | None:
+    """Normalize a model-supplied speaker name, or None when it is unusable."""
+    name = " ".join(str(raw or "").split())
+    return name if _SPEAKER_NAME_RE.match(name) else None
 
-    Textract returns blocks in no guaranteed order, so lines are sorted by their
-    normalized vertical position. Left-to-right is the tiebreak for two lines
-    that share a baseline (a two-column receipt, a labelled form row).
+
+def build_labeled_text(payload: dict) -> tuple[str, list[str]]:
+    """Turn the model's answer into composer text, plus the speakers found.
+
+    Returns "@이름: 발화" lines only when the result is unambiguously a
+    conversation; otherwise plain text, which the composer attributes to 나 and
+    the learner can reassign from the speaker chips.
+
+    The model's `is_conversation` flag is necessary but not sufficient. Two more
+    conditions are enforced here, at the decoding level, because a prompt can be
+    disobeyed and a wrong speaker becomes a person node in the graph:
+
+      * every speaker name has to survive `_sanitize_speaker`, so a stray label
+        cannot arrive as an unmatched literal "@…:" in the composer;
+      * there have to be at least two distinct speakers, since one speaker is
+        just text and gains nothing from labeling.
+
+    Failing either drops the whole result to plain text — the cheap outcome. The
+    expensive one is a fake speaker committed to the knowledge graph.
     """
-    lines = [b for b in blocks if b.get("BlockType") == "LINE"]
+    raw_lines = payload.get("lines")
+    if not isinstance(raw_lines, list):
+        raw_lines = []
 
-    def position(block: dict) -> tuple[float, float]:
-        box = (block.get("Geometry") or {}).get("BoundingBox") or {}
-        return (box.get("Top") or 0.0, box.get("Left") or 0.0)
+    texts: list[str] = []
+    for line in raw_lines:
+        if isinstance(line, dict):
+            text = str(line.get("text", "")).strip()
+            if text:
+                texts.append(text)
+    plain = "\n".join(texts)
 
-    lines.sort(key=position)
-    text = "\n".join((b.get("Text") or "") for b in lines).strip()
+    if not payload.get("is_conversation") or not texts:
+        return plain, []
 
-    confidences = [
-        float(b["Confidence"]) for b in lines if b.get("Confidence") is not None
-    ]
-    mean_confidence = (
-        round(sum(confidences) / len(confidences), 2) if confidences else None
-    )
-    return text, mean_confidence
+    labeled: list[str] = []
+    speakers: list[str] = []
+    for line in raw_lines:
+        if not isinstance(line, dict):
+            continue
+        text = str(line.get("text", "")).strip()
+        if not text:
+            continue
+        name = _sanitize_speaker(line.get("speaker"))
+        if name is None:
+            logger.info("OCR speaker %r rejected — falling back to plain text",
+                        line.get("speaker"))
+            return plain, []
+        labeled.append(f"@{name}: {text}")
+        if name not in speakers:
+            speakers.append(name)
+
+    if len(speakers) < 2:
+        return plain, []
+    return "\n".join(labeled), speakers
 
 
-def _translate_client_error(exc: Exception) -> HTTPException:
-    """Map botocore's error codes onto responses the client can act on."""
-    code = getattr(exc, "response", {}).get("Error", {}).get("Code", "")
+def _translate_llm_error(exc: Exception) -> HTTPException:
+    """Map the OpenAI SDK's failures onto responses the client can act on."""
+    from openai import APITimeoutError, AuthenticationError, RateLimitError
 
-    if code in ("ThrottlingException", "ProvisionedThroughputExceededException"):
+    if isinstance(exc, RateLimitError):
         return HTTPException(
             status_code=429,
             detail="OCR 요청이 몰려 잠시 처리할 수 없습니다. 잠시 후 다시 시도해 주세요.",
             headers={"Retry-After": "5"},
         )
-    if code in (
-        "UnsupportedDocumentException",
-        "InvalidParameterException",
-        "DocumentTooLargeException",
-        "BadDocumentException",
-    ):
+    if isinstance(exc, APITimeoutError):
         return HTTPException(
-            status_code=422,
-            detail="이미지를 읽을 수 없습니다. 더 선명한 사진으로 다시 시도해 주세요.",
+            status_code=504,
+            detail="사진을 읽는 데 시간이 너무 오래 걸렸습니다. 다시 시도해 주세요.",
         )
-    if code in ("AccessDeniedException", "UnrecognizedClientException"):
-        # A deployment/IAM problem, not the learner's. Do not leak the AWS text.
-        logger.error("Textract access denied — check the function's IAM policy")
+    if isinstance(exc, AuthenticationError):
+        # A deployment problem, not the learner's. Do not leak the provider text.
+        logger.error("OpenAI rejected the OCR call — check the API key")
         return HTTPException(status_code=502, detail="OCR 서비스를 사용할 수 없습니다.")
 
-    logger.exception("Textract call failed (code=%s)", code or "unknown")
+    logger.exception("Vision OCR call failed")
     return HTTPException(status_code=502, detail="OCR 처리에 실패했습니다.")
 
 
@@ -173,20 +281,42 @@ async def ocr_image(
         ext = ".png" if sniffed == "image/png" else ".jpg"
         storage_key = await save_media(data, f"{user.id}/ocr/{uuid.uuid4()}{ext}")
 
+    data_url = f"data:{sniffed};base64,{base64.b64encode(data).decode()}"
     try:
-        response = _textract_client().detect_document_text(Document={"Bytes": data})
+        response = await _llm_client().chat.completions.create(
+            model=get_settings().openai_model,
+            response_format=_OCR_RESPONSE_FORMAT,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            # "high" is not optional here: Korean glyphs are
+                            # unreadable at "low" (85 tokens buys a thumbnail).
+                            "image_url": {"url": data_url, "detail": "high"},
+                        }
+                    ],
+                },
+            ],
+        )
     except HTTPException:
         raise
     except Exception as exc:
-        raise _translate_client_error(exc) from exc
+        raise _translate_llm_error(exc) from exc
 
-    text, mean_confidence = extract_lines(response.get("Blocks") or [])
+    try:
+        payload = json.loads(response.choices[0].message.content or "{}")
+    except (json.JSONDecodeError, IndexError, AttributeError):
+        logger.exception("Vision OCR returned unparseable content")
+        raise HTTPException(status_code=502, detail="OCR 처리에 실패했습니다.")
+
+    text, speakers = build_labeled_text(payload)
     return {
         "text": text,
-        "mean_confidence": mean_confidence,
-        "low_confidence": (
-            mean_confidence is not None and mean_confidence < LOW_CONFIDENCE_THRESHOLD
-        ),
+        "is_conversation": bool(speakers),
+        "speakers": speakers,
         "line_count": len(text.splitlines()) if text else 0,
         "storage_key": storage_key,
     }

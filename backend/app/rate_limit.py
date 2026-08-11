@@ -1,6 +1,6 @@
 """Per-user daily quotas for the endpoints that cost real money.
 
-Every counted endpoint either calls an LLM, Whisper, or Textract. Before this
+Every counted endpoint either calls an LLM or Whisper. Before this
 existed there was no ceiling of any kind, and the Lambda Function URL is
 ``AuthType: NONE`` — the only thing between an attacker and an unbounded gpt-4o
 bill was that nobody had tried.

@@ -478,8 +478,8 @@ const Map<String, String> _ko = {
   'chat.menu.ocr': '사진에서 가져오기',
   'ocr.working': '사진에서 글자를 읽는 중…',
   'ocr.reviewTitle': '인식된 텍스트 확인',
-  'ocr.confidenceLabel': '인식률 {percent}%',
-  'ocr.lowConfidenceWarning': '인식률이 낮습니다. 저장하기 전에 내용을 확인해 주세요.',
+  'ocr.checkHint': '사진에서 읽은 글자는 틀릴 수 있습니다. 저장 전에 확인해 주세요.',
+  'ocr.speakersLabel': '화자 {count}명 인식: {names}',
   'ocr.emptyResultHint': '인식된 글자가 없습니다. 직접 입력해 주세요.',
   'ocr.useText': '이 텍스트 사용',
   'ocr.cancel': '취소',
@@ -1685,9 +1685,9 @@ const Map<String, String> _en = {
   'chat.menu.ocr': 'Import from photo',
   'ocr.working': 'Reading the text in your photo…',
   'ocr.reviewTitle': 'Check the recognised text',
-  'ocr.confidenceLabel': '{percent}% confidence',
-  'ocr.lowConfidenceWarning':
-      'Recognition confidence is low — please check this before saving.',
+  'ocr.checkHint':
+      'Text read from a photo can be wrong. Check it before saving.',
+  'ocr.speakersLabel': '{count} speakers found: {names}',
   'ocr.emptyResultHint': 'No text was recognised. Type it in yourself.',
   'ocr.useText': 'Use this text',
   'ocr.cancel': 'Cancel',

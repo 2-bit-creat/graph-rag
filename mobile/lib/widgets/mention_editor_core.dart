@@ -572,8 +572,12 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     if (mounted && (textChanged || popupChanged)) setState(() {});
   }
 
-  /// Replace the whole draft (e.g. restoring an abandoned entry's original text)
-  /// and put the caret at the end.
+  /// Replace the whole draft — restoring an abandoned entry's original text, or
+  /// dropping in text imported from a photo — and put the caret at the end.
+  ///
+  /// Writes through the controller so the normal change pipeline runs: an
+  /// imported "@이름: 발화" transcript registers its badges on the way in, which
+  /// is what makes those mentions live rather than literal text.
   void setText(String value) {
     _controller.value = TextEditingValue(
       text: value,

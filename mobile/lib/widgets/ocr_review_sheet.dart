@@ -14,20 +14,21 @@ class OcrReviewSheet extends StatefulWidget {
   const OcrReviewSheet({
     super.key,
     required this.initialText,
-    this.meanConfidence,
-    this.lowConfidence = false,
+    this.speakers = const [],
   });
 
   final String initialText;
-  final double? meanConfidence;
-  final bool lowConfidence;
+
+  /// Speakers the vision model found, when the photo was a conversation. Shown
+  /// so the split is visible *here* — once this text reaches the composer the
+  /// names become "@배지" mentions, and a wrong one is far cheaper to fix now.
+  final List<String> speakers;
 
   /// Returns the confirmed text, or null when dismissed.
   static Future<String?> show(
     BuildContext context, {
     required String initialText,
-    double? meanConfidence,
-    bool lowConfidence = false,
+    List<String> speakers = const [],
   }) {
     return showModalBottomSheet<String>(
       context: context,
@@ -35,8 +36,7 @@ class OcrReviewSheet extends StatefulWidget {
       showDragHandle: true,
       builder: (_) => OcrReviewSheet(
         initialText: initialText,
-        meanConfidence: meanConfidence,
-        lowConfidence: lowConfidence,
+        speakers: speakers,
       ),
     );
   }
@@ -77,10 +77,11 @@ class _OcrReviewSheetState extends State<OcrReviewSheet> {
             children: [
               Text(tr('ocr.reviewTitle'), style: theme.textTheme.titleMedium),
               const Spacer(),
-              if (widget.meanConfidence != null)
+              if (widget.speakers.isNotEmpty)
                 Text(
-                  tr('ocr.confidenceLabel', {
-                    'percent': widget.meanConfidence!.toStringAsFixed(0),
+                  tr('ocr.speakersLabel', {
+                    'count': '${widget.speakers.length}',
+                    'names': widget.speakers.join(', '),
                   }),
                   style: theme.textTheme.labelSmall
                       ?.copyWith(color: AppColors.textMuted),
@@ -88,31 +89,35 @@ class _OcrReviewSheetState extends State<OcrReviewSheet> {
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
-          if (widget.lowConfidence)
-            Container(
-              margin: const EdgeInsets.only(bottom: AppSpacing.md),
-              padding: const EdgeInsets.all(AppSpacing.md),
-              decoration: BoxDecoration(
-                color: AppColors.accentWarm.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.warning_amber_rounded,
-                    size: 18,
-                    color: AppColors.accentWarm,
-                  ),
-                  const SizedBox(width: AppSpacing.sm),
-                  Expanded(
-                    child: Text(
-                      tr('ocr.lowConfidenceWarning'),
-                      style: theme.textTheme.bodySmall,
-                    ),
-                  ),
-                ],
-              ),
+          // Unconditional, unlike the old confidence-gated warning. A vision
+          // model returns no calibrated per-line score to gate on, and its own
+          // stated confidence is not that measurement — so the honest UI says
+          // "check this" every time rather than implying a number it does not
+          // have.
+          Container(
+            margin: const EdgeInsets.only(bottom: AppSpacing.md),
+            padding: const EdgeInsets.all(AppSpacing.md),
+            decoration: BoxDecoration(
+              color: AppColors.accentWarm.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
             ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.warning_amber_rounded,
+                  size: 18,
+                  color: AppColors.accentWarm,
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text(
+                    tr('ocr.checkHint'),
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ),
+          ),
           ConstrainedBox(
             constraints: BoxConstraints(
               maxHeight: MediaQuery.sizeOf(context).height * 0.42,
