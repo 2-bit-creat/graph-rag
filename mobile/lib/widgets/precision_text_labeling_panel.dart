@@ -9,24 +9,11 @@ import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart' show isSpeakerLikeType, isStatementHeadType;
 import '../widgets/app_ui.dart';
+import 'mention_editor_core.dart' show colorForSpeaker, speakerTurns;
+import 'speaker_bar.dart';
 
 // 추출 품질이 급격히 떨어지는 지점 이전으로 캡 (백엔드 JournalTextEntryRequest와 동일).
 const kMaxJournalTextChars = 4000;
-
-/// '나' 배지 고정 색 — 화자 확인 칩의 확정(초록) 톤과 맞춘다.
-const _selfColor = Color(0xFF2E7D32);
-
-/// 그 외 화자 배지 색 팔레트 — 등장 순서대로 배정.
-const _speakerPalette = <Color>[
-  Color(0xFF6750A4), // 보라
-  Color(0xFF00639B), // 파랑
-  Color(0xFFB3261E), // 빨강
-  Color(0xFF7D5260), // 로즈
-  Color(0xFF9A6400), // 앰버
-  Color(0xFF006A60), // 청록
-  Color(0xFF8E4585), // 자주
-  Color(0xFF5B6236), // 올리브
-];
 
 /// 본문에서 발견된 "@배지" 멘션.
 class _MentionHit {
@@ -310,12 +297,9 @@ class _PrecisionTextLabelingPanelState
   /// 팝업에서 ↑↓로 고른 위치 (options 다음 한 칸은 "새 화자 만들기").
   int _optionCursor = 0;
 
-  Color _colorFor(String name) {
-    if (name == '나') return _selfColor;
-    final i = _badges.indexOf(name);
-    final idx = i <= 0 ? 0 : i - 1; // '나' 제외한 순번
-    return _speakerPalette[idx % _speakerPalette.length];
-  }
+  /// 화자색은 앱 전체가 한 함수를 쓴다 — 이 패널, 채팅 작성창 배지, OCR 확인
+  /// 시트, 화자 바, 그래프 캔버스. 사본을 두면 같은 사람이 화면마다 다른 색이 된다.
+  Color _colorFor(String name) => colorForSpeaker(name, _badges);
 
   void _ensureBadge(String name) {
     if (name.trim().isEmpty) return;
@@ -829,41 +813,20 @@ class _PrecisionTextLabelingPanelState
     }
     if (segs.isEmpty) return const SizedBox.shrink();
 
-    final theme = Theme.of(context);
-    final counts = <String, int>{};
-    for (final e in segs) {
-      counts[e.key] = (counts[e.key] ?? 0) + 1;
-    }
+    // Same bar as the chat composer and the saved entry — one shape for
+    // "who is in this", wherever the learner happens to be standing.
     return Padding(
       padding: const EdgeInsets.only(top: AppSpacing.xs),
-      child: Wrap(
-        spacing: 6,
-        runSpacing: 4,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          Text(tr('precisionText.splitPreviewLabel'), style: theme.textTheme.labelMedium),
-          for (final entry in counts.entries)
-            Chip(
-              avatar: Icon(
-                entry.key == '나'
-                    ? Icons.check_circle_rounded
-                    : Icons.person_outline_rounded,
-                size: 14,
-                color: _colorFor(entry.key),
-              ),
-              label: Text(
-                '${entry.key == '나' ? selfSpeakerLabel : entry.key} · ${entry.value}',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: Color.lerp(_colorFor(entry.key), Colors.black, 0.2),
-                ),
-              ),
-              visualDensity: VisualDensity.compact,
-              backgroundColor: _colorFor(entry.key).withValues(alpha: 0.1),
-              side: BorderSide(
-                color: _colorFor(entry.key).withValues(alpha: 0.35),
-              ),
+      child: SpeakerBar(
+        dense: true,
+        chips: [
+          for (final entry in speakerTurns(segs))
+            SpeakerChipData(
+              label: entry.key,
+              displayName:
+                  entry.key == '나' ? selfSpeakerLabel : entry.key,
+              turns: entry.value,
+              color: _colorFor(entry.key),
             ),
         ],
       ),

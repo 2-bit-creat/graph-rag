@@ -151,11 +151,40 @@ ParsedDialogue? parseDialogueLines(String text) {
 }
 
 /// [badges] 등장 순서 기준 색 — '나'는 [kSelfMentionColor], 나머지는 [kSpeakerPalette].
+///
+/// 팔레트 번호는 '나'를 **건너뛴 순번**이다. 예전 구현은 `indexOf`에서 1을 빼는
+/// 방식이라 목록에 '나'가 없으면(저장된 항목의 화자 목록, OCR 인식 결과처럼)
+/// 첫째와 둘째 화자가 같은 색을 받았다. 색이 신원을 뜻하는 이상 두 사람이 같은
+/// 색인 것은 그냥 틀린 것이므로, '나'의 존재 여부와 무관하게 세도록 바꿨다.
+/// '나'가 맨 앞에 있는 기존 호출은 결과가 이전과 완전히 동일하다.
 Color colorForSpeaker(String name, List<String> badges) {
   if (name == '나') return kSelfMentionColor;
-  final i = badges.indexOf(name);
-  final idx = i <= 0 ? 0 : i - 1; // '나' 제외한 순번
+  var idx = 0;
+  for (final badge in badges) {
+    if (badge == '나') continue;
+    if (badge == name) break;
+    idx++;
+  }
   return kSpeakerPalette[idx % kSpeakerPalette.length];
+}
+
+/// 화자 이름을 색 배정 순서로 정렬 — '나'가 있으면 항상 맨 앞, 나머지는 첫 등장 순.
+///
+/// 작성창의 배지 목록과 저장된 항목의 세그먼트 목록을 같은 규칙으로 통과시켜야
+/// 한 화자가 저장 전후로 같은 색을 유지한다.
+List<String> speakerColorOrder(Iterable<String> appearanceOrder) {
+  final others = <String>[];
+  var hasSelf = false;
+  for (final raw in appearanceOrder) {
+    final name = normalizeMentionName(raw);
+    if (name.isEmpty) continue;
+    if (name == '나') {
+      hasSelf = true;
+      continue;
+    }
+    if (!others.contains(name)) others.add(name);
+  }
+  return [if (hasSelf) '나', ...others];
 }
 
 /// 매칭 대상 이름 목록으로 본문의 @멘션을 찾는다 (긴 이름 우선 매칭은 호출측 정렬).
@@ -206,22 +235,88 @@ String toLabeledLines(List<MapEntry<String, String>> segs) {
   return segs.map((e) => '[${e.key}]: ${e.value}').join('\n');
 }
 
-/// Speaker-labeled lines ("[name]: text") built from a mention field's current
-/// text — shared by every composer that saves journal text, so the @-mention →
-/// per-speaker-line rule lives in exactly one place.
-String labeledTextFromMentionField(MentionAutocompleteFieldState field) {
+/// Per-speaker segments for a mention field's current text.
+///
+/// The one place the @-mention → per-speaker rule lives. The speaker bar above
+/// the composer and the text that actually gets saved both read it, so the bar
+/// cannot promise a split the save does not deliver.
+List<MapEntry<String, String>> segmentsFromMentionField(
+  MentionAutocompleteFieldState field,
+) {
   final raw = field.text;
   final text = raw.trim();
-  if (text.isEmpty) return '';
+  if (text.isEmpty) return const [];
   final hits = findMentions(raw, field.matchableNames());
-  if (hits.isNotEmpty) {
-    return toLabeledLines(splitByMentions(raw, hits));
-  }
+  if (hits.isNotEmpty) return splitByMentions(raw, hits);
   final legacy = parseDialogueLines(text);
-  if (legacy != null) {
-    return toLabeledLines(legacy.lines);
+  if (legacy != null) return legacy.lines;
+  return [MapEntry('나', text)];
+}
+
+/// Speaker-labeled lines ("[name]: text") built from a mention field's current
+/// text — shared by every composer that saves journal text.
+String labeledTextFromMentionField(MentionAutocompleteFieldState field) {
+  final segments = segmentsFromMentionField(field);
+  return segments.isEmpty ? '' : toLabeledLines(segments);
+}
+
+/// (화자, 턴 수) — 등장 순서. 화자 바가 "제니 · 8" 을 그리는 근거.
+///
+/// 턴 수는 장식이 아니라 안전장치다. 잘못된 분리는 거의 항상 "화자 여럿이 각각
+/// 1턴"으로 나타난다 — 용어사전이 23명짜리 대화로 잘렸을 때가 정확히 그 모양이다.
+List<MapEntry<String, int>> speakerTurns(
+  List<MapEntry<String, String>> segments,
+) {
+  final counts = <String, int>{};
+  final order = <String>[];
+  for (final segment in segments) {
+    final name = normalizeMentionName(segment.key);
+    if (name.isEmpty) continue;
+    if (!counts.containsKey(name)) order.add(name);
+    counts[name] = (counts[name] ?? 0) + 1;
   }
-  return toLabeledLines([MapEntry('나', text)]);
+  return [for (final name in order) MapEntry(name, counts[name]!)];
+}
+
+/// 본문의 "@옛이름" 멘션을 전부 "@새이름"으로 바꾼다.
+///
+/// 뒤에서부터 치환한다 — 앞에서 하면 길이가 달라지는 순간 뒤쪽 히트의 위치가
+/// 전부 어긋난다.
+String renameMentionInText(String text, String oldName, String newName) {
+  final hits = findMentions(text, [oldName]);
+  if (hits.isEmpty) return text;
+  final buffer = StringBuffer();
+  var idx = 0;
+  for (final hit in hits) {
+    buffer
+      ..write(text.substring(idx, hit.start))
+      ..write('@$newName');
+    idx = hit.end;
+  }
+  buffer.write(text.substring(idx));
+  return buffer.toString();
+}
+
+/// "@이름" 표시를 걷어내 그 발화를 앞 화자에게 합친다 (칩의 '화자 아님').
+///
+/// 멘션 바로 뒤의 구분자(":"·",")와 이어지는 공백까지 함께 지운다. 그것이 남으면
+/// 합쳐진 문장이 콜론으로 시작한다.
+String dissolveMentionInText(String text, String name) {
+  final hits = findMentions(text, [name]);
+  if (hits.isEmpty) return text;
+  final buffer = StringBuffer();
+  var idx = 0;
+  for (final hit in hits) {
+    buffer.write(text.substring(idx, hit.start));
+    var after = hit.end;
+    final trailing = RegExp(r'^[ \t]*[:：,·]?[ \t]*').firstMatch(
+      text.substring(after),
+    );
+    if (trailing != null) after += trailing.end;
+    idx = after;
+  }
+  buffer.write(text.substring(idx));
+  return buffer.toString();
 }
 
 /// Colors the "@배지" runs of the text.
@@ -486,6 +581,19 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
   String get text => _controller.text;
 
   List<String> get badges => List.unmodifiable(_badges);
+
+  /// Register a speaker without the learner having to pick it from the popup.
+  ///
+  /// Renaming a speaker from the composer's chip needs this: the rewritten text
+  /// carries a name nothing has registered yet, and an unregistered name is not
+  /// a mention — the rename would silently collapse that speaker's lines into
+  /// the previous one.
+  void ensureSpeaker(String name) {
+    final normalized = normalizeMentionName(name);
+    if (normalized.isEmpty) return;
+    _ensureBadge(normalized);
+    if (mounted) setState(() {});
+  }
 
   /// 매칭 대상 이름: 세션 배지 + 그래프 화자 (긴 이름 우선).
   List<String> matchableNames() {

@@ -15,6 +15,7 @@ import 'chat_suggestion_rail.dart';
 import 'journal_progress_card.dart';
 import 'mention_editor_core.dart';
 import 'quiz/quiz_viewport_scope.dart';
+import 'speaker_bar.dart';
 import 'thinking_orbs.dart';
 
 /// 지식그래프 화면 위에 떠 있는 바텀시트 형태의 대화 패널 (헤더 + 메시지 피드만).
@@ -782,7 +783,142 @@ class _InputBarState extends State<_InputBar> {
   void _onJournalTextChanged(String text) {
     final long = text.length >= _longDraftChars;
     if (long != _longDraft) setState(() => _longDraft = long);
+    _refreshComposerSpeakers();
     _followCaretWhileTyping();
+  }
+
+  /// Live (화자, 턴 수) for the bar above the composer.
+  List<MapEntry<String, int>> _composerTurns = const [];
+
+  /// Recompute only when the split actually changed.
+  ///
+  /// This runs on every keystroke, and the composer is the one place in this
+  /// tree where a needless rebuild is expensive — see the caret notes in
+  /// [MentionStyledController]. Typing inside one speaker's block changes no
+  /// chip, so the common case must not call setState at all.
+  void _refreshComposerSpeakers() {
+    final field = _mentionFieldKey.currentState;
+    if (field == null) return;
+    final next = speakerTurns(segmentsFromMentionField(field));
+    if (next.length == _composerTurns.length) {
+      var same = true;
+      for (var i = 0; i < next.length; i++) {
+        if (next[i].key != _composerTurns[i].key ||
+            next[i].value != _composerTurns[i].value) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return;
+    }
+    if (mounted) setState(() => _composerTurns = next);
+  }
+
+  /// The composer's speaker chip — correction at the point it is still free.
+  ///
+  /// After a save, fixing a speaker means touching an entry that may already
+  /// have a graph draft behind it. Here it is only text.
+  Future<void> _openComposerSpeakerSheet(String name) async {
+    final field = _mentionFieldKey.currentState;
+    if (field == null) return;
+
+    if (name == '나') {
+      // 나 owns everything not claimed by another mention, so there is nothing
+      // to rename it to and nothing to merge it into.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr('speakerBar.selfNotEditable'))),
+      );
+      return;
+    }
+
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit_rounded),
+              title: Text(tr('speakerBar.renameAction')),
+              onTap: () => Navigator.pop(ctx, 'rename'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.merge_type_rounded),
+              title: Text(tr('speakerBar.dissolveAction')),
+              onTap: () => Navigator.pop(ctx, 'dissolve'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+
+    if (action == 'dissolve') {
+      field.setText(dissolveMentionInText(field.text, name));
+      _refreshComposerSpeakers();
+      return;
+    }
+
+    final renamed = await _promptSpeakerName(name);
+    if (renamed == null || !mounted) return;
+    // Register first: the rewritten text names a speaker nothing knows yet, and
+    // an unregistered name is not a mention.
+    field.ensureSpeaker(renamed);
+    field.setText(renameMentionInText(field.text, name, renamed));
+    _refreshComposerSpeakers();
+  }
+
+  Future<String?> _promptSpeakerName(String current) async {
+    final controller = TextEditingController(text: current);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('speakerBar.renameTitle')),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: InputDecoration(hintText: tr('speakerBar.renameHint')),
+          onSubmitted: (v) => Navigator.pop(ctx, v),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(tr('speakerBar.cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: Text(tr('speakerBar.renameConfirm')),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    final name = normalizeMentionName(result ?? '');
+    return (name.isEmpty || name == current) ? null : name;
+  }
+
+  Widget _composerSpeakerBar() {
+    // One speaker is just text — a bar that always says "나 · 1" is noise.
+    if (_composerTurns.length < 2) return const SizedBox.shrink();
+    final order = speakerColorOrder(_composerTurns.map((e) => e.key));
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, right: 4, bottom: 6),
+      child: SpeakerBar(
+        dense: true,
+        chips: [
+          for (final entry in _composerTurns)
+            SpeakerChipData(
+              label: entry.key,
+              displayName:
+                  entry.key == '나' ? selfSpeakerLabel : entry.key,
+              turns: entry.value,
+              color: colorForSpeaker(entry.key, order),
+              onTap: () => _openComposerSpeakerSheet(entry.key),
+            ),
+        ],
+      ),
+    );
   }
 
   /// The field no longer scrolls itself, so typing past the cap would run off
@@ -907,9 +1043,16 @@ class _InputBarState extends State<_InputBar> {
     // this is just the naked row so the pill stays one clean surface.
     return Padding(
       padding: const EdgeInsets.fromLTRB(3, 1, 5, 1),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Above the pill, not inside it: this answers "how many speakers am I
+          // about to create", which until now was only visible after saving.
+          if (journalMode) _composerSpeakerBar(),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
           if (widget.onModeSelected != null)
             _ModeMenuButton(onSelected: widget.onModeSelected!),
           if (journalMode) ...[
@@ -1009,18 +1152,20 @@ class _InputBarState extends State<_InputBar> {
                     ),
                   ),
           ),
-          const SizedBox(width: AppSpacing.xs),
-          _SendButton(
-            enabled: journalMode ? (canType && !recording) : canType,
-            busy: journalMode && _journalSaving,
-            onSend: () {
-              HapticFeedback.lightImpact();
-              if (journalMode) {
-                _saveJournal();
-              } else {
-                widget.onSend(widget.controller.text);
-              }
-            },
+              const SizedBox(width: AppSpacing.xs),
+              _SendButton(
+                enabled: journalMode ? (canType && !recording) : canType,
+                busy: journalMode && _journalSaving,
+                onSend: () {
+                  HapticFeedback.lightImpact();
+                  if (journalMode) {
+                    _saveJournal();
+                  } else {
+                    widget.onSend(widget.controller.text);
+                  }
+                },
+              ),
+            ],
           ),
         ],
       ),
