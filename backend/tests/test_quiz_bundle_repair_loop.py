@@ -24,24 +24,83 @@ class _Completions:
 
 
 def test_cloze_author_prompt_requires_complete_native_translation() -> None:
-    """The single-card author prompt (not a separate translation pass) is the
-    quality boundary today: it must still demand that sentence_ko translate the
-    *complete* sentence_target and that target_ko be copied verbatim from it, so
-    a card can never omit a clause the way the old Korean gloss regression did
-    (a card that said "acquiring management control AND restructuring
-    governance" but glossed only the second clause)."""
+    """The single-card author must translate the complete target sentence and
+    copy the exact corresponding native span, without a separate translation call."""
     prompt = quiz_bundle._build_cloze_system_prompt(
         "Korean (한국어)", "English", 50, quiz_bundle.lang_guide("english"), "english"
-    ) + (
-        " This request contains exactly ONE expression. Create exactly one card for it. "
-        "The card must focus on that expression alone; never import a sibling expression from the reference answer. "
-        "Prefer a concise 6-14 word standalone example with one clear proposition. sentence_ko must translate the final "
-        "sentence_target completely in this same response, and target_ko must be copied verbatim from sentence_ko."
     )
-    assert "sentence_ko must translate the final" in prompt
-    assert "sentence_target completely in this same response" in prompt
-    assert "target_ko must be copied verbatim from sentence_ko" in prompt
-    assert "sentence_ko must be its complete natural native-language translation" in prompt
+    assert "sentence_native must be the complete sentence" in prompt
+    assert "completely translate sentence_target" in prompt
+    assert "answer_native must be copied verbatim" in prompt
+
+
+def test_release_prompt_rejects_conservative_rate_scope_mismatch() -> None:
+    prompt = quiz_bundle._build_cloze_qa_system_prompt("Korean (한국어)", "English")
+    assert "a conservative discount rate" in prompt
+    assert "보수적으로" in prompt
+    assert "보수적인 할인율" in prompt
+    assert "semantic_scope_mismatch" in prompt
+    assert "part_of_speech_mismatch" in prompt
+    assert "score < 92" in prompt
+    assert "part of the faithful short source sentence" in prompt
+
+
+def test_author_prompt_uses_language_neutral_model_fields() -> None:
+    prompt = quiz_bundle._build_cloze_system_prompt(
+        "English", "Korean (한국어)", 50, quiz_bundle.lang_guide("korean"), "korean"
+    )
+    assert "sentence_target to that complete reference answer" in prompt
+    assert "sentence_native must be the complete sentence" in prompt
+    assert "answer_native must be copied verbatim" in prompt
+    assert '"sentence_native"' in prompt
+    assert '"answer_native"' in prompt
+    assert "sibling expression may remain as context outside surface_answer" in prompt
+
+
+def test_language_neutral_model_fields_map_to_legacy_storage_fields() -> None:
+    mapped = quiz_bundle._store_legacy_cloze_fields({
+        "question_native": "Complete the sentence.",
+        "sentence_native": "He applied a conservative discount rate.",
+        "answer_native": "a conservative discount rate",
+    })
+    assert mapped == {
+        "question_ko": "Complete the sentence.",
+        "sentence_ko": "He applied a conservative discount rate.",
+        "target_ko": "a conservative discount rate",
+    }
+    assert quiz_bundle._review_cloze_view(mapped) == {
+        "question_native": "Complete the sentence.",
+        "sentence_native": "He applied a conservative discount rate.",
+        "answer_native": "a conservative discount rate",
+    }
+
+
+def test_reviewed_meaning_parts_recover_exact_native_source_span() -> None:
+    source = "He is applying a conservative discount rate to account for uncertainty."
+    core = {
+        "meaning": "to apply a conservative discount rate",
+        "meaning_parts": [
+            {"native": "conservative"},
+            {"native": "discount rate"},
+            {"native": "to apply"},
+        ],
+    }
+    purpose = {"meaning": "to account for uncertainty", "meaning_parts": []}
+    assert quiz_bundle._source_alignment_span(source, core) == (
+        "is applying a conservative discount rate"
+    )
+    assert quiz_bundle._source_alignment_span(source, purpose) == "to account for uncertainty"
+
+
+def test_missing_or_low_quality_review_fails_closed() -> None:
+    items = [{"expression_id": "good"}, {"expression_id": "missing"}]
+    reviews = {
+        "good": {"expression_id": "good", "verdict": "pass", "score": 91, "issues": []}
+    }
+    assert quiz_bundle._quality_feedback_for_items(items, reviews) == {
+        "good": ["quality_score_below_release_bar"],
+        "missing": ["missing_quality_review"],
+    }
 
 
 @pytest.mark.asyncio
@@ -179,7 +238,15 @@ async def test_quality_review_repairs_only_the_failed_card(
         "target_ko": "꼼꼼히 검토했습니다",
         "sentence_target": "I carefully reviewed the key metrics before the meeting.",
     }]}
-    completions = _Completions([plan, plan, first_card, review, repaired_card])
+    repaired_review = {"reviews": [{
+        "expression_id": "0:0",
+        "verdict": "pass",
+        "score": 96,
+        "issues": [],
+    }]}
+    completions = _Completions([
+        plan, plan, first_card, review, repaired_card, repaired_review
+    ])
     monkeypatch.setattr(
         quiz_bundle,
         "_client",
@@ -204,7 +271,9 @@ async def test_quality_review_repairs_only_the_failed_card(
         if step["name"] == "bundle_cloze_batch_quality_review"
     )
     assert review_step["output"]["repair_count"] == 1
-    assert len(completions.calls) == 5
+    assert len(completions.calls) == 6
+    assert review_step["output"]["fail_closed"] is True
+    assert review_step["output"]["release_score"] == 92
 
 
 def test_proper_name_expression_chunks_are_excluded() -> None:

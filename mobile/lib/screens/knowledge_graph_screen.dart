@@ -113,6 +113,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   Map<String, dynamic>? _selectedStudyQuizzes;
   bool _selectedStudyLoading = false;
   bool _selectedRegenerating = false;
+  bool _selectedGenerating = false;
   final _canvasKey = GlobalKey<KnowledgeGraphCanvasState>();
   // 화자 숨김(Speaker-to-Color) 모드: head 노드를 물리에서 제거하고
   // Statement를 화자색으로 인코딩 — 슈퍼노드(성게) 뭉침 해소용.
@@ -166,6 +167,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   bool _lastDistillLoading = false;
   bool _lastWordQuizSolved = false;
   String? _lastActiveQuizId;
+
   /// Which chat room is on screen — see _onChatSessionSwitched. Null until the
   /// first room loads, so opening the app is not mistaken for a room switch.
   String? _lastSessionId;
@@ -274,7 +276,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     if (_chatFocused) setState(() => _chatFocused = false);
   }
 
-  void _animateChatSheet(double target, {bool remember = true}) {
+  void _animateChatSheet(double target) {
     final min = _sheetMinChildSize(context, _chatAreaHeight);
     final next = target.clamp(min, _sheetFocusSize).toDouble();
     if (next > min + 0.01) {
@@ -1159,7 +1161,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   }
 
   void _snack(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   static List<({String key, String label, String flag})> get _quizLanguages =>
@@ -1475,8 +1478,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
                   const SizedBox(height: 2),
                   Text(
                     tr('quiz.preparingHint'),
-                    style: TextStyle(
-                        color: context.shell.mutedText, fontSize: 12),
+                    style:
+                        TextStyle(color: context.shell.mutedText, fontSize: 12),
                   ),
                 ],
               ),
@@ -1579,6 +1582,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       _selectedStudyQuizzes = null;
       _selectedStudyLoading = isStatement;
       _selectedRegenerating = false;
+      _selectedGenerating = false;
     });
     _canvasKey.currentState?.centerOnNode(node['id'].toString());
 
@@ -1635,6 +1639,100 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     }
   }
 
+  Future<void> _generateSelectedStudyQuizzes(String nodeId) async {
+    if (_selectedGenerating) return;
+    final before =
+        ((_selectedStudyQuizzes?['word'] as Map?)?['count'] as num?)?.toInt() ??
+            0;
+    setState(() => _selectedGenerating = true);
+    try {
+      await apiClient.generateNodeStudyQuizzes(nodeId);
+      for (var attempt = 0; attempt < 30; attempt++) {
+        await Future<void>.delayed(const Duration(seconds: 2));
+        if (!mounted || _selectedNodeId != nodeId) return;
+        await _loadSelectedStudyQuizzes(nodeId);
+        final data = _selectedStudyQuizzes;
+        final status =
+            ((data?['generation'] as Map?)?['status'] ?? 'idle').toString();
+        final count =
+            (((data?['word'] as Map?)?['count']) as num?)?.toInt() ?? 0;
+        if (!const {'queued', 'running'}.contains(status) && count >= before) {
+          break;
+        }
+      }
+    } catch (e) {
+      if (mounted) chatSession.errors.value = e.toString();
+    } finally {
+      if (mounted) setState(() => _selectedGenerating = false);
+    }
+  }
+
+  Future<void> _showSelectedExpressions(String nodeId) async {
+    try {
+      final data = await apiClient.getNodeExpressions(nodeId);
+      if (!mounted || _selectedNodeId != nodeId) return;
+      final raw = data['expressions_by_language'];
+      final groups = raw is Map ? raw : const <String, dynamic>{};
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (sheetContext) => SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(sheetContext).height * .72,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.visibility_outlined),
+                  title: Text(tr('kg.expressionSheetTitle')),
+                  subtitle: Text(tr('kg.expressionSheetWarning')),
+                ),
+                const Divider(height: 1),
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+                    children: [
+                      for (final entry in groups.entries) ...[
+                        Text(
+                          kLegacyLanguageLabelsKo[entry.key.toString()] ??
+                              entry.key.toString(),
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 6),
+                        for (final item in (entry.value as List? ?? const []))
+                          ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.auto_awesome, size: 18),
+                            title: Text(
+                              (item as Map)['expression']?.toString() ?? '',
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                            subtitle:
+                                ((item)['meaning']?.toString() ?? '').isEmpty
+                                    ? null
+                                    : Text(item['meaning'].toString()),
+                          ),
+                        const SizedBox(height: 10),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (mounted) chatSession.errors.value = e.toString();
+    }
+  }
+
   Future<void> _selectEdge(Map<String, dynamic>? edge,
       {bool showSheet = false}) async {
     setState(() {
@@ -1645,6 +1743,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       _selectedStudyQuizzes = null;
       _selectedStudyLoading = false;
       _selectedRegenerating = false;
+      _selectedGenerating = false;
     });
     if (edge != null && showSheet && mounted) {
       await _showInspectorSheet();
@@ -2011,10 +2110,21 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
                     studyQuizzes: _selectedStudyQuizzes,
                     studyLoading: _selectedStudyLoading,
                     regenerating: _selectedRegenerating,
+                    generating: _selectedGenerating,
                     onRegenerate: () {
                       final nodeId = _selectedNodeId;
                       if (nodeId == null) return;
                       unawaited(_regenerateSelectedQuizzes(nodeId));
+                    },
+                    onGenerate: () {
+                      final nodeId = _selectedNodeId;
+                      if (nodeId == null) return;
+                      unawaited(_generateSelectedStudyQuizzes(nodeId));
+                    },
+                    onShowExpressions: () {
+                      final nodeId = _selectedNodeId;
+                      if (nodeId == null) return;
+                      unawaited(_showSelectedExpressions(nodeId));
                     },
                     onStudyQuizzes: (quizType, quizIds, language) async {
                       if (quizType == 'composition') {
@@ -2711,7 +2821,10 @@ class _SelectionInfoCard extends StatelessWidget {
     required this.studyQuizzes,
     required this.studyLoading,
     required this.regenerating,
+    required this.generating,
     required this.onRegenerate,
+    required this.onGenerate,
+    required this.onShowExpressions,
     required this.onStudyQuizzes,
     required this.onDetail,
     required this.onClose,
@@ -2725,7 +2838,10 @@ class _SelectionInfoCard extends StatelessWidget {
   final Map<String, dynamic>? studyQuizzes;
   final bool studyLoading;
   final bool regenerating;
+  final bool generating;
   final VoidCallback onRegenerate;
+  final VoidCallback onGenerate;
+  final VoidCallback onShowExpressions;
   final Future<void> Function(
     String quizType,
     List<String> quizIds,
@@ -2799,8 +2915,8 @@ class _SelectionInfoCard extends StatelessWidget {
               ListTile(
                 leading: const Icon(Icons.translate_rounded),
                 title: Text(_languageLabels[language] ?? language),
-                trailing: Text(tr('kg.countItems',
-                    {'count': byLanguage[language]!.length})),
+                trailing: Text(tr(
+                    'kg.countItems', {'count': byLanguage[language]!.length})),
                 onTap: () => Navigator.pop(sheetContext, language),
               ),
             const SizedBox(height: 8),
@@ -2813,62 +2929,143 @@ class _SelectionInfoCard extends StatelessWidget {
     }
   }
 
-  Widget _studyQuizButtons(BuildContext context) {
+  Widget _studyLearningPanel(BuildContext context) {
     if (studyLoading) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 4),
-        child: SizedBox(
-          width: 16,
-          height: 16,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      );
+      return Row(children: [
+        const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2)),
+        const SizedBox(width: 9),
+        Flexible(child: Text(tr('kg.analysisPreparing'))),
+      ]);
     }
+    final shell = context.shell;
     final word = (studyQuizzes?['word'] as Map?)?.cast<String, dynamic>() ??
         const <String, dynamic>{};
     final composition =
         (studyQuizzes?['composition'] as Map?)?.cast<String, dynamic>() ??
             const <String, dynamic>{};
-    Widget button(String type, Map<String, dynamic> group, String label) {
+    final expressions =
+        (studyQuizzes?['expressions'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{};
+    final generation =
+        (studyQuizzes?['generation'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{};
+    final rawStatuses = studyQuizzes?['material_status'];
+    final statuses = rawStatuses is Map
+        ? rawStatuses.values.map((value) => value.toString()).toSet()
+        : const <String>{};
+    final generationStatus = (generation['status'] ?? 'idle').toString();
+    final isPreparing = generating ||
+        regenerating ||
+        const {'queued', 'running'}.contains(generationStatus) ||
+        statuses.any(const {'pending', 'analyzing', 'stale'}.contains);
+    final failed = statuses.contains('failed');
+    final expressionCount = (expressions['count'] as num?)?.toInt() ?? 0;
+    final availableCount =
+        (expressions['available_count'] as num?)?.toInt() ?? 0;
+
+    Widget quizButton(String type, Map<String, dynamic> group, String label) {
       final count = (group['count'] as num?)?.toInt() ?? 0;
-      return OutlinedButton(
+      final reviewCount = (group['review_count'] as num?)?.toInt() ?? 0;
+      return OutlinedButton.icon(
         onPressed:
             count == 0 ? null : () => _startStudyQuiz(context, type, group),
-        style: OutlinedButton.styleFrom(
-          visualDensity: VisualDensity.compact,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        ),
-        child: Text('$label $count'),
+        icon: Icon(
+            type == 'cloze'
+                ? Icons.spellcheck_rounded
+                : Icons.edit_note_rounded,
+            size: 17),
+        label: Text(reviewCount > 0
+            ? '$label $count · ${tr('kg.reviewShort')} $reviewCount'
+            : '$label $count'),
       );
     }
 
-    // 진술을 수정하면 기존 문제·표현은 보관으로 넘어가고 이 버튼만 열린다.
-    // 수정된 적이 없으면(=재생성할 이유가 없으면) 비활성이다.
-    final needsRegeneration = studyQuizzes?['needs_regeneration'] == true;
-    return Wrap(
-      spacing: 8,
-      runSpacing: 6,
-      children: [
-        button('cloze', word, tr('kg.wordQuiz')),
-        button('composition', composition, tr('kg.compositionQuiz')),
-        OutlinedButton.icon(
-          onPressed:
-              (!needsRegeneration || regenerating) ? null : onRegenerate,
-          style: OutlinedButton.styleFrom(
-            visualDensity: VisualDensity.compact,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      if (expressionCount > 0) ...[
+        InkWell(
+          onTap: isPreparing ? null : onShowExpressions,
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+            child: Row(children: [
+              Icon(Icons.auto_awesome_outlined,
+                  size: 17, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 7),
+              Expanded(
+                  child: Text(
+                tr('kg.expressionCount', {'count': expressionCount}),
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              )),
+              Icon(Icons.chevron_right_rounded,
+                  size: 18, color: shell.mutedText),
+            ]),
           ),
-          icon: regenerating
-              ? const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.autorenew_rounded, size: 16),
-          label: Text(regenerating ? tr('kg.regenerating') : tr('kg.regenerateQuiz')),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(left: 26, bottom: 7),
+          child: Text(tr('kg.expressionHiddenHint'),
+              style: TextStyle(fontSize: 11, color: shell.mutedText)),
         ),
       ],
-    );
+      if (isPreparing)
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(11),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.primary.withValues(alpha: .08),
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(
+                color: Theme.of(context)
+                    .colorScheme
+                    .primary
+                    .withValues(alpha: .22)),
+          ),
+          child: Row(children: [
+            const SizedBox(
+                width: 17,
+                height: 17,
+                child: CircularProgressIndicator(strokeWidth: 2)),
+            const SizedBox(width: 10),
+            Expanded(
+                child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(tr('kg.generatingQualityTitle'),
+                    style: const TextStyle(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 2),
+                Text(tr('kg.generatingQualityBody'),
+                    style: TextStyle(fontSize: 11.5, color: shell.mutedText)),
+              ],
+            )),
+          ]),
+        )
+      else ...[
+        Wrap(spacing: 8, runSpacing: 7, children: [
+          quizButton('cloze', word, tr('kg.wordQuiz')),
+          quizButton('composition', composition, tr('kg.compositionQuiz')),
+        ]),
+        if (availableCount > 0 || failed) ...[
+          const SizedBox(height: 8),
+          SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: failed ? onRegenerate : onGenerate,
+                icon: Icon(failed
+                    ? Icons.refresh_rounded
+                    : Icons.auto_awesome_rounded),
+                label: Text(failed
+                    ? tr('kg.retryAnalysis')
+                    : ((word['count'] as num?)?.toInt() ?? 0) == 0
+                        ? tr('kg.createFromStatement')
+                        : tr('kg.createMoreFromStatement',
+                            {'count': availableCount})),
+              )),
+        ],
+      ],
+    ]);
   }
 
   @override
@@ -3083,7 +3280,7 @@ class _SelectionInfoCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 5),
-              _studyQuizButtons(context),
+              _studyLearningPanel(context),
             ],
             const SizedBox(height: 6),
             Row(

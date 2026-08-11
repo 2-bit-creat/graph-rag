@@ -162,7 +162,7 @@ async def _archive_previous_pair(
                 Quiz.user_id == user_id,
                 Quiz.language == language,
                 Quiz.quiz_type.in_(("cloze", "composition")),
-                Quiz.queue_kind != "archived",
+                Quiz.queue_kind.in_(("new", "review")),
                 Quiz.source_nodes.any(node_id),
             )
         )
@@ -284,22 +284,26 @@ async def process_generation_run(run_id: uuid.UUID) -> None:
             node_id = uuid.UUID(str(item["node_id"]))
             language = str(item["language"]).lower()
             try:
+                direct_source = run.source in {
+                    "manual", "node_selected", "regeneration"
+                }
                 material, created, _ = await generate_complete_learning_set(
                     session,
                     user,
                     node_id=node_id,
                     language=language,
-                    priority=100 if run.source == "manual" else 0,
-                    force_analysis=run.source == "manual",
-                    limit=8,
-                    direct_node=run.source == "manual",
+                    priority=100 if direct_source else 0,
+                    force_analysis=run.source in {"manual", "regeneration"},
+                    limit=3 if run.source == "node_selected" else 8,
+                    direct_node=direct_source,
                 )
                 for quiz in created:
-                    quiz.source_kind = (
-                        "auto_generation"
-                        if run.source == "auto"
-                        else "developer_generation"
-                    )
+                    quiz.source_kind = {
+                        "auto": "auto_generation",
+                        "node_selected": "node_selected",
+                        "regeneration": "node_regeneration",
+                        "manual": "developer_generation",
+                    }.get(run.source, "auto_generation")
                 created_counts = {
                     "cloze": sum(quiz.quiz_type == "cloze" for quiz in created),
                     "composition": sum(

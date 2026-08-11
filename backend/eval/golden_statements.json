@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "note": "Golden set for the quiz-generation eval harness (scripts/quiz_eval.py). Korean statements feed ko-en and ko-de; english statements feed en-ko. Tags name the failure mode each statement is meant to probe — see backend/eval/README.md.",
   "statements": [
     {
@@ -171,6 +171,19 @@
       "note": "세 개의 동작(퇴근, 구매, 정리)이 이어지는 긴 문장 — 유닛 분리 한계 확인."
     },
     {
+      "id": "ko-025",
+      "quality_case_id": "polysemy-conservative-rate-001",
+      "native": "korean",
+      "text": "그는 불확실성을 반영하기 위해 보수적인 할인율을 적용하고 있다.",
+      "tags": ["polysemy", "domain_term", "semantic_scope", "part_of_speech"],
+      "note": "보수적인 할인율은 a conservative discount rate. 명사구 전체를 단순 부사 '보수적으로'로 축소하거나 'adopt a rate'처럼 어색한 연어를 만들면 안 됨.",
+      "expect_cloze": {
+        "target_contains": ["conservative", "discount rate"],
+        "native_contains": ["보수적", "할인율", "적용"],
+        "native_forbidden_exact": ["보수적으로"]
+      }
+    },
+    {
       "id": "en-001",
       "native": "english",
       "text": "I carefully reviewed the presentation before the meeting.",
@@ -253,6 +266,19 @@
       "text": "I closely reviewed the presentation materials, not just glanced at them.",
       "tags": ["comparative_자세히"],
       "note": "closely의 자연스러운 한국어 대응(자세히/꼼꼼히) 확인."
+    },
+    {
+      "id": "en-013",
+      "quality_case_id": "polysemy-conservative-rate-001",
+      "native": "english",
+      "text": "He is applying a conservative discount rate to account for uncertainty.",
+      "tags": ["polysemy", "domain_term", "semantic_scope", "part_of_speech"],
+      "note": "영어 명사구 a conservative discount rate를 자연스러운 한국어 명사구 '보수적인 할인율'로 보존하고, 적용하다와의 연어도 자연스러워야 함.",
+      "expect_cloze": {
+        "target_contains": ["보수적", "할인율"],
+        "native_contains": ["applying", "conservative", "discount rate"],
+        "native_forbidden_exact": ["conservatively"]
+      }
     }
   ]
 }

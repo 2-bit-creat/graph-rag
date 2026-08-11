@@ -9,8 +9,8 @@ accepted expression is authored as its own cloze card in an isolated request
 (``_author_individual_cloze_items``) so one bad card cannot contaminate its
 siblings, then every card in the batch is reviewed together
 (``_review_cloze_quality``) and any card that fails is re-authored with the
-reviewer's feedback. A card that still fails after repair falls back to a
-source-faithful card (``_safe_reference_fallback``) rather than shipping nothing.
+reviewer's feedback. A repaired card must pass a second independent release
+review; unchecked or still-failing cards are withheld.
 """
 
 from __future__ import annotations
@@ -47,7 +47,9 @@ logger = logging.getLogger(__name__)
 
 # Bump this whenever the cloze contract changes.  The batch service uses it to
 # retry sources that were exhausted by an older, broken prompt/normalizer.
-CLOZE_GENERATOR_VERSION = "cloze-contract-v14-language-packs"
+CLOZE_GENERATOR_VERSION = "cloze-contract-v15-semantic-release-gate"
+
+_CLOZE_RELEASE_SCORE = 92
 _BLANK_RUN_RE = re.compile(r"_{2,}")
 # Kept as a module-level alias: several structural helpers below tokenize
 # canonical/answer text with the English word pattern regardless of target
@@ -81,13 +83,22 @@ def _client() -> AsyncOpenAI:
     return AsyncOpenAI(api_key=get_settings().openai_api_key)
 
 
+def _temperature_args(model: str, value: float) -> dict[str, float]:
+    """Reasoning-family models choose their own sampling; older models accept temperature."""
+    return {} if (model or "").lower().startswith("gpt-5") else {"temperature": value}
+
+
 def _usage_payload(response: Any) -> dict[str, int]:
     """Persist provider token accounting in traces without storing secrets."""
     usage = getattr(response, "usage", None)
+    prompt_details = getattr(usage, "prompt_tokens_details", None)
+    completion_details = getattr(usage, "completion_tokens_details", None)
     return {
         "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
         "completion_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
         "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+        "cached_prompt_tokens": int(getattr(prompt_details, "cached_tokens", 0) or 0),
+        "reasoning_tokens": int(getattr(completion_details, "reasoning_tokens", 0) or 0),
     }
 
 
@@ -145,9 +156,9 @@ _CLOZE_SCHEMA_HINT = """{
     "expression_id": "<supplied id>",
     "canonical_form": "<copy supplied canonical form>",
     "surface_answer": "<natural inflected contiguous answer used in sentence_target>",
-    "question_ko": "<short native-language instruction that does not reveal the answer>",
-    "sentence_ko": "<complete native-language translation of sentence_target>",
-    "target_ko": "<matching native-language surface span when available>",
+    "question_native": "<short NATIVE-language instruction that does not reveal the answer>",
+    "sentence_native": "<complete NATIVE-language translation of sentence_target>",
+    "answer_native": "<exact matching NATIVE-language surface span copied from sentence_native>",
     "sentence_target": "<complete TARGET-language sentence containing surface_answer exactly once; no underscores>"
   }]
 }"""
@@ -278,15 +289,15 @@ _CLOZE_RESPONSE_FORMAT = {
                         "additionalProperties": False,
                         "required": [
                             "expression_id", "canonical_form", "surface_answer",
-                            "question_ko", "sentence_ko", "target_ko", "sentence_target",
+                            "question_native", "sentence_native", "answer_native", "sentence_target",
                         ],
                         "properties": {
                             "expression_id": {"type": "string"},
                             "canonical_form": {"type": "string"},
                             "surface_answer": {"type": "string"},
-                            "question_ko": {"type": "string"},
-                            "sentence_ko": {"type": "string"},
-                            "target_ko": {"type": "string"},
+                            "question_native": {"type": "string"},
+                            "sentence_native": {"type": "string"},
+                            "answer_native": {"type": "string"},
                             "sentence_target": {"type": "string"},
                         },
                     },
@@ -328,15 +339,127 @@ _CLOZE_QA_RESPONSE_FORMAT = {
 
 def _build_cloze_qa_system_prompt(native_label: str, target_label: str) -> str:
     return (
-        "You are an independent senior language-learning card editor. Review every card, not the planner. "
+        "You are the independent release editor for a commercial native-level language-learning product. "
+        "Review every card from scratch; never trust the author or planner. A false pass teaches an error, so be conservative about PASS. "
         f"Target language: {target_label}. Native language: {native_label}. Score strictly on: idiomatic target-language usage (20), "
         "learning value and reusable expression boundary (15), source fidelity (15), exact inflected answer boundary (15), "
         "context that makes the intended answer reasonably recoverable with the native meaning and letter hint (10), complete native "
-        "translation of every clause (15), level/length fit (5), and concise useful wording (5). A card must be repaired when score < 85, "
-        "when it imports a sibling expression, when the native sentence omits or adds meaning, or when the example is unnatural. "
+        "translation of every clause (15), level/length fit (5), and concise useful wording (5). A card must be repaired when score < 92, "
+        "when surface_answer itself imports a sibling expression, when the native sentence omits or adds meaning, or when the example is unnatural. "
+        "A sibling expression may remain outside the blank when it is part of the faithful short source sentence; that is context, not "
+        "sibling_expression_leak. "
+        "The highlighted native span must translate the WHOLE surface_answer with the same semantic scope and grammatical role, not merely "
+        "one convenient word. Explicitly reject part-of-speech or constituent mismatches (for example, English noun phrase "
+        "'a conservative discount rate' cannot be glossed only as Korean adverb '보수적으로'; the span must express the rate itself, such "
+        "as '보수적인 할인율'). Distinguish lexical senses and domain collocations: in finance, 'use/apply a conservative discount rate' "
+        "means using/applying a prudently chosen rate; do not approve a mechanically rearranged translation that changes what is modified. "
+        "Both target and native sentences must sound publishable to an educated native speaker, not merely grammatical or understandable. "
         "Do not rewrite cards. Return terse machine-readable issue codes such as unnatural_collocation, sibling_expression_leak, "
-        "translation_omission, translation_addition, ambiguous_answer, answer_boundary, source_drift, too_long, or level_mismatch."
+        "translation_omission, translation_addition, semantic_scope_mismatch, part_of_speech_mismatch, wrong_sense, ambiguous_answer, "
+        "answer_boundary, source_drift, too_long, or level_mismatch."
     )
+
+
+def _quality_feedback_for_items(
+    items: list[dict[str, Any]], reviews: dict[str, dict[str, Any]]
+) -> dict[str, list[str]]:
+    """Fail closed: every learner-facing card needs an explicit high-score pass."""
+    feedback: dict[str, list[str]] = {}
+    for item in items:
+        expression_id = str(item.get("expression_id") or "")
+        review = reviews.get(expression_id)
+        if review is None:
+            feedback[expression_id] = ["missing_quality_review"]
+            continue
+        if review.get("verdict") != "pass" or int(review.get("score") or 0) < _CLOZE_RELEASE_SCORE:
+            feedback[expression_id] = list(review.get("issues") or ["quality_score_below_release_bar"])
+    return feedback
+
+
+def _store_legacy_cloze_fields(card: dict[str, Any]) -> dict[str, Any]:
+    """Translate model-facing language-neutral names to the persisted API names."""
+    mapped = dict(card)
+    for neutral, legacy in (
+        ("question_native", "question_ko"),
+        ("sentence_native", "sentence_ko"),
+        ("answer_native", "target_ko"),
+    ):
+        if neutral in mapped:
+            mapped[legacy] = mapped.pop(neutral)
+    return mapped
+
+
+def _review_cloze_view(card: dict[str, Any]) -> dict[str, Any]:
+    """Hide misleading legacy ``*_ko`` names from the independent model reviewer."""
+    view = dict(card)
+    for legacy, neutral in (
+        ("question_ko", "question_native"),
+        ("sentence_ko", "sentence_native"),
+        ("target_ko", "answer_native"),
+    ):
+        if legacy in view:
+            view[neutral] = view.pop(legacy)
+    return view
+
+
+def _source_alignment_span(source: str, chunk: dict[str, Any]) -> str:
+    """Recover an exact native span from reviewed bilingual meaning parts."""
+    text = (source or "").strip()
+    if not text:
+        return ""
+    lowered = text.casefold()
+    def find_span(phrase: str) -> tuple[int, int] | None:
+        needle = phrase.strip().casefold()
+        start = lowered.find(needle)
+        if start >= 0:
+            return start, start + len(phrase.strip())
+        if not needle.startswith("to "):
+            return None
+        words = needle[3:].split(maxsplit=1)
+        if not words:
+            return None
+        verb = words[0]
+        tail = f" {words[1]}" if len(words) > 1 else ""
+        forms = {verb, f"{verb}s", f"{verb}ed", f"{verb}ing"}
+        if verb.endswith("e"):
+            forms.add(f"{verb[:-1]}ing")
+        if verb.endswith("y") and len(verb) > 1:
+            forms.add(f"{verb[:-1]}ies")
+        for form in sorted(forms, key=len, reverse=True):
+            candidate = f"{form}{tail}"
+            start = lowered.find(candidate)
+            if start < 0:
+                continue
+            prefix = lowered[:start]
+            aux = re.search(r"\b(?:am|is|are|was|were|be|been|being|has|have|had|will)\s+$", prefix)
+            return (aux.start() if aux else start), start + len(candidate)
+        return None
+
+    candidates: list[tuple[int, int]] = []
+    meaning = str(chunk.get("meaning") or "").strip()
+    if meaning:
+        span = find_span(meaning)
+        if span:
+            candidates.append(span)
+    spans: list[tuple[int, int]] = []
+    for part in chunk.get("meaning_parts") or []:
+        if not isinstance(part, dict):
+            continue
+        native = str(part.get("native") or "").strip()
+        if len(native) < 3:
+            continue
+        span = find_span(native)
+        if span:
+            spans.append(span)
+    if spans:
+        candidates.append((
+            min(value[0] for value in spans),
+            max(value[1] for value in spans),
+        ))
+    if not candidates:
+        return ""
+    start, end = max(candidates, key=lambda value: value[1] - value[0])
+    return text[start:end].strip()
 
 
 # Both now live in ``precision_text`` so the knowledge-graph extractor can reuse
@@ -664,24 +787,27 @@ def _build_cloze_system_prompt(
         "You create exactly one context-grounded cloze card for each supplied expression. "
         f"Native language: {native_label}. Target language: {target_label}. Learner level: {level}/100. "
         f"Teaching focus: {guide} Target-language quality rubric: {localized_quality_rules(language)} "
-        "Use the supplied source segment, reference answer, canonical form, surface form, meaning parts and grammar as the meaning source, "
-        "but do NOT simply copy the entire reference answer or source segment into sentence_target when it is longer than needed for this "
-        "one expression. The reference answer may be one long sentence shared by several expressions from the same statement; each cloze card "
-        "is a standalone vocabulary example and must carry only what surface_answer needs. Write a concise, self-contained natural sentence "
-        "(roughly 6-16 target-language words) that showcases surface_answer in its ordinary collocation. Only keep a longer sentence when the "
-        "expression is a discourse frame or grammar pattern whose meaning genuinely depends on the fuller clause. Do not weaken or omit "
+        "Use the supplied source segment, reference answer, canonical form, surface form, meaning parts and grammar as the only meaning source. "
+        "DEFAULT FOR A SHORT SOURCE: when the reference answer is 16 target-language words or fewer, set sentence_target to that complete "
+        "reference answer (verbatim unless it has a real language error), and set sentence_native to the complete supplied native source unit. Do "
+        "not shorten either side merely to isolate the blank. A sibling expression may remain as context outside surface_answer. "
+        "LONG-SOURCE EXCEPTION: when the reference is over 16 words and shared by several expressions, make a concise 6-16 word example by "
+        "removing only sibling clauses unrelated to this expression. The example must remain grounded in the supplied source proposition: never "
+        "replace its subject, object, purpose, cause, polarity, or domain situation with invented generic context, and never paraphrase away "
+        "the original who-did-what relation. Do not weaken or omit "
         "meaning-bearing modifiers such as closer/more, again, still, barely, might, must or not, and never add one absent from the source. "
         "Korean '자세히' does not license English 'closer/more closely'; those require explicit '더 자세히'. canonical_form is a wordbook identity, "
         "NOT a literal substring requirement. Choose surface_answer as a natural inflected form for this sentence, but inflection may "
         "change grammar only: it must NEVER add a name, organization, event, place, date, product, or contextual noun that is not part of "
         "the reusable expression. Every supplied excluded entity is forbidden in surface_answer. Keep it outside the blank or omit it from "
         "this vocabulary example. For example, use surface_answer 'on the webpage' / 'auf der Webseite', never 'at the Antock webpage' / "
-        "'auf der Webseite von Entok'. The complete target_ko must cover the WHOLE surface_answer; if target_ko is only '웹페이지에서', "
+        "'auf der Webseite von Entok'. The complete answer_native must cover the WHOLE surface_answer; if answer_native is only '웹페이지에서', "
         "surface_answer cannot contain 'Antock'. For a discontinuous or "
         "separable expression, write a new natural sentence where one useful realization is contiguous; never force the canonical form into "
         "an ungrammatical position. sentence_target must contain surface_answer exactly once and no underscores. "
-        "sentence_ko must be its complete natural native-language translation and contain no underscores. "
-        "target_ko should identify the matching inflected native-language span when one is available. "
+        "sentence_native must be the complete sentence in the NATIVE language named above and completely translate sentence_target. "
+        "answer_native must be copied verbatim as one contiguous span from sentence_native and translate the WHOLE surface_answer with the "
+        "same semantic scope. question_native must also be in the NATIVE language. "
         "The instruction must not reveal the answer. "
         f"{_author_prompt_extra_notes(language)}"
         f"Respond only with JSON of this exact shape: {_CLOZE_SCHEMA_HINT}"
@@ -776,7 +902,7 @@ def _normalize_bundle_cloze(
     if "_" in full_sentence or len(list(matcher.finditer(full_sentence))) != 1:
         return None
     prompt = matcher.sub("___", full_sentence, count=1)
-    if pack.sentence_length_reason(full_sentence):
+    if pack.sentence_length_reason(full_sentence) or pack.sentence_language_reason(full_sentence):
         return None
 
     sentence_ko = str(item.get("sentence_ko") or "").strip()
@@ -1164,9 +1290,14 @@ async def _author_individual_cloze_items(
         native_label, target_label, level, lang_guide(target_language), target_language
     ) + (
         " This request contains exactly ONE expression. Create exactly one card for it. "
-        "The card must focus on that expression alone; never import a sibling expression from the reference answer. "
-        "Prefer a concise 6-14 word standalone example with one clear proposition. sentence_ko must translate the final "
-        "sentence_target completely in this same response, and target_ko must be copied verbatim from sentence_ko."
+        "The card must focus on that expression alone: never include a sibling expression inside surface_answer, but preserve it outside the "
+        "blank when reusing a short faithful source sentence. "
+        "Prefer a concise 6-14 word standalone example with one clear proposition. sentence_native must translate the final "
+        "sentence_target completely in this same response, and answer_native must be copied verbatim from sentence_native."
+        " Repair feedback is binding. source_drift or translation_omission means reuse the COMPLETE supplied reference answer as sentence_target "
+        "and the COMPLETE source unit as sentence_native instead of shortening them or inventing a new "
+        "scenario. semantic_scope_mismatch or part_of_speech_mismatch means answer_native must cover the entire surface_answer as the same kind of "
+        "constituent, including its head noun and modifiers."
     )
     sibling_names = [str(chunk.get("canonical_form") or "") for chunk in chunks]
     semaphore = asyncio.Semaphore(3)
@@ -1178,7 +1309,7 @@ async def _author_individual_cloze_items(
             "source_statement": source_statement,
             "source_unit": chunk.get("source_segment") or "",
             "expression": chunk,
-            "forbidden_sibling_expressions": forbidden,
+            "forbidden_inside_surface_answer": forbidden,
             "repair_feedback": list((feedback or {}).get(expression_id) or []),
         }
         try:
@@ -1189,7 +1320,7 @@ async def _author_individual_cloze_items(
                         {"role": "system", "content": base_system},
                         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
                     ],
-                    temperature=0.2 if not payload["repair_feedback"] else 0.1,
+                    **_temperature_args(model, 0.2 if not payload["repair_feedback"] else 0.1),
                     response_format=_CLOZE_RESPONSE_FORMAT,
                     timeout=timeout,
                 )
@@ -1197,7 +1328,39 @@ async def _author_individual_cloze_items(
             cards = [item for item in (raw.get("cloze") or []) if isinstance(item, dict)]
             if len(cards) != 1:
                 return None, f"{expression_id}: author returned {len(cards)} cards", _usage_payload(response)
-            card = dict(cards[0])
+            raw_card = dict(cards[0])
+            used_neutral_fields = any(
+                key in raw_card
+                for key in ("question_native", "sentence_native", "answer_native")
+            )
+            card = _store_legacy_cloze_fields(raw_card)
+            # For a short reviewed reference, sentence generation is already
+            # solved upstream. Reuse the trusted bilingual pair exactly and
+            # let the author supply only the expression alignment. This avoids
+            # both translation drift and a costly repair call.
+            references = chunk.get("reference_answers") or []
+            reference_text = str(
+                (references[0] if references and isinstance(references[0], dict) else {}).get("text")
+                or ""
+            ).strip()
+            source_text = str(chunk.get("source_segment") or "").strip()
+            surface_answer = str(card.get("surface_answer") or "").strip()
+            pack = target_pack(target_language)
+            if (
+                used_neutral_fields
+                and reference_text
+                and source_text
+                and len(pack.tokens(reference_text)) <= 16
+                and pack.contains_span(reference_text, surface_answer)
+            ):
+                card["sentence_target"] = reference_text
+                card["sentence_ko"] = source_text
+                if not native_quiz_pack(native_language).contains_span(
+                    source_text, str(card.get("target_ko") or "")
+                ):
+                    aligned = _source_alignment_span(source_text, chunk)
+                    if aligned:
+                        card["target_ko"] = aligned
             card["expression_id"] = expression_id
             card["canonical_form"] = str(chunk.get("canonical_form") or "")
             return card, None, _usage_payload(response)
@@ -1230,7 +1393,10 @@ async def _review_cloze_quality(
     contracts = {str(chunk.get("expression_id")): chunk for chunk in chunks}
     payload = {
         "cards": [
-            {"card": item, "contract": contracts.get(str(item.get("expression_id")), {})}
+            {
+                "card": _review_cloze_view(item),
+                "contract": contracts.get(str(item.get("expression_id")), {}),
+            }
             for item in items
         ]
     }
@@ -1240,7 +1406,7 @@ async def _review_cloze_quality(
             {"role": "system", "content": system},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ],
-        temperature=0,
+        **_temperature_args(model, 0),
         response_format=_CLOZE_QA_RESPONSE_FORMAT,
         timeout=timeout,
     )
@@ -1295,6 +1461,7 @@ async def generate_quiz_bundle(
     generation_version: str | None = None,
     allow_existing_expressions: bool = False,
     materialize_cloze: bool = True,
+    synthesize_audio: bool = True,
 ) -> tuple[list[Quiz], dict]:
     """Generate composition units and expression clozes from one Statement.
 
@@ -1305,6 +1472,7 @@ async def generate_quiz_bundle(
 
     settings = get_settings()
     quality_model = settings.quiz_quality_model or settings.openai_model
+    author_model = settings.quiz_author_model or quality_model
     language = (language or "english").lower()
     native_language = (getattr(user, "native_language", None) or "korean").lower()
     if not is_supported_pair(native_language, language):
@@ -1370,7 +1538,7 @@ async def generate_quiz_bundle(
             {"role": "system", "content": system},
             {"role": "user", "content": user_content},
         ],
-        temperature=0.35,
+        **_temperature_args(settings.openai_model, 0.35),
         response_format=_PLAN_RESPONSE_FORMAT,
         timeout=settings.openai_timeout_sec,
     )
@@ -1452,7 +1620,7 @@ async def generate_quiz_bundle(
                     "proposed_plan": {"segments": raw_segments},
                 }, ensure_ascii=False)},
             ],
-            temperature=0,
+            **_temperature_args(quality_model, 0),
             response_format=_PLAN_RESPONSE_FORMAT,
             timeout=settings.openai_timeout_sec,
         )
@@ -1484,7 +1652,7 @@ async def generate_quiz_bundle(
                             ),
                         }, ensure_ascii=False)},
                     ],
-                    temperature=0,
+                    **_temperature_args(quality_model, 0),
                     response_format=_PLAN_RESPONSE_FORMAT,
                     timeout=settings.openai_timeout_sec,
                 )
@@ -1609,7 +1777,7 @@ async def generate_quiz_bundle(
                     {"role": "system", "content": inventory_system},
                     {"role": "user", "content": json.dumps({"segments": raw_segments}, ensure_ascii=False)},
                 ],
-                temperature=0,
+                **_temperature_args(quality_model, 0),
                 response_format=_PLAN_RESPONSE_FORMAT,
                 timeout=settings.openai_timeout_sec,
             )
@@ -1687,6 +1855,22 @@ async def generate_quiz_bundle(
             canonical = str(chunk.get("canonical_form") or chunk.get("text") or "").strip()
             key_set = _usable_expression_chunks([chunk], language=language)
             key = _expression_key(canonical)
+            # Small planners occasionally leave canonical_form in the source
+            # language even though surface_form is a valid target-language
+            # realization copied from the reviewed reference. Recover that
+            # trusted target span deterministically instead of paying another
+            # model call or silently dropping the best expression.
+            if key not in key_set or not target_pack(language).is_valid_blank(canonical):
+                surface_candidate = str(chunk.get("surface_form") or "").strip()
+                candidate_chunk = {**chunk, "canonical_form": surface_candidate}
+                candidate_key = _expression_key(surface_candidate)
+                if surface_candidate and candidate_key in _usable_expression_chunks(
+                    [candidate_chunk], language=language
+                ):
+                    chunk = candidate_chunk
+                    canonical = surface_candidate
+                    key_set = {candidate_key}
+                    key = candidate_key
             if key not in key_set or key in seen_expression_keys:
                 continue
             # A valid reusable canonical expression can arrive with a polluted
@@ -1773,8 +1957,8 @@ async def generate_quiz_bundle(
             node_name=str(seed.get("node_name") or seed.get("content_ko") or ""),
         )
 
-    # Stage two isolates every expression in its own author request, then uses a
-    # cheap batch editor to spot semantic and pedagogical defects across cards.
+    # Stage two isolates every expression in its own author request, then uses an
+    # independent release editor to spot semantic and pedagogical defects.
     cloze_items: list[Any] = []
     quality_rejections: list[str] = []
     if accepted_chunks and materialize_cloze:
@@ -1786,20 +1970,21 @@ async def generate_quiz_bundle(
                 "concurrency": 3,
             },
         )
-        cloze_step.model = settings.openai_model
+        cloze_step.model = author_model
         cloze_items, author_errors, author_usage = await _author_individual_cloze_items(
             accepted_chunks,
             source_statement=str(seed.get("content_ko") or ""),
             native_language=native_language,
             target_language=language,
             level=level,
-            model=settings.openai_model,
+            model=author_model,
             timeout=settings.openai_timeout_sec,
         )
         tracer.finish_step(
             cloze_step,
             output={"returned_count": len(cloze_items), "errors": author_errors, "usage": author_usage},
         )
+        initial_cloze_items = list(cloze_items)
 
         qa_step = tracer.begin_step(
             "bundle_cloze_batch_quality_review", "llm", phase="quiz_path",
@@ -1818,8 +2003,6 @@ async def generate_quiz_bundle(
                 timeout=settings.openai_timeout_sec,
             )
         except Exception as exc:
-            # A reviewer outage must not erase otherwise structurally valid
-            # cards. The final deterministic validator still runs below.
             quality_rejections.append(f"quality reviewer unavailable: {type(exc).__name__}")
         repair_feedback = _structural_feedback_by_expression(
             cloze_items,
@@ -1828,17 +2011,17 @@ async def generate_quiz_bundle(
             level=level,
             native_language=native_language,
         )
-        qa_feedback = {
-            expression_id: list(review.get("issues") or ["quality_score_below_85"])
-            for expression_id, review in reviews.items()
-            if review.get("verdict") != "pass" or int(review.get("score") or 0) < 85
-        }
+        # Missing reviews (including a reviewer outage) are failures. Shipping
+        # an unchecked card is worse than returning a smaller bundle.
+        qa_feedback = _quality_feedback_for_items(cloze_items, reviews)
         for expression_id, issues in qa_feedback.items():
             repair_feedback.setdefault(expression_id, []).extend(issues)
         pass_items = [
             item for item in cloze_items
             if str(item.get("expression_id")) not in repair_feedback
         ]
+        repaired: list[dict[str, Any]] = []
+        repaired_reviews: dict[str, dict[str, Any]] = {}
         if repair_feedback:
             repair_chunks = [
                 chunk for chunk in accepted_chunks
@@ -1850,13 +2033,49 @@ async def generate_quiz_bundle(
                 native_language=native_language,
                 target_language=language,
                 level=level,
-                model=quality_model,
+                model=author_model,
                 timeout=settings.openai_timeout_sec,
                 feedback=repair_feedback,
             )
-            pass_items.extend(repaired)
             quality_rejections.extend(repair_errors)
-            qa_usage = {"review": qa_usage, "repair": repair_usage}
+            repaired_review_usage: dict[str, Any] = {}
+            try:
+                repaired_reviews, repaired_review_usage = await _review_cloze_quality(
+                    repaired,
+                    chunks=repair_chunks,
+                    native_language=native_language,
+                    target_language=language,
+                    model=quality_model,
+                    timeout=settings.openai_timeout_sec,
+                )
+            except Exception as exc:
+                quality_rejections.append(
+                    f"repair quality reviewer unavailable: {type(exc).__name__}"
+                )
+            repaired_feedback = _structural_feedback_by_expression(
+                repaired,
+                chunks=repair_chunks,
+                language=language,
+                level=level,
+                native_language=native_language,
+            )
+            for expression_id, issues in _quality_feedback_for_items(
+                repaired, repaired_reviews
+            ).items():
+                repaired_feedback.setdefault(expression_id, []).extend(issues)
+            pass_items.extend(
+                item for item in repaired
+                if str(item.get("expression_id")) not in repaired_feedback
+            )
+            quality_rejections.extend(
+                f"{expression_id}: {'; '.join(issues)}"
+                for expression_id, issues in repaired_feedback.items()
+            )
+            qa_usage = {
+                "review": qa_usage,
+                "repair": repair_usage,
+                "repair_review": repaired_review_usage,
+            }
         cloze_items = pass_items
 
         # A rewrite is still untrusted output. Re-run the deterministic contract
@@ -1879,18 +2098,51 @@ async def generate_quiz_bundle(
                 for expression_id, issues in post_repair_feedback.items()
             )
 
-        # Keep the bundle productive: after one quality-directed rewrite, use a
-        # source-faithful reference card for any missing expression when safe.
-        emitted_ids = {str(item.get("expression_id")) for item in cloze_items}
-        for chunk in accepted_chunks:
-            if str(chunk.get("expression_id")) in emitted_ids:
-                continue
-            fallback = _safe_reference_fallback(chunk, target_language=language)
-            if fallback is not None:
-                cloze_items.append(fallback)
+        # Both author attempts can occasionally fail closed even though the
+        # reviewed bundle plan already contains a source-faithful reference
+        # sentence and an exact expression span.  Recover from that trusted
+        # material deterministically; never issue another model call, and never
+        # release it unless the same structural + semantic-scope contracts pass.
+        released_ids = {
+            str(item.get("expression_id") or "") for item in cloze_items
+        }
+        fallback_candidates = [
+            fallback
+            for chunk in accepted_chunks
+            if str(chunk.get("expression_id") or "") not in released_ids
+            for fallback in [
+                _safe_reference_fallback(chunk, target_language=language)
+            ]
+            if fallback is not None
+        ]
+        fallback_feedback = _structural_feedback_by_expression(
+            fallback_candidates,
+            chunks=accepted_chunks,
+            language=language,
+            level=level,
+            native_language=native_language,
+        )
+        safe_fallbacks = [
+            item
+            for item in fallback_candidates
+            if str(item.get("expression_id")) not in fallback_feedback
+        ]
+        cloze_items.extend(safe_fallbacks)
+        quality_rejections.extend(
+            f"{expression_id}: fallback rejected: {'; '.join(issues)}"
+            for expression_id, issues in fallback_feedback.items()
+        )
+
         tracer.finish_step(qa_step, output={
             "review_count": len(reviews),
+            "release_score": _CLOZE_RELEASE_SCORE,
+            "fail_closed": True,
+            "initial_candidates": initial_cloze_items,
+            "initial_reviews": list(reviews.values()),
+            "repair_candidates": repaired,
+            "repair_reviews": list(repaired_reviews.values()),
             "repair_count": len(repair_feedback),
+            "safe_reference_fallback_count": len(safe_fallbacks),
             "final_candidate_count": len(cloze_items),
             "issues": quality_rejections,
             "usage": qa_usage,
@@ -2011,7 +2263,7 @@ async def generate_quiz_bundle(
             debug_run_dir=tracer.debug_dir_relative,
             generation_key=generation_key,
         )
-        if spec["quiz_type"] == "cloze":
+        if spec["quiz_type"] == "cloze" and synthesize_audio:
             audio_url, answer_audio_url, tts_error = await synthesize_quiz_audio_assets(
                 quiz.id,
                 spec["quiz_type"],
@@ -2115,7 +2367,8 @@ async def materialize_expression_clozes(
     )
     settings = get_settings()
     quality_model = settings.quiz_quality_model or settings.openai_model
-    step.model = quality_model
+    author_model = settings.quiz_author_model or quality_model
+    step.model = author_model
     try:
         items, author_errors, author_usage = await _author_individual_cloze_items(
             chunks,
@@ -2123,7 +2376,7 @@ async def materialize_expression_clozes(
             native_language=native_language,
             target_language=language,
             level=level,
-            model=quality_model,
+            model=author_model,
             timeout=settings.openai_timeout_sec,
         )
         tracer.finish_step(step, output={"returned_count": len(items), "errors": author_errors, "usage": author_usage})
@@ -2157,11 +2410,7 @@ async def materialize_expression_clozes(
         level=level,
         native_language=native_language,
     )
-    qa_feedback = {
-        expression_id: list(review.get("issues") or ["quality_score_below_85"])
-        for expression_id, review in reviews.items()
-        if review.get("verdict") != "pass" or int(review.get("score") or 0) < 85
-    }
+    qa_feedback = _quality_feedback_for_items(items, reviews)
     for expression_id, issues in qa_feedback.items():
         feedback.setdefault(expression_id, []).extend(issues)
     kept = [item for item in items if str(item.get("expression_id")) not in feedback]
@@ -2173,13 +2422,50 @@ async def materialize_expression_clozes(
             native_language=native_language,
             target_language=language,
             level=level,
-            model=quality_model,
+            model=author_model,
             timeout=settings.openai_timeout_sec,
             feedback=feedback,
         )
-        kept.extend(repaired)
         quality_rejections.extend(repair_errors)
-        qa_usage = {"review": qa_usage, "repair": repair_usage}
+        repaired_reviews: dict[str, dict[str, Any]] = {}
+        repaired_review_usage: dict[str, Any] = {}
+        try:
+            repaired_reviews, repaired_review_usage = await _review_cloze_quality(
+                repaired,
+                chunks=repair_chunks,
+                native_language=native_language,
+                target_language=language,
+                model=quality_model,
+                timeout=settings.openai_timeout_sec,
+            )
+        except Exception as exc:
+            quality_rejections.append(
+                f"repair quality reviewer unavailable: {type(exc).__name__}"
+            )
+        repaired_feedback = _structural_feedback_by_expression(
+            repaired,
+            chunks=repair_chunks,
+            language=language,
+            level=level,
+            native_language=native_language,
+        )
+        for expression_id, issues in _quality_feedback_for_items(
+            repaired, repaired_reviews
+        ).items():
+            repaired_feedback.setdefault(expression_id, []).extend(issues)
+        kept.extend(
+            item for item in repaired
+            if str(item.get("expression_id")) not in repaired_feedback
+        )
+        quality_rejections.extend(
+            f"{expression_id}: {'; '.join(issues)}"
+            for expression_id, issues in repaired_feedback.items()
+        )
+        qa_usage = {
+            "review": qa_usage,
+            "repair": repair_usage,
+            "repair_review": repaired_review_usage,
+        }
     items = kept
     post_repair_feedback = _structural_feedback_by_expression(
         items,
@@ -2197,14 +2483,10 @@ async def materialize_expression_clozes(
             f"{expression_id}: {'; '.join(issues)}"
             for expression_id, issues in post_repair_feedback.items()
         )
-    emitted_ids = {str(item.get("expression_id")) for item in items}
-    for chunk in chunks:
-        if str(chunk.get("expression_id")) not in emitted_ids:
-            fallback = _safe_reference_fallback(chunk, target_language=language)
-            if fallback is not None:
-                items.append(fallback)
     tracer.finish_step(quality_step, output={
         "review_count": len(reviews),
+        "release_score": _CLOZE_RELEASE_SCORE,
+        "fail_closed": True,
         "repair_count": len(feedback),
         "final_candidate_count": len(items),
         "issues": quality_rejections,

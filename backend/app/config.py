@@ -30,11 +30,13 @@ class Settings(BaseSettings):
     # non-secret and is safe to expose from /ready for release verification.
     app_version: str = "local"
     openai_api_key: str = ""
-    # General-purpose inexpensive model for broad drafting. Quiz plan editing,
-    # individual final-card authoring, QA, and failed-card repair may use the
-    # stronger quality model because a semantic defect becomes learned content.
+    # General-purpose inexpensive model for broad drafting. Quiz generation has
+    # separate author/editor roles, but both use a current small model with a
+    # strict semantic contract. Quality comes from independent author/reviewer
+    # calls, golden evals, and a fail-closed release gate—not an expensive model.
     openai_model: str = "gpt-4o-mini"
-    quiz_quality_model: str = "gpt-4o"
+    quiz_author_model: str = "gpt-5.4-mini"
+    quiz_quality_model: str = "gpt-5.4-mini"
     # Cap each LLM request so a hung/slow OpenAI call surfaces as a fast failure
     # instead of leaving the graph build stuck in 'graph_processing' (the default
     # SDK timeout is 600s × retries — perceived as an indefinite buffering spinner).

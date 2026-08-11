@@ -7,6 +7,7 @@ graph_locked 409 로 여전히 잠긴다 — test_entry_graph_draft_apply 참조
 from __future__ import annotations
 
 import pytest
+from fastapi import BackgroundTasks
 from sqlalchemy import select
 
 from app.models import Edge, JournalEntry, JournalGraphLink, Node
@@ -38,7 +39,9 @@ async def _committed_graph(db_session, user_id):
 @pytest.mark.asyncio
 async def test_edit_node_allowed_after_commit_keeps_provenance(db_session, iso_user):
     entry, _, concept, _ = await _committed_graph(db_session, iso_user.id)
-    out = await edit_node(concept.id, NodeUpdate(name="커피"), iso_user, db_session)
+    out = await edit_node(
+        concept.id, NodeUpdate(name="커피"), BackgroundTasks(), iso_user, db_session
+    )
     assert out.name == "커피"
 
     # 일기 연결(provenance)은 수정 후에도 살아있다.
@@ -75,5 +78,7 @@ async def test_edit_allowed_for_non_journal_node(db_session, iso_user):
     node = Node(user_id=iso_user.id, name="freeform", type="Concept")
     db_session.add(node)
     await db_session.commit()
-    out = await edit_node(node.id, NodeUpdate(name="renamed"), iso_user, db_session)
+    out = await edit_node(
+        node.id, NodeUpdate(name="renamed"), BackgroundTasks(), iso_user, db_session
+    )
     assert out.name == "renamed"

@@ -197,6 +197,10 @@ class TargetLanguagePack:
             return R.reason(R.SENTENCE_TOO_SHORT, f"sentence has {n} tokens, need {self.min_sentence_tokens}")
         return None
 
+    def sentence_language_reason(self, sentence: str) -> str | None:
+        """Reject a sentence written mainly in a different script when known."""
+        return None
+
     # -- output-side -------------------------------------------------------------
 
     def is_valid_blank(self, text: str) -> bool:

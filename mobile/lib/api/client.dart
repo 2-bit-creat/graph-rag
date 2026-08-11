@@ -657,16 +657,19 @@ class ApiClient {
 
   Future<Map<String, dynamic>> previewQuizDeletion(List<String> quizIds) async {
     try {
-      final resp = await _dio.post('/quiz/delete-preview', data: {'quiz_ids': quizIds});
+      final resp =
+          await _dio.post('/quiz/delete-preview', data: {'quiz_ids': quizIds});
       return Map<String, dynamic>.from(resp.data as Map);
     } on DioException catch (e) {
       throw _friendlyError(e, '문제 삭제 정보 확인');
     }
   }
 
-  Future<Map<String, dynamic>> deleteQuizItemsPermanently(List<String> quizIds) async {
+  Future<Map<String, dynamic>> deleteQuizItemsPermanently(
+      List<String> quizIds) async {
     try {
-      final resp = await _dio.post('/quiz/delete-permanent', data: {'quiz_ids': quizIds});
+      final resp = await _dio
+          .post('/quiz/delete-permanent', data: {'quiz_ids': quizIds});
       return Map<String, dynamic>.from(resp.data as Map);
     } on DioException catch (e) {
       throw _friendlyError(e, '문제 일괄 삭제');
@@ -763,12 +766,30 @@ class ApiClient {
     }
   }
 
+  /// Generate the next small study set for a Statement selected in the graph.
+  /// This is a learner surface; the operator problem-queue remains separate.
+  Future<Map<String, dynamic>> generateNodeStudyQuizzes(
+    String nodeId, {
+    String? language,
+  }) async {
+    try {
+      final resp = await _dio.post(
+        '/graph/nodes/$nodeId/study-quizzes/generate',
+        queryParameters: {
+          if (language != null && language.isNotEmpty) 'language': language,
+        },
+      );
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '학습 문제 생성');
+    }
+  }
+
   /// Rebuild an edited Statement's quizzes and expressions. The old ones were
   /// already archived by the edit itself, so this only starts the new set.
   Future<Map<String, dynamic>> regenerateNodeQuizzes(String nodeId) async {
     try {
-      final resp =
-          await _dio.post('/graph/nodes/$nodeId/regenerate-quizzes');
+      final resp = await _dio.post('/graph/nodes/$nodeId/regenerate-quizzes');
       return Map<String, dynamic>.from(resp.data as Map);
     } on DioException catch (e) {
       throw _friendlyError(e, '문제 재생성');

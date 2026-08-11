@@ -191,6 +191,16 @@ class KoreanTargetPack(TargetLanguagePack):
             return False
         return any("가" <= ch <= "힣" for ch in cleaned)
 
+    def sentence_language_reason(self, sentence: str) -> str | None:
+        hangul = re.findall(r"[가-힣]+", sentence or "")
+        latin = re.findall(r"[A-Za-z]+", sentence or "")
+        if len(hangul) < 2 or len(latin) > max(3, len(hangul)):
+            return R.reason(
+                R.WRONG_LANGUAGE,
+                "Korean target sentence is not predominantly Korean",
+            )
+        return None
+
     def normalize_learner_answer(self, text: str) -> str:
         # Korean spacing is genuinely variable; tolerate it the same way the
         # existing grading path (quiz_queue._normalize_answer) already does.

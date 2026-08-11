@@ -5,6 +5,7 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -65,27 +66,12 @@ async def _schedule_statement_learning(
     priority: int = 0,
 ) -> None:
     languages = crud.get_effective_target_languages(user)
-    if getattr(user, "auto_generate_quizzes", False):
-        from ..quiz_generation_runs import create_generation_run, process_generation_run
-
-        run, created = await create_generation_run(
-            session,
-            user,
-            node_ids=[node_id],
-            languages=languages,
-            idempotency_key=f"auto:graph:{node_id}:{uuid.uuid4()}",
-            source="auto",
-        )
-        if created:
-            background.add_task(process_generation_run, run.id)
-        return
-
-    from ..quiz_materials import analyse_material_background
+    from ..quiz_materials import analyse_nodes_and_refill_background
 
     background.add_task(
-        analyse_material_background,
+        analyse_nodes_and_refill_background,
         user.id,
-        node_id,
+        [node_id],
         languages,
         priority=priority,
     )
@@ -414,7 +400,6 @@ async def read_node_study_quizzes(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Return node quizzes and prioritise material analysis when none exist."""
-    from sqlalchemy import select
     from ..models import Quiz
 
     node = await session.get(Node, node_id)
@@ -424,23 +409,26 @@ async def read_node_study_quizzes(
         raise HTTPException(status_code=400, detail="only Statement nodes have study quizzes")
 
     rows = await session.execute(
-        select(Quiz.id, Quiz.quiz_type, Quiz.language)
+        select(Quiz.id, Quiz.quiz_type, Quiz.language, Quiz.queue_kind)
         .where(
             Quiz.user_id == user.id,
             Quiz.source_nodes.contains([node_id]),
             Quiz.quiz_type.in_(("cloze", "composition")),
-            Quiz.queue_kind != "archived",
+            Quiz.queue_kind.in_(("new", "review")),
         )
         .order_by(Quiz.created_at.desc())
     )
     grouped = {"cloze": [], "composition": []}
+    reviews = {"cloze": 0, "composition": 0}
     by_language = {"cloze": {}, "composition": {}}
-    for quiz_id, quiz_type, language in rows.all():
+    for quiz_id, quiz_type, language, queue_kind in rows.all():
         kind = str(quiz_type)
         quiz_id_str = str(quiz_id)
         lang = (str(language).strip().lower() if language else "english")
         grouped[kind].append(quiz_id_str)
         by_language[kind].setdefault(lang, []).append(quiz_id_str)
+        if queue_kind == "review":
+            reviews[kind] += 1
     from ..models import QuizLearningMaterial
 
     languages = crud.get_effective_target_languages(user)
@@ -454,6 +442,44 @@ async def read_node_study_quizzes(
         )
     ).all()
     material_status = {row.language: row.status for row in material_rows}
+    from ..node_expression_store import get_node_expressions
+
+    expression_by_language: dict[str, dict[str, int]] = {}
+    for language in languages:
+        expressions = await get_node_expressions(user.id, str(node_id), language)
+        expression_by_language[language] = {
+            "total": len(expressions),
+            "available": sum(
+                str(item.get("quiz_status") or "available") == "available"
+                for item in expressions
+            ),
+            "generated": sum(
+                str(item.get("quiz_status") or "available") == "emitted"
+                for item in expressions
+            ),
+        }
+
+    from ..models import QuizGenerationRun
+
+    recent_runs = (
+        await session.scalars(
+            select(QuizGenerationRun)
+            .where(
+                QuizGenerationRun.user_id == user.id,
+                QuizGenerationRun.source.in_(("node_selected", "regeneration")),
+            )
+            .order_by(QuizGenerationRun.created_at.desc())
+            .limit(20)
+        )
+    ).all()
+    active_run = next(
+        (
+            run for run in recent_runs
+            if str(node_id) in (run.node_ids or [])
+            and run.status in {"queued", "running"}
+        ),
+        None,
+    )
     # A Statement edited after generation is left archived-and-empty on purpose;
     # only the learner's 재생성 press rebuilds it, so auto-analysis stays off here.
     needs_regeneration = any(row.status == "stale" for row in material_rows)
@@ -465,18 +491,89 @@ async def read_node_study_quizzes(
     return {
         "node_id": str(node_id),
         "material_status": material_status,
+        "expressions": {
+            "count": sum(value["total"] for value in expression_by_language.values()),
+            "available_count": sum(value["available"] for value in expression_by_language.values()),
+            "generated_count": sum(value["generated"] for value in expression_by_language.values()),
+            "by_language": expression_by_language,
+        },
+        "generation": (
+            {"run_id": str(active_run.id), "status": active_run.status}
+            if active_run is not None
+            else {"run_id": None, "status": "idle"}
+        ),
         "needs_regeneration": needs_regeneration,
         "word": {
             "count": len(grouped["cloze"]),
+            "review_count": reviews["cloze"],
             "quiz_ids": grouped["cloze"],
             "by_language": by_language["cloze"],
         },
         "composition": {
             "count": len(grouped["composition"]),
+            "review_count": reviews["composition"],
             "quiz_ids": grouped["composition"],
             "by_language": by_language["composition"],
         },
     }
+
+
+@router.post("/nodes/{node_id}/study-quizzes/generate")
+async def generate_node_study_quizzes(
+    node_id: uuid.UUID,
+    background: BackgroundTasks,
+    language: str | None = None,
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Generate the next small, high-quality set for a selected Statement.
+
+    This is a learner action, not the operator generation hub.  It reuses a
+    ready expression inventory, emits at most three new cloze cards, and is
+    durable so the graph card can show progress without holding the request.
+    """
+    node = await session.get(Node, node_id)
+    if node is None or node.user_id != user.id or node.type.lower() != "statement":
+        raise HTTPException(status_code=404, detail="Statement node not found")
+    languages = crud.get_effective_target_languages(user)
+    if language:
+        requested = language.strip().lower()
+        if requested not in {value.lower() for value in languages}:
+            raise HTTPException(status_code=400, detail="Inactive target language")
+        languages = [requested]
+
+    from ..models import QuizGenerationRun
+    from ..quiz_generation_runs import create_generation_run, process_generation_run
+
+    active = (
+        await session.scalars(
+            select(QuizGenerationRun)
+            .where(
+                QuizGenerationRun.user_id == user.id,
+                QuizGenerationRun.source == "node_selected",
+                QuizGenerationRun.status.in_(("queued", "running")),
+            )
+            .order_by(QuizGenerationRun.created_at.desc())
+            .limit(20)
+        )
+    ).all()
+    existing = next(
+        (run for run in active if str(node_id) in (run.node_ids or [])), None
+    )
+    if existing is not None:
+        return {"run_id": str(existing.id), "status": existing.status}
+
+    run, created = await create_generation_run(
+        session,
+        user,
+        node_ids=[node_id],
+        languages=languages,
+        idempotency_key=f"node-study:{node_id}:{uuid.uuid4()}",
+        source="node_selected",
+    )
+    if created:
+        background.add_task(process_generation_run, run.id)
+    return {"run_id": str(run.id), "status": run.status}
 
 
 @router.post("/nodes/{node_id}/regenerate-quizzes")
@@ -517,7 +614,7 @@ async def regenerate_node_quizzes(
         node_ids=[node_id],
         languages=crud.get_effective_target_languages(user),
         idempotency_key=f"regenerate:{node_id}:{uuid.uuid4()}",
-        source="manual",
+        source="regeneration",
     )
     if created:
         background.add_task(process_generation_run, run.id)
@@ -660,8 +757,11 @@ async def add_node(
     )
     await crud.index_identity_alias(session, user.id, node, name)
     await session.commit()
-    if node.type == "Statement" and len((node.description or node.name or "").strip()) >= 6:
-        await _schedule_statement_learning(background, session, user, node.id)
+    if node.type == "Statement":
+        from ..graph_retrieval import statement_content
+
+        if len(statement_content(node).strip()) >= 6:
+            await _schedule_statement_learning(background, session, user, node.id)
     out = await crud.get_node_out(session, node.id, user.id)
     if out is None:
         raise HTTPException(status_code=404, detail="node not found")
@@ -672,6 +772,7 @@ async def add_node(
 async def edit_node(
     node_id: uuid.UUID,
     payload: NodeUpdate,
+    background: BackgroundTasks,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> NodeOut:
@@ -704,20 +805,26 @@ async def edit_node(
         raise HTTPException(status_code=404, detail="node not found")
 
     changed = before != (node.name, node.type, node.description)
-    # 2026-07-31 편집은 재생성을 자동으로 시작하지 않는다. 기존 문제·표현을 즉시
-    # 보관으로 내리고, 새로 만들지 여부는 학습자가 재생성 버튼으로 결정한다.
-    if (
-        changed
-        and node.type == "Statement"
-        and len((node.description or node.name or "").strip()) >= 6
-    ):
+    # Source text is the contract for every derived expression and quiz.  A text
+    # edit therefore has one simple lifecycle: retire the old derivatives,
+    # clear their expression inventory, and analyse the new source automatically.
+    was_statement = str(before[1] or "").lower() == "statement"
+    is_statement = str(node.type or "").lower() == "statement"
+    if changed and (was_statement or is_statement):
         from ..quiz_bundle import BundleSeedError
-        from ..quiz_materials import archive_edited_statement_materials
+        from ..quiz_materials import retire_statement_derivatives
 
         try:
-            await archive_edited_statement_materials(session, user, node_id=node.id)
+            await retire_statement_derivatives(session, user, node_id=node.id)
         except BundleSeedError:
             pass
+        if is_statement:
+            from ..graph_retrieval import statement_content
+
+            if len(statement_content(node).strip()) >= 6:
+                await _schedule_statement_learning(
+                    background, session, user, node.id, priority=100
+                )
 
     out = await crud.get_node_out(session, node_id, user.id)
     if out is None:

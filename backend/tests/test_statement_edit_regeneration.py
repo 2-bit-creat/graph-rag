@@ -1,5 +1,4 @@
-"""Editing a Statement archives its learning material and hands the decision to
-rebuild back to the learner.
+"""Editing a Statement retires stale material and schedules fresh analysis.
 
 The old pin flow generated on demand for a node the learner wanted to study.
 Generation is now automatic at creation time, so the only remaining hole is an
@@ -19,7 +18,11 @@ from fastapi import BackgroundTasks
 from app import crud, json_doc_store, node_expression_store
 from app.models import Node, QuizLearningMaterial
 from app.quiz_materials import source_hash
-from app.routers.graph import edit_node, read_node_study_quizzes
+from app.routers.graph import (
+    edit_node,
+    generate_node_study_quizzes,
+    read_node_study_quizzes,
+)
 from app.schemas import NodeUpdate
 
 
@@ -77,6 +80,7 @@ async def test_editing_statement_archives_material_and_enables_regeneration(
         db_session, iso_user, tmp_path, monkeypatch, "기존 진술 내용으로 학습 문제를 만들었다."
     )
 
+    background = BackgroundTasks()
     await edit_node(
         node.id,
         NodeUpdate(
@@ -85,12 +89,14 @@ async def test_editing_statement_archives_material_and_enables_regeneration(
                 ensure_ascii=False,
             )
         ),
+        background,
         iso_user,
         db_session,
     )
     await db_session.refresh(quiz)
 
     assert quiz.queue_kind == "archived"
+    assert len(background.tasks) == 1
     assert await node_expression_store.get_node_expressions(
         iso_user.id, str(node.id), "english"
     ) == []
@@ -101,6 +107,7 @@ async def test_editing_statement_archives_material_and_enables_regeneration(
     assert result["needs_regeneration"] is True
     assert result["word"]["count"] == 0
     assert result["composition"]["count"] == 0
+    assert result["expressions"]["count"] == 0
 
 
 @pytest.mark.asyncio
@@ -115,6 +122,7 @@ async def test_unedited_statement_leaves_regeneration_disabled(
     await edit_node(
         node.id,
         NodeUpdate(name=node.name, description=node.description),
+        BackgroundTasks(),
         iso_user,
         db_session,
     )
@@ -126,3 +134,48 @@ async def test_unedited_statement_leaves_regeneration_disabled(
     )
     assert result["needs_regeneration"] is False
     assert result["composition"]["count"] == 1
+    assert result["expressions"]["count"] == 1
+    assert "old expression" not in json.dumps(result, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_shortened_statement_still_retires_old_derivatives(
+    db_session, iso_user, tmp_path, monkeypatch
+) -> None:
+    node, quiz = await _statement_with_material(
+        db_session, iso_user, tmp_path, monkeypatch, "A valid original Statement."
+    )
+    background = BackgroundTasks()
+
+    await edit_node(
+        node.id,
+        NodeUpdate(description=json.dumps({"content": "짧음"}, ensure_ascii=False)),
+        background,
+        iso_user,
+        db_session,
+    )
+    await db_session.refresh(quiz)
+
+    assert quiz.queue_kind == "archived"
+    assert len(background.tasks) == 0
+    assert await node_expression_store.get_node_expressions(
+        iso_user.id, str(node.id), "english"
+    ) == []
+
+
+@pytest.mark.asyncio
+async def test_selected_statement_starts_durable_learner_generation(
+    db_session, iso_user, tmp_path, monkeypatch
+) -> None:
+    node, _ = await _statement_with_material(
+        db_session, iso_user, tmp_path, monkeypatch, "A Statement worth studying."
+    )
+    background = BackgroundTasks()
+
+    result = await generate_node_study_quizzes(
+        node.id, background, "english", iso_user, db_session
+    )
+
+    assert result["status"] == "queued"
+    assert result["run_id"]
+    assert len(background.tasks) == 1

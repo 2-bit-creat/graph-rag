@@ -17,7 +17,11 @@ from . import crud
 from .composition_quiz import generate_composition_quiz
 from .models import Quiz, QuizBatch, QuizGenerationState, QuizSourceExploration, User
 from .quiz_bundle import CLOZE_GENERATOR_VERSION, BundleSeedError
-from .quiz_materials import ensure_learning_material, materialize_node_expressions
+from .quiz_materials import (
+    activate_node_compositions,
+    ensure_learning_material,
+    materialize_node_expressions,
+)
 from .tutor import DrillSeedError
 
 _LOCKS: dict[uuid.UUID, asyncio.Lock] = {}
@@ -68,7 +72,7 @@ async def _counts(session: AsyncSession, batch_id: uuid.UUID) -> dict[str, int]:
         select(Quiz.quiz_type, func.count())
         .where(
             Quiz.batch_id == batch_id,
-            Quiz.queue_kind != "archived",
+            Quiz.queue_kind.in_(("new", "review")),
             Quiz.quiz_type.in_(("cloze", "composition")),
         )
         .group_by(Quiz.quiz_type)
@@ -188,7 +192,7 @@ async def _covered_node_types(
             Quiz.user_id == user_id,
             Quiz.language == language,
             Quiz.track == "daily",
-            Quiz.queue_kind != "archived",
+            Quiz.queue_kind.in_(("new", "review")),
             Quiz.quiz_type.in_(("cloze", "composition")),
         )
     )
@@ -260,15 +264,27 @@ async def fill_daily_batch(
             .group_by(Quiz.quiz_type)
         )
         current = {str(kind): int(n) for kind, n in active_counts.all()}
-        composition_buffer = max(0, user.daily_composition_target * 2)
-        cloze_buffer = max(0, user.daily_cloze_target * 2)
-        # Refill in stable chunks: when the buffer is crossed, add one full
-        # buffer-sized chunk instead of topping up by one item. This keeps the
-        # queue around 10/40 for the default 5/20 daily goals.
+        # Daily goals are inventory targets, not batch sizes.  The old policy
+        # added an entire 2x buffer whenever the count crossed the threshold
+        # (39 -> +40 for a target of 40), leaving large piles of never-opened
+        # cards.  Refill only the actual deficit and wait until a low-water mark
+        # is crossed so small fluctuations do not start model work.
+        composition_target = max(0, user.daily_composition_target)
+        cloze_target = max(0, user.daily_cloze_target)
+        composition_low = min(composition_target, max(2, composition_target // 2))
+        cloze_low = min(cloze_target, max(5, cloze_target // 2))
+        composition_current = current.get("composition", 0)
+        cloze_current = current.get("cloze", 0)
         composition_missing = (
-            composition_buffer if current.get("composition", 0) < composition_buffer else 0
+            max(0, composition_target - composition_current)
+            if composition_current <= composition_low
+            else 0
         )
-        cloze_missing = cloze_buffer if current.get("cloze", 0) < cloze_buffer else 0
+        cloze_missing = (
+            max(0, cloze_target - cloze_current)
+            if cloze_current <= cloze_low
+            else 0
+        )
         generated = {"cloze": 0, "composition": 0}
         if composition_missing == 0 and cloze_missing == 0:
             await session.commit()
@@ -289,16 +305,36 @@ async def fill_daily_batch(
             return {"status": "source_exhausted", "cloze": 0, "composition": 0}
 
         covered = await _covered_node_types(session, user.id, language)
-        candidates = [
-            s for s in sources
-            if (
-                (composition_missing > 0 and "composition" not in covered.get(str(s.get("node_id")), set()))
-                or (
-                    cloze_missing > 0
-                    and "cloze" not in covered.get(str(s.get("node_id")), set())
-                )
+        from .node_expression_store import list_available_node_expressions
+
+        ranked_sources: list[tuple[int, str, dict]] = []
+        for source in sources:
+            source_id = str(source.get("node_id"))
+            available = (
+                await list_available_node_expressions(user.id, source_id, language)
+                if cloze_missing > 0
+                else []
             )
-        ]
+            can_analyse_for_cloze = "cloze" not in covered.get(source_id, set())
+            needs_composition = (
+                composition_missing > 0
+                and "composition" not in covered.get(source_id, set())
+            )
+            if not needs_composition and not (
+                cloze_missing > 0 and (available or can_analyse_for_cloze)
+            ):
+                continue
+            best_utility = max(
+                (int(item.get("utility_score") or 0) for item in available),
+                default=0,
+            )
+            ranked_sources.append(
+                (best_utility, str(source.get("created_at") or ""), source)
+            )
+        # High-value expressions first, then recent memories.  This replaces
+        # database return order, which was never a recommendation policy.
+        ranked_sources.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        candidates = [item[2] for item in ranked_sources]
         if not candidates:
             state.status = "exhausted"
             state.source_count = len(sources)
@@ -311,12 +347,28 @@ async def fill_daily_batch(
             source_id = str(source["node_id"])
             source_covered = covered.get(source_id, set())
             needs_composition = "composition" not in source_covered
-            needs_cloze = "cloze" not in source_covered
+            available_expressions = await list_available_node_expressions(
+                user.id, source_id, language
+            )
+            # One existing cloze only proves that one expression was emitted.
+            # Keep the Statement eligible while unused analysed expressions remain.
+            needs_cloze = bool(available_expressions) or "cloze" not in source_covered
             cloze_attempted = needs_cloze and generated["cloze"] < cloze_missing
             try:
-                material, composition_cards, trace = await ensure_learning_material(
+                material, _, trace = await ensure_learning_material(
                     session, user, node_id=uuid.UUID(source_id), language=language
                 )
+                composition_cards = []
+                if needs_composition and generated["composition"] < composition_missing:
+                    # Spread writing prompts across memories instead of filling
+                    # the target from the first rich Statement.
+                    composition_cards = await activate_node_compositions(
+                        session,
+                        user,
+                        node_id=uuid.UUID(source_id),
+                        language=language,
+                        limit=1,
+                    )
                 comp_count = 0
                 for quiz in composition_cards:
                     if needs_composition and generated["composition"] < composition_missing:
@@ -328,12 +380,14 @@ async def fill_daily_batch(
                         quiz.queue_kind = "archived"
                 word_count = 0
                 if cloze_attempted:
+                    # Two expressions from one Statement share context well
+                    # without letting a rich node monopolise the whole queue.
                     clozes, _ = await materialize_node_expressions(
                         session,
                         user,
                         node_id=uuid.UUID(source_id),
                         language=language,
-                        limit=min(8, max(1, cloze_missing - generated["cloze"])),
+                        limit=min(2, max(1, cloze_missing - generated["cloze"])),
                         queue_missing=max(0, cloze_missing - generated["cloze"]),
                     )
                     for quiz in clozes:

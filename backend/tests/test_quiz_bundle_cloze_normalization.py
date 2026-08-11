@@ -23,6 +23,18 @@ def test_normalizes_legacy_underscore_run_and_requires_a_korean_meaning() -> Non
     )
 
 
+def test_rejects_bilingual_sentence_when_target_is_korean() -> None:
+    assert _normalize_bundle_cloze(
+        {
+            "sentence_target": "He applies a discount rate to 불확실성을 반영하기 위해.",
+            "surface_answer": "불확실성을 반영하기 위해",
+            "sentence_ko": "He applies a discount rate to account for uncertainty.",
+            "target_ko": "to account for uncertainty",
+        },
+        language="korean",
+        native_language="english",
+    ) is None
+
 def test_normalizes_two_character_model_placeholder() -> None:
     result = _normalize_bundle_cloze(
         {

@@ -170,6 +170,63 @@ async def archive_edited_statement_materials(
     return {"archived_quiz_count": archived, "languages": stale_languages}
 
 
+async def retire_statement_derivatives(
+    session: AsyncSession,
+    user: User,
+    *,
+    node_id: uuid.UUID,
+    languages: list[str] | None = None,
+) -> dict:
+    """Retire derived learning data even when the edited node is no longer valid.
+
+    A Statement can be shortened below the analysis threshold or changed to a
+    different node type.  In both cases the previous answers are still wrong,
+    so cleanup must not depend on being able to fingerprint the new Statement.
+    """
+    node = await session.get(Node, node_id)
+    if node is None or node.user_id != user.id:
+        raise BundleSeedError("Node not found")
+    targets = [
+        str(language).lower()
+        for language in (languages or crud.get_effective_target_languages(user))
+    ]
+    fingerprint = source_hash(
+        f"retired|{node.type}|{node.name}|{node.description or ''}"
+    )
+    rows = (
+        await session.scalars(
+            select(QuizLearningMaterial).where(
+                QuizLearningMaterial.user_id == user.id,
+                QuizLearningMaterial.node_id == node_id,
+                QuizLearningMaterial.language.in_(targets),
+            )
+        )
+    ).all()
+    archived = 0
+    seen_languages: set[str] = set()
+    for row in rows:
+        archived += await _supersede_material(
+            session,
+            user,
+            row,
+            node_id=node_id,
+            language=row.language,
+            fingerprint=fingerprint,
+            priority=100,
+        )
+        seen_languages.add(row.language)
+
+    # Defensive cleanup for inventories created before material rows became the
+    # lifecycle owner.
+    from .node_expression_store import delete_node_language_expressions
+
+    for language in targets:
+        if language not in seen_languages:
+            await delete_node_language_expressions(user.id, str(node_id), language)
+    await session.commit()
+    return {"archived_quiz_count": archived, "languages": targets}
+
+
 async def reset_node_materials(
     session: AsyncSession,
     user: User,
@@ -310,6 +367,12 @@ async def ensure_learning_material(
             materialize_cloze=False,
         )
         composition = [quiz for quiz in created if quiz.quiz_type == "composition"]
+        # The analysis pass needs composition references to judge expressions,
+        # but those cards are not automatically part of the learner's active
+        # queue.  Keep them as cheap text inventory until refill or an explicit
+        # node study action promotes them.  No TTS is generated on this path.
+        for quiz in composition:
+            quiz.queue_kind = "inventory"
         expression_count = next(
             (
                 int(step.get("input", {}).get("expression_count") or 0)
@@ -360,6 +423,38 @@ async def ensure_learning_material(
             row.error = str(exc)[:1000]
             await session.commit()
         raise
+
+
+async def activate_node_compositions(
+    session: AsyncSession,
+    user: User,
+    *,
+    node_id: uuid.UUID,
+    language: str,
+    limit: int = 1,
+) -> list[Quiz]:
+    """Promote analysed composition inventory into the learner's new queue."""
+    if limit <= 0:
+        return []
+    quizzes = (
+        await session.scalars(
+            select(Quiz)
+            .where(
+                Quiz.user_id == user.id,
+                Quiz.language == language.lower(),
+                Quiz.quiz_type == "composition",
+                Quiz.queue_kind == "inventory",
+                Quiz.source_nodes.any(node_id),
+            )
+            .order_by(Quiz.created_at, Quiz.id)
+            .limit(limit)
+        )
+    ).all()
+    for quiz in quizzes:
+        quiz.queue_kind = "new"
+    if quizzes:
+        await session.flush()
+    return quizzes
 
 
 async def materialize_node_expressions(
@@ -418,13 +513,20 @@ async def generate_complete_learning_set(
     operation that finishes composition creation, expression extraction and
     expression-based cloze creation.
     """
-    row, composition, trace = await ensure_learning_material(
+    row, _, trace = await ensure_learning_material(
         session,
         user,
         node_id=node_id,
         language=language,
         priority=priority,
         force=force_analysis,
+    )
+    composition = await activate_node_compositions(
+        session,
+        user,
+        node_id=node_id,
+        language=language,
+        limit=1,
     )
     clozes, cloze_trace = await materialize_node_expressions(
         session,
@@ -460,3 +562,52 @@ async def analyse_material_background(
                 )
             except Exception:  # one language should not block other languages
                 logger.exception("learning material analysis failed user=%s node=%s lang=%s", user_id, node_id, language)
+
+
+async def analyse_nodes_and_refill_background(
+    user_id: uuid.UUID,
+    node_ids: list[uuid.UUID],
+    languages: list[str],
+    *,
+    priority: int = 0,
+) -> None:
+    """Analyse confirmed Statements once, then top up the shared quiz queue.
+
+    Analysis and card inventory are deliberately separate.  A journal may add
+    many Statements at once; extracting every useful expression is cheap future
+    curriculum work, while materialising every expression immediately would
+    create a large queue the learner may never open.  One refill after the whole
+    group also avoids each Statement starting a competing background refill.
+    """
+    unique_nodes = list(dict.fromkeys(node_ids))
+    unique_languages = list(
+        dict.fromkeys(value.lower() for value in languages if value)
+    )
+    async with async_session_factory() as session:
+        user = await session.get(User, user_id)
+        if user is None:
+            return
+        for node_id in unique_nodes:
+            for language in unique_languages:
+                try:
+                    await ensure_learning_material(
+                        session,
+                        user,
+                        node_id=node_id,
+                        language=language,
+                        priority=priority,
+                    )
+                except Exception:
+                    logger.exception(
+                        "learning material analysis failed user=%s node=%s lang=%s",
+                        user_id,
+                        node_id,
+                        language,
+                    )
+
+    # The refill worker owns its own session and an in-flight guard. Running it
+    # after analysis means it can choose across all newly discovered expressions
+    # instead of over-producing from whichever Statement happened to finish first.
+    from .workers.quiz_refill import refill_user_quizzes
+
+    await refill_user_quizzes(user_id)

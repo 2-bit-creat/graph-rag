@@ -93,8 +93,42 @@ def _load_golden(ids: set[str] | None) -> list[dict]:
     data = json.loads(_GOLDEN_PATH.read_text(encoding="utf-8"))
     statements = data["statements"]
     if ids:
-        statements = [s for s in statements if s["id"] in ids]
+        statements = [
+            s for s in statements
+            if s["id"] in ids or str(s.get("quality_case_id") or "") in ids
+        ]
     return statements
+
+
+def _check_golden_expectation(statement: dict, views: list[dict]) -> dict | None:
+    """Check a narrow semantic regression contract on the generated cloze."""
+    expected = statement.get("expect_cloze")
+    if not isinstance(expected, dict):
+        return None
+    target_terms = [str(v).casefold() for v in expected.get("target_contains") or []]
+    native_terms = [str(v).casefold() for v in expected.get("native_contains") or []]
+    forbidden_exact = {
+        str(v).strip().casefold() for v in expected.get("native_forbidden_exact") or []
+    }
+    matching = []
+    for view in views:
+        if view.get("quiz_type") != "cloze":
+            continue
+        target = str(view.get("surface_answer") or "").casefold()
+        native = str(view.get("target_native") or "").strip().casefold()
+        if all(term in target for term in target_terms):
+            matching.append((target, native))
+    passed = any(
+        all(term in native for term in native_terms) and native not in forbidden_exact
+        for _target, native in matching
+    )
+    return {
+        "statement_id": statement["id"],
+        "quality_case_id": statement.get("quality_case_id"),
+        "passed": passed,
+        "expected": expected,
+        "matching_clozes": matching,
+    }
 
 
 def _extract_step(trace: dict, name: str) -> dict | None:
@@ -102,6 +136,30 @@ def _extract_step(trace: dict, name: str) -> dict | None:
         if step.get("name") == name:
             return step
     return None
+
+
+def _accumulate_usage(value: Any, totals: dict, *, model: str) -> None:
+    """Recursively total plain, list, and review/repair usage payloads."""
+    if isinstance(value, list):
+        for item in value:
+            _accumulate_usage(item, totals, model=model)
+        return
+    if not isinstance(value, dict):
+        return
+    if "prompt_tokens" in value or "completion_tokens" in value:
+        bucket = totals["by_model"].setdefault(model or "unknown", {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cached_prompt_tokens": 0,
+            "reasoning_tokens": 0,
+        })
+        for key in ("prompt_tokens", "completion_tokens", "cached_prompt_tokens", "reasoning_tokens"):
+            amount = int(value.get(key) or 0)
+            totals[key] += amount
+            bucket[key] += amount
+        return
+    for nested in value.values():
+        _accumulate_usage(nested, totals, model=model)
 
 
 def _card_view(quiz: Quiz) -> dict:
@@ -168,7 +226,11 @@ async def _run_pair(
         "chunks_proposed": 0, "chunks_selected": 0, "cards_emitted": 0,
         "gate_histogram": Counter(), "qa_scores": [], "verdicts": Counter(),
         "repaired": 0, "fallback": 0, "pack_coverage": target_pack(target).coverage,
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+        "golden_checks": [], "golden_failures": 0,
+        "usage": {
+            "prompt_tokens": 0, "completion_tokens": 0,
+            "cached_prompt_tokens": 0, "reasoning_tokens": 0, "by_model": {},
+        },
     }
     async with async_session_factory() as session:
         user = await _make_eval_user(
@@ -181,7 +243,11 @@ async def _run_pair(
                     node = await _make_seed_node(session, user, statement)
                     try:
                         created, trace = await generate_quiz_bundle(
-                            session, user, language=target, seed_node_ids={str(node.id)}
+                            session,
+                            user,
+                            language=target,
+                            seed_node_ids={str(node.id)},
+                            synthesize_audio=False,
                         )
                     except BundleSeedError as exc:
                         metrics["bundle_errors"] += 1
@@ -202,20 +268,27 @@ async def _run_pair(
                         metrics["gate_histogram"][_gate_code(reason)] += 1
                     for reason in struct_out.get("quality_rejections") or []:
                         metrics["gate_histogram"][_gate_code(str(reason))] += 1
-                    for step_name in ("bundle_cloze_individual_author", "bundle_cloze_batch_quality_review"):
-                        step = _extract_step(trace, step_name)
-                        if not step:
-                            continue
+                    for step in trace.get("steps") or []:
                         usage = (step.get("output") or {}).get("usage")
-                        if isinstance(usage, list):
-                            for u in usage:
-                                metrics["usage"]["prompt_tokens"] += int((u or {}).get("prompt_tokens") or 0)
-                                metrics["usage"]["completion_tokens"] += int((u or {}).get("completion_tokens") or 0)
+                        if usage is not None:
+                            _accumulate_usage(
+                                usage, metrics["usage"], model=str(step.get("model") or "unknown")
+                            )
                     qa_step = _extract_step(trace, "bundle_cloze_batch_quality_review")
                     if qa_step:
-                        metrics["repaired"] += int((qa_step.get("output") or {}).get("repair_count") or 0)
+                        qa_output = qa_step.get("output") or {}
+                        metrics["repaired"] += int(qa_output.get("repair_count") or 0)
+                        metrics["fallback"] += int(
+                            qa_output.get("safe_reference_fallback_count") or 0
+                        )
                     metrics["chunks_selected"] += sum(1 for q in created if q.quiz_type == "cloze")
                     metrics["cards_emitted"] += len(created)
+                    created_views = [_card_view(quiz) for quiz in created]
+                    golden_check = _check_golden_expectation(statement, created_views)
+                    if golden_check is not None:
+                        metrics["golden_checks"].append(golden_check)
+                        if not golden_check["passed"]:
+                            metrics["golden_failures"] += 1
                     for quiz in created:
                         cards.append({
                             "statement_id": statement["id"], "repeat": rep, "pair": pair,
@@ -259,6 +332,7 @@ def _write_report(cards: list[dict], metrics_by_pair: dict[str, dict], out_dir: 
             f"- statements: {metrics['statements']}, bundles: {metrics['bundles']}, "
             f"cards emitted: {metrics['cards_emitted']}, cards/statement: {metrics['cards_per_statement']:.2f}\n"
             f"- pack coverage: {metrics['pack_coverage']}\n"
+            f"- semantic golden failures: {metrics['golden_failures']} / {len(metrics['golden_checks'])}\n"
             f"- gate histogram: {metrics['gate_histogram']}\n"
         )
         by_statement: dict[str, list[dict]] = {}
@@ -345,6 +419,22 @@ def _assert_baseline(baseline_path: Path, metrics_by_pair: dict[str, dict]) -> i
     return 0
 
 
+def _assert_golden(metrics_by_pair: dict[str, dict]) -> int:
+    failures = [
+        f"{pair}/{check['statement_id']} ({check.get('quality_case_id')})"
+        for pair, metrics in metrics_by_pair.items()
+        for check in metrics.get("golden_checks") or []
+        if not check.get("passed")
+    ]
+    if failures:
+        print("SEMANTIC GOLDEN ASSERTION FAILED:")
+        for failure in failures:
+            print(f"  - {failure}")
+        return 1
+    print("Semantic golden assertions passed.")
+    return 0
+
+
 async def main_async(args: argparse.Namespace) -> int:
     settings = get_settings()
     if settings.is_production:
@@ -398,7 +488,9 @@ async def main_async(args: argparse.Namespace) -> int:
     (out_dir / "run.json").write_text(
         json.dumps({
             "argv": sys.argv, "git_sha": _git_sha(),
-            "openai_model": settings.openai_model, "quiz_quality_model": settings.quiz_quality_model,
+            "openai_model": settings.openai_model,
+            "quiz_author_model": settings.quiz_author_model,
+            "quiz_quality_model": settings.quiz_quality_model,
             "cloze_generator_version": CLOZE_GENERATOR_VERSION,
             "golden_set_version": json.loads(_GOLDEN_PATH.read_text(encoding="utf-8"))["version"],
         }, indent=2),
@@ -416,6 +508,8 @@ async def main_async(args: argparse.Namespace) -> int:
         print(comparison)
     if args.assert_baseline:
         exit_code = _assert_baseline(Path(args.assert_baseline), metrics_by_pair)
+    if args.assert_golden:
+        exit_code = max(exit_code, _assert_golden(metrics_by_pair))
     return exit_code
 
 
@@ -428,6 +522,7 @@ def main() -> int:
     parser.add_argument("--out", default=None, help="Output directory (default eval/runs/<ts>_<sha>)")
     parser.add_argument("--compare", default=None, help="Previous run directory to diff against")
     parser.add_argument("--assert-baseline", default=None, help="baseline.json to assert against (nonzero exit on regression)")
+    parser.add_argument("--assert-golden", action="store_true", help="fail when semantic golden expectations are not met")
     args = parser.parse_args()
     return asyncio.run(main_async(args))
 
