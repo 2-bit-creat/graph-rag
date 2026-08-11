@@ -19,59 +19,21 @@ _SPEAKER_LINE_RE = re.compile(
     re.MULTILINE,
 )
 
-# 대괄호 없는 "이름: 내용" 줄 (카톡·회의록 붙여넣기). 이름은 숫자 없는 12자
-# 이하 한글/영문(+공백·점·언더스코어) — 시간("12:30")·목록 콜론 오탐 방지.
-_BARE_SPEAKER_LINE_RE = re.compile(
-    r"^\s*(?P<speaker>[A-Za-z가-힣][A-Za-z가-힣 ._-]{0,11}?)\s*[:：]\s*(?P<text>.+?)\s*$"
-)
-
-
-def _pre_slice_bare_speaker_lines(paragraph_text: str) -> list[dict[str, str]]:
-    """Heuristic fallback for un-bracketed "이름: 내용" dialogue pastes.
-
-    산문 속 콜론("결심: …", "주의: …", URL)을 대화로 오인하지 않도록 보수적으로:
-    ① 서로 다른 화자 2명 이상, ② **화자당 평균 2턴 이상**, ③ 비어있지 않은 줄의
-    60% 이상이 매칭될 때만 대화로 인정. 미분리로 남아도 화자 확인 UI에서 지정 가능.
-
-    ②가 이 함수의 핵심 판별식이다. 대화는 소수의 화자가 번갈아 **반복** 등장하지만,
-    용어사전·강의노트("약정액: …", "설정액: …", "ROE: …")는 줄마다 새 이름이 나온다.
-    예전 조건은 "한 화자가 2번 이상 OR 매칭 4줄 이상"이었는데, 뒤쪽 우회로 때문에
-    한 번도 반복되지 않는 24줄짜리 금융 용어 정리가 화자 23명짜리 대화로 잘려
-    개념 하나하나가 Identity 노드로 그래프에 박혔다. 평균 턴 수는 그 둘을 정확히
-    가른다 — 2인 대화 20줄이면 10턴/인, 용어사전 24줄이면 1.04턴/인.
-    """
-    raw_lines = [l.strip() for l in paragraph_text.splitlines() if l.strip()]
-    parsed: list[dict[str, str]] = []
-    matched = 0
-    for line in raw_lines:
-        m = _BARE_SPEAKER_LINE_RE.match(line)
-        speaker = m.group("speaker").strip() if m else ""
-        text = m.group("text").strip() if m else ""
-        if m and not text.startswith("//"):
-            parsed.append({"speaker": speaker, "text": text})
-            matched += 1
-        elif parsed:
-            # 이어지는 줄은 사용자가 넣은 줄바꿈을 살려 붙인다(공백 병합 금지) —
-            # 목록·문단 구조가 화자별 스크립트에 그대로 남게.
-            parsed[-1]["text"] = f"{parsed[-1]['text']}\n{line}".strip()
-    counts: dict[str, int] = {}
-    for p in parsed:
-        counts[p["speaker"]] = counts.get(p["speaker"], 0) + 1
-    # 화자당 평균 2턴 이상. 대화에서는 자연스럽게 성립하고, 줄마다 새 용어가 오는
-    # 정의 목록에서는 절대 성립하지 않는다. 애매하면 대화가 아니라고 본다 —
-    # 놓쳤을 때의 비용(사용자가 화자 확인 UI에서 지정)이 잘못 잘랐을 때의 비용
-    # (지식그래프에 가짜 인물 노드 수십 개)보다 훨씬 싸다.
-    recurring_enough = matched >= len(counts) * 2
-    if len(counts) >= 2 and recurring_enough and matched * 5 >= len(raw_lines) * 3:
-        return parsed
-    return []
-
 
 def pre_slice_by_speaker_lines(paragraph_text: str) -> list[dict[str, str]]:
     """Parse [화자명]: line blocks without merging same-speaker lines.
 
-    대괄호 형식이 하나도 없으면 "이름: 내용" 맨살 형식을 휴리스틱으로 시도한다
-    (카톡·회의록 붙여넣기 자동 화자 분리 — 2026-07-04 텍스트/음성 통일 흐름).
+    화자는 명시적 표기로만 갈린다 — 클라이언트의 `@이름` 멘션, 그리고 그것이
+    정규화된 `[이름]: …` 라벨. 대괄호가 없으면 화자가 없는 것이고, 전체가 한
+    사람(글쓴이)의 글로 남는다.
+
+    예전에는 여기에 맨살 "이름: 내용" 휴리스틱 폴백이 있었다. 명분은 카톡·회의록
+    붙여넣기였는데 실제 카톡 내보내기 두 포맷(`2026년 ... , 홍길동 : 안녕`,
+    `[홍길동] [오후 3:20] 안녕`) 어느 것도 그 정규식에 걸리지 않았다. 잡으려던
+    것은 못 잡고 콜론이 흔한 문서만 잘라서, 금융 용어 정리 한 장이 화자 23명짜리
+    대화가 되고 개념마다 Identity 노드가 생겼다. 턴 수 임계값으로 완화해도
+    `질문:/답변:` 같은 메모는 통과하므로, 신호 자체를 신뢰할 수 없다고 보고 제거.
+    스크린샷 대화는 OCR이 `@이름:`을 붙여 오므로 이 경로가 아니라 멘션 경로를 탄다.
     """
     lines: list[dict[str, str]] = []
     for raw_line in paragraph_text.splitlines():
@@ -88,10 +50,9 @@ def pre_slice_by_speaker_lines(paragraph_text: str) -> list[dict[str, str]]:
             )
             continue
         if lines:
-            # 줄바꿈 보존(공백 병합 금지) — 위 _pre_slice_bare_speaker_lines와 동일.
+            # 사용자가 넣은 줄바꿈 보존(공백 병합 금지) — 목록·문단 구조가
+            # 화자별 스크립트에 그대로 남게.
             lines[-1]["text"] = f"{lines[-1]['text']}\n{line}".strip()
-    if not lines:
-        return _pre_slice_bare_speaker_lines(paragraph_text)
     return lines
 
 

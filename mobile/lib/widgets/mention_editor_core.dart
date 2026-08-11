@@ -57,7 +57,7 @@ class SpeakerOption {
   final bool isSource;
 }
 
-/// "[이름]: …" / "이름: …" 형식 붙여넣기 지원 — 백엔드 pre_slice와 같은 규칙.
+/// "[이름]: …" 형식 붙여넣기 지원 — 백엔드 pre_slice와 같은 규칙.
 class ParsedDialogue {
   const ParsedDialogue(this.lines);
 
@@ -74,8 +74,6 @@ class ParsedDialogue {
 }
 
 final _bracketLineRe = RegExp(r'^\s*\[([^\]]+)\]\s*[:：]\s*(.+)$');
-final _bareLineRe =
-    RegExp(r'^\s*([A-Za-z가-힣][A-Za-z가-힣 ._\-]{0,11}?)\s*[:：]\s*(.+)$');
 
 /// "@이름: 발화" — the shape people actually paste back into journal mode after
 /// composing elsewhere. Without this, the pasted @names were never registered as
@@ -116,12 +114,28 @@ List<String> unregisteredMentionTokens(String text, List<String> knownNames) {
   return out;
 }
 
+/// 화자는 오직 명시적 표기로만 갈린다: `@이름` 멘션, 그리고 이 함수가 보는
+/// `[이름]: …` 라벨. 콜론이 붙었다는 이유만으로 줄을 화자로 승격시키지 않는다.
+///
+/// 예전에는 대괄호가 없을 때 맨살 "이름: 내용" 줄을 휴리스틱으로 대화로
+/// 인정했다. 명분은 "카톡·회의록 붙여넣기 자동 분리"였는데, 실제 카톡
+/// 내보내기 두 포맷 중 어느 것도 그 정규식에 걸리지 않았다:
+///   Android — `2026년 8월 11일 오후 3:20, 홍길동 : 안녕`  (숫자로 시작)
+///   PC/iOS  — `[홍길동] [오후 3:20] 안녕`                  (`]` 뒤가 `:`가 아님)
+/// 잡으려던 것은 하나도 못 잡고, 대신 콜론이 흔한 문서를 잘랐다 — 24줄짜리
+/// 금융 용어 정리가 화자 23명("약정액", "설정액", "ROE", "수탁은행" …)짜리
+/// 대화가 되어 개념마다 인물 노드가 그래프에 박혔다. 턴 수 조건을 걸어 완화해
+/// 봐도 `질문:/답변:`, `장점:/단점:` 같은 메모는 여전히 통과한다. 신호 자체가
+/// 화자를 뜻하지 않으므로 임계값으로는 고칠 수 없어 규칙을 걷어냈다.
+///
+/// 스크린샷에서 온 대화는 OCR이 화자를 `@이름:` 형태로 붙여 오고, 그러면 이
+/// 함수가 아니라 [findMentions] 경로를 탄다.
 ParsedDialogue? parseDialogueLines(String text) {
   final rawLines =
       text.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
   if (rawLines.isEmpty) return null;
 
-  var lines = <MapEntry<String, String>>[];
+  final lines = <MapEntry<String, String>>[];
   var matched = 0;
   for (final line in rawLines) {
     final m = _bracketLineRe.firstMatch(line);
@@ -133,43 +147,7 @@ ParsedDialogue? parseDialogueLines(String text) {
       lines.add(MapEntry(last.key, '${last.value}\n$line'.trim()));
     }
   }
-  if (matched > 0) return ParsedDialogue(lines);
-
-  lines = <MapEntry<String, String>>[];
-  matched = 0;
-  for (final line in rawLines) {
-    final m = _bareLineRe.firstMatch(line);
-    final body = m?.group(2)?.trim() ?? '';
-    if (m != null && !body.startsWith('//')) {
-      lines.add(MapEntry(m.group(1)!.trim(), body));
-      matched++;
-    } else if (lines.isNotEmpty) {
-      final last = lines.removeLast();
-      lines.add(MapEntry(last.key, '${last.value}\n$line'.trim()));
-    }
-  }
-  final counts = <String, int>{};
-  for (final e in lines) {
-    counts[e.key] = (counts[e.key] ?? 0) + 1;
-  }
-  // 화자당 평균 2턴 이상이어야 대화로 인정한다. 대화는 소수의 화자가 번갈아
-  // 반복 등장하지만, 용어사전·강의노트("약정액: …", "설정액: …", "ROE: …")는
-  // 줄마다 새 이름이 나온다.
-  //
-  // 예전 조건은 "한 화자가 2번 이상 OR 매칭 4줄 이상"이었는데, 뒤쪽 우회로는
-  // 문서가 길기만 하면 통과한다 — 즉 대화임을 뜻하는 유일한 신호인 '반복'을
-  // 건너뛸 수 있었다. 그 결과 24줄짜리 금융 용어 정리가 화자 23명짜리 대화로
-  // 잘려 개념 하나하나가 그래프에 인물 노드로 박혔다.
-  //
-  // 같은 판별식이 backend/app/precision_text.py 에도 있다. 둘 다 고쳐야 한다 —
-  // 클라이언트가 먼저 잘라서 보내면 서버 쪽 가드는 볼 기회조차 없다.
-  final recurringEnough = matched >= counts.length * 2;
-  if (counts.length >= 2 &&
-      recurringEnough &&
-      matched * 5 >= rawLines.length * 3) {
-    return ParsedDialogue(lines);
-  }
-  return null;
+  return matched > 0 ? ParsedDialogue(lines) : null;
 }
 
 /// [badges] 등장 순서 기준 색 — '나'는 [kSelfMentionColor], 나머지는 [kSpeakerPalette].

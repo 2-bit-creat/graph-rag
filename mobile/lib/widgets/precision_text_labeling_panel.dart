@@ -45,7 +45,7 @@ class _SpeakerOption {
   final bool isSource;
 }
 
-/// "[이름]: …" / "이름: …" 형식 붙여넣기 지원 — 백엔드 pre_slice와 같은 규칙.
+/// "[이름]: …" 형식 붙여넣기 지원 — 백엔드 pre_slice와 같은 규칙.
 class _ParsedDialogue {
   const _ParsedDialogue(this.lines);
 
@@ -62,15 +62,16 @@ class _ParsedDialogue {
 }
 
 final _bracketLineRe = RegExp(r'^\s*\[([^\]]+)\]\s*[:：]\s*(.+)$');
-final _bareLineRe =
-    RegExp(r'^\s*([A-Za-z가-힣][A-Za-z가-힣 ._\-]{0,11}?)\s*[:：]\s*(.+)$');
 
+/// 화자는 `@이름` 멘션과 `[이름]:` 라벨로만 갈린다. 맨살 "이름: 내용" 휴리스틱은
+/// 제거됨 — 사유는 mention_editor_core.dart 의 parseDialogueLines 주석 참고
+/// (요약: 노린 카톡 포맷은 하나도 못 잡고 콜론 쓰는 문서만 잘랐다).
 _ParsedDialogue? _parseDialogueLines(String text) {
   final rawLines =
       text.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
   if (rawLines.isEmpty) return null;
 
-  var lines = <MapEntry<String, String>>[];
+  final lines = <MapEntry<String, String>>[];
   var matched = 0;
   for (final line in rawLines) {
     final m = _bracketLineRe.firstMatch(line);
@@ -82,36 +83,7 @@ _ParsedDialogue? _parseDialogueLines(String text) {
       lines.add(MapEntry(last.key, '${last.value}\n$line'.trim()));
     }
   }
-  if (matched > 0) return _ParsedDialogue(lines);
-
-  lines = <MapEntry<String, String>>[];
-  matched = 0;
-  for (final line in rawLines) {
-    final m = _bareLineRe.firstMatch(line);
-    final body = m?.group(2)?.trim() ?? '';
-    if (m != null && !body.startsWith('//')) {
-      lines.add(MapEntry(m.group(1)!.trim(), body));
-      matched++;
-    } else if (lines.isNotEmpty) {
-      final last = lines.removeLast();
-      lines.add(MapEntry(last.key, '${last.value}\n$line'.trim()));
-    }
-  }
-  final counts = <String, int>{};
-  for (final e in lines) {
-    counts[e.key] = (counts[e.key] ?? 0) + 1;
-  }
-  // 화자당 평균 2턴 이상. 세 번째 사본이다 — mention_editor_core.dart 와
-  // backend/app/precision_text.py 의 같은 판별식과 반드시 함께 움직여야 한다.
-  // "매칭 4줄 이상"이라는 옛 우회로 때문에 용어 정의 목록이 화자 수십 명짜리
-  // 대화로 잘렸다.
-  final recurringEnough = matched >= counts.length * 2;
-  if (counts.length >= 2 &&
-      recurringEnough &&
-      matched * 5 >= rawLines.length * 3) {
-    return _ParsedDialogue(lines);
-  }
-  return null;
+  return matched > 0 ? _ParsedDialogue(lines) : null;
 }
 
 /// @멘션 부분(배지)의 흰 글자만 그려주는 컨트롤러 — 배지의 색 배경 자체는
