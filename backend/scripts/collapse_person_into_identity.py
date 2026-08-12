@@ -55,24 +55,35 @@ from app.models import User
 _DEFAULT_REPORT = "person_to_identity_report.json"
 
 
+def _write_report(path: Path, rows: list[dict], totals: dict | None) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "completed": totals is not None,
+                "rows": rows,
+                "totals": totals or {},
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 async def main(apply: bool, report_path: str) -> None:
     totals: dict[str, int] = {}
     all_rows: list[dict] = []
 
+    # Survey every account BEFORE writing anything. The report is the only
+    # record of which identities used to be typed Person, so it has to exist on
+    # disk before the first UPDATE — not after the last one, or a crash halfway
+    # through would leave rows already retyped and nothing to reconstruct from.
     async with async_session_factory() as session:
         user_ids = list((await session.execute(select(User.id))).scalars().all())
         print(f"accounts: {len(user_ids)}")
-
         for user_id in user_ids:
-            preview = await crud.identity_type_repair_preview(session, user_id)
-            all_rows.extend(preview)
-            if not apply:
-                continue
-
-            counts = await crud.repair_identity_types(session, user_id)
-            await session.commit()
-            for key, value in counts.items():
-                totals[key] = totals.get(key, 0) + value
+            all_rows.extend(await crud.identity_type_repair_preview(session, user_id))
 
     voiceless = sum(1 for r in all_rows if not r["has_voice"])
     print(f"legacy-typed nodes  : {len(all_rows)}")
@@ -90,23 +101,20 @@ async def main(apply: bool, report_path: str) -> None:
             print(f"  ... and {len(all_rows) - 20} more")
         return
 
-    # Written after the run so the file also records that it completed; the rows
-    # themselves were captured from the pre-retype state.
     path = Path(report_path)
-    path.write_text(
-        json.dumps(
-            {
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-                "rows": all_rows,
-                "totals": totals,
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    _write_report(path, all_rows, None)
+    print(f"\nreport written before applying: {path.resolve()}")
 
-    print(f"\nreport: {path.resolve()}")
+    async with async_session_factory() as session:
+        for user_id in user_ids:
+            counts = await crud.repair_identity_types(session, user_id)
+            await session.commit()
+            for key, value in counts.items():
+                totals[key] = totals.get(key, 0) + value
+
+    # Re-write with the outcome so the file also records that the run finished.
+    _write_report(path, all_rows, totals)
+    print("\ndone:")
     for key in sorted(totals):
         print(f"  {key}: {totals[key]}")
 
