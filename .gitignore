@@ -62,3 +62,9 @@ mobile/android/build/
 # journal content and this repo is public. Regenerate with
 #   QUIZ_SHOT_FONT_DIR=<ttf dir> flutter test <suite> --update-goldens
 mobile/test/screenshots/
+
+# Database dumps and migration reports. These hold the graph verbatim — real
+# names of everyone the diaries mention — and this repo is public. The
+# Person→Identity report in particular is the only record of which identities
+# used to carry that type, so keep it locally, never here.
+backups/
