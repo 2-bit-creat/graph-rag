@@ -168,9 +168,9 @@ async def get_profile(
         daily_cloze_target=user.daily_cloze_target,
         daily_composition_target=user.daily_composition_target,
         quiz_review_ratio=user.quiz_review_ratio,
-        auto_generate_quizzes=bool(
-            getattr(user, "auto_generate_quizzes", False)
-        ),
+        # Compatibility field for older clients. Generation no longer branches
+        # on this temporary development setting.
+        auto_generate_quizzes=True,
         daily_progress_by_language=daily_progress,
         timezone=user_timezone_name(user),
         # Surfaced so the client can warn before a generation attempt fails.
@@ -1093,7 +1093,7 @@ async def update_profile_settings(
         daily_cloze_target=payload.daily_cloze_target,
         daily_composition_target=payload.daily_composition_target,
         quiz_review_ratio=payload.quiz_review_ratio,
-        auto_generate_quizzes=payload.auto_generate_quizzes,
+        auto_generate_quizzes=True,
         timezone=payload.timezone,
     )
     if payload.level is not None and payload.level != prev_level:

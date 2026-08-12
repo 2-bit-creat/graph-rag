@@ -28,6 +28,10 @@ from .quiz_policies import (
 
 logger = logging.getLogger(__name__)
 
+# Graph refreshes can overlap while the first background response is running.
+# Keep legacy adoption single-flight per process to avoid duplicate model work.
+_BACKFILL_IN_FLIGHT: set[uuid.UUID] = set()
+
 
 def source_hash(text: str) -> str:
     return hashlib.sha256(" ".join((text or "").split()).encode("utf-8")).hexdigest()
@@ -611,3 +615,61 @@ async def analyse_nodes_and_refill_background(
     from .workers.quiz_refill import refill_user_quizzes
 
     await refill_user_quizzes(user_id)
+
+
+async def backfill_missing_learning_materials_background(
+    user_id: uuid.UUID,
+    *,
+    batch_size: int = 8,
+) -> None:
+    """Incrementally adopt Statements created before automatic analysis.
+
+    The bounded sweep avoids an expensive historical burst. Every graph visit
+    advances the backlog, while selecting a node uses the immediate priority path.
+    """
+    if user_id in _BACKFILL_IN_FLIGHT:
+        return
+    _BACKFILL_IN_FLIGHT.add(user_id)
+    try:
+        async with async_session_factory() as session:
+            user = await session.get(User, user_id)
+            if user is None:
+                return
+            languages = crud.get_effective_target_languages(user)
+            sources = await crud.get_all_statement_nodes(session, user_id)
+            node_ids = [
+                uuid.UUID(str(source["node_id"]))
+                for source in sources
+                if source.get("node_id")
+                and len(str(source.get("content_ko") or "").strip()) >= 6
+            ]
+            if not node_ids:
+                return
+            existing = set(
+                (
+                    await session.execute(
+                        select(
+                            QuizLearningMaterial.node_id,
+                            QuizLearningMaterial.language,
+                        ).where(
+                            QuizLearningMaterial.user_id == user_id,
+                            QuizLearningMaterial.node_id.in_(node_ids),
+                            QuizLearningMaterial.language.in_(languages),
+                        )
+                    )
+                ).all()
+            )
+            missing_nodes: list[uuid.UUID] = []
+            for node_id in node_ids:
+                if any((node_id, language) not in existing for language in languages):
+                    missing_nodes.append(node_id)
+                if len(missing_nodes) >= max(1, min(batch_size, 20)):
+                    break
+        if missing_nodes:
+            await analyse_nodes_and_refill_background(
+                user_id,
+                missing_nodes,
+                languages,
+            )
+    finally:
+        _BACKFILL_IN_FLIGHT.discard(user_id)

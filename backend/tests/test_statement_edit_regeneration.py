@@ -179,3 +179,35 @@ async def test_selected_statement_starts_durable_learner_generation(
     assert result["status"] == "queued"
     assert result["run_id"]
     assert len(background.tasks) == 1
+
+
+@pytest.mark.asyncio
+async def test_selecting_legacy_unanalysed_statement_marks_pending_and_schedules(
+    db_session, iso_user, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        json_doc_store,
+        "_local_path",
+        lambda user_id, filename: tmp_path / f"{user_id}-{filename}",
+    )
+    node = Node(
+        user_id=iso_user.id,
+        name="legacy-unanalysed",
+        type="Statement",
+        description=json.dumps(
+            {"content": "수동 모드 시절 만들어져 아직 분석되지 않은 진술이다."},
+            ensure_ascii=False,
+        ),
+    )
+    db_session.add(node)
+    await db_session.commit()
+    background = BackgroundTasks()
+
+    result = await read_node_study_quizzes(
+        node.id, background, iso_user, db_session
+    )
+
+    assert result["material_status"]["english"] == "pending"
+    assert result["word"]["count"] == 0
+    assert result["expressions"]["count"] == 0
+    assert len(background.tasks) == 1

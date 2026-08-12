@@ -717,7 +717,7 @@ class LearningProfileOut(BaseModel):
     daily_cloze_target: int = 20
     daily_composition_target: int = 5
     quiz_review_ratio: float = 0.5
-    auto_generate_quizzes: bool = False
+    auto_generate_quizzes: bool = True
     daily_progress_by_language: dict[str, DailyLanguageProgressOut] = {}
     # Zone the server computes this learner's day boundaries in, so the app can
     # tell whether the device has moved and only PATCH when it actually differs.

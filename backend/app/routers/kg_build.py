@@ -1323,37 +1323,15 @@ async def kg_commit(
     except Exception:
         logger.warning("kg_commit: embedding backfill failed", exc_info=True)
 
-    if getattr(user, "auto_generate_quizzes", False) and statement_node_ids:
-        from ..quiz_generation_runs import (
-            create_generation_run,
-            process_generation_run,
-        )
+    if statement_node_ids:
+        from ..quiz_materials import analyse_nodes_and_refill_background
 
-        run, created = await create_generation_run(
-            session,
-            user,
-            node_ids=[_uuid.UUID(value) for value in statement_node_ids],
-            languages=crud.get_effective_target_languages(user),
-            idempotency_key=(
-                f"auto:kg:{body.journal_entry_id or _uuid.uuid4()}"
-            ),
-            source="auto",
+        background_tasks.add_task(
+            analyse_nodes_and_refill_background,
+            user.id,
+            [_uuid.UUID(value) for value in statement_node_ids],
+            crud.get_effective_target_languages(user),
         )
-        if created:
-            background_tasks.add_task(process_generation_run, run.id)
-    else:
-        # When auto generation is off, prepare reusable material without creating
-        # the full quiz set. Auto mode uses the single generation run above and
-        # must not enqueue a second competing analysis.
-        try:
-            from ..extraction_queue import enqueue_bulk
-            from ..crud import get_effective_target_languages, get_all_statement_nodes
-
-            langs = get_effective_target_languages(user)
-            all_stmts = await get_all_statement_nodes(session, user.id)
-            await enqueue_bulk(user.id, all_stmts, langs)
-        except Exception as _eq_exc:
-            logger.warning("kg_commit: failed to enqueue material analysis: %s", _eq_exc)
 
     return KgCommitOut(
         ok=True,

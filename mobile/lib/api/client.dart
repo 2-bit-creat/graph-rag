@@ -686,7 +686,6 @@ class ApiClient {
     int? dailyClozeTarget,
     int? dailyCompositionTarget,
     double? quizReviewRatio,
-    bool? autoGenerateQuizzes,
     String? timezone,
   }) async {
     try {
@@ -698,8 +697,6 @@ class ApiClient {
         if (dailyCompositionTarget != null)
           'daily_composition_target': dailyCompositionTarget,
         if (quizReviewRatio != null) 'quiz_review_ratio': quizReviewRatio,
-        if (autoGenerateQuizzes != null)
-          'auto_generate_quizzes': autoGenerateQuizzes,
       });
       return resp.data as Map<String, dynamic>;
     } on DioException catch (e) {

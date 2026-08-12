@@ -114,6 +114,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   bool _selectedStudyLoading = false;
   bool _selectedRegenerating = false;
   bool _selectedGenerating = false;
+  Timer? _selectedStudyPollTimer;
   final _canvasKey = GlobalKey<KnowledgeGraphCanvasState>();
   // 화자 숨김(Speaker-to-Color) 모드: head 노드를 물리에서 제거하고
   // Statement를 화자색으로 인코딩 — 슈퍼노드(성게) 뭉침 해소용.
@@ -645,6 +646,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   void dispose() {
     _bottomPinTimer?.cancel();
     _chatPeekTimer?.cancel();
+    _selectedStudyPollTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     chatSession.removeListener(_onChatChanged);
     chatSession.errors.removeListener(_onChatError);
@@ -1571,6 +1573,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       return;
     }
 
+    _selectedStudyPollTimer?.cancel();
     // Show the card immediately with what we have; upgrade to full detail.
     final nodeId = node['id']?.toString();
     final isStatement = isStatementNode(node);
@@ -1611,6 +1614,25 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         _selectedStudyQuizzes = data;
         _selectedStudyLoading = false;
       });
+      final statuses = data['material_status'] is Map
+          ? (data['material_status'] as Map)
+              .values
+              .map((value) => value.toString())
+              .toSet()
+          : const <String>{};
+      final generationStatus =
+          ((data['generation'] as Map?)?['status'] ?? 'idle').toString();
+      final isPreparing = statuses.any(
+            const {'pending', 'analyzing', 'stale'}.contains,
+          ) ||
+          const {'queued', 'running'}.contains(generationStatus);
+      _selectedStudyPollTimer?.cancel();
+      if (isPreparing) {
+        _selectedStudyPollTimer = Timer(
+          const Duration(seconds: 2),
+          () => _loadSelectedStudyQuizzes(nodeId),
+        );
+      }
     } catch (_) {
       if (!mounted || _selectedNodeId != nodeId) return;
       setState(() => _selectedStudyLoading = false);
@@ -1735,6 +1757,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
 
   Future<void> _selectEdge(Map<String, dynamic>? edge,
       {bool showSheet = false}) async {
+    _selectedStudyPollTimer?.cancel();
     setState(() {
       _selectedEdge = edge;
       _selectedEdgeId = edge?['id']?.toString();
@@ -1887,6 +1910,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   }
 
   void _clearSelection() {
+    _selectedStudyPollTimer?.cancel();
     setState(() {
       _selectedNode = null;
       _selectedNodeId = null;
@@ -3047,7 +3071,9 @@ class _SelectionInfoCard extends StatelessWidget {
           quizButton('cloze', word, tr('kg.wordQuiz')),
           quizButton('composition', composition, tr('kg.compositionQuiz')),
         ]),
-        if (availableCount > 0 || failed) ...[
+        if (availableCount > 0 ||
+            ((word['count'] as num?)?.toInt() ?? 0) == 0 ||
+            failed) ...[
           const SizedBox(height: 8),
           SizedBox(
               width: double.infinity,

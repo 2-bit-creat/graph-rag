@@ -152,7 +152,8 @@ _MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_cloze_target INTEGER NOT NULL DEFAULT 20",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_composition_target INTEGER NOT NULL DEFAULT 5",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS quiz_review_ratio DOUBLE PRECISION NOT NULL DEFAULT 0.5",
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_generate_quizzes BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_generate_quizzes BOOLEAN NOT NULL DEFAULT TRUE",
+    "ALTER TABLE users ALTER COLUMN auto_generate_quizzes SET DEFAULT TRUE",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS level_stats JSONB",
     # Existing installations predate these columns even though new installs
     # receive them through CREATE TABLE above.

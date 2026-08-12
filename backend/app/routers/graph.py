@@ -368,6 +368,7 @@ async def graph_node_types_v1(
 
 @router.get("", response_model=GraphOut)
 async def read_graph(
+    background: BackgroundTasks,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> GraphOut:
@@ -376,6 +377,10 @@ async def read_graph(
     if await crud.deduplicate_node_type_casing(session, user.id):
         await session.commit()
         nodes = await crud.list_nodes_out(session, user.id)
+
+    from ..quiz_materials import backfill_missing_learning_materials_background
+
+    background.add_task(backfill_missing_learning_materials_background, user.id)
 
     return GraphOut(nodes=nodes, edges=edges)
 
@@ -441,7 +446,29 @@ async def read_node_study_quizzes(
             )
         )
     ).all()
-    material_status = {row.language: row.status for row in material_rows}
+    material_by_language = {row.language: row for row in material_rows}
+    missing_languages = [
+        language for language in languages if language not in material_by_language
+    ]
+    if missing_languages:
+        from ..quiz_bundle import BundleSeedError
+        from ..quiz_materials import get_or_mark_material
+
+        for language in missing_languages:
+            try:
+                material_by_language[language] = await get_or_mark_material(
+                    session,
+                    user,
+                    node_id=node_id,
+                    language=language,
+                    priority=100,
+                )
+            except BundleSeedError:
+                continue
+        await session.commit()
+    material_status = {
+        language: row.status for language, row in material_by_language.items()
+    }
     from ..node_expression_store import get_node_expressions
 
     expression_by_language: dict[str, dict[str, int]] = {}
@@ -483,8 +510,12 @@ async def read_node_study_quizzes(
     # A Statement edited after generation is left archived-and-empty on purpose;
     # only the learner's 재생성 press rebuilds it, so auto-analysis stays off here.
     needs_regeneration = any(row.status == "stale" for row in material_rows)
-    if not grouped["cloze"] and not grouped["composition"] and not needs_regeneration:
-        if any(material_status.get(language) not in {"ready", "analyzing"} for language in languages):
+    if not grouped["cloze"] and not grouped["composition"]:
+        if any(
+            material_status.get(language) in {"pending", "stale"}
+            or language not in material_status
+            for language in languages
+        ):
             await _schedule_statement_learning(
                 background, session, user, node_id, priority=100
             )

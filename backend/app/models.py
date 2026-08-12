@@ -33,7 +33,7 @@ class User(Base):
     daily_composition_target: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     quiz_review_ratio: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
     auto_generate_quizzes: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False
+        Boolean, nullable=False, default=True, server_default="true"
     )
     # IANA zone the learner's day boundaries are computed in — streaks, the daily
     # goal reset, and the once-per-day XP cap. Stored on the user rather than

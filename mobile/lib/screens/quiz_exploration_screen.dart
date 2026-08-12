@@ -18,8 +18,6 @@ class QuizExplorationScreen extends StatefulWidget {
 class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
   bool _loading = true;
   bool _submitting = false;
-  bool _savingAuto = false;
-  bool _autoGenerate = false;
   String? _error;
   List<Map<String, dynamic>> _nodes = [];
   List<Map<String, dynamic>> _runs = [];
@@ -75,7 +73,6 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
         _languages = languages;
         _nodes = nodes;
         _runs = runs;
-        _autoGenerate = profile['auto_generate_quizzes'] == true;
         _selectedNodes.removeWhere(
           (id) => !_nodes.any((node) => node['node_id']?.toString() == id),
         );
@@ -120,24 +117,6 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
           () => _load(silent: true),
         );
       }
-    }
-  }
-
-  Future<void> _setAutoGenerate(bool value) async {
-    setState(() {
-      _savingAuto = true;
-      _autoGenerate = value;
-    });
-    try {
-      await apiClient.updateQuizProfileSettings(autoGenerateQuizzes: value);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _autoGenerate = !value);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('자동 생성 설정 실패: $e')),
-      );
-    } finally {
-      if (mounted) setState(() => _savingAuto = false);
     }
   }
 
@@ -349,14 +328,13 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
         children: [
           AppSurfaceCard(
             tint: AppColors.hubQuiz,
-            child: SwitchListTile.adaptive(
+            child: const ListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Statement 자동 문제 생성'),
-              subtitle: const Text(
-                '새로 확정되거나 내용이 변경된 Statement를 모든 활성 Target 언어로 한 번에 분석·생성합니다.',
+              leading: Icon(Icons.auto_awesome_rounded),
+              title: Text('자동 학습 재고'),
+              subtitle: Text(
+                '새 Statement는 자동 분석됩니다. 여기서는 특정 노드의 기존 문제를 확인하거나 추가 생성할 수 있습니다.',
               ),
-              value: _autoGenerate,
-              onChanged: _savingAuto ? null : _setAutoGenerate,
             ),
           ),
           const SizedBox(height: AppSpacing.md),

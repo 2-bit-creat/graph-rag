@@ -433,7 +433,7 @@ async def enqueue_entry_expression_extraction(
 
     Runs only AFTER the graph is committed (one-shot build or HITL apply), so the
     expensive per-node LLM extraction targets confirmed content — never a draft.
-    Auto mode completes analysis and every quiz type in one generation run.
+    Confirmed Statements always enter inventory-first automatic analysis.
     """
     try:
         from .models import User as _User
@@ -442,19 +442,14 @@ async def enqueue_entry_expression_extraction(
         user = await session.get(_User, user_id)
         if user is not None:
             langs = get_effective_target_languages(user)
-            if getattr(user, "auto_generate_quizzes", False) and node_ids:
-                from .quiz_generation_runs import create_generation_run, process_generation_run
+            if node_ids:
+                from .quiz_materials import analyse_nodes_and_refill_background
 
-                run, created = await create_generation_run(
-                    session,
-                    user,
-                    node_ids=[uuid.UUID(value) for value in node_ids],
-                    languages=langs,
-                    idempotency_key=idempotency_key or f"auto:pipeline:{uuid.uuid4()}",
-                    source="auto",
+                await analyse_nodes_and_refill_background(
+                    user_id,
+                    [uuid.UUID(value) for value in node_ids],
+                    langs,
                 )
-                if created:
-                    await process_generation_run(run.id)
                 return
 
             from .extraction_queue import enqueue_bulk

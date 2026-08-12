@@ -27,7 +27,6 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
   List<String> _targetLanguages = const ['english'];
   bool _includeArchived = false;
   bool _loading = true;
-  bool _autoGenerate = false;
   double _reviewRatio = .5;
   int _total = 0;
   int _offset = 0;
@@ -70,10 +69,10 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
             .map(Map<String, dynamic>.from)
             .toList();
         _total = (list['total'] as num?)?.toInt() ?? _items.length;
-        _targetLanguages = (profile['target_languages'] as List? ?? const ['english'])
-            .map((value) => value.toString().toLowerCase())
-            .toList();
-        _autoGenerate = profile['auto_generate_quizzes'] == true;
+        _targetLanguages =
+            (profile['target_languages'] as List? ?? const ['english'])
+                .map((value) => value.toString().toLowerCase())
+                .toList();
         _reviewRatio = (profile['quiz_review_ratio'] as num?)?.toDouble() ?? .5;
         _selectedIds.clear();
         _loading = false;
@@ -85,18 +84,6 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
           _error = error;
         });
       }
-    }
-  }
-
-  Future<void> _setAutoGenerate(bool value) async {
-    setState(() => _autoGenerate = value);
-    try {
-      await apiClient.updateQuizProfileSettings(autoGenerateQuizzes: value);
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _autoGenerate = !value);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('자동 모드 변경 실패: $error')));
     }
   }
 
@@ -230,7 +217,10 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
         title: Text('보관 중'),
         content: Row(
           children: [
-            SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
+            SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2)),
             SizedBox(width: 12),
             Expanded(child: Text('선택한 문제를 보관하고 있습니다…')),
           ],
@@ -265,7 +255,10 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
                   title: Text('삭제 정보 계산 중'),
                   content: Row(
                     children: [
-                      SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
+                      SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2)),
                       SizedBox(width: 12),
                       Expanded(child: Text('연결된 음성 파일을 확인하고 있습니다…')),
                     ],
@@ -320,7 +313,10 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
         title: Text('문제 삭제 중'),
         content: Row(
           children: [
-            SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
+            SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2)),
             SizedBox(width: 12),
             Expanded(child: Text('문제와 더 이상 쓰이지 않는 음성을 정리하고 있습니다…')),
           ],
@@ -402,35 +398,21 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
               child: Column(
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: () async {
-                            await Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => const QuizExplorationScreen(),
-                              ),
-                            );
-                            await _load();
-                          },
-                          icon: const Icon(Icons.account_tree_outlined),
-                          label: const Text('문제 생성'),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: SwitchListTile.adaptive(
-                          dense: true,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 10),
-                          title: const Text('자동 모드'),
-                          subtitle: Text(_autoGenerate ? '새 Statement 자동 생성' : '수동 생성만'),
-                          value: _autoGenerate,
-                          onChanged: _setAutoGenerate,
-                        ),
-                      ),
-                    ],
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const QuizExplorationScreen(),
+                          ),
+                        );
+                        await _load();
+                      },
+                      icon: const Icon(Icons.account_tree_outlined),
+                      label: const Text('노드별 문제 관리'),
+                    ),
                   ),
                   ExpansionTile(
                     tilePadding: EdgeInsets.zero,
@@ -443,7 +425,8 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
                         value: _reviewRatio,
                         divisions: 20,
                         label: '${(_reviewRatio * 100).round()}%',
-                        onChanged: (value) => setState(() => _reviewRatio = value),
+                        onChanged: (value) =>
+                            setState(() => _reviewRatio = value),
                         onChangeEnd: _saveReviewRatio,
                       ),
                     ],
@@ -490,9 +473,12 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
                         value: _sort,
                         underline: const SizedBox.shrink(),
                         items: const [
-                          DropdownMenuItem(value: 'created_desc', child: Text('최신 생성순')),
-                          DropdownMenuItem(value: 'created_asc', child: Text('오래된 생성순')),
-                          DropdownMenuItem(value: 'studied_desc', child: Text('최근 학습순')),
+                          DropdownMenuItem(
+                              value: 'created_desc', child: Text('최신 생성순')),
+                          DropdownMenuItem(
+                              value: 'created_asc', child: Text('오래된 생성순')),
+                          DropdownMenuItem(
+                              value: 'studied_desc', child: Text('최근 학습순')),
                         ],
                         onChanged: (value) {
                           if (value == null) return;
@@ -501,7 +487,8 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
                         },
                       ),
                       const Spacer(),
-                      Text('총 $_total개', style: const TextStyle(color: AppColors.textMuted)),
+                      Text('총 $_total개',
+                          style: const TextStyle(color: AppColors.textMuted)),
                     ],
                   ),
                 ],
@@ -520,7 +507,8 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
                           : null,
                   onChanged: (checked) => setState(() {
                     if (checked == true) {
-                      _selectedIds.addAll(_items.map((item) => item['id'].toString()));
+                      _selectedIds
+                          .addAll(_items.map((item) => item['id'].toString()));
                     } else {
                       _selectedIds.clear();
                     }
@@ -539,7 +527,8 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
                       ),
                       TextButton.icon(
                         onPressed: _permanentlyDeleteSelected,
-                        style: TextButton.styleFrom(foregroundColor: Colors.red),
+                        style:
+                            TextButton.styleFrom(foregroundColor: Colors.red),
                         icon: const Icon(Icons.delete_forever_outlined),
                         label: const Text('완전 삭제'),
                       ),
@@ -555,7 +544,8 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
                         icon: Icons.error_outline,
                         title: '문제 목록을 불러오지 못했습니다',
                         subtitle: '$_error',
-                        action: FilledButton(onPressed: _load, child: const Text('다시 시도')),
+                        action: FilledButton(
+                            onPressed: _load, child: const Text('다시 시도')),
                       )
                     : _items.isEmpty
                         ? const AppEmptyState(
@@ -571,9 +561,12 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
                               itemBuilder: (context, index) {
                                 final item = _items[index];
                                 final id = item['id'].toString();
-                                final kind = item['queue_kind']?.toString() ?? 'new';
+                                final kind =
+                                    item['queue_kind']?.toString() ?? 'new';
                                 final color = _queueColor(kind);
-                                final type = item['quiz_type'] == 'composition' ? '작문' : '단어';
+                                final type = item['quiz_type'] == 'composition'
+                                    ? '작문'
+                                    : '단어';
                                 final queueLabel = kind == 'review'
                                     ? '복습 대상 문제'
                                     : kind == 'archived'
@@ -587,7 +580,8 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
                                       await Navigator.push(
                                         context,
                                         MaterialPageRoute(
-                                          builder: (_) => QuizAdminDetailScreen(quizId: id),
+                                          builder: (_) =>
+                                              QuizAdminDetailScreen(quizId: id),
                                         ),
                                       );
                                       await _load();
@@ -595,41 +589,59 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
                                     child: Padding(
                                       padding: const EdgeInsets.all(12),
                                       child: Row(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
                                         children: [
                                           Checkbox(
                                             value: _selectedIds.contains(id),
-                                            onChanged: (checked) => setState(() {
+                                            onChanged: (checked) =>
+                                                setState(() {
                                               checked == true
                                                   ? _selectedIds.add(id)
                                                   : _selectedIds.remove(id);
                                             }),
                                           ),
                                           CircleAvatar(
-                                            backgroundColor: color.withValues(alpha: .14),
+                                            backgroundColor:
+                                                color.withValues(alpha: .14),
                                             child: Text(
                                               'L${item['difficulty_level'] ?? 0}',
-                                              style: TextStyle(fontSize: 11, color: color),
+                                              style: TextStyle(
+                                                  fontSize: 11, color: color),
                                             ),
                                           ),
                                           const SizedBox(width: 12),
                                           Expanded(
                                             child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
                                               children: [
                                                 Text(
-                                                  item['target_node']?.toString().trim().isNotEmpty == true
-                                                      ? item['target_node'].toString()
-                                                      : item['context_sentence']?.toString() ?? '이름 없는 문제',
+                                                  item['target_node']
+                                                              ?.toString()
+                                                              .trim()
+                                                              .isNotEmpty ==
+                                                          true
+                                                      ? item['target_node']
+                                                          .toString()
+                                                      : item['context_sentence']
+                                                              ?.toString() ??
+                                                          '이름 없는 문제',
                                                   maxLines: 1,
-                                                  overflow: TextOverflow.ellipsis,
-                                                  style: const TextStyle(fontWeight: FontWeight.w700),
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w700),
                                                 ),
                                                 const SizedBox(height: 3),
                                                 Text(
-                                                  item['context_sentence']?.toString() ?? '',
+                                                  item['context_sentence']
+                                                          ?.toString() ??
+                                                      '',
                                                   maxLines: 2,
-                                                  overflow: TextOverflow.ellipsis,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
                                                   style: TextStyle(
                                                     color: Theme.of(context)
                                                         .colorScheme
@@ -641,12 +653,19 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
                                                   spacing: 6,
                                                   runSpacing: 5,
                                                   children: [
-                                                    _Badge(label: queueLabel, color: color),
-                                                    _Badge(label: type, color: AppColors.hubQuiz),
+                                                    _Badge(
+                                                        label: queueLabel,
+                                                        color: color),
+                                                    _Badge(
+                                                        label: type,
+                                                        color:
+                                                            AppColors.hubQuiz),
                                                     _Badge(
                                                       label: _languageLabels[
-                                                              item['language']?.toString()] ??
-                                                          item['language']?.toString() ??
+                                                              item['language']
+                                                                  ?.toString()] ??
+                                                          item['language']
+                                                              ?.toString() ??
                                                           '영어',
                                                       color: AppColors.hubGraph,
                                                     ),
@@ -654,7 +673,8 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
                                                       _date(item['created_at']),
                                                       style: const TextStyle(
                                                         fontSize: 11,
-                                                        color: AppColors.textMuted,
+                                                        color:
+                                                            AppColors.textMuted,
                                                       ),
                                                     ),
                                                   ],
@@ -662,7 +682,8 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
                                               ],
                                             ),
                                           ),
-                                          const Icon(Icons.chevron_right_rounded),
+                                          const Icon(
+                                              Icons.chevron_right_rounded),
                                         ],
                                       ),
                                     ),
@@ -729,7 +750,8 @@ class _Badge extends StatelessWidget {
         ),
         child: Text(
           label,
-          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color),
+          style: TextStyle(
+              fontSize: 10, fontWeight: FontWeight.w700, color: color),
         ),
       );
 }
