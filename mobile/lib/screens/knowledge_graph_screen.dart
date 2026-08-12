@@ -184,7 +184,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   double _chatAreaHeight = 1;
   double _chatSheetSize = _sheetDefaultSize;
   double _chatRestoredSize = _sheetDefaultSize;
-  bool _graphToolsVisible = true;
+  // Keep the first view calm: filters and canvas controls are still available
+  // from the search bar's overflow menu, but no longer compete with the graph
+  // and selected-node summary on every visit.
+  bool _graphToolsVisible = false;
   bool _chatExpandedForInput = false;
   bool _chatManuallySized = false;
   bool get _isQuizMode =>
@@ -3094,6 +3097,21 @@ class _SelectionInfoCard extends StatelessWidget {
     ]);
   }
 
+  String _studySummary() {
+    if (studyLoading) return tr('kg.analysisPreparing');
+    final word = (studyQuizzes?['word'] as Map?)?['count'] as num?;
+    final composition =
+        (studyQuizzes?['composition'] as Map?)?['count'] as num?;
+    final expressions =
+        (studyQuizzes?['expressions'] as Map?)?['count'] as num?;
+    final quizCount = (word?.toInt() ?? 0) + (composition?.toInt() ?? 0);
+    final expressionCount = expressions?.toInt() ?? 0;
+    return tr('kg.studySummary', {
+      'quizzes': quizCount,
+      'expressions': expressionCount,
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final shell = context.shell;
@@ -3296,17 +3314,35 @@ class _SelectionInfoCard extends StatelessWidget {
           children: [
             body,
             if (isStatement) ...[
-              const SizedBox(height: 10),
-              Text(
-                tr('kg.quizFromStatement'),
-                style: TextStyle(
-                  color: shell.mutedText,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
+              const SizedBox(height: 6),
+              Theme(
+                data: Theme.of(context).copyWith(
+                  dividerColor: Colors.transparent,
+                ),
+                child: ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  childrenPadding: const EdgeInsets.only(bottom: 6),
+                  visualDensity: VisualDensity.compact,
+                  leading: Icon(
+                    Icons.school_outlined,
+                    size: 18,
+                    color: shell.mutedText,
+                  ),
+                  title: Text(
+                    tr('kg.learningSection'),
+                    style: TextStyle(
+                      color: shell.primaryText,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  subtitle: Text(
+                    _studySummary(),
+                    style: TextStyle(fontSize: 10.5, color: shell.mutedText),
+                  ),
+                  children: [_studyLearningPanel(context)],
                 ),
               ),
-              const SizedBox(height: 5),
-              _studyLearningPanel(context),
             ],
             const SizedBox(height: 6),
             Row(

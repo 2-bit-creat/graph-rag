@@ -69,6 +69,9 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
   final _relationCtrl = TextEditingController();
   String? _type;
   bool _saving = false;
+  bool _editing = false;
+  bool _showRelations = false;
+  bool _showMore = false;
 
   /// Event day currently shown for a Statement, and the value it was loaded
   /// with. Only a real change is sent, so editing the text of a statement whose
@@ -325,6 +328,9 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       _loadedOccurredAt = _occurredAt;
       _showAdvanced = false;
       _showDebug = false;
+      _editing = false;
+      _showRelations = false;
+      _showMore = false;
     }
     final edge = widget.selectedEdge;
     if (edge != null) {
@@ -370,6 +376,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       _loadedOccurredAt = _occurredAt;
       widget.onUpdated?.call();
       if (mounted) {
+        setState(() => _editing = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr('inspector.nodeSaved'))),
         );
@@ -645,7 +652,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
           Expanded(
             child: Text(
               node != null
-                  ? nodeDisplayLabel(node)
+                  ? tr('inspector.nodeDetailTitle')
                   : edge != null
                       ? tr('inspector.relationDetailTitle')
                       : 'Inspector',
@@ -654,6 +661,25 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
               overflow: TextOverflow.ellipsis,
             ),
           ),
+          if (node != null && !_isChunkNode(node))
+            TextButton.icon(
+              onPressed: _saving
+                  ? null
+                  : () {
+                      if (_editing) {
+                        setState(_syncFields);
+                      } else {
+                        setState(() => _editing = true);
+                      }
+                    },
+              icon: Icon(
+                _editing ? Icons.close_rounded : Icons.edit_outlined,
+                size: 17,
+              ),
+              label: Text(_editing
+                  ? tr('common.cancel')
+                  : tr('inspector.editAction')),
+            ),
           IconButton(
             icon: const Icon(Icons.close),
             onPressed: widget.onClose,
@@ -1027,6 +1053,17 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     final incoming =
         widget.edges.where((e) => e['target_id'].toString() == id).toList();
 
+    if (!_editing && !_isChunkNode(node)) {
+      return _nodeReadInspector(
+        node,
+        theme,
+        color: color,
+        outgoing: outgoing,
+        incoming: incoming,
+        locked: locked,
+      );
+    }
+
     return [
       ...chunkSection,
       Row(
@@ -1211,6 +1248,122 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     ];
   }
 
+  List<Widget> _nodeReadInspector(
+    Map<String, dynamic> node,
+    ThemeData theme, {
+    required Color color,
+    required List<Map<String, dynamic>> outgoing,
+    required List<Map<String, dynamic>> incoming,
+    required bool locked,
+  }) {
+    final id = node['id'].toString();
+    final isStatement = _isStatementNode(node);
+    final content = isStatement
+        ? _stmtContent(node)
+        : (node['description']?.toString().trim() ?? '');
+    final relationCount = outgoing.length + incoming.length;
+
+    return [
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 10,
+            height: 10,
+            margin: const EdgeInsets.only(top: 7),
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              nodeDisplayLabel(node),
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 10),
+      Wrap(
+        spacing: 7,
+        runSpacing: 7,
+        children: [
+          _InspectorMetaPill(label: _type ?? node['type']?.toString() ?? ''),
+          if (isStatement) _InspectorMetaPill(label: _stmtCtxType(node)),
+          if (isStatement && _occurredAt != null)
+            _InspectorMetaPill(
+              icon: Icons.calendar_today_outlined,
+              label: _inspectorDayLabel(_occurredAt!),
+            ),
+        ],
+      ),
+      if (content.isNotEmpty) ...[
+        const SizedBox(height: 18),
+        Text(
+          content,
+          style: theme.textTheme.bodyLarge?.copyWith(
+            height: 1.55,
+            color: theme.colorScheme.onSurface,
+          ),
+        ),
+      ],
+      const SizedBox(height: 18),
+      _disclosureHeader(
+        theme,
+        label: tr('inspector.relationsCount', {'count': relationCount}),
+        expanded: _showRelations,
+        onTap: () => setState(() => _showRelations = !_showRelations),
+      ),
+      if (_showRelations) ...[
+        const SizedBox(height: 6),
+        ...outgoing.map((e) => _RelationTile(
+              label:
+                  '${e['relation']} → ${widget.nodeById[e['target_id'].toString()]?['name'] ?? '?'}',
+              onTap: () => widget.onSelectEdge?.call(e),
+            )),
+        ...incoming.map((e) => _RelationTile(
+              label:
+                  '${widget.nodeById[e['source_id'].toString()]?['name'] ?? '?'} → ${e['relation']}',
+              onTap: () => widget.onSelectEdge?.call(e),
+            )),
+      ],
+      const SizedBox(height: 4),
+      _disclosureHeader(
+        theme,
+        label: tr('inspector.moreSection'),
+        expanded: _showMore,
+        onTap: () => setState(() => _showMore = !_showMore),
+      ),
+      if (_showMore) ...[
+        const SizedBox(height: 8),
+        if (locked) ...[
+          _LockedNotice(),
+          const SizedBox(height: 8),
+        ],
+        _sourceTranscriptWidget(node),
+        if (isStatement) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _NodeExpressionButton(
+              nodeId: id,
+              nodeName: node['name']?.toString() ?? '',
+            ),
+          ),
+        ],
+        const SizedBox(height: 8),
+        TextButton.icon(
+          onPressed: _deleteNode,
+          style: TextButton.styleFrom(foregroundColor: theme.colorScheme.error),
+          icon: const Icon(Icons.delete_outline, size: 18),
+          label: Text(tr('common.delete')),
+        ),
+      ],
+    ];
+  }
+
   /// Header for a collapsed group — a plain disclosure row rather than an
   /// ExpansionTile, so it sits flush with the surrounding flat list.
   Widget _disclosureHeader(
@@ -1319,6 +1472,42 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
             fontSize: 10, color: Colors.grey[600], fontFamily: 'monospace'),
       ),
     ];
+  }
+}
+
+class _InspectorMetaPill extends StatelessWidget {
+  const _InspectorMetaPill({required this.label, this.icon});
+
+  final String label;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest.withValues(alpha: .55),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 13, color: colors.onSurfaceVariant),
+            const SizedBox(width: 5),
+          ],
+          Text(
+            label,
+            style: TextStyle(
+              color: colors.onSurfaceVariant,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
