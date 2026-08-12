@@ -346,9 +346,51 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     super.dispose();
   }
 
+  /// Statements this node currently heads. Demoting it out of the identity
+  /// category reverses those edges into `Statement --CONTEXT--> node`, which
+  /// destroys "who said it" — nothing else in the schema records the head.
+  int _spokenStatementCount(Map<String, dynamic> node) {
+    final id = node['id'].toString();
+    return widget.edges
+        .where((e) =>
+            e['source_id'].toString() == id &&
+            e['relation']?.toString() == 'SPOKE_OR_PUBLISHED')
+        .length;
+  }
+
+  /// Warn before an irreversible identity → non-identity retype. Warn, don't
+  /// refuse: the KG screen is the after-the-fact correction hub.
+  Future<bool> _confirmHeadDemotion(Map<String, dynamic> node) async {
+    final wasIdentity = _isIdentityCategoryType(node['type']?.toString());
+    if (!wasIdentity || _isIdentityCategoryType(_type)) return true;
+    final count = _spokenStatementCount(node);
+    if (count == 0) return true;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('inspector.demoteHeadTitle')),
+        content: Text(tr('inspector.demoteHeadBody', {'count': count})),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(tr('common.cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(tr('inspector.demoteHeadConfirm')),
+          ),
+        ],
+      ),
+    );
+    return ok ?? false;
+  }
+
   Future<void> _saveNode() async {
     final node = widget.selectedNode;
     if (node == null || _type == null) return;
+    if (!await _confirmHeadDemotion(node)) return;
+    if (!mounted) return;
     setState(() => _saving = true);
 
     // For Statement nodes: user edits the content text, we re-wrap in JSON
@@ -362,7 +404,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     }
 
     try {
-      await apiClient.updateNode(
+      final saved = await apiClient.updateNode(
         node['id'].toString(),
         name: _nameCtrl.text.trim(),
         type: _type!,
@@ -376,9 +418,17 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       _loadedOccurredAt = _occurredAt;
       widget.onUpdated?.call();
       if (mounted) {
+        // A successful save drops back to read mode.
         setState(() => _editing = false);
+        // Say so when the type change rewrote relations. Silently fixing what
+        // used to silently break is only half the fix.
+        final realigned = (saved[kEdgesRealignedKey] as int?) ?? 0;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr('inspector.nodeSaved'))),
+          SnackBar(
+            content: Text(realigned > 0
+                ? tr('inspector.nodeSavedWithEdges', {'count': realigned})
+                : tr('inspector.nodeSaved')),
+          ),
         );
       }
     } catch (e) {
@@ -1626,7 +1676,7 @@ class _EmbeddingStatusCard extends StatelessWidget {
     final samples = node['voice_sample_count'];
     final duration =
         (node['voice_total_duration_sec'] as num?)?.toDouble() ?? 0.0;
-    final isSpeakerLike = isSpeakerLikeType(node['type']?.toString());
+    final isSpeakerLike = isNonSourceIdentityType(node['type']?.toString());
 
     return Card(
       color: Colors.blueGrey.withValues(alpha: 0.08),

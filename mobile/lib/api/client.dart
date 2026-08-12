@@ -6,6 +6,11 @@ import 'json_compat.dart';
 
 export 'config.dart' show apiBaseUrl, resolveMediaUrl, resolvedApiBaseUrl;
 
+/// Client-only key [ApiClient.updateNode] stamps onto the returned node when
+/// the server reports realigned edges. Not part of the API payload — prefixed
+/// so it can never collide with a real field.
+const kEdgesRealignedKey = '_edges_realigned';
+
 /// English translations for the Korean action labels passed to
 /// [ApiClient._friendlyError] at each call site — kept in one table here so
 /// ~90 call sites don't each need their own tr() key.
@@ -934,8 +939,8 @@ class ApiClient {
     }
   }
 
-  /// Concept nodes whose name matches an existing Person/self identity — likely
-  /// people mis-stored as concepts before mention-resolution existed.
+  /// Concept nodes whose name matches an existing identity/self node — likely
+  /// identities mis-stored as concepts before mention-resolution existed.
   Future<List<Map<String, dynamic>>> personMigrationSuggestions() async {
     try {
       final resp = await _dio.get('/kg/nodes/person-migration-suggestions');
@@ -961,11 +966,11 @@ class ApiClient {
     }
   }
 
-  /// Retype a node in place (e.g. Concept → Person), or — when [mergeInto] is
+  /// Retype a node in place (e.g. Concept → Identity), or — when [mergeInto] is
   /// given — merge it into that identity (reassigning edges, deleting the source).
   Future<Map<String, dynamic>> reclassifyNode(
     String nodeId, {
-    String toType = 'Person',
+    String toType = 'Identity',
     String? mergeInto,
   }) async {
     try {
@@ -1153,7 +1158,14 @@ class ApiClient {
         if (description != null) 'description': description,
         if (occurredAt != null) 'occurred_at': occurredAt,
       });
-      return resp.data as Map<String, dynamic>;
+      final node = Map<String, dynamic>.from(resp.data as Map);
+      // Changing a node's type rewrites its Statement relations server-side
+      // (MENTIONS ↔ CONTEXT, demoted heads). The count rides on a header so the
+      // response model stays a plain node; surfaced under a local-only key.
+      final realigned =
+          int.tryParse(resp.headers.value('x-edges-realigned') ?? '');
+      if (realigned != null) node[kEdgesRealignedKey] = realigned;
+      return node;
     } on DioException catch (e) {
       if (e.response?.statusCode == 409) {
         final data = e.response?.data;

@@ -10,7 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import crud
 from .config import get_settings
-from .entity_types import is_identity_type, is_source_like_type, normalize_entity_type
+from .entity_types import (
+    IDENTITY_ENTITY_TYPE,
+    is_identity_type,
+    is_source_like_type,
+    normalize_entity_type,
+)
 from .models import JournalEntry, Node, SpeakerProfile
 
 # Written to speaker_entry_appearances.match_score after the user confirms in UI.
@@ -164,7 +169,7 @@ async def build_speaker_summaries_for_entry(
                             name=self_node.name if self_node is not None else "나",
                             type=normalize_entity_type(self_node.type)
                             if self_node is not None
-                            else "Person",
+                            else IDENTITY_ENTITY_TYPE,
                         ),
                         suggested_node=None,
                         auto_assigned=True,
@@ -216,7 +221,7 @@ async def build_speaker_summaries_for_entry(
                         name=self_node.name if self_node is not None else "나",
                         type=normalize_entity_type(self_node.type)
                         if self_node is not None
-                        else "Person",
+                        else IDENTITY_ENTITY_TYPE,
                     )
                 elif name:
                     confirmed = RecommendedNode(id=None, name=name)

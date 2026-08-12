@@ -36,13 +36,17 @@ from ..db import get_session
 from ..deps import daily_quota, request_user_dep, require_debug_enabled
 from ..rate_limit import KIND_KG_EXTRACT, KIND_STT
 from ..entity_types import (
+    IDENTITY_ENTITY_TYPE,
+    SOURCE_ENTITY_TYPE,
+    canonical_identity_type,
+    identity_types_compatible,
     is_identity_type,
-    is_person_like_type,
     is_source_like_type,
     normalize_entity_type,
 )
 from ..journal_pipeline import transcribe_audio
-from ..models import JournalEntry, JournalGraphLink, Node, SpeakerProfile, User
+from ..graph_schema import REL_SPOKE_OR_PUBLISHED
+from ..models import Edge, JournalEntry, JournalGraphLink, Node, SpeakerProfile, User
 from ..text_coverage import native_ngram_coverage, split_statement_units
 from ..speaker_diarization import SpeakerSegment, diarize_audio
 from ..storage import save_audio_workfile
@@ -110,8 +114,10 @@ class ConceptResolutionIn(BaseModel):
 
     action:
       - "link"       → attach the mention to an existing node (`node_id`), aliasing the surface name.
-      - "new_person" → create a fresh Person node for this name.
-      - "concept"    → keep it an ordinary Concept node (downgrade / not a person after all).
+      - "new_person" → create a fresh Identity node for this name. (Wire-format
+                       name kept for compatibility with the review UI and older
+                       clients; there is no Person type any more.)
+      - "concept"    → keep it an ordinary Concept node (downgrade / not an identity after all).
     """
     action: Literal["link", "new_person", "concept"] = "new_person"
     node_id: _uuid.UUID | None = None
@@ -121,8 +127,9 @@ class ConceptIn(BaseModel):
     name: str
     # 1-5: how central this concept is to the statement (LLM-assigned, clamped).
     importance: int = Field(default=3, ge=1, le=5)
-    # "person" → a specific human (resolves to a Person/self node, MENTIONS edge);
+    # "person" → a named identity (resolves to an Identity/self node, MENTIONS edge);
     # "concept" → an ordinary idea/thing (Concept node, CONTEXT edge).
+    # The LLM contract keeps the "person" wording; the server maps it to Identity.
     kind: Literal["person", "concept"] = "concept"
     # Only meaningful for kind="person"; carries the reviewer's resolution decision.
     resolution: ConceptResolutionIn | None = None
@@ -130,8 +137,10 @@ class ConceptIn(BaseModel):
 
 class KgClaimIn(BaseModel):
     speaker: str
-    # Head-node entity type: "Person" (화자) or "Source" (매체·기관·AI 출처).
-    speaker_type: str = "Person"
+    # Head-node entity type: "Identity" (화자·개체) or "Source" (매체·기관·AI 출처).
+    # Legacy "Person"/"Speaker" from stored drafts and older clients is coerced
+    # by _claim_head_type.
+    speaker_type: str = IDENTITY_ENTITY_TYPE
     title: str = ""          # short node label (5-7 words); falls back to truncated statement
     statement: str           # full 1-2 sentence content; stored in node description
     concepts: list[ConceptIn] = Field(default_factory=list)
@@ -156,17 +165,21 @@ class TemporalBackfillRequest(BaseModel):
     dry_run: bool = True
 
 
-# Allowed statement head-node types. Person and Source are distinct identity
-# subtypes that never merge by name alone (see entity_types.is_identity_type) —
-# both are valid "화자" (speaker) picks now, Source included, e.g. an external
-# entity like 기업은행 publishing a statement with no voice of its own.
-_HEAD_NODE_TYPES = frozenset({"Person", "Source"})
+# Allowed statement head-node types. Identity and Source never merge by name
+# alone (see entity_types.identity_merge_group) — both are valid "화자" (speaker)
+# picks, Source included, e.g. an external entity like 기업은행 publishing a
+# statement with no voice of its own.
+_HEAD_NODE_TYPES = frozenset({IDENTITY_ENTITY_TYPE, SOURCE_ENTITY_TYPE})
 
 
 def _claim_head_type(raw: str | None) -> str:
-    """Sanitize a claim's speaker_type to a valid head-node entity type."""
-    t = normalize_entity_type(raw or "Person")
-    return t if t in _HEAD_NODE_TYPES else "Person"
+    """Sanitize a claim's speaker_type to a valid head-node entity type.
+
+    The compatibility funnel: legacy "Person"/"Speaker"/"화자" from stored
+    graph_staging drafts and older review clients all land on "Identity" here,
+    which is why this coerces rather than rejects.
+    """
+    return canonical_identity_type(raw or IDENTITY_ENTITY_TYPE)
 
 
 async def _resolve_head_node(
@@ -179,34 +192,25 @@ async def _resolve_head_node(
 
     A head is created by name+type, but a mentioned identity may already exist under
     the same name (e.g. '엄마' first appeared as a MENTIONS target → Identity node).
-    Blindly creating a Person/Source head would fork it. So resolve across the whole
-    정체성 category first and reuse:
-      - Person head ↔ person-like or generic Identity (a speaker is human → the
-        generic Identity is promoted to Person).
-      - Source head ↔ source-like only.
-    A person↔source name clash (incompatible role) falls through to a fresh node.
+    Blindly creating a head would fork it. So resolve across the whole 정체성
+    category first and reuse whenever the merge groups agree — an Identity head
+    reuses an Identity node, a Source head reuses a Source node.
+
+    Speaking does NOT change the node's type. An identity that turns out to be a
+    person is marked by its bound voice profile, not by a type promotion.
+    An identity↔source name clash falls through to a fresh node.
     """
     name = (name or "").strip()
     head_type = _claim_head_type(head_type)
-    want_source = is_source_like_type(head_type)
 
     existing = await crud.find_identity_node_by_name_or_alias(session, user_id, name)
     if existing is not None:
-        existing_is_source = is_source_like_type(existing.type)
-        if want_source and existing_is_source:
+        if identity_types_compatible(head_type, existing.type):
             crud.add_node_alias(existing, name)
             await session.flush()
             await crud.index_identity_alias(session, user_id, existing, name)
             return existing
-        if not want_source and not existing_is_source:
-            if not is_person_like_type(existing.type):
-                # generic Identity now speaks → it's human.
-                existing.type = normalize_entity_type("Person")
-            crud.add_node_alias(existing, name)
-            await session.flush()
-            await crud.index_identity_alias(session, user_id, existing, name)
-            return existing
-        # incompatible role (person↔source name clash) → create a fresh head node.
+        # incompatible role (identity↔source name clash) → create a fresh head node.
 
     node = await crud._get_or_create_node(
         session, name=name, type_=head_type, user_id=user_id
@@ -1225,7 +1229,7 @@ async def kg_commit(
     """Stage 2 — persist human-verified claims into the graph (PostgreSQL).
 
     Graph structure per claim:
-        (Person/Speaker) --SPOKE_OR_PUBLISHED--> (Statement) --CONTEXT--> (Concept...)
+        (Identity/Source) --SPOKE_OR_PUBLISHED--> (Statement) --CONTEXT--> (Concept...)
     """
     node_ids: set[str] = set()
     edge_ids: set[str] = set()
@@ -1341,13 +1345,15 @@ async def kg_commit(
     )
 
 
-# ─── Concept → Person migration ───────────────────────────────────────────────
+# ─── Concept ↔ Identity 재분류 ────────────────────────────────────────────────
 # For nodes created before person-mention resolution existed: a name like '할머니'
-# that was stored as a Concept can be promoted to a Person node, or merged into an
-# already-existing Person identity (reassigning its edges). See [[project_immutable_graph_model]]
+# that was stored as a Concept can be promoted to an Identity node, or merged into
+# an already-existing identity (reassigning its edges). See [[project_immutable_graph_model]]
 # — this is an explicit user-driven correction, the one place edge surgery is allowed.
 
 class ReclassifyNodeRequest(BaseModel):
+    # "Person" is accepted only for older clients and is normalized to
+    # "Identity" by the handler; there is no Person type any more.
     to_type: Literal["Person", "Identity", "Source", "Concept"] = "Identity"
     # When set, merge this node INTO the target identity instead of just retyping.
     merge_into: _uuid.UUID | None = None
@@ -1412,7 +1418,8 @@ async def kg_reclassify_node(
 
     - merge_into set → reassign this node's edges onto the target and delete it,
       carrying the old name over as an alias so future mentions auto-resolve.
-    - otherwise → change the node's type in place (e.g. Concept → Person).
+    - otherwise → change the node's type in place (e.g. Concept → Identity),
+      realigning its Statement relations and alias index to match.
     """
     node = await session.get(Node, node_id)
     if node is None or node.user_id != user.id or node.deleted_at is not None:
@@ -1443,13 +1450,20 @@ async def kg_reclassify_node(
             "edges_reassigned": reassigned,
         }
 
-    node.type = normalize_entity_type(body.to_type)
-    node.updated_at = datetime.now(timezone.utc)
-    await session.flush()
-    # Now that it's an identity, index its name so it participates in fuzzy resolution.
-    await crud.index_identity_alias(session, user.id, node, node.name)
+    requested = normalize_entity_type(body.to_type)
+    # Legacy "Person" from an older client folds into Identity.
+    if is_identity_type(requested):
+        requested = canonical_identity_type(requested)
+    # Realigns MENTIONS ↔ CONTEXT and the alias index along with the type.
+    fixup = await crud.apply_type_change(session, user.id, node, requested)
     await session.commit()
-    return {"ok": True, "merged": False, "node_id": str(node.id), "type": node.type}
+    return {
+        "ok": True,
+        "merged": False,
+        "node_id": str(node.id),
+        "type": node.type,
+        **fixup,
+    }
 
 
 # ─── Shared claim persistence ─────────────────────────────────────────────────
@@ -1536,10 +1550,10 @@ async def _link_confirmed_voices_to_nodes(
     Profiles already linked (existing node / as-self) or without an embedding or a
     confirmed name are skipped.
 
-    A confirmed voice means the identity is human: if the name already exists as a
-    mentioned ``Identity`` node it is promoted to ``Person`` (and reused) rather than
-    forking a second node — the mention and the voice converge. External ``Source``
-    nodes never receive a voice.
+    If the name already exists as a mentioned ``Identity`` node it is reused
+    rather than forking a second node — the mention and the voice converge. The
+    node's type does not change: the bound voice profile IS the record that this
+    identity is a real person. External ``Source`` nodes never receive a voice.
     """
     appearances = await crud.list_speaker_appearances_for_entry(session, entry_id)
     for app in appearances:
@@ -1556,12 +1570,8 @@ async def _link_confirmed_voices_to_nodes(
             node = None  # never attach a voice to an external 출처
         if node is None:
             node = await crud._get_or_create_node(
-                session, name=name, type_="Person", user_id=user_id
+                session, name=name, type_=IDENTITY_ENTITY_TYPE, user_id=user_id
             )
-        elif not is_person_like_type(node.type):
-            # Mentioned Identity now has a confirmed voice → it's a human.
-            node.type = normalize_entity_type("Person")
-            await session.flush()
         await crud.index_identity_alias(session, user_id, node, name)
         await crud.assign_exclusive_voice_profile_to_node(
             session, user_id, profile, node, display_name=name
@@ -1608,10 +1618,9 @@ async def _resolve_person_concept(
     ordinary Concept node (the reviewer downgraded it).
 
     A genuinely-new mention becomes an ``Identity`` node — the general 정체성
-    category — NOT ``Person``. We can't tell a human (할머니) from a pet (마야) or a
-    group at this point, and "Person" would mislabel the non-humans; the graph's
-    top tier is 정체성–진술–개념. Person is reserved for identities confirmed human
-    (the self node, voice-linked speakers); Source for 외부 출처. Registers the
+    category. We can't tell a human (할머니) from a pet (마야) or a group here, and
+    we don't need to: humanity is recorded by a bound voice profile, not by the
+    type. ``Source`` is the only other identity type, for 외부 출처. Registers the
     surface name as an alias whenever it links to a differently-named identity.
     """
     if action == "concept":
@@ -1641,9 +1650,9 @@ async def _resolve_person_concept(
     if existing is not None:
         return existing
 
-    # Genuinely new mention → an Identity node (NEVER a Concept, NEVER assumed Person).
+    # Genuinely new mention → an Identity node (NEVER a Concept).
     node = await crud._get_or_create_node(
-        session, name=name, type_="Identity", user_id=user_id
+        session, name=name, type_=IDENTITY_ENTITY_TYPE, user_id=user_id
     )
     await crud.index_identity_alias(session, user_id, node, name)
     return node
@@ -1771,7 +1780,7 @@ async def _persist_claims(
     recorded_at: datetime | None = None,
     entry_id: _uuid.UUID | None = None,
 ) -> tuple[set[str], set[str], set[str]]:
-    """Persist claims as (Person|Source)-SPOKE_OR_PUBLISHED->(Statement)-CONTEXT->(Concept).
+    """Persist claims as (Identity|Source)-SPOKE_OR_PUBLISHED->(Statement)-CONTEXT->(Concept).
 
     The head node is a Person for spoken/diary attribution and a Source for
     외부 출처 (매체·기관·AI) attribution — claim["speaker_type"] decides.
@@ -1892,15 +1901,19 @@ async def extract_statement_graph_draft(
 
     # Entry-level attribution (text paste): the user already told us who asserted
     # this content — no speaker inference. 'source' heads get a Source node (매체·
-    # 기관·AI), 'person' a Person node. 'self' flows through the diary path below.
+    # 기관·AI), 'person' an Identity node. 'self' flows through the diary path below.
     attribution_kind = (getattr(entry, "attribution_kind", None) or "").strip().lower()
     attribution_name = (getattr(entry, "attribution_name", None) or "").strip()
 
     speaker_name: str | None = None
-    speaker_type = "Person"
+    speaker_type = IDENTITY_ENTITY_TYPE
     if attribution_kind in ("source", "person") and attribution_name:
         speaker_name = attribution_name
-        speaker_type = "Source" if attribution_kind == "source" else "Person"
+        speaker_type = (
+            SOURCE_ENTITY_TYPE
+            if attribution_kind == "source"
+            else IDENTITY_ENTITY_TYPE
+        )
         # Attributed paste is never a personal diary. External source (매체·AI) falls
         # back to 자료 (정리된 지식); a named person's authored text to 책 (산문).
         attr_fallback = "자료" if attribution_kind == "source" else "책"
@@ -2268,6 +2281,17 @@ async def kg_stats(
     )
     type_counts = {str(t): int(c) for t, c in type_rows.all()}
 
+    # Speaker count from the SPOKE_OR_PUBLISHED heads rather than from type
+    # strings — a graph that still has legacy 'Person'/'Speaker' rows would
+    # otherwise report zero speakers after the Person type was retired.
+    speaker_rows = await session.execute(
+        select(func.count(func.distinct(Edge.source_id))).where(
+            Edge.user_id == user.id,
+            Edge.relation == REL_SPOKE_OR_PUBLISHED,
+        )
+    )
+    total_speakers = int(speaker_rows.scalar() or 0)
+
     today = datetime.now(timezone.utc).date()
     cutoff = today - timedelta(days=364)
 
@@ -2313,8 +2337,9 @@ async def kg_stats(
     return {
         "total_statements": type_counts.get("Statement", 0),
         "total_concepts": type_counts.get("Concept", 0),
-        # Statement heads: people AND 출처(Source) nodes both anchor statements.
-        "total_speakers": type_counts.get("Person", 0) + type_counts.get("Source", 0),
+        # Statement heads, counted from the edges rather than from type strings:
+        # type-independent, so it survives un-migrated 'Person'/'Speaker' rows.
+        "total_speakers": total_speakers,
         "streak_days": streak,
         "daily_activity": daily_activity,
         "source_distribution": source_distribution,

@@ -63,7 +63,7 @@ async def test_overview_answers_what_is_in_my_graph(db_session, iso_user, seeded
     text = await build_graph_overview(db_session, iso_user.id)
     assert text, "an empty summary is the bug this exists to fix"
     assert "전체 노드 7개" in text
-    assert "진술 3개" in text and "개념 2개" in text and "사람 2개" in text
+    assert "진술 3개" in text and "개념 2개" in text and "정체성 2개" in text
     # The most-used concept leads, which is what "자주 말한 주제" asks for.
     assert "면접(2)" in text
     assert text.index("면접(2)") < text.index("저녁(1)")

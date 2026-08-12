@@ -15,7 +15,11 @@ import pytest
 from fastapi import BackgroundTasks
 
 from app import crud
-from app.entity_types import is_person_like_type, is_source_like_type
+from app.entity_types import (
+    identity_merge_group,
+    identity_types_compatible,
+    is_source_like_type,
+)
 from app.journal_pipeline import DIARY_CATEGORY, gate_source_type
 from app.models import JournalEntry
 from app.routers.journal import apply_entry_graph
@@ -25,12 +29,18 @@ from app.schemas import GraphApplyRequest
 
 # ─── Pure helpers ──────────────────────────────────────────────────────────────
 
-def test_source_type_is_not_person_like():
-    assert not is_person_like_type("Source")
-    assert not is_person_like_type("source")
+def test_source_never_merges_with_a_plain_identity():
+    """Source is its own merge bucket — a same-name Identity must not absorb it."""
     assert is_source_like_type("Source")
     assert is_source_like_type("media")
-    assert not is_source_like_type("Person")
+    assert not is_source_like_type("Identity")
+
+    assert identity_merge_group("Source") != identity_merge_group("Identity")
+    assert not identity_types_compatible("Source", "Identity")
+    assert identity_types_compatible("Identity", "Identity")
+    # Legacy rows on an un-migrated graph share the Identity bucket.
+    assert identity_types_compatible("Person", "Identity")
+    assert not identity_types_compatible("Person", "Source")
 
 
 @pytest.mark.parametrize(
@@ -38,11 +48,15 @@ def test_source_type_is_not_person_like():
     [
         ("Source", "Source"),
         ("source", "Source"),
-        ("Person", "Person"),
-        (None, "Person"),
-        ("", "Person"),
-        ("Concept", "Person"),   # head must be Person|Source — anything else sanitized
-        ("Statement", "Person"),
+        ("Identity", "Identity"),
+        (None, "Identity"),
+        ("", "Identity"),
+        # head must be Identity|Source — anything else is coerced
+        ("Concept", "Identity"),
+        ("Statement", "Identity"),
+        # legacy wire values from stored drafts / older clients
+        ("Person", "Identity"),
+        ("Speaker", "Identity"),
     ],
 )
 def test_claim_head_type_sanitized(raw, expected):

@@ -63,7 +63,8 @@ async def test_get_or_create_self_node_is_idempotent(db_session, iso_user):
 
     assert first.id == second.id
     assert first.is_self is True
-    assert crud.is_person_like_type(first.type)
+    assert crud.is_identity_type(first.type)
+    assert first.type == "Identity"
     assert first.name == "나"
 
 
@@ -316,7 +317,8 @@ async def test_multispeaker_statements_and_voice_converge_on_confirmed_nodes(
     await _link_confirmed_voices_to_nodes(db_session, user_id, entry.id)
     await db_session.commit()
 
-    jenny = await crud._get_or_create_node(db_session, name="제니", type_="Person", user_id=user_id)
+    jenny = await crud.find_identity_node_by_name_or_alias(db_session, user_id, "제니")
+    assert jenny is not None and jenny.type == "Identity"
     await db_session.refresh(p1)
     await db_session.refresh(p2)
     assert p1.node_id == jenny.id and crud.is_bidirectional_voice_link(p1, jenny)

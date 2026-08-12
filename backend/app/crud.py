@@ -35,12 +35,16 @@ from .models import (
     User,
 )
 from .entity_types import (
+    IDENTITY_ENTITY_TYPE,
+    canonical_identity_type,
+    identity_merge_group,
     is_identity_type,
-    is_person_like_type,
+    is_source_like_type,
     normalize_entity_type,
     type_group_key,
 )
 from .graph_schema import (
+    CANONICAL_STATEMENT_RELATIONS,
     NODE_CHUNK,
     NODE_SPEAKER,
     REL_CONTEXT,
@@ -231,7 +235,7 @@ async def _sanitize_stale_voice_links(
             node_key
             and identity_keys
             and node_key not in identity_keys
-            and is_person_like_type(node.type)
+            and is_identity_type(node.type)
         ):
             profile.node_id = None
             node.speaker_profile_id = None
@@ -1127,33 +1131,40 @@ async def get_or_create_self_node(
 ) -> Node:
     """Return the user's self node, creating (or adopting) one if needed.
 
-    Adopts a pre-existing Person node named '나' (from older diaries) so the
-    diary owner doesn't fork into a second node. Always a Person-type node so
-    the diary-statement graph and the voice link converge on the same identity.
+    Adopts a pre-existing identity node named '나' (from older diaries) so the
+    diary owner doesn't fork into a second node. The match spans the whole
+    identity category, not just the legacy 'Person' type — on a graph that
+    hasn't been through repair_identity_types yet the owner's node is still
+    typed Person, and a narrower match would silently create a duplicate '나'.
     """
     node = await get_self_node(session, user_id)
     if node is not None:
         return node
 
-    # Adopt an existing owner-default Person '나' node rather than duplicating it.
+    # Adopt an existing owner-default '나' identity node rather than duplicating it.
     existing = await session.execute(
         select(Node)
         .where(
             Node.user_id == user_id,
             Node.name == default_name,
-            func.lower(Node.type) == type_group_key("Person"),
             Node.deleted_at.is_(None),
         )
         .order_by(Node.created_at)
-        .limit(1)
     )
-    node = existing.scalar_one_or_none()
+    node = next(
+        (n for n in existing.scalars().all() if is_identity_type(n.type)), None
+    )
     if node is not None:
         node.is_self = True
         await session.flush()
         return node
 
-    node = Node(user_id=user_id, name=default_name, type="Person", is_self=True)
+    node = Node(
+        user_id=user_id,
+        name=default_name,
+        type=IDENTITY_ENTITY_TYPE,
+        is_self=True,
+    )
     session.add(node)
     await session.flush()
     return node
@@ -2601,19 +2612,35 @@ async def update_node(
     name: str | None,
     type_: str | None,
     description: str | None,
-) -> Node | None:
+    *,
+    user_id: uuid.UUID | None = None,
+) -> tuple[Node, dict[str, int]] | None:
+    """Edit a node, keeping its edges consistent when the TYPE changes.
+
+    Returns (node, edge_fixup_counts). A type change goes through
+    apply_type_change so the generic edit path and the reclassify endpoint can
+    never drift — this used to be the unguarded back door that left MENTIONS
+    edges pointing at a demoted Concept.
+    """
     node = await session.get(Node, node_id)
     if node is None:
         return None
     if name is not None:
         node.name = normalize_node_name(name)
-    if type_ is not None:
-        node.type = normalize_entity_type(type_)
     if description is not None:
         node.description = description
+
+    fixup = {"relations_fixed": 0, "duplicates_merged": 0, "heads_demoted": 0}
+    if type_ is not None:
+        owner_id = user_id or node.user_id
+        if owner_id is not None:
+            fixup = await apply_type_change(session, owner_id, node, type_)
+        else:
+            node.type = normalize_entity_type(type_)
+
     await session.commit()
     await session.refresh(node)
-    return node
+    return node, fixup
 
 
 async def create_edge(
@@ -3152,11 +3179,11 @@ async def list_person_nodes(
     user_id: uuid.UUID,
     limit: int = 100,
 ) -> list[Node]:
-    """Identity-category graph nodes (Person / Source / generic Identity) for the
-    화자 (speaker) picker. Any recurring identity can be attributed as a segment's
-    speaker — not just people — e.g. an external Source like "기업은행" publishing
-    a statement. Voice EMBEDDING binding still only makes sense for something with
-    an actual voice, but that's a user choice at confirm time, not a listing gate."""
+    """Identity-category graph nodes (Identity / Source) for the 화자 (speaker)
+    picker. Any recurring identity can be attributed as a segment's speaker — not
+    just people — e.g. an external Source like "기업은행" publishing a statement.
+    Voice EMBEDDING binding still only makes sense for something with an actual
+    voice, but that's a user choice at confirm time, not a listing gate."""
     result = await session.execute(
         select(Node)
         .where(Node.user_id == user_id)
@@ -3164,11 +3191,10 @@ async def list_person_nodes(
         .limit(limit * 3)
     )
     speaker_type = normalize_entity_type(NODE_SPEAKER)
-    # Dedup key is (name, category) — NOT name alone. Person/Individual/Speaker
-    # collapse into one "person" bucket per name (legacy cleanup: these are
-    # different type strings for the SAME real person). But a same-name Person
-    # and Source must both survive as separate picker entries — they're
-    # deliberately distinct identities that never merge (see is_person_like_type).
+    # Dedup key is (name, merge group) — NOT name alone. Legacy Person/Individual/
+    # Speaker rows collapse with Identity into one bucket per name (different type
+    # strings for the SAME identity). But a same-name Identity and Source must both
+    # survive as separate picker entries — see entity_types.identity_merge_group.
     by_key: dict[tuple[str, str], Node] = {}
     for node in result.scalars().all():
         if not is_identity_type(node.type):
@@ -3176,8 +3202,7 @@ async def list_person_nodes(
         name_key = normalize_node_name(node.name).lower()
         if not name_key:
             continue
-        category = "person" if is_person_like_type(node.type) else type_group_key(node.type)
-        key = (name_key, category)
+        key = (name_key, identity_merge_group(node.type))
         existing = by_key.get(key)
         if existing is None:
             by_key[key] = node
@@ -3195,7 +3220,7 @@ async def find_person_node_by_exact_name(
     *,
     exclude_node_ids: set[uuid.UUID] | None = None,
 ) -> Node | None:
-    """Exact (case-insensitive) name match among this user's Person-like nodes.
+    """Exact (case-insensitive) name match among this user's identity nodes.
 
     Used to auto-link a text-typed (@멘션) speaker label to an already-known
     person — the frontend's @ picker only offers exact existing names, so a
@@ -3219,8 +3244,10 @@ async def find_person_node_by_exact_name(
 # When a name shows up as an extracted entity (a diarist mentions 제니 or the cat
 # 마야, or another speaker mentions the diary owner by name), it must resolve to
 # the SAME node as that identity — never fork a duplicate Concept. The scope is
-# the whole 정체성 category (Person / Source / Identity subtypes); voice linking
-# remains Person-only. These helpers match a surface name against a node's
+# the whole 정체성 category (Identity / Source). Voice linking is not type-gated
+# either — it's a per-confirmation user choice, and a bound speaker profile is
+# what marks an identity as an actual person. These helpers match a surface name
+# against a node's
 # canonical name AND its aliases (nicknames / inflected forms / the self node's
 # real names). See [[project_speaker_identity]] and the KG-build commit path.
 
@@ -3331,7 +3358,11 @@ async def find_identity_by_alias_embedding(
 ) -> tuple[Node, str, float] | None:
     """Nearest active identity node whose indexed name/alias embedding is within
     ``max_distance`` (cosine) of the query. Returns (node, matched_text, distance)
-    or None. Used to SUGGEST — never to auto-link."""
+    or None. Used to SUGGEST — never to auto-link.
+
+    The type check is belt-and-braces: apply_type_change deletes a node's alias
+    rows when it leaves the identity category, but a row predating that (or one
+    written by an older build) must not resurrect a demoted node here."""
     dist = NodeAliasEmbedding.embedding.cosine_distance(query_embedding).label("dist")
     result = await session.execute(
         select(Node, NodeAliasEmbedding.text, dist)
@@ -3347,7 +3378,7 @@ async def find_identity_by_alias_embedding(
     )
     excluded = exclude_node_ids or set()
     for node, text, d in result.all():
-        if node.id in excluded:
+        if node.id in excluded or not is_identity_type(node.type):
             continue
         return node, text, float(d)
     return None
@@ -3363,7 +3394,7 @@ async def find_identities_by_alias_embedding(
 ) -> list[tuple[Node, str, float]]:
     """List sibling of :func:`find_identity_by_alias_embedding`.
 
-    Returns up to ``limit`` DISTINCT active identity nodes (Person·Source·Identity)
+    Returns up to ``limit`` DISTINCT active identity nodes (Identity·Source)
     whose indexed name/alias embedding is within ``max_distance`` of the query,
     nearest first, keeping each node's best-matching surface form. Powers graph-chat
     retrieval, where "마야가 누구야?"/"삼성전자가 뭐랬어?" must seed the identity node
@@ -3384,6 +3415,8 @@ async def find_identities_by_alias_embedding(
     )
     best: dict[uuid.UUID, tuple[Node, str, float]] = {}
     for node, text, d in result.all():
+        if not is_identity_type(node.type):
+            continue
         if node.id not in best:
             best[node.id] = (node, text, float(d))
         if len(best) >= limit:
@@ -3479,13 +3512,16 @@ async def list_identity_reference_candidates(
 async def _voiced_person_names(
     session: AsyncSession, user_id: uuid.UUID
 ) -> set[str]:
-    """Lowercased names that already have a human-confirmed voice link on a Speaker node."""
+    """Lowercased names that already carry a confirmed voice link.
+
+    No type gate: a bound speaker_profiles row IS the "this is a real person"
+    signal now that Person is gone as a type."""
     nodes = await get_all_nodes(session, user_id=user_id)
     profiles = await _speaker_profiles_for_nodes(session, nodes)
     names: set[str] = set()
     for node in nodes:
         profile = profiles.get(node.id)
-        if profile is None or not is_person_like_type(node.type):
+        if profile is None:
             continue
         name = (node.name or "").strip()
         if name:
@@ -3556,15 +3592,12 @@ async def get_or_create_speaker_node(
         if normalize_node_name(node.name).lower() == name.lower()
     ]
     if existing:
-        speaker_type = normalize_entity_type(NODE_SPEAKER)
-        person_type = normalize_entity_type("Person")
         for node in existing:
-            nt = normalize_entity_type(node.type)
-            if nt == speaker_type or nt == person_type:
+            if is_identity_type(node.type):
                 return node
         return existing[0]
     return await _get_or_create_node(
-        session, name, node_type or NODE_SPEAKER, user_id=user_id
+        session, name, node_type or IDENTITY_ENTITY_TYPE, user_id=user_id
     )
 
 
@@ -3573,7 +3606,9 @@ async def get_or_create_person_node(
     user_id: uuid.UUID,
     name: str,
 ) -> Node:
-    return await get_or_create_speaker_node(session, user_id, name, node_type=NODE_SPEAKER)
+    return await get_or_create_speaker_node(
+        session, user_id, name, node_type=IDENTITY_ENTITY_TYPE
+    )
 
 
 # --- Semantic Chunk graph (2안) ----------------------------------------------
@@ -3765,6 +3800,173 @@ async def find_person_nodes_by_name(
     return await find_nodes_by_name(session, user_id, name, exclude_id=exclude_id)
 
 
+# ─── Type change side effects (엣지 자동 교정) ────────────────────────────────
+# A node's type and its incident Statement relations are two views of one fact:
+#
+#   Identity|Source --SPOKE_OR_PUBLISHED--> Statement
+#   Statement       --MENTIONS-->           Identity|Source
+#   Statement       --CONTEXT-->            Concept
+#
+# Retyping a node used to change only nodes.type, leaving MENTIONS pointing at a
+# Concept (or CONTEXT at an identity). apply_type_change is the one entry point
+# that keeps both in sync, and every path that changes a type must go through it.
+
+
+async def drop_identity_alias_rows(session: AsyncSession, node: Node) -> int:
+    """Remove a node's fuzzy alias embeddings (used when it leaves the identity
+    category). Without this a demoted node keeps matching in
+    find_identity_by_alias_embedding, which resolves by vector distance alone."""
+    result = await session.execute(
+        delete(NodeAliasEmbedding).where(NodeAliasEmbedding.node_id == node.id)
+    )
+    await session.flush()
+    return int(result.rowcount or 0)
+
+
+def _desired_statement_relation(
+    *, statement_is_source: bool, other_type: str | None
+) -> tuple[str, bool]:
+    """(relation, needs_direction_swap) for an edge with one Statement endpoint.
+
+    ``statement_is_source`` describes the CURRENT direction. An identity heading
+    a statement keeps Identity -> Statement; anything else must be
+    Statement -> X, so a non-identity currently sitting on the source side is a
+    demoted head and its endpoints get swapped.
+    """
+    other_is_identity = is_identity_type(other_type)
+    if statement_is_source:
+        # Statement -> X
+        return (REL_MENTIONS if other_is_identity else REL_CONTEXT), False
+    # X -> Statement
+    if other_is_identity:
+        return REL_SPOKE_OR_PUBLISHED, False
+    return REL_CONTEXT, True
+
+
+async def realign_node_edges(
+    session: AsyncSession, user_id: uuid.UUID, node: Node
+) -> dict[str, int]:
+    """Rewrite ``node``'s incident Statement edges to match its current type.
+
+    Only the three canonical relations are touched — a hand-authored relation
+    (the edge inspector lets the user type anything) stays authoritative, and
+    edges with no Statement endpoint are none of our business.
+
+    JournalGraphLink is deliberately NOT touched: its key is
+    (journal_entry_id, node_id) and a retype never deletes or replaces a node,
+    so provenance is already intact. Re-pointing is a merge concern only — see
+    merge_node_into.
+    """
+    counts = {"relations_fixed": 0, "duplicates_merged": 0, "heads_demoted": 0}
+
+    result = await session.execute(
+        select(Edge).where(
+            Edge.user_id == user_id,
+            or_(Edge.source_id == node.id, Edge.target_id == node.id),
+        )
+    )
+    edges = result.scalars().all()
+    if not edges:
+        return counts
+
+    # One lookup for every counterpart node so the loop stays query-free.
+    other_ids = {
+        (e.target_id if e.source_id == node.id else e.source_id) for e in edges
+    }
+    others = (
+        await session.execute(select(Node).where(Node.id.in_(other_ids)))
+    ).scalars().all()
+    node_by_id = {n.id: n for n in others}
+    node_by_id[node.id] = node
+
+    for edge in edges:
+        if edge.relation not in CANONICAL_STATEMENT_RELATIONS:
+            continue
+        source = node_by_id.get(edge.source_id)
+        target = node_by_id.get(edge.target_id)
+        if source is None or target is None:
+            continue
+
+        source_is_stmt = normalize_entity_type(source.type) == "Statement"
+        target_is_stmt = normalize_entity_type(target.type) == "Statement"
+        if source_is_stmt == target_is_stmt:
+            # Neither endpoint is a Statement, or both are — not our invariant.
+            continue
+
+        other = target if source_is_stmt else source
+        relation, swap = _desired_statement_relation(
+            statement_is_source=source_is_stmt, other_type=other.type
+        )
+        new_source, new_target = edge.source_id, edge.target_id
+        if swap:
+            new_source, new_target = new_target, new_source
+        if (
+            new_source == edge.source_id
+            and new_target == edge.target_id
+            and relation == edge.relation
+        ):
+            continue
+
+        if new_source == new_target:
+            await session.delete(edge)
+            counts["relations_fixed"] += 1
+            continue
+
+        conflict = await session.execute(
+            select(Edge).where(
+                Edge.source_id == new_source,
+                Edge.target_id == new_target,
+                Edge.relation == relation,
+                Edge.id != edge.id,
+            )
+        )
+        existing = conflict.scalar_one_or_none()
+        if existing is not None:
+            existing.weight = (existing.weight or 1) + (edge.weight or 1)
+            await session.delete(edge)
+            counts["duplicates_merged"] += 1
+        else:
+            edge.source_id = new_source
+            edge.target_id = new_target
+            edge.relation = relation
+        counts["relations_fixed"] += 1
+        if swap:
+            counts["heads_demoted"] += 1
+
+    await session.flush()
+    return counts
+
+
+async def apply_type_change(
+    session: AsyncSession, user_id: uuid.UUID, node: Node, new_type: str | None
+) -> dict[str, int]:
+    """Change a node's type and bring its edges and alias embeddings along.
+
+    Returns the realignment counts (all zero when the type didn't actually
+    change). Does not commit — the caller owns the transaction.
+    """
+    counts = {"relations_fixed": 0, "duplicates_merged": 0, "heads_demoted": 0}
+    before = normalize_entity_type(node.type)
+    after = normalize_entity_type(new_type)
+    if not after or before == after:
+        return counts
+
+    node.type = after
+    node.updated_at = datetime.now(UTC)
+    await session.flush()
+
+    counts = await realign_node_edges(session, user_id, node)
+
+    if is_identity_type(after):
+        # Now resolvable by name — index the canonical name and learned aliases.
+        for surface in [node.name, *node_alias_keys(node)]:
+            await index_identity_alias(session, user_id, node, surface)
+    else:
+        await drop_identity_alias_rows(session, node)
+
+    return counts
+
+
 async def merge_node_into(
     session: AsyncSession,
     user_id: uuid.UUID,
@@ -3773,9 +3975,11 @@ async def merge_node_into(
 ) -> int:
     """Reassign edges from duplicate node to confirmed node; delete source.
 
-    Journal provenance (JournalGraphLink) is re-pointed to the target before the
+    Journal provenance (JournalGraphLink), learned alias embeddings and the
+    accumulated importance score are all carried over to the target before the
     source is deleted — otherwise the ON DELETE CASCADE would silently erase the
-    노드↔일기 trace and the timeline would lose the merged item.
+    노드↔일기 trace, degrade fuzzy resolution for aliases only the duplicate knew,
+    and reset the merged node's weight.
     """
     if source_id == target_id:
         return 0
@@ -3786,6 +3990,33 @@ async def merge_node_into(
         return 0
     if source.user_id != user_id or target.user_id != user_id:
         return 0
+
+    target.importance_score = (target.importance_score or 0) + (
+        source.importance_score or 0
+    )
+
+    # Carry the duplicate's alias embeddings over (they would otherwise cascade
+    # away), skipping surfaces the target already knows.
+    target_surfaces = {
+        (text or "").strip().lower()
+        for (text,) in (
+            await session.execute(
+                select(NodeAliasEmbedding.text).where(
+                    NodeAliasEmbedding.node_id == target_id
+                )
+            )
+        ).all()
+    }
+    alias_rows = await session.execute(
+        select(NodeAliasEmbedding).where(NodeAliasEmbedding.node_id == source_id)
+    )
+    for alias in alias_rows.scalars().all():
+        key = (alias.text or "").strip().lower()
+        if not key or key in target_surfaces:
+            await session.delete(alias)
+        else:
+            alias.node_id = target_id
+            target_surfaces.add(key)
 
     # Re-point provenance rows, deduping (entry, target) pairs that already exist.
     existing_target_entries = {
@@ -3852,6 +4083,144 @@ async def merge_person_node_into(
     target_id: uuid.UUID,
 ) -> int:
     return await merge_node_into(session, user_id, source_id, target_id)
+
+
+# ─── Person → Identity 백필 ───────────────────────────────────────────────────
+
+
+def legacy_identity_type_keys() -> list[str]:
+    """Lowercased type strings that should now be stored as 'Identity'.
+
+    Read off _IDENTITY_LEGACY so the SQL and the predicates can never drift.
+    """
+    from .entity_types import _IDENTITY_LEGACY
+
+    return sorted(_IDENTITY_LEGACY)
+
+
+async def identity_type_repair_preview(
+    session: AsyncSession, user_id: uuid.UUID
+) -> list[dict]:
+    """Rows the repair would retype, for the pre-apply report.
+
+    Collapsing the type is not reversible from the database — a node that was
+    'Person' but has no voice profile becomes indistinguishable from a pet
+    afterwards. This is the only artifact that records what it used to be.
+    """
+    legacy = set(legacy_identity_type_keys())
+    rows = await session.execute(
+        select(Node.id, Node.name, Node.type, Node.speaker_profile_id).where(
+            Node.user_id == user_id, Node.deleted_at.is_(None)
+        )
+    )
+    return [
+        {
+            "user_id": str(user_id),
+            "node_id": str(nid),
+            "name": name,
+            "old_type": ntype,
+            "has_voice": profile_id is not None,
+        }
+        for nid, name, ntype, profile_id in rows.all()
+        if type_group_key(ntype) in legacy
+    ]
+
+
+async def repair_identity_types(
+    session: AsyncSession, user_id: uuid.UUID
+) -> dict[str, int]:
+    """Collapse legacy identity types onto 'Identity' and repair the graph.
+
+    Idempotent — a second run reports all zeros. Does not commit.
+
+    1. Merge same-name duplicates within the identity merge group FIRST, since
+       the bulk retype below would otherwise violate uq_node_user_name_type
+       (a user with both a 'Person 마야' and an 'Identity 마야').
+    2. Bulk-retype the legacy rows.
+    3. Realign every Statement relation graph-wide.
+    4. Alias hygiene: drop rows on non-identity nodes, backfill missing ones.
+    """
+    counts = {
+        "merged": 0,
+        "retyped": 0,
+        "relations_fixed": 0,
+        "duplicates_merged": 0,
+        "heads_demoted": 0,
+        "aliases_dropped": 0,
+        "aliases_indexed": 0,
+    }
+
+    # ── 1. Same-name identity duplicates ─────────────────────────────────────
+    nodes = [
+        n
+        for n in await get_all_nodes(session, user_id=user_id)
+        if n.deleted_at is None and is_identity_type(n.type)
+    ]
+    groups: dict[tuple[str, str], list[Node]] = {}
+    for node in nodes:
+        name_key = normalize_node_name(node.name).lower()
+        if not name_key:
+            continue
+        # Source stays its own bucket — a same-name Identity and Source are
+        # deliberately distinct and must both survive.
+        groups.setdefault((name_key, identity_merge_group(node.type)), []).append(node)
+
+    for (_, group), members in groups.items():
+        if group == "source" or len(members) < 2:
+            continue
+        # Survivor: the self node, else one with a voice, else the oldest.
+        members.sort(
+            key=lambda n: (
+                not bool(n.is_self),
+                n.speaker_profile_id is None,
+                n.created_at or datetime.max.replace(tzinfo=UTC),
+            )
+        )
+        survivor, *losers = members
+        for loser in losers:
+            loser_name = loser.name
+            add_node_alias(survivor, loser_name)
+            for alias in node_alias_keys(loser):
+                add_node_alias(survivor, alias)
+            await session.flush()
+            # merge_node_into carries importance, alias embeddings, provenance.
+            await merge_node_into(session, user_id, loser.id, survivor.id)
+            await index_identity_alias(session, user_id, survivor, loser_name)
+            counts["merged"] += 1
+
+    # ── 2. Bulk retype ───────────────────────────────────────────────────────
+    legacy = legacy_identity_type_keys()
+    retype = await session.execute(
+        update(Node)
+        .where(
+            Node.user_id == user_id,
+            Node.deleted_at.is_(None),
+            func.lower(Node.type).in_(legacy),
+        )
+        .values(type=IDENTITY_ENTITY_TYPE)
+        .execution_options(synchronize_session="fetch")
+    )
+    counts["retyped"] = int(retype.rowcount or 0)
+    await session.flush()
+
+    # ── 3. Graph-wide relation repair ────────────────────────────────────────
+    live = [
+        n
+        for n in await get_all_nodes(session, user_id=user_id)
+        if n.deleted_at is None and normalize_entity_type(n.type) != "Statement"
+    ]
+    for node in live:
+        fixed = await realign_node_edges(session, user_id, node)
+        for key in ("relations_fixed", "duplicates_merged", "heads_demoted"):
+            counts[key] += fixed[key]
+
+    # ── 4. Alias hygiene ─────────────────────────────────────────────────────
+    for node in live:
+        if not is_identity_type(node.type):
+            counts["aliases_dropped"] += await drop_identity_alias_rows(session, node)
+    counts["aliases_indexed"] = await backfill_alias_embeddings(session, user_id)
+
+    return counts
 
 
 async def set_node_speaker_profile(

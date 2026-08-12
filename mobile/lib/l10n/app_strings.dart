@@ -147,7 +147,7 @@ const Map<String, String> _ko = {
   'kg.addNodeTypeLabel': '타입',
   'kg.typeConcept': '개념 (Concept)',
   'kg.typeIdentity': '정체성 (Identity)',
-  'kg.typePerson': '사람 (Person)',
+  'kg.typePerson': '정체성 (Identity)',
   'kg.typeSource': '출처 (Source)',
   'kg.deleteRoomTitle': '채팅방 삭제',
   'kg.deleteRoomBody': '이 채팅방의 대화를 모두 지울까요?\n지식그래프는 그대로 유지돼요.',
@@ -712,7 +712,14 @@ const Map<String, String> _ko = {
   'inspector.sourceRawLabel': '원문 (정제 전 원본)',
   'inspector.sourceFullLabel': '원문 (일기 전체)',
   'inspector.nodeSaved': '노드 저장됨',
+  'inspector.nodeSavedWithEdges': '노드 저장됨 · 관계 {count}개 자동 교정됨',
   'inspector.saveFailed': '저장 실패: {error}',
+  'inspector.demoteHeadTitle': '화자 귀속이 사라집니다',
+  'inspector.demoteHeadBody':
+      '이 노드는 진술 {count}개의 화자입니다. 개념으로 바꾸면 "누가 말했는지"가 '
+      '기록되지 않고, 해당 관계는 진술 → 개념으로 뒤집힙니다. 되돌리려면 다시 '
+      '정체성으로 바꾼 뒤 화자 관계를 직접 이어야 합니다.',
+  'inspector.demoteHeadConfirm': '그래도 변경',
   'inspector.deleteFailed': '삭제 실패: {error}',
   'inspector.deleteNodeTitle': '노드 삭제',
   'inspector.deleteNodeSimpleBody': '「{name}」 노드와 연결된 관계도 삭제됩니다.',
@@ -1049,7 +1056,8 @@ const Map<String, String> _ko = {
   'speakerId.newPersonNameHint': '예: 장덕환',
   'speakerId.registerAsSourceButton': '출처로 등록',
   'speakerId.registerAsPersonButton': '인물로 등록',
-  'speakerId.typePerson': '인물',
+  // 사람만이 아니라 반려동물·단체까지 포함하는 정체성 — Source(출처)와의 대비.
+  'speakerId.typePerson': '인물·개체',
   'speakerId.typeSource': '출처',
   'speakerId.seeMoreIdentities': '더 많은 정체성 보기',
   'entityId.closeIdentityPicker': '정체성 선택 닫기',
@@ -1347,7 +1355,7 @@ const Map<String, String> _en = {
   'kg.addNodeTypeLabel': 'Type',
   'kg.typeConcept': 'Concept',
   'kg.typeIdentity': 'Identity',
-  'kg.typePerson': 'Person',
+  'kg.typePerson': 'Identity',
   'kg.typeSource': 'Source',
   'kg.deleteRoomTitle': 'Delete chat room',
   'kg.deleteRoomBody':
@@ -1968,7 +1976,15 @@ const Map<String, String> _en = {
   'inspector.sourceRawLabel': 'Source (before cleanup)',
   'inspector.sourceFullLabel': 'Source (full entry)',
   'inspector.nodeSaved': 'Node saved',
+  'inspector.nodeSavedWithEdges': 'Node saved · {count} relation(s) realigned',
   'inspector.saveFailed': 'Save failed: {error}',
+  'inspector.demoteHeadTitle': 'Speaker attribution will be lost',
+  'inspector.demoteHeadBody':
+      'This node is the speaker of {count} statement(s). Turning it into a '
+      'concept means "who said it" is no longer recorded, and those relations '
+      'flip to statement → concept. Undoing it means changing the type back '
+      'and re-linking the speaker by hand.',
+  'inspector.demoteHeadConfirm': 'Change anyway',
   'inspector.deleteFailed': 'Delete failed: {error}',
   'inspector.deleteNodeTitle': 'Delete node',
   'inspector.deleteNodeSimpleBody':
@@ -2338,7 +2354,7 @@ const Map<String, String> _en = {
   'speakerId.newPersonNameHint': 'e.g. Jane Doe',
   'speakerId.registerAsSourceButton': 'Register as source',
   'speakerId.registerAsPersonButton': 'Register as person',
-  'speakerId.typePerson': 'Person',
+  'speakerId.typePerson': 'Person / thing',
   'speakerId.typeSource': 'Source',
   'speakerId.seeMoreIdentities': 'See more identities',
   'entityId.closeIdentityPicker': 'Close identity picker',

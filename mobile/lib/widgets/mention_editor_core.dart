@@ -10,7 +10,7 @@ import '../api/client.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart'
-    show isSpeakerAssignableType, isSpeakerLikeType;
+    show isSpeakerAssignableType, isNonSourceIdentityType;
 import '../utils/keep_keyboard_on_tap.dart';
 
 // 추출 품질이 급격히 떨어지는 지점 이전으로 캡 (백엔드 JournalTextEntryRequest와 동일).
@@ -784,7 +784,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
         if (name.isEmpty || name == '나' || !seen.add(name)) continue;
         out.add(SpeakerOption(
           name,
-          isSource: !isSpeakerLikeType(type),
+          isSource: !isNonSourceIdentityType(type),
           weight: degree[raw['id']?.toString()] ?? 0,
         ));
       }

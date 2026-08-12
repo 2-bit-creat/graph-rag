@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-from .entity_types import is_person_like_type, is_source_like_type, type_group_key
+from .entity_types import is_identity_type, is_source_like_type, type_group_key
 
 
 class OntologyPreset(TypedDict):
@@ -23,7 +23,7 @@ LEARNING_GRAPH: OntologyPreset = {
         {"name": "Definition", "color": "#22c55e", "description": "용어의 정의"},
         {"name": "Example", "color": "#f59e0b", "description": "구체적 사례, 예시"},
         {"name": "Theory", "color": "#a855f7", "description": "이론, 학술적 틀"},
-        {"name": "Person", "color": "#ef4444", "description": "실제 인물 이름만 (직급·직책 제외)"},
+        {"name": "Identity", "color": "#ef4444", "description": "실제 인물·단체 이름만 (직급·직책 제외)"},
         {"name": "Role", "color": "#f97316", "description": "직급, 직책, 역할 (사람 이름이 아님)"},
         {"name": "Tool", "color": "#14b8a6", "description": "도구, 방법론, 기법"},
     ],
@@ -47,9 +47,9 @@ FINANCIAL_IT_KNOWLEDGE_GRAPH: OntologyPreset = {
             "description": "금융 기관, IT 벤더, 규제 기관",
         },
         {
-            "name": "Person",
+            "name": "Identity",
             "color": "#ef4444",
-            "description": "관련 인물 (실명)",
+            "description": "관련 인물·주체 (실명)",
         },
         {
             "name": "Regulation",
@@ -103,29 +103,26 @@ DAILY_LIFE_ENGLISH: OntologyPreset = {
         {
             "name": "Identity",
             "color": "#ff8c42",
-            "description": "정체성 카테고리 — 이름/별칭으로 재식별되는 반복 등장 개체 전체 "
-            "(Person·Source 포함 상위 분류이자, 사람도 매체도 아닌 반려동물·단체 등의 기본 타입)",
-        },
-        {
-            "name": "Person",
-            "color": "#ff8c42",
-            "description": "Identity의 하위 타입 — 실존 인물. 동명이인이어도 Source와는 병합되지 않음",
-            "parent": "Identity",
+            "description": "이름/별칭으로 재식별되는 반복 등장 개체 — 사람·반려동물·단체 등. "
+            "실제 사람인지는 타입이 아니라 목소리 프로필 연결 여부로 표시된다",
         },
         {
             "name": "Source",
             "color": "#ffc53d",
-            "description": "Identity의 하위 타입 — 매체·기관·AI 등 발화 귀속처. "
-            "화자로 지정할 수 있지만 사람과는 병합되지 않음",
+            "description": "매체·기관·AI 등 외부 발화 귀속처. "
+            "화자로 지정할 수 있지만 동명의 Identity와는 병합되지 않음",
             "parent": "Identity",
         },
         {"name": "Statement", "color": "#b07bff", "description": "화자(Identity)의 발화 · 진술 단위"},
         {"name": "Concept", "color": "#5b9dff", "description": "진술이 언급하는 도메인 개념 · 고유명사"},
     ],
+    # The three relations the pipeline actually produces. CONTEXT was missing
+    # here (so the edge editor never suggested it) and RELATED_TO was listed
+    # despite nothing ever creating one.
     "relation_types": [
         "SPOKE_OR_PUBLISHED",
         "MENTIONS",
-        "RELATED_TO",
+        "CONTEXT",
     ],
 }
 
@@ -135,7 +132,7 @@ ONTOLOGY_PRESETS: dict[str, OntologyPreset] = {
     DAILY_LIFE_ENGLISH["ontology_name"]: DAILY_LIFE_ENGLISH,
 }
 
-# Canonical Identity/Person/Source/Statement/Concept definitions from
+# Canonical Identity/Source/Statement/Concept definitions from
 # DAILY_LIFE_ENGLISH, keyed lowercase for lookup by name.
 _IDENTITY_HIERARCHY_BY_KEY: dict[str, dict] = {
     et["name"].lower(): et for et in DAILY_LIFE_ENGLISH["entity_types"]
@@ -143,39 +140,43 @@ _IDENTITY_HIERARCHY_BY_KEY: dict[str, dict] = {
 
 
 def ensure_identity_hierarchy(entity_types: list[dict]) -> list[dict]:
-    """Backfill the Identity/Person/Source structural types for display.
+    """Normalize the stored entity types onto the canonical Identity/Source pair.
 
     Ontology rows seeded before the 정체성-진술-개념 model existed (or from an
-    older preset) may still say just "Speaker"/"Statement"/"Concept". The
-    Identity/Person/Source distinction is a structural given of the graph
-    model (see entity_types.py), not something the ontology editor invents,
-    so the settings sheet should always show it correctly regardless of what
-    happens to be stored — this only affects the returned response, never
+    older preset) may still say "Speaker", "Person" or "화자". Those are all the
+    same structural type — Identity — and the identity/source split is a given
+    of the graph model (see entity_types.py), not something the ontology editor
+    invents. So the settings sheet always shows it correctly regardless of
+    what happens to be stored; this only affects the returned response, never
     what's persisted.
 
-    A stored legacy alias for Person/Source (e.g. "Speaker", the pre-split
-    name for what Person means now) is MIGRATED in place to the canonical
-    entry rather than left alongside a separately-appended "Person" — showing
-    both "Speaker" and "Person" as if they were two different types is exactly
-    the same role twice, which reads as a duplicate/confusing list rather than
-    an update.
+    Legacy aliases are MIGRATED IN PLACE and DEDUPED: an ontology carrying both
+    "Speaker" and "Person" collapses to one Identity entry, because listing the
+    same role twice reads as a confusing duplicate rather than an update.
     """
     result: list[dict] = []
     present: set[str] = set()
     for et in entity_types:
         name = str(et.get("name", ""))
         key = type_group_key(name)
-        if key != "person" and is_person_like_type(name):
-            result.append(dict(_IDENTITY_HIERARCHY_BY_KEY["person"]))
-            present.add("person")
+        canonical = None
+        if is_source_like_type(name):
+            canonical = "source"
+        elif is_identity_type(name):
+            canonical = "identity"
+
+        if canonical is not None:
+            if canonical in present:
+                continue  # already emitted — drop the duplicate spelling
+            result.append(dict(_IDENTITY_HIERARCHY_BY_KEY[canonical]))
+            present.add(canonical)
             continue
-        if key != "source" and is_source_like_type(name):
-            result.append(dict(_IDENTITY_HIERARCHY_BY_KEY["source"]))
-            present.add("source")
+
+        if key in present:
             continue
         result.append(dict(et))
         present.add(key)
-    for key in ("identity", "person", "source"):
+    for key in ("identity", "source"):
         if key not in present:
             result.append(dict(_IDENTITY_HIERARCHY_BY_KEY[key]))
     return result

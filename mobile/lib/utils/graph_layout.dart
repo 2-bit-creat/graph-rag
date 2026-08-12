@@ -707,21 +707,20 @@ const _semanticTypeColors = <String, Color>{
   'chunk': Color(0xFF6366F1),
   'speaker': Color(0xFFFF8C42),
   'vocab': Color(0xFF3DD6C3),
-  // 3-노드 구조 핵심 색상: Person=주황 / Statement=보라 / Concept=파랑.
+  // 3-노드 구조 핵심 색상: Identity=주황 / Statement=보라 / Concept=파랑.
   // statement 키가 없으면 fallback 팔레트의 파랑(0xFF5B9DFF)으로 떨어져 concept과
   // 색이 겹쳐 보이므로 반드시 명시적으로 구분된 색을 지정한다.
   'statement': Color(0xFFB07BFF),
   'concept': Color(0xFF5B9DFF),
+  // Identity(정체성): 사람·반려동물·단체 — 그래프의 head/색인 계층. 레거시
+  // 온톨로지의 회색 스와치를 물려받지 않도록 어디서나 확실히 주황이어야 한다.
+  'identity': Color(0xFFFF8C42),
+  // 미이관 그래프의 레거시 철자 — 같은 주황으로 렌더한다.
   'person': Color(0xFFFF8C42),
   'individual': Color(0xFFFF8C42),
-  // Source(외부 출처) head: person과 같은 warm 계열이되 구분되는 골드 —
+  // Source(외부 출처) head: identity와 같은 warm 계열이되 구분되는 골드 —
   // "귀속처 계층은 따뜻한 색" 규칙 유지, 사람/출처는 색으로 구분.
   'source': Color(0xFFFFC53D),
-  // Identity(정체성): 사람인지 확정되지 않은 개체(반려동물·단체 등). 정체성
-  // 계층이라 warm 계열(살구/코랄)로 person·source와 묶되 구분되는 톤.
-  // Identity is the graph's primary index/head category. Keep it visibly
-  // orange everywhere rather than inheriting a legacy ontology's gray swatch.
-  'identity': Color(0xFFFF8C42),
   'organization': Color(0xFF5BABFF),
   'company': Color(0xFF5BABFF),
   'topic': Color(0xFF5B9DFF),
@@ -819,9 +818,9 @@ bool entityTypeMatches(String? nodeType, String filter) {
   if (nodeType == null) return false;
   final node = canonicalEntityType(nodeType).toLowerCase();
   final selected = canonicalEntityType(filter).toLowerCase();
-  // Person is a concrete identity subtype in the graph UI. Keep its storage
-  // type intact, but expose one Identity filter that includes both forms.
-  if (selected == 'identity') return node == 'identity' || node == 'person';
+  // The Identity chip must also catch legacy rows on a graph that hasn't been
+  // through the Person→Identity backfill yet.
+  if (selected == 'identity') return isNonSourceIdentityType(nodeType);
   return node == selected;
 }
 
@@ -935,27 +934,40 @@ Map<String, int> degreeByNodeId(List<Map<String, dynamic>> edges) {
   return counts;
 }
 
-bool isPersonLikeType(String? raw) => isSpeakerLikeType(raw);
-
-bool isSpeakerLikeType(String? raw) {
+/// 외부 출처(매체·기관·책·AI) — 동명의 Identity와 절대 병합되지 않는 별개 버킷.
+/// 백엔드 `is_source_like_type`의 짝.
+bool isSourceType(String? raw) {
   final t = canonicalEntityType(raw ?? '').toLowerCase();
-  return t == 'speaker' || t == 'person' || t == 'individual';
+  return t == 'source' || t == 'media' || t == 'publication' || t == '출처';
 }
 
-/// Statement head-node types (Speaker → Statement → Concept 체인의 최상위 계층).
-/// Source(외부 출처: 매체·기관·AI)도 화자로 지정할 수 있는 head지만 사람이
-/// 아니므로 isSpeakerLikeType에는 절대 포함하지 말 것 — Person과 동명이어도
-/// 병합되지 않는 별개 정체성이라는 구분이 여기 달려 있다. 피커에서는 노출하되
-/// (SpeakerOption.isSource) 항상 Person과 시각적으로 구분해서 보여준다.
-bool isStatementHeadType(String? raw) {
-  if (isSpeakerLikeType(raw)) return true;
-  return canonicalEntityType(raw ?? '').toLowerCase() == 'source';
-}
+/// Identity 타입으로 저장되는(=Source가 아닌) 정체성 — 사람·반려동물·단체.
+///
+/// 피커의 사람 아이콘 대 책 아이콘을 가르는 술어다. `Person` 타입은 폐지됐으므로
+/// 반드시 `Identity`에 대해 참이어야 한다 — 아니면 마이그레이션 후 모든 화자가
+/// 책 아이콘으로 렌더된다. 레거시 철자(person/speaker/화자)도 여기 포함된다.
+bool isNonSourceIdentityType(String? raw) =>
+    isSpeakerAssignableType(raw) && !isSourceType(raw);
 
-/// 그 밖의 지속적 정체성 — 반려동물·단체 등. Person도 Source도 아니지만 화자가
-/// 될 수 있는 것들. 백엔드 entity_types.py 의 `_IDENTITY_EXTRA` 와 같은 집합.
-const _kIdentityExtraTypes = <String>{
+/// 정체성 카테고리 전체 — Identity ∪ Source. 백엔드 `_IDENTITY_LIKE | _SOURCE_LIKE`.
+/// 레거시 철자를 포함하는 이유는 백필이 코드 배포와 동시가 아니기 때문 —
+/// 백엔드 `entity_types._IDENTITY_LEGACY` 주석 참고.
+const _kIdentityTypes = <String>{
+  // 저장되는 두 타입
   'identity',
+  'source',
+  // Source 계열 별칭
+  'media',
+  'publication',
+  '출처',
+  // 레거시/대체 철자 — 전부 Identity 취급
+  'person',
+  'individual',
+  'human',
+  'speaker',
+  '화자',
+  'character',
+  'people',
   'animal',
   'pet',
   'organization',
@@ -965,19 +977,20 @@ const _kIdentityExtraTypes = <String>{
   '단체',
 };
 
-/// 화자로 지정할 수 있는 정체성 전체 — Person ∪ Source ∪ Identity.
+/// 화자로 지정할 수 있는 정체성 전체 — Identity ∪ Source.
 ///
 /// 백엔드 `is_identity_type`의 클라이언트 짝이다. 거기 주석대로 "any identity in
-/// this whole category can be a segment's 화자". 화자 피커는 반드시 이것을 써야
-/// 한다 — [isStatementHeadType]은 Person/Source만 참이라, 그것으로 거르면 새 언급
-/// 대부분이 갖는 Identity 타입(마야=고양이 같은)이 목록에서 통째로 빠진다.
+/// this whole category can be a segment's 화자".
+bool isSpeakerAssignableType(String? raw) =>
+    _kIdentityTypes.contains(canonicalEntityType(raw ?? '').toLowerCase());
+
+/// Statement head 타입 — 캔버스 계층(반경·화자색·2-hop 포커스·범례)이 이걸 쓴다.
 ///
-/// 캔버스 계층 계산은 계속 [isStatementHeadType]을 쓴다. 둘은 목적이 다르다:
-/// 하나는 "무엇이 진술의 머리인가", 다른 하나는 "누가 화자가 될 수 있는가".
-bool isSpeakerAssignableType(String? raw) {
-  if (isStatementHeadType(raw)) return true;
-  return _kIdentityExtraTypes.contains(canonicalEntityType(raw ?? '').toLowerCase());
-}
+/// [isSpeakerAssignableType]과 **같다**. Person이 폐지되기 전에는 둘이 달랐고
+/// (head=Person∪Source, 피커=거기에 Identity까지), 그 탓에 Identity로 저장된
+/// 화자가 캔버스에서 head 계층을 못 받아 화자색도 포커스도 잃었다. 이제 진술의
+/// 머리가 될 수 있는 것과 화자가 될 수 있는 것은 정확히 같은 집합이다.
+bool isStatementHeadType(String? raw) => isSpeakerAssignableType(raw);
 
 // ---------------------------------------------------------------------------
 // 화자 숨김(Speaker-to-Color) 모드
@@ -1010,7 +1023,7 @@ const kHeadColorPalette = <Color>[
 bool isSelfNode(Map<String, dynamic> node) {
   if (node['is_self'] == true) return true;
   // 구버전 백엔드 fallback: is_self 미노출 시 이름으로 판별.
-  return isSpeakerLikeType(node['type']?.toString()) &&
+  return isNonSourceIdentityType(node['type']?.toString()) &&
       node['name']?.toString().trim() == '나';
 }
 

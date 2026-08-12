@@ -8,7 +8,7 @@ import '../api/client.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart'
-    show isSpeakerAssignableType, isSpeakerLikeType;
+    show isSpeakerAssignableType, isNonSourceIdentityType;
 import '../widgets/app_ui.dart';
 import 'mention_editor_core.dart' show colorForSpeaker, speakerTurns;
 import 'speaker_bar.dart';
@@ -359,7 +359,7 @@ class _PrecisionTextLabelingPanelState
         if (!isSpeakerAssignableType(type)) continue;
         final name = raw['name']?.toString().trim() ?? '';
         if (name.isEmpty || name == '나' || !seen.add(name)) continue;
-        out.add(_SpeakerOption(name, isSource: !isSpeakerLikeType(type)));
+        out.add(_SpeakerOption(name, isSource: !isNonSourceIdentityType(type)));
       }
       out.sort((a, b) => a.name.compareTo(b.name));
       if (mounted) setState(() => _graphSpeakers = out);

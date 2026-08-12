@@ -443,15 +443,27 @@ _MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_version TEXT",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS consented_at TIMESTAMPTZ",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS speaker_id_consent_at TIMESTAMPTZ",
-    # Identity/Person/Source model backfill: "Speaker" was the pre-split name for
-    # what Person means now (see entity_types.is_person_like_type) — rename any
-    # node still carrying the old literal type string so the graph canvas and
-    # ontology settings show one consistent model instead of Speaker/Person as if
-    # they were two different things. Safe: is_person_like_type already treats
-    # them as interchangeable everywhere (matching, dedup, voice-linking), and
-    # uq_node_user_name_type (user_id, name, type) means this only fires where no
-    # same-named Person row already exists for that user.
-    "UPDATE nodes SET type = 'Person' WHERE type = 'Speaker'",
+    # Identity model backfill: "Speaker" and "Person" were both earlier names for
+    # what "Identity" means now (see entity_types._IDENTITY_LEGACY) — rename any
+    # node still carrying an old literal type string so the graph canvas and
+    # ontology settings show one consistent model. Safe: is_identity_type already
+    # treats them as interchangeable everywhere (matching, dedup, voice-linking).
+    # The NOT EXISTS guard protects uq_node_user_name_type (user_id, name, type):
+    # a user who has BOTH a legacy row and an Identity row of the same name keeps
+    # the legacy one here, and crud.repair_identity_types merges the pair properly
+    # (aliases, importance, edges, provenance) — raw SQL can't do that.
+    """
+    UPDATE nodes SET type = 'Identity'
+    WHERE lower(type) IN (
+        'person', 'individual', 'human', 'speaker', '화자', 'character', 'people'
+    )
+      AND NOT EXISTS (
+        SELECT 1 FROM nodes n2
+        WHERE n2.user_id IS NOT DISTINCT FROM nodes.user_id
+          AND n2.name = nodes.name
+          AND n2.type = 'Identity'
+      )
+    """,
     # Reverse-edge traversal (target_id + relation) had no matching index —
     # only the (source_id, target_id, relation) uniqueness index existed, whose
     # leftmost column doesn't help a target_id-first lookup. This is the exact

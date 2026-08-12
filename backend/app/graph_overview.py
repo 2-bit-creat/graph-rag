@@ -31,9 +31,10 @@ logger = logging.getLogger(__name__)
 _TYPE_LABELS = {
     "Statement": "진술",
     "Concept": "개념",
-    "Person": "사람",
     "Source": "출처",
-    "Identity": "개체",
+    "Identity": "정체성",
+    # Legacy rows on graphs that predate the Person→Identity collapse.
+    "Person": "정체성",
 }
 
 

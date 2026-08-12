@@ -1,9 +1,13 @@
 """Person-mention resolution at commit time.
 
-A concept tagged kind="person" must resolve to a Person/self identity — linking to
-an existing node (never forking a duplicate), creating a new Person node, or being
-downgraded back to an ordinary Concept — with the mention attached via a MENTIONS
-edge (concepts use CONTEXT). See app.routers.kg_build._persist_concept.
+A concept tagged kind="person" must resolve to an Identity/self node — linking to
+an existing node (never forking a duplicate), creating a new Identity node, or
+being downgraded back to an ordinary Concept — with the mention attached via a
+MENTIONS edge (concepts use CONTEXT). See app.routers.kg_build._persist_concept.
+
+The "person" wording is the LLM/review wire contract only; the stored type is
+Identity. Fixtures that still say type="Person" are deliberate regressions for
+graphs that have not been through crud.repair_identity_types yet.
 """
 
 from __future__ import annotations
@@ -323,7 +327,7 @@ async def test_aliases_exposed_in_node_output(db_session, iso_user):
 
 
 @pytest.mark.asyncio
-async def test_speaker_head_reuses_and_promotes_identity(db_session, iso_user):
+async def test_speaker_head_reuses_identity_without_retyping_it(db_session, iso_user):
     # '엄마' first appears only as a mentioned Identity node.
     ident = await crud._get_or_create_node(
         db_session, name="엄마", type_="Identity", user_id=iso_user.id
@@ -331,6 +335,9 @@ async def test_speaker_head_reuses_and_promotes_identity(db_session, iso_user):
     await db_session.commit()
 
     # Now '엄마' is the SPEAKER of a statement (external multi-speaker path).
+    # speaker_type is the LEGACY "Person" wire value that stored graph_staging
+    # drafts and older review clients still send — it must be absorbed, not
+    # rejected, and must not fork a second node.
     claims = [{
         "speaker": "엄마",
         "speaker_type": "Person",
@@ -343,9 +350,11 @@ async def test_speaker_head_reuses_and_promotes_identity(db_session, iso_user):
 
     nodes = await crud.get_all_nodes(db_session, iso_user.id)
     moms = [n for n in nodes if n.name == "엄마" and n.deleted_at is None]
-    assert len(moms) == 1                       # reused, NOT forked into a Person
+    assert len(moms) == 1                       # reused, NOT forked
     assert moms[0].id == ident.id
-    assert crud.is_person_like_type(moms[0].type)  # generic Identity promoted → Person
+    # Speaking does not change the type. Humanity is recorded by a bound voice
+    # profile, not by promoting Identity → Person (that type no longer exists).
+    assert moms[0].type == "Identity"
 
     rels = await _relations(db_session, iso_user.id)
     assert rels.get(("엄마", "엄마의 말")) == "SPOKE_OR_PUBLISHED"

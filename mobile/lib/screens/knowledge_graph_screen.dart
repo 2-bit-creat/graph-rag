@@ -1843,26 +1843,24 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
             .toList()
         : entityTypes;
 
-    // Person is a subtype of Identity in the graph filter UI. Merge its count
-    // into one Identity chip, creating that chip for Person-only graphs too.
-    var personCount = 0;
-    Map<String, dynamic>? identity;
+    // Every legacy identity spelling (Person/Speaker/화자) folds into the one
+    // Identity chip — on a graph that hasn't been through the backfill these
+    // are the same category, and showing them separately reads as duplicates.
+    // Source keeps its own chip; it is a deliberately distinct identity.
+    var identityCount = 0;
+    var sawIdentity = false;
     final result = <Map<String, dynamic>>[];
     for (final type in visible) {
       final name = canonicalEntityType(type['name']?.toString() ?? '');
-      if (name == 'Person') {
-        personCount += (type['count'] as num?)?.toInt() ?? 0;
-      } else if (name == 'Identity') {
-        identity = Map<String, dynamic>.from(type);
+      if (isNonSourceIdentityType(name)) {
+        identityCount += (type['count'] as num?)?.toInt() ?? 0;
+        sawIdentity = true;
       } else {
         result.add(type);
       }
     }
-    if (identity != null || personCount > 0) {
-      result.add({
-        'name': 'Identity',
-        'count': ((identity?['count'] as num?)?.toInt() ?? 0) + personCount,
-      });
+    if (sawIdentity) {
+      result.add({'name': 'Identity', 'count': identityCount});
     }
     return result;
   }
@@ -3209,7 +3207,7 @@ class _SelectionInfoCard extends StatelessWidget {
                       const SizedBox(width: 6),
                       Flexible(
                         child: Text(
-                          '${isSpeakerLikeType(headNode['type']?.toString()) ? tr('kg.speakerLabel') : tr('kg.sourceLabel')}: ${headNode['name'] ?? '?'}',
+                          '${isNonSourceIdentityType(headNode['type']?.toString()) ? tr('kg.speakerLabel') : tr('kg.sourceLabel')}: ${headNode['name'] ?? '?'}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(

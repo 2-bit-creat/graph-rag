@@ -3,7 +3,15 @@ import uuid
 
 
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Response,
+    status,
+)
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -806,6 +814,11 @@ async def edit_node(
     background: BackgroundTasks,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
+    # Trailing so direct in-process callers keep their positional signature;
+    # FastAPI injects it regardless of position. Annotated bare (not
+    # `Response | None`) because FastAPI only special-cases the exact class and
+    # would otherwise try to treat it as a Pydantic field.
+    response: Response = None,
 ) -> NodeOut:
     existing = await session.get(Node, node_id)
     # Ownership is checked before anything is written. The trailing get_node_out
@@ -829,11 +842,25 @@ async def edit_node(
         )
         await session.commit()
 
-    node = await crud.update_node(
-        session, node_id, payload.name, payload.type, payload.description
+    updated = await crud.update_node(
+        session,
+        node_id,
+        payload.name,
+        payload.type,
+        payload.description,
+        user_id=user.id,
     )
-    if node is None:
+    if updated is None:
         raise HTTPException(status_code=404, detail="node not found")
+    node, fixup = updated
+
+    # A type change rewrites the node's Statement relations (MENTIONS ↔ CONTEXT,
+    # demoted heads). Reported as a header so the response model — and older
+    # clients that ignore it — stay unchanged.
+    if response is not None and fixup.get("relations_fixed"):
+        response.headers["X-Edges-Realigned"] = str(fixup["relations_fixed"])
+        if fixup.get("heads_demoted"):
+            response.headers["X-Heads-Demoted"] = str(fixup["heads_demoted"])
 
     changed = before != (node.name, node.type, node.description)
     # Source text is the contract for every derived expression and quiz.  A text
@@ -1030,6 +1057,32 @@ async def backfill_journal_links(
     """), {"user_id": user.id})
     await session.commit()
     return {"inserted": result.rowcount}
+
+
+@router.post("/admin/repair-identity-types")
+async def repair_identity_types(
+    dry_run: bool = Query(False),
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Collapse legacy Person/Speaker nodes onto Identity and repair the graph.
+
+    Idempotent self-heal for a graph built before the Person type was retired:
+    merges same-name identity duplicates, retypes the legacy rows, realigns
+    every MENTIONS/CONTEXT/SPOKE_OR_PUBLISHED edge to match its endpoints, and
+    cleans up alias embeddings.
+
+    ``dry_run`` returns the rows that WOULD be retyped without writing. Worth
+    keeping: which identities used to be typed 'Person' is not recoverable from
+    the database once they are Identity.
+    """
+    preview = await crud.identity_type_repair_preview(session, user.id)
+    if dry_run:
+        return {"ok": True, "dry_run": True, "would_retype": preview}
+
+    counts = await crud.repair_identity_types(session, user.id)
+    await session.commit()
+    return {"ok": True, "dry_run": False, "retyped_nodes": preview, **counts}
 
 
 @router.post("/admin/cleanup-orphan-speaker-profiles")
