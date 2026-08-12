@@ -189,12 +189,12 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
   /// When the statement's event happened. Falls back to the source entry's
   /// writing time, then node creation, mirroring how the server resolves it.
   DateTime? _nodeEventDate(Map<String, dynamic> node) {
-    final raw = (node['occurred_at'] ??
-            node['entry_created_at'] ??
-            node['created_at'])
-        ?.toString();
+    final raw =
+        (node['occurred_at'] ?? node['entry_created_at'] ?? node['created_at'])
+            ?.toString();
     if (raw == null || raw.isEmpty) return null;
-    final parsed = DateTime.tryParse(raw.length > 10 ? raw.substring(0, 10) : raw);
+    final parsed =
+        DateTime.tryParse(raw.length > 10 ? raw.substring(0, 10) : raw);
     return parsed == null
         ? null
         : DateTime(parsed.year, parsed.month, parsed.day);
@@ -220,8 +220,8 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       helpText: tr('reviewDate.pickerHelp'),
     );
     if (picked == null || !mounted) return;
-    setState(() =>
-        _occurredAt = DateTime(picked.year, picked.month, picked.day));
+    setState(
+        () => _occurredAt = DateTime(picked.year, picked.month, picked.day));
   }
 
   /// The date, stated plainly and editable in place — it is a primary fact
@@ -335,6 +335,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     final edge = widget.selectedEdge;
     if (edge != null) {
       _relationCtrl.text = edge['relation']?.toString() ?? '';
+      _editing = false;
     }
   }
 
@@ -699,6 +700,15 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       padding: const EdgeInsets.fromLTRB(0, 4, 0, 0),
       child: Row(
         children: [
+          if (edge != null)
+            IconButton(
+              icon: const Icon(Icons.arrow_back_rounded),
+              tooltip: tr('inspector.backToNode'),
+              onPressed: () {
+                final source = widget.nodeById[edge['source_id'].toString()];
+                if (source != null) widget.onSelectNode?.call(source);
+              },
+            ),
           Expanded(
             child: Text(
               node != null
@@ -711,8 +721,8 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          if (node != null && !_isChunkNode(node))
-            TextButton.icon(
+          if ((node != null && !_isChunkNode(node)) || edge != null)
+            TextButton(
               onPressed: _saving
                   ? null
                   : () {
@@ -722,13 +732,8 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
                         setState(() => _editing = true);
                       }
                     },
-              icon: Icon(
-                _editing ? Icons.close_rounded : Icons.edit_outlined,
-                size: 17,
-              ),
-              label: Text(_editing
-                  ? tr('common.cancel')
-                  : tr('inspector.editAction')),
+              child: Text(
+                  _editing ? tr('common.cancel') : tr('inspector.editAction')),
             ),
           IconButton(
             icon: const Icon(Icons.close),
@@ -1146,7 +1151,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       // with the node id.
       if (_isStatementNode(node)) _eventDateField(node, theme),
       DropdownButtonFormField<String>(
-        value: _selectedTypeValue(),
+        initialValue: _selectedTypeValue(),
         decoration: InputDecoration(
             labelText: tr('inspector.typeLabel'),
             border: const OutlineInputBorder(),
@@ -1188,11 +1193,6 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         ),
       ),
       _sourceTranscriptWidget(node),
-      if (_isStatementNode(node)) ...[
-        const SizedBox(height: 10),
-        _NodeExpressionButton(
-            nodeId: id, nodeName: node['name']?.toString() ?? ''),
-      ],
       const SizedBox(height: 14),
       Row(
         children: [
@@ -1306,7 +1306,6 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     required List<Map<String, dynamic>> incoming,
     required bool locked,
   }) {
-    final id = node['id'].toString();
     final isStatement = _isStatementNode(node);
     final content = isStatement
         ? _stmtContent(node)
@@ -1393,16 +1392,6 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
           const SizedBox(height: 8),
         ],
         _sourceTranscriptWidget(node),
-        if (isStatement) ...[
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: _NodeExpressionButton(
-              nodeId: id,
-              nodeName: node['name']?.toString() ?? '',
-            ),
-          ),
-        ],
         const SizedBox(height: 8),
         TextButton.icon(
           onPressed: _deleteNode,
@@ -1457,9 +1446,41 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         (src?['source_entry_id'] != null) || (tgt?['source_entry_id'] != null);
     final suggestions = _relationSuggestions(_relationCtrl.text);
 
+    if (!_editing) {
+      return [
+        _EdgeEndpoint(
+          label: tr('inspector.sourceNode'),
+          name: src?['name']?.toString() ?? '?',
+          onTap: src == null ? null : () => widget.onSelectNode?.call(src),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(left: 18),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(99),
+              ),
+              child: Text(
+                edge['relation']?.toString() ?? '',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ),
+        ),
+        _EdgeEndpoint(
+          label: tr('inspector.targetNode'),
+          name: tgt?['name']?.toString() ?? '?',
+          onTap: tgt == null ? null : () => widget.onSelectNode?.call(tgt),
+        ),
+      ];
+    }
+
     return [
-      Text(tr('inspector.edgeRelationTitle'),
-          style: theme.textTheme.labelLarge?.copyWith(color: Colors.grey)),
       if (locked) ...[
         const SizedBox(height: 10),
         _LockedNotice(),
@@ -1468,14 +1489,13 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       ListTile(
         contentPadding: EdgeInsets.zero,
         title: Text(src?['name']?.toString() ?? '?'),
-        subtitle: Text(tr('inspector.sourceWord')),
-        trailing: const Icon(Icons.arrow_forward),
+        subtitle: Text(tr('inspector.sourceNode')),
         onTap: src != null ? () => widget.onSelectNode?.call(src) : null,
       ),
       ListTile(
         contentPadding: EdgeInsets.zero,
         title: Text(tgt?['name']?.toString() ?? '?'),
-        subtitle: Text(tr('inspector.targetWord')),
+        subtitle: Text(tr('inspector.targetNode')),
         onTap: tgt != null ? () => widget.onSelectNode?.call(tgt) : null,
       ),
       const SizedBox(height: 8),
@@ -1556,6 +1576,51 @@ class _InspectorMetaPill extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _EdgeEndpoint extends StatelessWidget {
+  const _EdgeEndpoint({
+    required this.label,
+    required this.name,
+    required this.onTap,
+  });
+
+  final String label;
+  final String name;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(name, style: theme.textTheme.titleMedium),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded,
+                color: theme.colorScheme.onSurfaceVariant),
+          ],
+        ),
       ),
     );
   }

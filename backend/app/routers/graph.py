@@ -422,7 +422,7 @@ async def read_node_study_quizzes(
         raise HTTPException(status_code=400, detail="only Statement nodes have study quizzes")
 
     rows = await session.execute(
-        select(Quiz.id, Quiz.quiz_type, Quiz.language, Quiz.queue_kind)
+        select(Quiz.id, Quiz.quiz_type, Quiz.language, Quiz.queue_kind, Quiz.quiz_data)
         .where(
             Quiz.user_id == user.id,
             Quiz.source_nodes.contains([node_id]),
@@ -434,7 +434,8 @@ async def read_node_study_quizzes(
     grouped = {"cloze": [], "composition": []}
     reviews = {"cloze": 0, "composition": 0}
     by_language = {"cloze": {}, "composition": {}}
-    for quiz_id, quiz_type, language, queue_kind in rows.all():
+    quiz_expression_keys: set[str] = set()
+    for quiz_id, quiz_type, language, queue_kind, quiz_data in rows.all():
         kind = str(quiz_type)
         quiz_id_str = str(quiz_id)
         lang = (str(language).strip().lower() if language else "english")
@@ -442,6 +443,16 @@ async def read_node_study_quizzes(
         by_language[kind].setdefault(lang, []).append(quiz_id_str)
         if queue_kind == "review":
             reviews[kind] += 1
+        if kind == "cloze":
+            data = quiz_data or {}
+            expression = str(
+                data.get("canonical_form")
+                or data.get("expression")
+                or data.get("blank")
+                or ""
+            ).strip().casefold()
+            if expression:
+                quiz_expression_keys.add(expression)
     from ..models import QuizLearningMaterial
 
     languages = crud.get_effective_target_languages(user)
@@ -527,11 +538,17 @@ async def read_node_study_quizzes(
             await _schedule_statement_learning(
                 background, session, user, node_id, priority=100
             )
+    stored_expression_count = sum(
+        value["total"] for value in expression_by_language.values()
+    )
     return {
         "node_id": str(node_id),
         "material_status": material_status,
         "expressions": {
-            "count": sum(value["total"] for value in expression_by_language.values()),
+            # Old cards can outlive a legacy inventory file. Never tell the
+            # learner that a Statement with expression-based clozes has zero
+            # expressions; recover the minimum visible count from those cards.
+            "count": max(stored_expression_count, len(quiz_expression_keys)),
             "available_count": sum(value["available"] for value in expression_by_language.values()),
             "generated_count": sum(value["generated"] for value in expression_by_language.values()),
             "by_language": expression_by_language,
@@ -555,6 +572,86 @@ async def read_node_study_quizzes(
             "by_language": by_language["composition"],
         },
     }
+
+
+@router.get("/expression-cards")
+async def read_expression_cards(
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Return deduplicated flip cards extracted from active Statement nodes."""
+    from ..models import Quiz
+    from ..node_expression_store import get_node_expressions_all_languages
+
+    statements = (
+        await session.scalars(
+            select(Node).where(
+                Node.user_id == user.id,
+                Node.deleted_at.is_(None),
+                Node.type.ilike("statement"),
+            )
+        )
+    ).all()
+    node_names = {str(node.id): node.name for node in statements}
+    cards: dict[tuple[str, str], dict] = {}
+
+    for node in statements:
+        by_language = await get_node_expressions_all_languages(user.id, str(node.id))
+        for language, items in by_language.items():
+            for item in items:
+                expression = str(item.get("expression") or "").strip()
+                if not expression:
+                    continue
+                key = (str(language).lower(), expression.casefold())
+                cards.setdefault(key, {
+                    "expression": expression,
+                    "meaning": str(item.get("meaning") or item.get("meaning_ko") or "").strip(),
+                    "example": str(item.get("example") or item.get("example_en") or "").strip(),
+                    "language": str(language).lower(),
+                    "node_id": str(node.id),
+                    "node_name": node.name,
+                })
+
+    # Compatibility recovery for older data where the generated quiz remains
+    # but its JSON expression inventory was lost.
+    statement_ids = [node.id for node in statements]
+    if statement_ids:
+        quiz_rows = await session.execute(
+            select(Quiz.language, Quiz.source_nodes, Quiz.quiz_data, Quiz.sentence_target)
+            .where(
+                Quiz.user_id == user.id,
+                Quiz.quiz_type == "cloze",
+                Quiz.queue_kind.in_(("new", "review")),
+                Quiz.source_nodes.overlap(statement_ids),
+            )
+            .order_by(Quiz.created_at.desc())
+        )
+        for language, source_nodes, quiz_data, sentence_target in quiz_rows.all():
+            data = quiz_data or {}
+            expression = str(
+                data.get("canonical_form")
+                or data.get("expression")
+                or data.get("blank")
+                or ""
+            ).strip()
+            if not expression:
+                continue
+            lang = str(language or "english").lower()
+            key = (lang, expression.casefold())
+            source_id = next(
+                (str(value) for value in (source_nodes or []) if str(value) in node_names),
+                "",
+            )
+            cards.setdefault(key, {
+                "expression": expression,
+                "meaning": str(data.get("meaning") or data.get("target_ko") or "").strip(),
+                "example": str(sentence_target or data.get("sentence_en") or "").strip(),
+                "language": lang,
+                "node_id": source_id,
+                "node_name": node_names.get(source_id, ""),
+            })
+
+    return {"count": len(cards), "items": list(cards.values())}
 
 
 @router.post("/nodes/{node_id}/study-quizzes/generate")
@@ -619,6 +716,7 @@ async def generate_node_study_quizzes(
 async def regenerate_node_quizzes(
     node_id: uuid.UUID,
     background: BackgroundTasks,
+    language: str | None = None,
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -637,7 +735,10 @@ async def regenerate_node_quizzes(
     # material left behind by an edit that failed to archive at the time.
     try:
         archived = await archive_edited_statement_materials(
-            session, user, node_id=node_id
+            session,
+            user,
+            node_id=node_id,
+            languages=[language.strip().lower()] if language else None,
         )
     except BundleSeedError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -647,11 +748,18 @@ async def regenerate_node_quizzes(
     # analysis half that the auto-generation-off path would produce.
     from ..quiz_generation_runs import create_generation_run, process_generation_run
 
+    languages = crud.get_effective_target_languages(user)
+    if language:
+        requested = language.strip().lower()
+        if requested not in {value.lower() for value in languages}:
+            raise HTTPException(status_code=400, detail="Inactive target language")
+        languages = [requested]
+
     run, created = await create_generation_run(
         session,
         user,
         node_ids=[node_id],
-        languages=crud.get_effective_target_languages(user),
+        languages=languages,
         idempotency_key=f"regenerate:{node_id}:{uuid.uuid4()}",
         source="regeneration",
     )
@@ -1025,10 +1133,65 @@ async def purge_from_trash(
 async def get_node_expressions(
     node_id: uuid.UUID,
     user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Return all extracted language expressions for a Statement node, grouped by language."""
+    from ..models import Quiz
     from ..node_expression_store import get_node_expressions_all_languages
+
+    node = await session.get(Node, node_id)
+    if node is None or node.user_id != user.id or node.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="node not found")
+
     data = await get_node_expressions_all_languages(user.id, str(node_id))
+
+    # Older records may retain their cloze quizzes even when the original JSON
+    # expression inventory is missing. Recover those expressions here so this
+    # node-level view stays consistent with its count and the global card deck.
+    quiz_rows = await session.execute(
+        select(Quiz.language, Quiz.quiz_data, Quiz.sentence_target)
+        .where(
+            Quiz.user_id == user.id,
+            Quiz.quiz_type == "cloze",
+            Quiz.queue_kind.in_(("new", "review")),
+            Quiz.source_nodes.contains([node_id]),
+        )
+        .order_by(Quiz.created_at.desc())
+    )
+    seen = {
+        (str(language).lower(), str(item.get("expression") or "").strip().casefold())
+        for language, items in data.items()
+        for item in items
+        if str(item.get("expression") or "").strip()
+    }
+    for language, quiz_data, sentence_target in quiz_rows.all():
+        quiz = quiz_data or {}
+        expression = str(
+            quiz.get("canonical_form")
+            or quiz.get("expression")
+            or quiz.get("blank")
+            or ""
+        ).strip()
+        if not expression:
+            continue
+        lang = str(language or "english").strip().lower()
+        key = (lang, expression.casefold())
+        if key in seen:
+            continue
+        data.setdefault(lang, []).append(
+            {
+                "expression": expression,
+                "meaning": str(
+                    quiz.get("meaning") or quiz.get("target_ko") or ""
+                ).strip(),
+                "example": str(
+                    sentence_target or quiz.get("sentence_en") or ""
+                ).strip(),
+                "quiz_status": "emitted",
+            }
+        )
+        seen.add(key)
+
     return {"node_id": str(node_id), "expressions_by_language": data}
 
 

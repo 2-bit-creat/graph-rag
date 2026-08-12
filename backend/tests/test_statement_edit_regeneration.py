@@ -21,6 +21,8 @@ from app.quiz_materials import source_hash
 from app.routers.graph import (
     edit_node,
     generate_node_study_quizzes,
+    get_node_expressions,
+    read_expression_cards,
     read_node_study_quizzes,
 )
 from app.schemas import NodeUpdate
@@ -136,6 +138,51 @@ async def test_unedited_statement_leaves_regeneration_disabled(
     assert result["composition"]["count"] == 1
     assert result["expressions"]["count"] == 1
     assert "old expression" not in json.dumps(result, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_legacy_cloze_recovers_expression_count_and_flip_card(
+    db_session, iso_user, tmp_path, monkeypatch
+) -> None:
+    node, _ = await _statement_with_material(
+        db_session, iso_user, tmp_path, monkeypatch, "A Statement with a legacy card."
+    )
+    await node_expression_store.delete_node_language_expressions(
+        iso_user.id, str(node.id), "english"
+    )
+    await crud.create_quiz(
+        db_session,
+        user_id=iso_user.id,
+        quiz_type="cloze",
+        question_ko="인수하다",
+        sentence_en="They decided to take over the company.",
+        quiz_data={
+            "canonical_form": "take over",
+            "blank": "take over",
+            "meaning": "인수하다",
+        },
+        language="english",
+        source_nodes=[node.id],
+        generation_key=f"legacy-cloze-{uuid.uuid4()}",
+    )
+    await db_session.commit()
+
+    study = await read_node_study_quizzes(
+        node.id, BackgroundTasks(), iso_user, db_session
+    )
+    assert study["expressions"]["count"] == 1
+
+    deck = await read_expression_cards(iso_user, db_session)
+    assert deck["count"] == 1
+    assert deck["items"][0]["expression"] == "take over"
+
+    expressions = await get_node_expressions(node.id, iso_user, db_session)
+    recovered = expressions["expressions_by_language"]["english"]
+    assert len(recovered) == 1
+    assert recovered[0]["expression"] == "take over"
+    assert recovered[0]["meaning"] == "인수하다"
+    assert recovered[0]["example"] == "They decided to take over the company."
+    assert deck["items"][0]["meaning"] == "인수하다"
 
 
 @pytest.mark.asyncio

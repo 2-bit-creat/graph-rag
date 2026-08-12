@@ -768,6 +768,16 @@ class ApiClient {
     }
   }
 
+  /// Flip cards built from expressions extracted across active Statements.
+  Future<Map<String, dynamic>> graphExpressionCards() async {
+    try {
+      final resp = await _dio.get('/graph/expression-cards');
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '표현 카드 불러오기');
+    }
+  }
+
   /// Generate the next small study set for a Statement selected in the graph.
   /// This is a learner surface; the operator problem-queue remains separate.
   Future<Map<String, dynamic>> generateNodeStudyQuizzes(
@@ -789,9 +799,17 @@ class ApiClient {
 
   /// Rebuild an edited Statement's quizzes and expressions. The old ones were
   /// already archived by the edit itself, so this only starts the new set.
-  Future<Map<String, dynamic>> regenerateNodeQuizzes(String nodeId) async {
+  Future<Map<String, dynamic>> regenerateNodeQuizzes(
+    String nodeId, {
+    String? language,
+  }) async {
     try {
-      final resp = await _dio.post('/graph/nodes/$nodeId/regenerate-quizzes');
+      final resp = await _dio.post(
+        '/graph/nodes/$nodeId/regenerate-quizzes',
+        queryParameters: {
+          if (language != null && language.isNotEmpty) 'language': language,
+        },
+      );
       return Map<String, dynamic>.from(resp.data as Map);
     } on DioException catch (e) {
       throw _friendlyError(e, '문제 재생성');
