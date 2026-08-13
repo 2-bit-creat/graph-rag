@@ -189,15 +189,15 @@ class ComposeSessionController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    // 엔트리를 채택하고 폴링을 시작한다 — status=graph_processing이면 4초 주기
+    // 엔트리를 채택하고 폴링을 시작한다 — status=graph_processing이면 1.5초 주기
     // 폴링이 돌다 graph_staging_ready(검토 필요)에서 phase=needsInput로 전환된다.
     await refreshEntry(silent: true);
   }
 
   /// 그래프 검토 화면에서 '확정'을 눌렀을 때 — startGraphBuild와 동일하게 창을
-  /// 우하단 미니 카드로 접고 백그라운드에서 커밋한다. 확정 API는 동기(완료 시
-  /// graph_ready 반환)라 표현 추출까지 오래 걸릴 수 있으므로, 큰 창에 사용자를
-  /// 붙잡아 두지 않고 미니 카드 버퍼링으로 위임한다. 완료되면 phase=done.
+  /// 우하단 미니 카드로 접고 백그라운드에서 커밋한다. 서버도 커밋을 백그라운드
+  /// 태스크로 돌리고 status=graph_committing으로 답하므로, 여기서는 요청을 붙잡지
+  /// 않고 폴링으로 진행을 따라간다(graph_committing → graph_ready → phase=done).
   Future<void> applyGraph(
     String entryId, {
     required List<Map<String, dynamic>> claims,
@@ -219,10 +219,12 @@ class ComposeSessionController extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // 서버가 백그라운드로 커밋하고, 미니 카드는 상태 폴링으로 진행을 보여준다.
       await apiClient.applyEntryGraph(
         entryId,
         claims: claims,
         contextType: contextType,
+        awaitCommit: false,
       );
     } catch (e) {
       if (serial != _workSerial) return; // 그 사이 다른 작업으로 교체됨
@@ -357,10 +359,13 @@ class ComposeSessionController extends ChangeNotifier {
     final graphStatus = _entry?['graph_status']?.toString() ?? '';
     final busy = status == 'processing' ||
         status == 'graph_processing' ||
-        graphStatus == 'graph_processing';
+        graphStatus == 'graph_processing' ||
+        jp.isGraphCommitting(_entry);
     if (busy && isActive) {
+      // Matches JournalTaskController — a 4 s poll spent up to 4 s spinning on a
+      // draft the server had already finished.
       _pollTimer ??= Timer.periodic(
-        const Duration(seconds: 4),
+        const Duration(milliseconds: 1500),
         (_) => refreshEntry(),
       );
     } else {

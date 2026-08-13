@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../l10n/app_strings.dart';
 import 'config.dart';
@@ -136,6 +137,11 @@ class ApiClient {
   }
 
   late final Dio _dio;
+
+  /// Transport seam for tests (swap `httpClientAdapter`). Not for app code —
+  /// every request belongs in a named method on this class.
+  @visibleForTesting
+  Dio get dio => _dio;
 
   /// Enter an ID-entry account space; returns its bearer token.
   ///
@@ -922,10 +928,22 @@ class ApiClient {
 
   /// Commit a reviewed graph draft into immutable nodes. Pass the (possibly
   /// user-edited) [claims]; when null the server commits the stored draft as-is.
+  ///
+  /// The server accepts the commit and runs it as a background task, replying
+  /// `graph_committing`; the entry's status is what says how it went. Callers
+  /// with their own progress UI (the chat card, the compose mini card) poll that
+  /// themselves and pass `awaitCommit: false`. Callers that just want "done"
+  /// (the review screen's own submit button) leave it true and this waits.
+  ///
+  /// Either way the client never treats a dropped request as a failure: the
+  /// commit used to run inside the request, outlive the 2-minute receive
+  /// timeout on a long entry, and surface as "지식그래프 확정 실패" while the
+  /// graph was being written successfully.
   Future<Map<String, dynamic>> applyEntryGraph(
     String entryId, {
     List<Map<String, dynamic>>? claims,
     String? contextType,
+    bool awaitCommit = true,
   }) async {
     try {
       final body = <String, dynamic>{};
@@ -934,18 +952,113 @@ class ApiClient {
       final resp = await _dio.post(
         '/journal/entries/$entryId/graph/apply',
         data: body.isEmpty ? null : body,
+        options: Options(receiveTimeout: const Duration(minutes: 6)),
       );
-      return resp.data as Map<String, dynamic>;
+      final result = Map<String, dynamic>.from(resp.data as Map);
+      if (awaitCommit && result['status']?.toString() == 'graph_committing') {
+        final committed = await _awaitGraphCommitted(entryId);
+        if (committed == null) {
+          throw Exception(_lastCommitError ?? tr('client.graphCommitFailed'));
+        }
+        return committed;
+      }
+      return result;
     } on DioException catch (e) {
       if (e.response?.statusCode == 409) {
         final data = e.response?.data;
-        if (data is Map && data['detail'] is Map) {
-          final msg = (data['detail'] as Map)['message']?.toString();
-          if (msg != null && msg.isNotEmpty) throw Exception(msg);
+        final detail = (data is Map && data['detail'] is Map)
+            ? Map<String, dynamic>.from(data['detail'] as Map)
+            : const <String, dynamic>{};
+        // The commit is idempotent from the user's side: a graph that is
+        // already committed for this entry is the outcome they asked for,
+        // whether this call or an earlier (timed-out, or double-tapped) one
+        // put it there. Reporting it as an error is what made a successful
+        // commit look like a failure.
+        if (detail['code']?.toString() == 'graph_locked') {
+          return {
+            'entry_id': entryId,
+            'status': 'graph_ready',
+            'message': detail['message']?.toString() ?? '',
+          };
         }
+        final msg = detail['message']?.toString();
+        if (msg != null && msg.isNotEmpty) throw Exception(msg);
+      }
+      if (_maybeStillRunning(e)) {
+        final committed = await _awaitGraphCommitted(entryId);
+        if (committed != null) return committed;
       }
       throw _friendlyError(e, '지식 그래프 확정');
     }
+  }
+
+  /// True when the request died in transit rather than being refused — the
+  /// server may well be finishing the work regardless.
+  bool _maybeStillRunning(DioException e) {
+    final status = e.response?.statusCode;
+    if (status != null) {
+      // Gateway/proxy timeouts: the hop gave up, the backend did not.
+      return status == 502 || status == 503 || status == 504;
+    }
+    return e.type == DioExceptionType.receiveTimeout ||
+        e.type == DioExceptionType.sendTimeout ||
+        e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.connectionError ||
+        e.type == DioExceptionType.unknown;
+  }
+
+  /// Why the last watched commit ended as `graph_failed`, straight off the
+  /// entry's pipeline trace, so the caller can show a cause instead of "실패".
+  String? _lastCommitError;
+
+  /// Poll the entry until its graph shows as committed, or [window] elapses.
+  ///
+  /// `graph_status: graph_ready` is authoritative — the server derives it from
+  /// the entry actually having graph nodes, not from a status column that could
+  /// be stale. Returns null if the commit genuinely never landed.
+  Future<Map<String, dynamic>?> _awaitGraphCommitted(
+    String entryId, {
+    Duration window = const Duration(minutes: 6),
+    Duration interval = const Duration(seconds: 3),
+  }) async {
+    _lastCommitError = null;
+    final deadline = DateTime.now().add(window);
+    while (true) {
+      try {
+        final entry = await getEntry(entryId);
+        final graphStatus = entry['graph_status']?.toString() ?? '';
+        final status = entry['status']?.toString() ?? '';
+        if (graphStatus == 'graph_ready' || status == 'graph_ready') {
+          return {
+            'entry_id': entryId,
+            'status': 'graph_ready',
+            'message': '',
+          };
+        }
+        if (graphStatus == 'graph_failed' || status == 'graph_failed') {
+          _lastCommitError = _traceError(entry);
+          return null;
+        }
+      } catch (_) {
+        // Still unreachable — keep waiting out the window.
+      }
+      if (!DateTime.now().isBefore(deadline)) return null;
+      await Future<void>.delayed(interval);
+    }
+  }
+
+  /// The last recorded step error on an entry's pipeline trace, if any.
+  String? _traceError(Map<String, dynamic> entry) {
+    final trace = entry['pipeline_trace'];
+    if (trace is! Map) return null;
+    final steps = trace['steps'];
+    if (steps is! List) return null;
+    for (final raw in steps.reversed) {
+      if (raw is! Map) continue;
+      final error = raw['error']?.toString().trim();
+      if (error != null && error.isNotEmpty && error != 'null') return error;
+    }
+    return null;
   }
 
   Future<Map<String, dynamic>> clearGraph() async {

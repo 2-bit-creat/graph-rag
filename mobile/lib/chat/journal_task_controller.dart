@@ -303,15 +303,23 @@ class JournalTaskController extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // The server commits in the background; this card's own polling (status
+      // graph_committing → graph_ready) is the progress UI, so don't hold the
+      // call open waiting for it.
       await apiClient.applyEntryGraph(
         entryId,
         claims: claims,
         contextType: contextType,
+        awaitCommit: false,
       );
-    } catch (_) {
+    } catch (e) {
       if (serial != _workSerial || _entryId != entryId) return;
+      // Only a commit that really did not land reaches here — the API client
+      // reconciles a dropped/timed-out request against the server first. Keep
+      // the reason: an unexplained "확정 실패" is what sent the user hunting.
       _phase = ComposePhase.error;
       _stageLabel = tr('journal.stageGraphCommitFailed');
+      _errorDetail = e.toString().replaceFirst('Exception: ', '');
       notifyListeners();
       return;
     }
@@ -326,10 +334,15 @@ class JournalTaskController extends ChangeNotifier {
     final busy = status == 'processing' ||
         status == 'graph_processing' ||
         graphStatus == 'graph_processing' ||
+        isGraphCommitting(_entry) ||
         (_phase == ComposePhase.working && _entryId != null);
     if (busy) {
+      // The draft itself takes ~10 s; a 4 s poll added up to 4 s of pure dead
+      // spinner after the server was already done — a third of the wait the user
+      // sees, spent on nothing. One entry polled at a time, so the cost is one
+      // cheap GET per 1.5 s while (and only while) work is in flight.
       _pollTimer ??= Timer.periodic(
-        const Duration(seconds: 4),
+        const Duration(milliseconds: 1500),
         (_) => refresh(),
       );
     } else {

@@ -66,6 +66,38 @@ void main() {
     expect(phase.awaitingSpeakerAck, isFalse);
   });
 
+  test('a commit in flight is work in progress, not a review gate', () {
+    // The commit runs as a background task on the server; the entry keeps its
+    // draft (so a failure is retryable), so this must not fall through to the
+    // "검토 필요" branch and ask the user to approve it a second time.
+    final phase = deriveChatJournalPhase(
+      {
+        'entry_source': 'precision_text',
+        'status': 'graph_committing',
+        'graph_status': 'graph_committing',
+        'transcript_ko': '대화를 일기로 정리했다.',
+      },
+      speakersAcknowledged: true,
+    );
+
+    expect(phase.phase, ComposePhase.working);
+    expect(phase.graphReviewPending, isFalse);
+    expect(isGraphCommitting({'status': 'graph_committing'}), isTrue);
+  });
+
+  test('a failed commit surfaces as an error', () {
+    final phase = deriveChatJournalPhase(
+      {
+        'status': 'graph_failed',
+        'graph_status': 'graph_failed',
+        'transcript_ko': '대화를 일기로 정리했다.',
+      },
+      speakersAcknowledged: true,
+    );
+
+    expect(phase.phase, ComposePhase.error);
+  });
+
   test('a staged draft waits for review, not completion', () {
     final phase = deriveChatJournalPhase(
       {

@@ -105,7 +105,10 @@ class PipelineTracer:
             (self.root / "audio").mkdir(exist_ok=True)
             (self.root / "steps").mkdir(exist_ok=True)
 
-        if resume:
+        # A trace dict without a run_id is a status-only stub (a stage writing
+        # graph_status onto an entry that never ran a traced step). It carries
+        # no run to resume, so start a fresh one instead of raising.
+        if resume and resume.get("run_id"):
             self.run_id = resume["run_id"]
             self.run = _run_from_dict(resume)
         else:

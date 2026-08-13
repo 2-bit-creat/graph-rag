@@ -2782,7 +2782,12 @@ async def clear_user_knowledge_graph(
         has_text = bool(entry.transcript_clean_native or entry.transcript_native)
         if entry.status == "graph_processing":
             entry.status = "ready" if has_text else "ready_no_graph"
-        elif entry.status in ("graph_staging_ready", "graph_ready", "completed"):
+        elif entry.status in (
+            "graph_staging_ready",
+            "graph_committing",
+            "graph_ready",
+            "completed",
+        ):
             entry.status = "ready" if has_text else "ready_no_graph"
         entry.graph_job_id = None
         entry.graph_build_requested_at = None
@@ -5384,6 +5389,7 @@ async def _journal_sidebar_preview(
     graph_status = (trace.get("graph_status") or "").strip()
     if not graph_status and status in (
         "graph_processing",
+        "graph_committing",
         "graph_ready",
         "graph_failed",
     ):
@@ -5394,6 +5400,8 @@ async def _journal_sidebar_preview(
         return "일기 처리 실패"
     if status == "graph_staging_ready" or graph_status == "graph_staging_ready":
         return "그래프 검토 필요"
+    if status == "graph_committing" or graph_status == "graph_committing":
+        return "지식그래프 확정 중…"
     if status in ("processing", "graph_processing") or graph_status == "graph_processing":
         return "일기 처리 중…"
     if status == "ready":

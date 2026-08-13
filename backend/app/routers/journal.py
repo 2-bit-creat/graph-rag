@@ -11,6 +11,7 @@ from ..deps import daily_quota, request_user_dep
 from ..rate_limit import KIND_STT
 from ..models import User
 from ..pipeline_runner import (
+    run_entry_graph_commit,
     run_entry_graph_draft,
     run_graph_ingest_pipeline,
     run_journal_fast_pipeline,
@@ -148,6 +149,7 @@ async def _entry_out(
     graph_status = trace.get("graph_status")
     if graph_status is None and entry.status in (
         "graph_processing",
+        "graph_committing",
         "graph_staging_ready",
         "graph_ready",
         "graph_failed",
@@ -491,6 +493,17 @@ async def build_entry_graph(
             },
         )
 
+    # A commit in flight is writing the very nodes a rebuild would replace;
+    # starting a draft over it would race the background worker.
+    if entry.status == "graph_committing" and not _is_stale_graph_build(
+        entry.graph_build_requested_at, datetime.now(UTC)
+    ):
+        return GraphBuildOut(
+            entry_id=entry_id,
+            status="graph_committing",
+            message="지식그래프 확정이 진행 중입니다",
+        )
+
     if entry.status == "graph_processing":
         now = datetime.now(UTC)
         if not _is_stale_graph_build(entry.graph_build_requested_at, now):
@@ -534,14 +547,16 @@ async def apply_entry_graph(
     *,
     background_tasks: BackgroundTasks,
 ) -> GraphBuildOut:
-    """Commit a reviewed graph draft into immutable graph nodes.
+    """Accept a reviewed graph draft for commit; the work runs in the background.
 
     Accepts the (possibly user-edited) claims from the review screen; falls back to
-    the stored ``graph_staging`` draft. After commit the graph is locked and
-    expression extraction is enqueued from the confirmed Statement nodes.
+    the stored ``graph_staging`` draft. Everything that can be judged immediately
+    (missing entry, already-committed graph, empty draft) is still answered
+    synchronously — only the commit itself is handed off, and the entry's status
+    (``graph_committing`` → ``graph_ready``/``graph_failed``) is what the client
+    polls. Committing inline meant a long conversation outran the client's
+    timeout and reported failure for a graph that was being written successfully.
     """
-    from ..routers.kg_build import persist_entry_claims
-
     entry = await crud.get_journal_entry(session, entry_id, user.id)
     if entry is None:
         raise HTTPException(status_code=404, detail="Entry not found")
@@ -569,65 +584,39 @@ async def apply_entry_graph(
             detail="검토할 그래프 드래프트가 없습니다. 먼저 그래프를 생성하세요.",
         )
 
-    # Trace the commit step so the pipeline flow view shows the full
-    # draft(LLM) → apply(commit) picture, not just the draft half.
-    tracer = PipelineTracer.resume(entry_id, entry.pipeline_trace)
-    tracer.run.current_phase = "slow_path"
-    step = tracer.begin_step(
-        "graph_apply",
-        "graph",
-        phase="slow_path",
-        input_data={
-            "claim_count": len(claims),
+    # A commit already in flight must not be started twice — the second run
+    # would race the first and could double-write nodes.
+    if entry.status == "graph_committing" and not _is_stale_graph_build(
+        entry.graph_build_requested_at, datetime.now(UTC)
+    ):
+        return GraphBuildOut(
+            entry_id=entry_id,
+            status="graph_committing",
+            message="지식그래프 확정이 이미 진행 중입니다",
+        )
+
+    # The reviewed claims become the draft of record, so the background worker
+    # commits exactly what the user approved even though the request is over.
+    trace = entry.pipeline_trace if isinstance(entry.pipeline_trace, dict) else {}
+    await crud.update_journal_entry(
+        session,
+        entry,
+        status="graph_committing",
+        graph_build_requested_at=datetime.now(UTC),
+        graph_staging={
+            **staging,
+            "claims": claims,
             "context_type": context_type,
             "user_edited": bool(payload and payload.claims),
         },
+        pipeline_trace={**trace, "graph_status": "graph_committing"},
     )
-    try:
-        summary = await persist_entry_claims(
-            session, user.id, entry_id, claims, context_type
-        )
-    except ValueError as exc:
-        tracer.finish_step(step, error=str(exc))
-        entry = await crud.get_journal_entry(session, entry_id, user.id)
-        if entry is not None:
-            await crud.update_journal_entry(
-                session, entry, pipeline_trace=tracer.checkpoint()
-            )
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    tracer.finish_step(step, output=summary)
-    trace = tracer.finish("completed")
-    trace["graph_status"] = "graph_ready"
-    trace["ingest_summary"] = summary
-
-    entry = await crud.get_journal_entry(session, entry_id, user.id)
-    if entry is not None:
-        await crud.update_journal_entry(
-            session,
-            entry,
-            status="graph_ready",
-            graph_staging=None,
-            pipeline_trace=trace,
-        )
-
-    statement_node_ids = [
-        uuid.UUID(value) for value in (summary.get("statement_node_ids") or [])
-    ]
-    if statement_node_ids:
-        from ..quiz_materials import analyse_nodes_and_refill_background
-
-        background_tasks.add_task(
-            analyse_nodes_and_refill_background,
-            user.id,
-            statement_node_ids,
-            crud.get_effective_target_languages(user),
-        )
-
+    background_tasks.add_task(run_entry_graph_commit, entry_id, user.id)
     return GraphBuildOut(
         entry_id=entry_id,
-        status="graph_ready",
-        message="지식그래프 확정 완료",
+        status="graph_committing",
+        message="지식그래프 확정을 시작했습니다",
     )
 
 

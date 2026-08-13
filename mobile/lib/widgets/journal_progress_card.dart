@@ -426,6 +426,8 @@ class _CardBody extends StatelessWidget {
         final graphStatus = entry?['graph_status']?.toString() ?? '';
         if (status == 'graph_processing' ||
             graphStatus == 'graph_processing' ||
+            status == 'graph_committing' ||
+            graphStatus == 'graph_committing' ||
             label.contains('그래프') ||
             label.toLowerCase().contains('graph')) {
           return 2;
@@ -714,12 +716,14 @@ class _InlineGraphReview extends StatelessWidget {
         ),
       );
     }
+    // No height cap: the chat presentation scrolls with the feed. Capping it put
+    // a second viewport inside the feed's, which ate the drag gestures over the
+    // draft and left its top edge permanently clipped.
     return GraphReviewPanel(
       key: ValueKey('graph-review-$entryId'),
       entryId: entryId,
       staging: Map<String, dynamic>.from(staging),
       presentation: GraphReviewPresentation.chat,
-      maxBodyHeight: 420,
       onReopenSpeakers: onReopenSpeakers,
     );
   }

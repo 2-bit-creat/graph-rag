@@ -124,6 +124,21 @@ async def _staged_source_entry(
     return entry
 
 
+async def _apply_and_commit(entry_id, payload, user, db_session):
+    """Call /graph/apply, then run the background task it queued.
+
+    The endpoint accepts the commit and hands the work off (see
+    ``run_entry_graph_commit``), so a test that asserts on committed nodes has
+    to drive the background task the way Starlette does after responding.
+    """
+    tasks = BackgroundTasks()
+    out = await apply_entry_graph(
+        entry_id, payload, user, db_session, background_tasks=tasks
+    )
+    await tasks()
+    return out
+
+
 @pytest.mark.asyncio
 async def test_source_attributed_apply_creates_source_head(db_session, iso_user):
     """attribution_kind='source' 엔트리 커밋 → head 노드 타입은 Source."""
@@ -139,8 +154,8 @@ async def test_source_attributed_apply_creates_source_head(db_session, iso_user)
         }],
     )
 
-    out = await apply_entry_graph(entry.id, None, iso_user, db_session, background_tasks=BackgroundTasks())
-    assert out.status == "graph_ready"
+    out = await _apply_and_commit(entry.id, None, iso_user, db_session)
+    assert out.status == "graph_committing"
 
     nodes = await crud.get_all_nodes(db_session, iso_user.id)
     head = next(n for n in nodes if n.name == "Claude")
@@ -178,8 +193,8 @@ async def test_speaker_type_restored_when_client_drops_it(db_session, iso_user):
         context_type="뉴스",
     )
 
-    out = await apply_entry_graph(entry.id, payload, iso_user, db_session, background_tasks=BackgroundTasks())
-    assert out.status == "graph_ready"
+    out = await _apply_and_commit(entry.id, payload, iso_user, db_session)
+    assert out.status == "graph_committing"
 
     nodes = await crud.get_all_nodes(db_session, iso_user.id)
     head = next(n for n in nodes if n.name == "한국경제")

@@ -59,9 +59,13 @@ async def _apply(db_session, user, entry, concepts):
         }],
         context_type="개인일기",
     )
-    return await apply_entry_graph(
-        entry.id, payload, user, db_session, background_tasks=BackgroundTasks()
+    # The endpoint only accepts the commit; run the background task it queued.
+    tasks = BackgroundTasks()
+    out = await apply_entry_graph(
+        entry.id, payload, user, db_session, background_tasks=tasks
     )
+    await tasks()
+    return out
 
 
 async def _nodes_by_name(db_session, user_id):

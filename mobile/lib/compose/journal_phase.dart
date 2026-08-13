@@ -21,6 +21,18 @@ bool speakersPending(Map<String, dynamic>? entry) {
   return false;
 }
 
+/// The reviewed draft is being committed into graph nodes on the server.
+///
+/// A separate state from `graph_processing` (draft extraction) because the two
+/// mean different things to the user: one is "AI가 초안을 만드는 중", the other is
+/// "확정 중". The commit runs as a background task, so this is what the client
+/// polls on instead of holding a request open past its timeout.
+bool isGraphCommitting(Map<String, dynamic>? entry) {
+  final status = entry?['status']?.toString() ?? '';
+  final graphStatus = entry?['graph_status']?.toString() ?? '';
+  return status == 'graph_committing' || graphStatus == 'graph_committing';
+}
+
 /// Graph draft is ready and waiting for user review/commit.
 bool isGraphReviewPending(Map<String, dynamic>? entry) {
   final status = entry?['status']?.toString() ?? '';
@@ -46,6 +58,9 @@ bool isGraphReviewPending(Map<String, dynamic>? entry) {
   if (status == 'processing') {
     phase = ComposePhase.working;
     label = tr('journal.stageTranscribing');
+  } else if (status == 'graph_committing' || graphStatus == 'graph_committing') {
+    phase = ComposePhase.working;
+    label = tr('journal.stageGraphCommitting');
   } else if (status == 'graph_processing' || graphStatus == 'graph_processing') {
     phase = ComposePhase.working;
     label = tr('journal.stageGraphDrafting');
@@ -140,6 +155,7 @@ bool hasSpeakerScript(Map<String, dynamic>? entry) {
   final status = entry['status']?.toString() ?? '';
   final graphStatus = entry['graph_status']?.toString() ?? '';
   final graphBuilt = status == 'graph_ready' || graphStatus == 'graph_ready';
+  final committing = isGraphCommitting(entry);
   final graphInFlight =
       status == 'graph_processing' || graphStatus == 'graph_processing';
 
@@ -165,6 +181,19 @@ bool hasSpeakerScript(Map<String, dynamic>? entry) {
       label: base.label,
       speakersPending: base.speakersPending,
       graphReviewPending: base.graphReviewPending,
+      awaitingSpeakerAck: false,
+    );
+  }
+
+  // 2.5) The user approved the draft and the server is committing it. The
+  //      draft is still stored (so a failed commit can be retried), which is
+  //      why this is checked before the review gate below.
+  if (committing) {
+    return (
+      phase: ComposePhase.working,
+      label: tr('journal.stageGraphCommitting'),
+      speakersPending: base.speakersPending,
+      graphReviewPending: false,
       awaitingSpeakerAck: false,
     );
   }
