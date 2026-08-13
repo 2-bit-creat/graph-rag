@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
-import 'mention_editor_core.dart' show colorForSpeaker;
+import 'mention_editor_core.dart'
+    show CaretStableField, NoTextScaling, colorForSpeaker, textScaleBakedIn;
 
 /// Review and correct OCR output before it becomes graph input.
 ///
@@ -35,6 +36,10 @@ class OcrReviewSheet extends StatefulWidget {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
+      // Without this the sheet is capped at half the screen, which on a phone
+      // with the keyboard up leaves the text field a couple of lines tall.
+      constraints: const BoxConstraints(maxWidth: 640),
+      useSafeArea: true,
       builder: (_) => OcrReviewSheet(
         initialText: initialText,
         speakers: speakers,
@@ -89,7 +94,28 @@ class _OcrReviewSheetState extends State<OcrReviewSheet> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     // Leave room for the keyboard: the field is the whole point of the sheet.
+    //
+    // Padding deflates the constraints it passes down, so subtracting the inset
+    // here is also what bounds the Column below — the field is `Flexible`, and
+    // takes whatever the fixed rows leave rather than a fraction of the *full*
+    // screen. Sizing it at 42% of the screen regardless of the keyboard is what
+    // made this sheet overflow by ~200px the moment the keyboard came up, with
+    // the text under the fold unreachable because nothing here scrolled.
     final inset = MediaQuery.viewInsetsOf(context).bottom;
+    final keyboardOpen = inset > 0;
+    // What is actually left to lay out in, once the keyboard and the sheet's
+    // own bottom gap are gone. Every optional row below is sized against this
+    // rather than against the screen, so a short phone under a tall keyboard
+    // sheds chrome instead of overflowing.
+    final available =
+        MediaQuery.sizeOf(context).height - inset - AppSpacing.lg;
+    final roomy = available > 420;
+    // Landscape, a split-screen browser, or a keyboard with a suggestion strip
+    // on a small phone. The title is the first thing to go: the drag handle
+    // above it already reads as a sheet, and the field is what the learner came
+    // for.
+    final tiny = available < 260;
+    final pillCap = roomy ? 108.0 : (available * 0.14).clamp(24.0, 64.0);
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -102,24 +128,33 @@ class _OcrReviewSheetState extends State<OcrReviewSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(tr('ocr.reviewTitle'), style: theme.textTheme.titleMedium),
-          const SizedBox(height: AppSpacing.sm),
+          if (!tiny) ...[
+            Text(tr('ocr.reviewTitle'), style: theme.textTheme.titleMedium),
+            const SizedBox(height: AppSpacing.sm),
+          ],
           // The speakers the photo produced, in the colors they will carry in
           // the composer and on the graph. Text alone ("화자 2명 인식: 제니, 나")
           // makes the reader match names to "@제니:" prefixes by eye; the color
           // is the thread that survives into the composer badges, so showing it
           // here is what makes a wrong split obvious at a glance.
           if (widget.speakers.isNotEmpty) ...[
-            Wrap(
-              spacing: 6,
-              runSpacing: 4,
-              children: [
-                for (final name in widget.speakers)
-                  _SpeakerPill(
-                    name: name,
-                    color: colorForSpeaker(name, widget.speakers),
-                  ),
-              ],
+            // A group chat screenshot can name a dozen people. Cap the rail and
+            // let it scroll rather than let it eat the field's height.
+            ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: pillCap),
+              child: SingleChildScrollView(
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    for (final name in widget.speakers)
+                      _SpeakerPill(
+                        name: name,
+                        color: colorForSpeaker(name, widget.speakers),
+                      ),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(height: AppSpacing.md),
           ],
@@ -128,7 +163,11 @@ class _OcrReviewSheetState extends State<OcrReviewSheet> {
           // stated confidence is not that measurement — so the honest UI says
           // "check this" every time rather than implying a number it does not
           // have.
-          Container(
+          //
+          // It does step aside once the keyboard is up: by then it has been
+          // read, and the room it occupies is room the text being corrected
+          // needs more.
+          if (!keyboardOpen && roomy) Container(
             margin: const EdgeInsets.only(bottom: AppSpacing.md),
             padding: const EdgeInsets.all(AppSpacing.md),
             decoration: BoxDecoration(
@@ -152,27 +191,68 @@ class _OcrReviewSheetState extends State<OcrReviewSheet> {
               ],
             ),
           ),
-          ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.sizeOf(context).height * 0.42,
-            ),
-            child: TextField(
-              controller: _controller,
-              maxLines: null,
-              expands: false,
-              autofocus: false,
-              keyboardType: TextInputType.multiline,
-              decoration: InputDecoration(
-                hintText: tr('ocr.emptyResultHint'),
-                filled: true,
-                fillColor: scheme.surfaceContainerLow,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+          // Flexible, not a fixed fraction: it grows to fill the sheet when
+          // there is room and shrinks under the keyboard instead of pushing the
+          // buttons off the bottom.
+          //
+          // The scrolling belongs to [CaretStableField], NOT to the field. A
+          // bounded height plus `maxLines: null` does keep a long transcript
+          // reachable, but it also gives `EditableText` its own scroll viewport
+          // — and `_scheduleShowCaretOnScreen` drags that viewport to the caret
+          // on every focus gain and every keyboard-inset change. On web the
+          // tapped offset arrives from the hidden DOM input a frame *after*
+          // focus, so the reveal still saw the OLD caret and scrolled back to
+          // it: tapping a line high up in a photographed conversation looked
+          // ignored, then jumped. This is the same bug the chat and journal
+          // composers fought; the fix is the same three pieces, and all three
+          // are load-bearing.
+          //
+          // The fill and border moved out to this box so they stay put instead
+          // of scrolling away with the text — the field inside is now taller
+          // than what is visible.
+          Flexible(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+                border: Border.all(color: scheme.outline),
+              ),
+              child: CaretStableField(
+                maxHeight: MediaQuery.sizeOf(context).height * 0.42,
+                // Scale baked into the style, scaling switched off below it:
+                // the canvas paints with `MediaQuery.textScalerOf`, while the
+                // hidden DOM input that resolves a tap into an offset gets the
+                // raw `style.fontSize`. At any scale but 1.0 the two disagree
+                // and the caret lands to the right of the press, further right
+                // the longer the line.
+                child: NoTextScaling(
+                  child: TextField(
+                    controller: _controller,
+                    maxLines: null,
+                    expands: false,
+                    autofocus: false,
+                    keyboardType: TextInputType.multiline,
+                    style: textScaleBakedIn(
+                      context,
+                      (theme.textTheme.bodyLarge ??
+                              const TextStyle(fontSize: 16))
+                          .copyWith(height: 1.5),
+                    ),
+                    decoration: InputDecoration(
+                      hintText: tr('ocr.emptyResultHint'),
+                      filled: false,
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 12,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
-          const SizedBox(height: AppSpacing.lg),
+          SizedBox(height: keyboardOpen ? AppSpacing.md : AppSpacing.lg),
           Row(
             children: [
               Expanded(

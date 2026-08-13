@@ -518,14 +518,33 @@ async def read_node_study_quizzes(
             .limit(20)
         )
     ).all()
+    node_runs = [
+        run for run in recent_runs if str(node_id) in (run.node_ids or [])
+    ]
     active_run = next(
-        (
-            run for run in recent_runs
-            if str(node_id) in (run.node_ids or [])
-            and run.status in {"queued", "running"}
-        ),
+        (run for run in node_runs if run.status in {"queued", "running"}),
         None,
     )
+    # Report the latest run even once it has finished, and why it finished.
+    #
+    # Reporting only the *active* run meant a run that failed simply vanished
+    # from this payload: the graph card kept polling a "generation" that read
+    # "idle" with no new quizzes, until its own 3-minute clock ran out and it
+    # announced "문제를 만들지 못했어요" — a client timeout wearing the costume of
+    # a server error, with the actual error nowhere on screen. The terminal
+    # statuses are not in {queued, running}, so nothing that reads this field
+    # to mean "still preparing" changes behaviour.
+    latest_run = active_run or (node_runs[0] if node_runs else None)
+    run_error: str | None = None
+    if latest_run is not None and latest_run.status in {"failed", "partial"}:
+        run_error = next(
+            (
+                str(item.get("error"))
+                for item in (latest_run.items or [])
+                if item.get("status") == "failed" and item.get("error")
+            ),
+            None,
+        )
     # A Statement edited after generation is left archived-and-empty on purpose;
     # only the learner's 재생성 press rebuilds it, so auto-analysis stays off here.
     needs_regeneration = any(row.status == "stale" for row in material_rows)
@@ -554,9 +573,15 @@ async def read_node_study_quizzes(
             "by_language": expression_by_language,
         },
         "generation": (
-            {"run_id": str(active_run.id), "status": active_run.status}
-            if active_run is not None
-            else {"run_id": None, "status": "idle"}
+            {
+                "run_id": str(latest_run.id),
+                "status": latest_run.status,
+                "error": run_error,
+                "completed_count": latest_run.completed_count,
+                "failed_count": latest_run.failed_count,
+            }
+            if latest_run is not None
+            else {"run_id": None, "status": "idle", "error": None}
         ),
         "needs_regeneration": needs_regeneration,
         "word": {

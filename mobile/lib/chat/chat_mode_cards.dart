@@ -8,6 +8,7 @@ import '../widgets/quiz/quiz_audio_button.dart';
 import '../widgets/quiz/quiz_viewport_scope.dart';
 import '../widgets/quiz/scramble_quiz_card.dart';
 import '../widgets/measure_size.dart';
+import '../widgets/scale_to_fit.dart';
 
 /// Light "sheet" wrapper so the light-themed quiz/draft cards stay legible
 /// inside the dark chat panel.
@@ -140,9 +141,21 @@ class _CardShell extends StatelessWidget {
                 if (titleGap != null) titleGap,
                 Flexible(
                   fit: FlexFit.loose,
-                  child: SingleChildScrollView(
-                    primary: false,
-                    child: measuredChild,
+                  // Shrink to fit before scrolling. Scrolling never hides the
+                  // wrong thing by accident — it hides whatever is at the
+                  // bottom, which for a quiz is the verdict, the hint, and the
+                  // Korean gloss. A uniformly smaller card keeps all of it on
+                  // screen at once, which is the trade worth making. The scroll
+                  // view stays underneath for the questions too long to rescue
+                  // without making the text unreadable.
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => SingleChildScrollView(
+                      primary: false,
+                      child: ScaleToFit(
+                        maxHeight: constraints.maxHeight,
+                        child: measuredChild,
+                      ),
+                    ),
                   ),
                 ),
               ],

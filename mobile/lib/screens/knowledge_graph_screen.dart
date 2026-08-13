@@ -1636,7 +1636,26 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     String nodeId, {
     required bool regenerate,
   }) async {
-    if (_generationStatus == 'running') return;
+    // One generation at a time — but say so. Returning silently left the
+    // learner pressing 생성 on a second Statement with no response at all, and
+    // no way to tell a busy queue from a dead button.
+    if (_generationStatus == 'running') {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(tr('kg.generationBusy', {
+            'name': _generationNodeName ?? '',
+          })),
+          action: _generationNodeId == null
+              ? null
+              : SnackBarAction(
+                  label: tr('kg.tapToOpen'),
+                  onPressed: () => unawaited(_openGenerationNode()),
+                ),
+        ),
+      );
+      return;
+    }
     final language = await _pickGenerationLanguage(nodeId);
     if (language == null || !mounted) return;
     final before =
@@ -1689,17 +1708,45 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
             _selectedStudyLoading = false;
           });
         }
-        final status =
-            ((data['generation'] as Map?)?['status'] ?? 'idle').toString();
+        final generation = (data['generation'] as Map?) ?? const {};
+        final status = (generation['status'] ?? 'idle').toString();
         final count =
             (((data['word'] as Map?)?['count']) as num?)?.toInt() ?? 0;
-        final done = !const {'queued', 'running'}.contains(status) &&
-            (regenerate
-                ? data['needs_regeneration'] != true && count > 0
-                : count > beforeCount);
-        if (!done) continue;
+        // A run that ended badly is terminal news, not something to keep
+        // waiting on. Surface the worker's own error instead of spinning for
+        // three more minutes and then blaming a timeout.
+        if (status == 'failed') {
+          setState(() {
+            _generationStatus = 'failed';
+            _generationError =
+                generation['error']?.toString() ?? tr('kg.generationFailed');
+            _selectedRegenerating = false;
+            _selectedGenerating = false;
+          });
+          return;
+        }
+        final settled = !const {'queued', 'running'}.contains(status);
+        final produced = regenerate
+            ? data['needs_regeneration'] != true && count > 0
+            : count > beforeCount;
+        // A finished run that added nothing (every expression already had its
+        // card, or the quality gate rejected the lot) used to look identical to
+        // one still working, and rode the loop to the timeout. Stop on the run
+        // itself, and report the empty result as its own outcome.
+        if (!settled) continue;
+        if (!produced && status != 'idle') {
+          setState(() {
+            _generationStatus = 'empty';
+            _generationError = generation['error']?.toString();
+            _selectedRegenerating = false;
+            _selectedGenerating = false;
+          });
+          return;
+        }
+        if (!produced) continue;
         setState(() {
           _generationStatus = 'complete';
+          _generationError = null;
           _selectedRegenerating = false;
           _selectedGenerating = false;
         });
@@ -1715,8 +1762,11 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       }
     }
     if (mounted && _generationNodeId == nodeId) {
+      // Its own status, not 'failed'. This clock running out says the client
+      // gave up watching; the run on the server may still be working, and
+      // calling that a failure is a claim this code cannot make.
       setState(() {
-        _generationStatus = 'failed';
+        _generationStatus = 'timeout';
         _generationError = tr('kg.generationTimedOut');
         _selectedRegenerating = false;
         _selectedGenerating = false;
@@ -1724,7 +1774,12 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     }
   }
 
-  Future<void> _openCompletedGeneration() async {
+  /// Open the Statement the pill is reporting on, study section expanded.
+  ///
+  /// Reachable while the run is still going, not only once it finishes: the
+  /// pill names a node, so tapping it should go there — waiting is not a reason
+  /// to make it inert.
+  Future<void> _openGenerationNode() async {
     final nodeId = _generationNodeId;
     if (nodeId == null) return;
     final node = (_graph?['nodes'] as List<dynamic>? ?? const [])
@@ -2253,11 +2308,19 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
               nodeName: _generationNodeName ?? '',
               language: _generationLanguage,
               error: _generationError,
-              onTap: _generationStatus == 'complete'
-                  ? _openCompletedGeneration
-                  : _generationStatus == 'failed'
-                      ? () => setState(() => _generationStatus = null)
-                      : null,
+              // Always tappable. 'running' and 'empty' go to the Statement (the
+              // one place that shows what it does and does not have yet); the
+              // outcomes with nothing to show just dismiss.
+              onTap: const {'failed', 'timeout'}.contains(_generationStatus)
+                  ? () => setState(() {
+                        _generationStatus = null;
+                        _generationError = null;
+                      })
+                  : _openGenerationNode,
+              onDismiss: () => setState(() {
+                _generationStatus = null;
+                _generationError = null;
+              }),
             ),
           ),
       ],
@@ -3392,6 +3455,7 @@ class _GenerationStatusPill extends StatelessWidget {
     required this.language,
     required this.error,
     required this.onTap,
+    this.onDismiss,
   });
 
   final String status;
@@ -3399,17 +3463,43 @@ class _GenerationStatusPill extends StatelessWidget {
   final String? language;
   final String? error;
   final VoidCallback? onTap;
+  final VoidCallback? onDismiss;
 
   @override
   Widget build(BuildContext context) {
     final shell = context.shell;
+    final running = status == 'running';
     final complete = status == 'complete';
     final failed = status == 'failed';
+    final timedOut = status == 'timeout';
+    final empty = status == 'empty';
     final tone = complete
         ? AppColors.accent
         : failed
             ? Theme.of(context).colorScheme.error
-            : shell.primaryText;
+            : (timedOut || empty)
+                ? AppColors.accentWarm
+                : shell.primaryText;
+    final title = complete
+        ? tr('kg.generationComplete')
+        : failed
+            ? tr('kg.generationFailed')
+            : timedOut
+                ? tr('kg.generationTimedOut')
+                : empty
+                    ? tr('kg.generationEmpty')
+                    : tr('kg.generationInProgress');
+    // The subtitle used to be the language plus a fixed reassurance, and the
+    // real reason a run failed lived only in a Tooltip — which a touch device
+    // never shows. Put it where it can actually be read.
+    final detail = (failed || timedOut) && (error?.isNotEmpty ?? false)
+        ? error!
+        : empty
+            ? tr('kg.generationEmptyHint')
+            : language == null
+                ? null
+                : '${langLabel(language!)} · '
+                    '${complete ? tr('kg.tapToOpen') : running ? tr('kg.youCanKeepBrowsing') : tr('kg.tapToOpen')}';
     return Tooltip(
       message: failed ? (error ?? '') : nodeName,
       child: Material(
@@ -3435,7 +3525,7 @@ class _GenerationStatusPill extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (status == 'running')
+                if (running)
                   SizedBox(
                     width: 16,
                     height: 16,
@@ -3448,7 +3538,11 @@ class _GenerationStatusPill extends StatelessWidget {
                   Icon(
                     complete
                         ? Icons.check_circle_outline_rounded
-                        : Icons.error_outline_rounded,
+                        : empty
+                            ? Icons.inbox_rounded
+                            : timedOut
+                                ? Icons.schedule_rounded
+                                : Icons.error_outline_rounded,
                     size: 18,
                     color: tone,
                   ),
@@ -3459,11 +3553,7 @@ class _GenerationStatusPill extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        complete
-                            ? tr('kg.generationComplete')
-                            : failed
-                                ? tr('kg.generationFailed')
-                                : tr('kg.generationInProgress'),
+                        title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -3472,10 +3562,10 @@ class _GenerationStatusPill extends StatelessWidget {
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                      if (language != null)
+                      if (detail != null)
                         Text(
-                          '${langLabel(language!)} · ${complete ? tr('kg.tapToOpen') : tr('kg.youCanKeepBrowsing')}',
-                          maxLines: 1,
+                          detail,
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style:
                               TextStyle(fontSize: 10, color: shell.mutedText),
@@ -3483,6 +3573,24 @@ class _GenerationStatusPill extends StatelessWidget {
                     ],
                   ),
                 ),
+                // A run still going has no dismiss — its own completion clears
+                // it. Every settled outcome does, so a pill the learner has
+                // read never has to be waited out.
+                if (!running && onDismiss != null) ...[
+                  const SizedBox(width: 4),
+                  InkWell(
+                    onTap: onDismiss,
+                    borderRadius: BorderRadius.circular(12),
+                    child: Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: Icon(
+                        Icons.close_rounded,
+                        size: 16,
+                        color: shell.mutedText,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

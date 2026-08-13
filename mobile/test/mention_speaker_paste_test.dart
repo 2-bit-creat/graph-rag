@@ -46,5 +46,30 @@ void main() {
     test('does not treat an email address as a mention', () {
       expect(unregisteredMentionTokens('보내기: a@b.com', ['나']), isEmpty);
     });
+
+    // A KakaoTalk screenshot names people "Unist 박병준". The token scan stops
+    // at the space, so it saw "Unist" — a name nothing had registered — and the
+    // composer demanded confirmation for speakers it had already confirmed and
+    // colored. Nothing the learner could do cleared it.
+    test('says nothing about a known speaker whose name contains a space', () {
+      const text = '@Unist 박병준: 근데 워터파크도 좋음\n'
+          '@Unist 박의준: 고럼 계곡으로 가는구마\n'
+          '@Unist 이영호: 출근완';
+      expect(
+        unregisteredMentionTokens(
+          text,
+          ['Unist 박병준', 'Unist 박의준', 'Unist 이영호'],
+        ),
+        isEmpty,
+      );
+    });
+
+    test('still flags an unknown speaker among known multi-word ones', () {
+      const text = '@Unist 박병준: 좋음\n@Unist 정승현: 나도';
+      expect(
+        unregisteredMentionTokens(text, ['Unist 박병준']),
+        ['Unist'],
+      );
+    });
   });
 }

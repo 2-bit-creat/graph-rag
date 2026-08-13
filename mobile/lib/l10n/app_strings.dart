@@ -1260,6 +1260,9 @@ const Map<String, String> _ko = {
   'kg.generationComplete': '문제가 완성됐어요',
   'kg.generationFailed': '문제를 만들지 못했어요',
   'kg.generationTimedOut': '생성이 예상보다 오래 걸리고 있습니다',
+  'kg.generationEmpty': '새로 추가할 문제가 없어요',
+  'kg.generationEmptyHint': '이 진술의 표현에는 이미 카드가 다 있어요. 눌러서 확인해 보세요.',
+  'kg.generationBusy': '\'{name}\'의 문제를 아직 만들고 있어요. 끝난 뒤에 다시 눌러 주세요.',
   'kg.youCanKeepBrowsing': '다른 작업을 해도 됩니다',
   'kg.tapToOpen': '눌러서 보기',
   'kg.reviewShort': '복습',
@@ -2590,6 +2593,11 @@ const Map<String, String> _en = {
   'kg.generationComplete': 'Questions are ready',
   'kg.generationFailed': 'Could not create questions',
   'kg.generationTimedOut': 'Generation is taking longer than expected',
+  'kg.generationEmpty': 'No new questions to add',
+  'kg.generationEmptyHint':
+      'Every expression in this statement already has a card. Tap to see them.',
+  'kg.generationBusy':
+      'Still creating questions for "{name}". Try this one once that finishes.',
   'kg.youCanKeepBrowsing': 'You can keep browsing',
   'kg.tapToOpen': 'Tap to open',
   'kg.reviewShort': 'Review',

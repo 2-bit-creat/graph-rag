@@ -106,9 +106,51 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
     super.dispose();
   }
 
+  /// The feedback that appears *below* the question, and the reason the card
+  /// needs to steer its own scroll.
+  ///
+  /// With the keyboard up the card gets roughly 340px of a ~500px question, so
+  /// it scrolls internally. Scroll position 0 shows the cloze sentence — the
+  /// right default while answering. But a graded attempt appends the answer
+  /// panel and the retry line underneath, and with the composer owning the
+  /// input there is no tap inside the card to bring them into view: the learner
+  /// types, is told nothing they can see, and types again.
+  final _answerPanelKey = GlobalKey();
+  final _wrongHintKey = GlobalKey();
+
+  /// Bring whichever feedback just appeared into view, once it has been laid
+  /// out. `ensureVisible` scrolls the minimum distance, so the cloze sentence
+  /// stays on screen whenever both can fit.
+  void _revealFeedbackAfterBuild() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      for (final key in [_answerPanelKey, _wrongHintKey]) {
+        final context = key.currentContext;
+        if (context == null) continue;
+        Scrollable.ensureVisible(
+          context,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+        );
+        return;
+      }
+    });
+  }
+
   @override
   void didUpdateWidget(covariant ClozeQuizCard oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // Grading is what makes feedback appear, and in the composer-driven word
+    // quiz it arrives as a new `externalResult` rather than a setState here.
+    if (_effectiveGrade != null || _effectiveAnswerRevealed) {
+      final wasHidden = oldWidget.externalResult == null &&
+          !oldWidget.externalSolved &&
+          !_answerRevealed;
+      if (wasHidden || oldWidget.externalResult != widget.externalResult) {
+        _revealFeedbackAfterBuild();
+      }
+    }
     // The live word-by-word matcher (ChatSessionController.updateClozeDraft)
     // flips externalSolved the instant every word matches, with no button
     // press involved — play the same confirmation sound the button-driven
@@ -449,6 +491,7 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
       _answerRevealed = true;
       if (fillField && blank.isNotEmpty) _controller.text = blank;
     });
+    _revealFeedbackAfterBuild();
     _playAnswerAudioAfterBuild();
     // Same focus-stealing issue as the hint button — hand focus back to the
     // composer so the learner can retype the revealed answer immediately.
@@ -491,6 +534,7 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
           _controller.clear();
         }
       });
+      _revealFeedbackAfterBuild();
       if (correct) _playAnswerAudioAfterBuild();
       if (correct) widget.onSolved();
       return;
@@ -794,20 +838,26 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
         ],
         if (_effectiveAnswerRevealed && blank.isNotEmpty) ...[
           SizedBox(height: sectionGap),
-          _answerPanel(
-              blank: blank, wrongFirstTry: wrongFirstTry, dense: dense),
+          KeyedSubtree(
+            key: _answerPanelKey,
+            child: _answerPanel(
+                blank: blank, wrongFirstTry: wrongFirstTry, dense: dense),
+          ),
         ],
         if (wrongFirstTry) ...[
           const SizedBox(height: 7),
-          Text(
-            _effectiveAnswerRevealed
-                ? (widget.externalInput
-                    ? tr('clozeCard.retypeExternalAfterReveal')
-                    : tr('clozeCard.retypeInternalAfterReveal'))
-                : (widget.externalInput
-                    ? tr('clozeCard.wrongExternalHint')
-                    : tr('clozeCard.wrongInternalHint')),
-            style: const TextStyle(fontSize: 13, color: Color(0xFFFF8A80)),
+          KeyedSubtree(
+            key: _wrongHintKey,
+            child: Text(
+              _effectiveAnswerRevealed
+                  ? (widget.externalInput
+                      ? tr('clozeCard.retypeExternalAfterReveal')
+                      : tr('clozeCard.retypeInternalAfterReveal'))
+                  : (widget.externalInput
+                      ? tr('clozeCard.wrongExternalHint')
+                      : tr('clozeCard.wrongInternalHint')),
+              style: const TextStyle(fontSize: 13, color: Color(0xFFFF8A80)),
+            ),
           ),
         ],
         if (hintKo.isNotEmpty && !_effectiveAnswerRevealed) ...[

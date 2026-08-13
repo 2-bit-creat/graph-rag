@@ -99,7 +99,13 @@ class GraphChatPanel extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // 44px of grab area is right for a sheet you resize by hand, and
+              // wrong when the keyboard has already taken more than half the
+              // screen and a quiz question is scrolling inside what's left. It
+              // shrinks rather than disappears: the drag is still how the sheet
+              // gets out of the way, so the target has to stay hittable.
               _SheetDragHandle(
+                compact: quizMode && MediaQuery.viewInsetsOf(context).bottom > 0,
                 onDragUpdate: onHandleDragUpdate,
                 onDragEnd: onHandleDragEnd,
               ),
@@ -314,10 +320,19 @@ class GraphChatMessage {
 /// already recognizes a drag gesture anywhere over its content), but without
 /// it there's no visual cue the sheet can be resized.
 class _SheetDragHandle extends StatelessWidget {
-  const _SheetDragHandle({this.onDragUpdate, this.onDragEnd});
+  const _SheetDragHandle({
+    this.onDragUpdate,
+    this.onDragEnd,
+    this.compact = false,
+  });
 
   final ValueChanged<double>? onDragUpdate;
   final VoidCallback? onDragEnd;
+
+  /// Halve the grab area when the space it costs is worth more than the
+  /// comfort it buys. 20px still clears the ~44px minimum touch target once
+  /// the panel's own top edge is counted.
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -328,9 +343,9 @@ class _SheetDragHandle extends StatelessWidget {
           : (details) => onDragUpdate!(details.primaryDelta ?? 0),
       onVerticalDragEnd: onDragEnd == null ? null : (_) => onDragEnd!(),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: EdgeInsets.symmetric(vertical: compact ? 2 : 8),
         child: SizedBox(
-          height: 28,
+          height: compact ? 16 : 28,
           child: Center(
             child: Container(
               width: 36,

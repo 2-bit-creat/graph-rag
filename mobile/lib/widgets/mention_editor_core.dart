@@ -115,12 +115,27 @@ List<String> atMentionLineSpeakers(String text) {
 
 /// "@무언가" tokens that are not (yet) registered speakers. Used to warn before
 /// a save silently drops them into the previous speaker's text.
+///
+/// The token regex stops at the first space, so it cannot decide on its own
+/// whether an "@" is unknown: a registered speaker whose name *contains* a
+/// space ("Unist 박병준" — the shape a KakaoTalk screenshot produces) yielded the
+/// token "Unist", which matched nothing and made the composer demand
+/// confirmation for a speaker it had already confirmed and colored. So resolve
+/// the known names against the text first, and only scan the "@" positions no
+/// known name claimed.
 List<String> unregisteredMentionTokens(String text, List<String> knownNames) {
   if (!text.contains('@')) return const <String>[];
   final known = knownNames.map((n) => n.toLowerCase()).toSet();
+  // Longest first, so "Unist 박병준" wins over a bare "Unist" that is also known.
+  final matchable = knownNames.where((n) => n.isNotEmpty).toList()
+    ..sort((a, b) => b.length.compareTo(a.length));
+  final claimed = {for (final hit in findMentions(text, matchable)) hit.start};
   final seen = <String>{};
   final out = <String>[];
   for (final m in RegExp(r'(?:^|\s)@([^\s:：,.!?]{1,20})').allMatches(text)) {
+    // The leading (?:^|\s) may be empty, so '@' is at the match start or one in.
+    final at = text[m.start] == '@' ? m.start : m.start + 1;
+    if (claimed.contains(at)) continue;
     final name = normalizeMentionName(m.group(1)!);
     if (name.isEmpty) continue;
     final key = name.toLowerCase();
@@ -880,18 +895,31 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     // A confirmed mention is followed by one separator before its message.
     // Detect it from the text itself (not ephemeral popup state), so rebuilds
     // can never reopen autocomplete over a selected speaker.
+    // The separator is not always a space. Text imported from a photo arrives
+    // as "@이름: 발화", and matching only `\s` here meant a *confirmed* speaker
+    // whose name was followed by ':' never closed its own mention context — the
+    // popup stayed open over the utterance and offered to create a speaker
+    // called "Unist 박의준: 가보자고". Accept the same separators
+    // [splitByMentions] strips.
+    final separator = RegExp(r'[\s:：,·]');
     for (final name in matchableNames()) {
       final tokenEnd = at + 1 + name.length;
       if (upto.length > tokenEnd &&
           upto.substring(at + 1, tokenEnd) == name &&
-          RegExp(r'\s').hasMatch(upto[tokenEnd])) {
+          separator.hasMatch(upto[tokenEnd])) {
         return null;
       }
     }
     // Speaker names may contain spaces (for example "김 철수"). Keep the
-    // autocomplete context alive while the user is typing the full name;
-    // only a newline ends a mention because it starts a new dialogue line.
-    if (partial.length > 40 || partial.contains('\n')) return null;
+    // autocomplete context alive while the user is typing the full name; a
+    // newline ends it because it starts a new dialogue line, and a colon ends it
+    // because that is where "@이름:" hands off from the name to the utterance.
+    if (partial.length > 40 ||
+        partial.contains('\n') ||
+        partial.contains(':') ||
+        partial.contains('：')) {
+      return null;
+    }
     return (at: at, partial: partial);
   }
 
