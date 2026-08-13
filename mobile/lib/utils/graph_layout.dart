@@ -1027,6 +1027,45 @@ bool isSelfNode(Map<String, dynamic> node) {
       node['name']?.toString().trim() == '나';
 }
 
+// ---------------------------------------------------------------------------
+// 노드 병합(드래그로 합치기) 자격
+//
+// 캔버스의 드롭 하이라이트와 확인 다이얼로그가 같은 규칙을 봐야 한다 — 캔버스가
+// "여기 놓을 수 있다"고 칠한 노드에 백엔드가 400을 주면 그건 UI의 거짓말이다.
+// ---------------------------------------------------------------------------
+
+/// 병합 버킷 — 같은 버킷끼리만 합칠 수 있다 (예외는 [canMergeNodes] 참고).
+///
+/// Statement·Chunk는 null이다: 두 진술은 "같은 것"일 수 없고(각자 다른 일기의
+/// 다른 문장이다), 합치면 provenance가 한쪽으로 뭉개진다.
+String? graphMergeGroup(String? type) {
+  if (isSourceType(type)) return 'source';
+  if (isSpeakerAssignableType(type)) return 'identity';
+  if (canonicalEntityType(type ?? '').toLowerCase() == 'concept') {
+    return 'concept';
+  }
+  return null;
+}
+
+/// [source]를 [target]에 병합해도 되는가 (source가 사라지고 엣지가 넘어간다).
+///
+/// Source(매체·기관)와 Identity(사람·반려동물)를 서로 못 합치게 막는 이유는
+/// [isSourceType]의 주석과 같다 — 동명의 출처와 사람은 별개 버킷이고, 자동
+/// 해소가 절대 섞지 않는 둘을 드래그 한 번으로 섞으면 그 불변식이 무의미해진다.
+/// 반대로 Concept→Identity는 백엔드가 명시적으로 지원하는 교정 경로다
+/// (`/kg/nodes/person-migration-suggestions`): 정체성 해소가 생기기 전에
+/// 개념으로 저장된 '할머니'·'의준'이 정확히 이 모양이다.
+bool canMergeNodes(Map<String, dynamic> source, Map<String, dynamic> target) {
+  if (source['id'].toString() == target['id'].toString()) return false;
+  // 백엔드도 400으로 거부한다: '나'는 흡수하는 쪽이지 흡수되는 쪽이 아니다.
+  if (isSelfNode(source)) return false;
+  final from = graphMergeGroup(source['type']?.toString());
+  final to = graphMergeGroup(target['type']?.toString());
+  if (from == null || to == null) return false;
+  if (from == to) return true;
+  return from == 'concept' && to == 'identity';
+}
+
 /// FNV-1a — String.hashCode는 플랫폼별로 달라질 수 있어 직접 구현.
 int _stableStringHash(String s) {
   var h = 0x811C9DC5;
