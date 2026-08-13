@@ -63,6 +63,11 @@ router = APIRouter(prefix="/kg", tags=["kg-build"])
 CONCEPT_SUGGEST_MAX_DISTANCE = 0.35
 CONCEPT_SUGGEST_TOP_K = 3
 
+
+def _ms_since(started: float) -> int:
+    """Elapsed milliseconds since a ``time.perf_counter()`` mark."""
+    return int((time.perf_counter() - started) * 1000)
+
 # ─── In-memory run log (last 50 extract calls) ───────────────────────────────
 
 _run_log: deque[dict] = deque(maxlen=50)
@@ -395,9 +400,7 @@ Return ONLY valid JSON in this exact shape (no markdown, no commentary):
       "temporal_precision": "exact | day | range | month | relative | unknown",
       "temporal_confidence": 0.0,
       "event_status": "happened | planned | cancelled | hypothetical | unknown",
-      "concepts": [{{"name": "개념1", "importance": 4, "kind": "concept"}}, {{"name": "제니", "importance": 3, "kind": "person"}}],
-      "speaker_matched": false,
-      "concepts_matched": [false, false]
+      "concepts": [{{"name": "개념1", "importance": 4, "kind": "concept"}}, {{"name": "제니", "importance": 3, "kind": "person"}}]
     }}
   ]
 }}
@@ -479,9 +482,6 @@ Return ONLY valid JSON in this exact shape (no markdown, no commentary):
     use the bare name when one exists).
     The ONLY exception: do NOT tag the statement's own speaker; only OTHER
     entities referred to inside the statement.
-- speaker_matched: true only when speaker name was reused from existing_nodes.
-- concepts_matched: per-concept boolean (same order as concepts), true if reused
-  from existing_nodes.
 - contextTypeOptions: top 2 guesses from [일기, 대화, 회의록, 책, 논문, 뉴스, 강연, 잡지, 자료].
   For casual multi-person talk with no clear medium, use 대화. Use 자료 for AI-generated
   summaries, curated notes, or knowledge compiled from mixed sources.
@@ -541,6 +541,13 @@ def _external_user_prompt(
 # Structured-outputs schema: 프롬프트 순종에 기대지 않고 디코딩 레벨에서
 # "concepts 빈 배열"을 불가능하게 만든다 (minItems=1). gpt-4o-mini에서
 # 검증 완료 — 2026-07-03 concepts 전량 유실 사고의 재발 방지 1차 방어선.
+#
+# speaker_matched / concepts_matched are deliberately ABSENT. strict mode forces
+# every declared property to be generated, and `_verify_concept_matches` then
+# overwrote both from the DB anyway — so asking for them bought nothing and cost
+# ~15 decoded tokens per claim on the one call the user actually waits for.
+# Output tokens are the whole latency budget here (a 8-claim draft measured 42 s),
+# so the flags are computed server-side only.
 _EXTRACTION_RESPONSE_FORMAT: dict = {
     "type": "json_schema",
     "json_schema": {
@@ -591,11 +598,6 @@ _EXTRACTION_RESPONSE_FORMAT: dict = {
                                     "additionalProperties": False,
                                 },
                             },
-                            "speaker_matched": {"type": "boolean"},
-                            "concepts_matched": {
-                                "type": "array",
-                                "items": {"type": "boolean"},
-                            },
                         },
                         "required": [
                             "speaker",
@@ -606,8 +608,6 @@ _EXTRACTION_RESPONSE_FORMAT: dict = {
                             "temporal_confidence",
                             "event_status",
                             "concepts",
-                            "speaker_matched",
-                            "concepts_matched",
                         ],
                         "additionalProperties": False,
                     },
@@ -658,6 +658,36 @@ def _require_complete_completion(choice: Any) -> None:
 # rephrasing of one sentence is normal, wholesale absence is not.
 _UNIT_COVERED_MIN = 0.6
 
+# Speaker labels ("[박병준]: …") are attribution, not content: they live on the
+# claim's `speaker`, never inside its statement. Scoring them made every
+# multi-speaker entry look like it had lost content — a short chat turn is mostly
+# label — and bought a full second extraction call on entries that had lost
+# nothing. Strip them before measuring.
+_SPEAKER_LABEL_RE = re.compile(r"^\s*\[[^\]]{1,40}\]\s*:?\s*")
+
+# Units with no proposition to lose: laughter, interjections, bare
+# acknowledgements, emoji/punctuation. A model that folds "ㅋㅋㅋ" into the next
+# turn has dropped nothing, so these must not trigger a repair call either.
+_FILLER_UNIT_RE = re.compile(
+    r"^(?:[ㅋㅎㅠㅜㅡㆍ~!?.,\-…\s]|[0-9]{0,2}"
+    r"|음|어|아|와|오|헐|응|네|넵|예|웅|ㅇㅇ|ㄴㄴ|ok|okay|yeah|lol|haha)+$",
+    re.IGNORECASE,
+)
+
+
+def _strip_speaker_label(unit: str) -> str:
+    return _SPEAKER_LABEL_RE.sub("", unit or "").strip()
+
+
+def _is_propositional(unit: str) -> bool:
+    """True when this source unit asserts something a claim could drop."""
+    body = _strip_speaker_label(unit)
+    if _FILLER_UNIT_RE.match(body):
+        return False
+    # Two content characters is the floor for anything nameable; below it the
+    # n-gram ratio is noise anyway.
+    return len(re.findall(r"[A-Za-z0-9가-힣]", body)) >= 2
+
 
 def _claim_statements(result: Any) -> list[str]:
     """Every non-empty statement string in an extraction result, in order."""
@@ -681,14 +711,22 @@ def _coverage_report(source: str, result: Any) -> dict[str, Any] | None:
         return None
     statements = _claim_statements(result)
     joined = " ".join(statements)
-    uncovered = [
-        unit
-        for unit in split_statement_units(text)
-        if native_ngram_coverage(unit, joined) < _UNIT_COVERED_MIN
-    ]
+    uncovered: list[str] = []
+    ignored: list[str] = []
+    for unit in split_statement_units(text):
+        body = _strip_speaker_label(unit)
+        if native_ngram_coverage(body, joined) >= _UNIT_COVERED_MIN:
+            continue
+        (uncovered if _is_propositional(unit) else ignored).append(body or unit)
+    scored = "\n".join(
+        _strip_speaker_label(unit) for unit in split_statement_units(text)
+    )
     return {
-        "score": round(native_ngram_coverage(text, joined), 4),
+        "score": round(native_ngram_coverage(scored, joined), 4),
         "uncovered": uncovered,
+        # Uncovered but contentless (laughter, "ㅇㅇ", emoji). Kept visible so a
+        # skipped repair is explainable, never silent.
+        "ignored": ignored,
         "claims": len(statements),
     }
 
@@ -732,14 +770,20 @@ async def _ensure_source_coverage(
     report = _coverage_report(source, result)
     if report is None:
         return result, None
-    threshold = get_settings().kg_extract_coverage_min
-    if report["score"] >= threshold and not report["uncovered"]:
+    # The repair is a SECOND full extraction — the single most expensive thing in
+    # the draft — so it fires only on a named, propositional loss (`uncovered`).
+    # A low global score with every proposition individually present means the
+    # model compressed wording, which is what it was asked to do; re-running it
+    # there doubled the user's wait and changed nothing. kg_extract_coverage_min
+    # still decides what counts as a complete draft in the report.
+    if not report["uncovered"]:
         return result, report
 
     # Local import for the same reason _build_extraction_system_prompt does it.
     from ..tutor import _lang_label
 
     native_label = _lang_label(native_language)
+    repair_started = time.perf_counter()
     try:
         repaired_resp = await _llm_client().chat.completions.create(
             model=model,
@@ -756,8 +800,9 @@ async def _ensure_source_coverage(
         repaired = _parse_llm_json(repaired_resp.choices[0].message.content or "{}")
     except Exception as exc:  # noqa: BLE001 — a failed repair must not lose the draft
         logger.warning("kg_extract coverage repair failed: %s", exc)
-        return result, {**report, "repaired": False}
+        return result, {**report, "repaired": False, "repair_ms": _ms_since(repair_started)}
 
+    repair_ms = _ms_since(repair_started)
     repaired_report = _coverage_report(source, repaired)
     # Never accept a repair that covers less than what it replaced. A model asked
     # to add content can restructure and drop something else on the way.
@@ -767,8 +812,8 @@ async def _ensure_source_coverage(
             report["score"],
             None if repaired_report is None else f"{repaired_report['score']:.3f}",
         )
-        return result, {**report, "repaired": False}
-    return repaired, {**repaired_report, "repaired": True}
+        return result, {**report, "repaired": False, "repair_ms": repair_ms}
+    return repaired, {**repaired_report, "repaired": True, "repair_ms": repair_ms}
 
 
 # ─── Person-mention enrichment (draft review) ─────────────────────────────────
@@ -823,15 +868,24 @@ async def _enrich_person_concepts(
        learns the alias so the same surface auto-resolves next time.
     """
     unresolved: list[dict] = []
+    # One lookup per DISTINCT surface, not per occurrence. A draft repeats the
+    # same name across turns (a 9-turn chat log asked for 이영호 four times), and
+    # every repeat was a separate sequential round trip on the request the user
+    # is watching.
+    seen: dict[str, list] = {}
     for c in _iter_concepts(claims):
         if isinstance(c.get("resolution"), dict):
             continue  # reviewer/prior pass already decided
         name = str(c.get("name") or "").strip()
         if not name:
             continue
-        candidates = await crud.find_identity_candidates_by_base_name(
-            session, user_id, name
-        )
+        if name in seen:
+            candidates = seen[name]
+        else:
+            candidates = await crud.find_identity_candidates_by_base_name(
+                session, user_id, name
+            )
+            seen[name] = candidates
         if len(candidates) == 1 and candidates[0][1]:
             # Exactly one identity shares this name, and it agrees down to
             # whitespace (covers both an exact match and a pure spacing variant
@@ -889,14 +943,21 @@ async def _suggest_identity_by_embedding(
 
     from ..rag import embed_texts
 
+    # Embed and search each distinct surface once — a repeated mention costs one
+    # embedding slot and one vector query, not one per occurrence.
+    names = list(dict.fromkeys(name for _, name in pairs))
     try:
-        vectors = await embed_texts([name for _, name in pairs])
+        vectors = await embed_texts(names)
     except Exception:
         logger.warning("identity alias fuzzy-match: embedding call failed", exc_info=True)
         return
 
-    for (c, _name), vec in zip(pairs, vectors):
-        hit = await crud.find_identity_by_alias_embedding(session, user_id, vec)
+    hits: dict[str, Any] = {}
+    for name, vec in zip(names, vectors):
+        hits[name] = await crud.find_identity_by_alias_embedding(session, user_id, vec)
+
+    for c, name in pairs:
+        hit = hits.get(name)
         if hit is None:
             continue
         node, matched_text, dist = hit
@@ -932,6 +993,7 @@ async def _enrich_plain_concepts(
        confirms → the surface is learned as an alias for next time.
     """
     unresolved: list[dict] = []
+    exact: dict[str, Any] = {}  # one lookup per distinct surface (see identity pass)
     for c in _iter_concepts(claims):
         if isinstance(c.get("resolution"), dict):
             continue  # identity pass / reviewer already decided
@@ -940,7 +1002,13 @@ async def _enrich_plain_concepts(
         name = str(c.get("name") or "").strip()
         if not name:
             continue
-        existing = await crud.find_concept_node_by_name_or_alias(session, user_id, name)
+        if name in exact:
+            existing = exact[name]
+        else:
+            existing = await crud.find_concept_node_by_name_or_alias(
+                session, user_id, name
+            )
+            exact[name] = existing
         if existing is not None:
             match = "exact" if crud._norm_surface(existing.name) == crud._norm_surface(
                 name
@@ -961,22 +1029,27 @@ async def _enrich_plain_concepts(
 
     from ..rag import embed_texts
 
+    names = list(
+        dict.fromkeys(str(c.get("name") or "").strip() for c in unresolved)
+    )
     try:
-        vectors = await embed_texts(
-            [str(c.get("name") or "").strip() for c in unresolved]
-        )
+        vectors = await embed_texts(names)
     except Exception:
         logger.warning("concept fuzzy-match: embedding call failed", exc_info=True)
         return
 
-    for c, vec in zip(unresolved, vectors):
-        hits = await crud.find_similar_concepts_with_distance(
+    by_name: dict[str, list] = {}
+    for name, vec in zip(names, vectors):
+        by_name[name] = await crud.find_similar_concepts_with_distance(
             session,
             user_id,
             vec,
             limit=CONCEPT_SUGGEST_TOP_K,
             max_distance=CONCEPT_SUGGEST_MAX_DISTANCE,
         )
+
+    for c in unresolved:
+        hits = by_name.get(str(c.get("name") or "").strip()) or []
         if not hits:
             continue
         best, best_dist = hits[0]
@@ -1081,6 +1154,15 @@ async def _verify_concept_matches(
     concepts_matched — the fields the frontend reads.
     """
     claims: list[dict] = result.get("claims") or []
+    known: dict[str, bool] = {}
+
+    async def _exists(name: str) -> bool:
+        # Names repeat heavily across claims (every turn carries its speaker), and
+        # this used to issue one query per occurrence.
+        if name not in known:
+            known[name] = bool(await crud.find_nodes_by_name(session, user_id, name))
+        return known[name]
+
     for claim in claims:
         if not isinstance(claim, dict):
             continue
@@ -1088,14 +1170,12 @@ async def _verify_concept_matches(
         matched_flags: list[bool] = []
         for c in concepts:
             name = (c.get("name") or "").strip()
-            hits = await crud.find_nodes_by_name(session, user_id, name) if name else []
-            matched_flags.append(len(hits) > 0)
+            matched_flags.append(await _exists(name) if name else False)
         claim["concepts_matched"] = matched_flags
 
         speaker_name: str = (claim.get("speaker") or "").strip()
         if speaker_name:
-            hits = await crud.find_nodes_by_name(session, user_id, speaker_name)
-            claim["speaker_matched"] = len(hits) > 0
+            claim["speaker_matched"] = await _exists(speaker_name)
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
@@ -1980,6 +2060,7 @@ async def extract_statement_graph_draft(
             labeled_text, source_category, existing_names, corrected_text=clean_text
         )
 
+    llm_started = time.perf_counter()
     resp = await _llm_client().chat.completions.create(
         model=settings.openai_model,
         messages=[
@@ -1989,11 +2070,13 @@ async def extract_statement_graph_draft(
         temperature=0.2,
         response_format=_EXTRACTION_RESPONSE_FORMAT,
     )
+    extract_ms = _ms_since(llm_started)
     _require_complete_completion(resp.choices[0])
     raw = resp.choices[0].message.content or "{}"
     result = _parse_llm_json(raw)
     # Same guard as the paste path: the entry's later sentences must not vanish
     # between the cleaned transcript and the claims the reviewer is shown.
+    coverage_started = time.perf_counter()
     result, coverage = await _ensure_source_coverage(
         source=extraction_source,
         result=result,
@@ -2003,10 +2086,13 @@ async def extract_statement_graph_draft(
         native_language=native_language,
         model=settings.openai_model,
     )
+    coverage_ms = _ms_since(coverage_started)
     _drop_referring_concepts(
         [c for c in (result.get("claims") or []) if isinstance(c, dict)]
     )
+    verify_started = time.perf_counter()
     await _verify_concept_matches(result, session, user_id)
+    verify_ms = _ms_since(verify_started)
 
     # Build claim dicts — diary and external both emit "claims": [...], and the
     # count is whatever the content naturally splits into (1 or many).
@@ -2067,11 +2153,30 @@ async def extract_statement_graph_draft(
 
     # Pre-resolve person-kind mentions against existing identities so the review
     # UI can pre-select a match; offer the full person roster as picker candidates.
+    enrich_started = time.perf_counter()
     await _enrich_person_concepts(session, user_id, claims)
     await _enrich_plain_concepts(session, user_id, claims)
     person_candidates = await _person_candidates_payload(session, user_id)
+    enrich_ms = _ms_since(enrich_started)
+
+    # Where the wait actually went. Without this the trace showed one opaque
+    # `statement_graph_draft` latency (10–42 s observed) and every explanation was
+    # a guess; now extraction / coverage repair / DB resolution are separable.
+    timings = {
+        "extract_ms": extract_ms,
+        "coverage_ms": coverage_ms,
+        "verify_ms": verify_ms,
+        "enrich_ms": enrich_ms,
+    }
+    logger.info(
+        "graph draft timings entry=%s claims=%d %s",
+        entry_id,
+        len(claims),
+        timings,
+    )
 
     return {
+        "timings": timings,
         "claims": claims,
         "context_type": context_type,
         "person_candidates": person_candidates,

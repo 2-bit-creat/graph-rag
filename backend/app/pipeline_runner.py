@@ -492,6 +492,9 @@ async def run_entry_graph_draft(
             # they're for the pipeline flow trace only, not the reviewable draft.
             system_prompt = draft.pop("system_prompt", None)
             user_prompt = draft.pop("user_prompt", None)
+            # Same for the sub-step timings: they explain the wait in the trace,
+            # they are not part of the draft the reviewer edits.
+            timings = draft.pop("timings", None)
             step.system_prompt = system_prompt
             step.input = {**step.input, "user_prompt": user_prompt}
             tracer.finish_step(
@@ -500,6 +503,7 @@ async def run_entry_graph_draft(
                     "claims": draft.get("claims"),
                     "context_type": draft.get("context_type"),
                     "speaker_count": draft.get("speaker_count"),
+                    "timings": timings,
                 },
             )
             trace = tracer.finish("completed")
@@ -525,6 +529,92 @@ async def run_entry_graph_draft(
             trace["graph_status"] = "graph_failed"
             await _mark_graph_failed(session, entry_id, user_id, trace)
             raise
+
+
+async def run_entry_graph_commit(
+    entry_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> dict | None:
+    """Commit the reviewed draft in ``entry.graph_staging`` into graph nodes.
+
+    The commit persists every claim, resolves each mention to an identity and
+    embeds the new nodes — minutes of work for a long conversation. Doing that
+    inside the request made the client's timeout the effective deadline: it gave
+    up, showed "지식그래프 확정 실패", and the graph appeared anyway. So the
+    endpoint now accepts the work and this runs it, with the entry's status as
+    the single source of truth for how it went (``graph_committing`` →
+    ``graph_ready`` / ``graph_failed``), exactly like the draft stage.
+    """
+    from .routers.kg_build import persist_entry_claims
+
+    async with async_session_factory() as session:
+        entry = await crud.get_journal_entry(session, entry_id, user_id)
+        if entry is None:
+            return None
+
+        staging = entry.graph_staging if isinstance(entry.graph_staging, dict) else {}
+        claims = staging.get("claims") or []
+        context_type = str(staging.get("context_type") or "대화")
+
+        tracer = PipelineTracer.resume(entry_id, entry.pipeline_trace)
+        tracer.run.current_phase = "slow_path"
+        step = tracer.begin_step(
+            "graph_apply",
+            "graph",
+            phase="slow_path",
+            input_data={
+                "claim_count": len(claims),
+                "context_type": context_type,
+                "user_edited": bool(staging.get("user_edited")),
+            },
+        )
+        try:
+            summary = await persist_entry_claims(
+                session, user_id, entry_id, claims, context_type
+            )
+        except Exception as exc:
+            logger.exception("graph commit failed for entry %s", entry_id)
+            try:
+                await session.rollback()
+            except Exception:
+                logger.exception("rollback failed after graph commit error")
+            tracer.finish_step(step, error=str(exc))
+            trace = tracer.finish("completed_with_errors")
+            trace["graph_status"] = "graph_failed"
+            # The draft stays in graph_staging so the review screen can retry
+            # the commit instead of re-running extraction from scratch.
+            await _mark_graph_failed(session, entry_id, user_id, trace)
+            raise
+
+        tracer.finish_step(step, output=summary)
+        trace = tracer.finish("completed")
+        trace["graph_status"] = "graph_ready"
+        trace["ingest_summary"] = summary
+
+        entry = await crud.get_journal_entry(session, entry_id, user_id)
+        if entry is not None:
+            await crud.update_journal_entry(
+                session,
+                entry,
+                status="graph_ready",
+                graph_staging=None,
+                pipeline_trace=trace,
+            )
+
+        statement_node_ids = [
+            uuid.UUID(value) for value in (summary.get("statement_node_ids") or [])
+        ]
+        if statement_node_ids:
+            from .crud import get_effective_target_languages
+            from .quiz_materials import analyse_nodes_and_refill_background
+            from .models import User as _User
+
+            user = await session.get(_User, user_id)
+            if user is not None:
+                await analyse_nodes_and_refill_background(
+                    user_id, statement_node_ids, get_effective_target_languages(user)
+                )
+        return summary
 
 
 async def run_graph_ingest_pipeline(
