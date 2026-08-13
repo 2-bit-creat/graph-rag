@@ -116,6 +116,14 @@ const Map<String, String> _ko = {
   // Accounts
   'account.title': '입장',
   'account.welcome': '등록된 아이디를 입력하면 내 공간이 열려요.',
+  'account.brandTagline': '기록이 지식 그래프가 되는 학습 공간',
+  'account.signInTitle': '로그인',
+  'account.signInSubtitle': '등록된 아이디로 계속하세요. 비밀번호는 필요하지 않습니다.',
+  'account.signIn': '로그인',
+  'account.orDivider': '또는',
+  'account.savedOnDevice': '이 기기에 저장됨',
+  'account.idPlaceholder': '아이디 입력',
+  'account.privacyPolicy': '개인정보 처리방침',
   'account.newId': '등록된 아이디',
   'account.hint': '관리자가 만들어준 아이디를 입력하세요',
   'account.emptyHandle': '아이디를 입력해 주세요',
@@ -671,6 +679,7 @@ const Map<String, String> _ko = {
   // API client
   'client.connectionFailed': '서버에 연결할 수 없어요. 잠시 후 다시 시도해 주세요.',
   'client.speakersPendingError': '화자 확인이 필요합니다: {names}',
+  'client.graphCommitFailed': '지식그래프 확정에 실패했어요. 잠시 후 다시 시도해 주세요.',
   // Graph review screen
   'graphReview.notEnoughContentSnackbar':
       '확정할 내용이 없습니다. 최소 한 개의 Statement가 필요합니다.',
@@ -887,7 +896,9 @@ const Map<String, String> _ko = {
   'trash.loadingMessage': '휴지통 불러오는 중…',
   'trash.emptyMessage': '휴지통이 비어 있습니다',
   'trash.impactSuffix': '노드 +{orphans} · 퀴즈 {quizzes}',
-  'canvas.dragHint': '빈 곳 드래그=이동 · 노드 드래그=개별 이동 · 휠=확대',
+  'canvas.dragHint': '빈 곳 드래그=이동 · 노드 드래그=개별 이동 · 길게 눌러 드래그=합치기 · 휠=확대',
+  'canvas.mergeDragHint': '합칠 노드 위로 끌어다 놓으세요',
+  'canvas.mergeDropOn': "놓으면 '{name}'에 합칩니다",
   'canvas.zoomIn': '확대',
   'canvas.zoomOut': '축소',
   'canvas.fitView': '전체 보기',
@@ -901,6 +912,17 @@ const Map<String, String> _ko = {
   'mention.fromGraphTrailing': '그래프',
   'mention.connectionsTrailing': '연결 {count}',
   'mention.createNewSpeaker': "'{partial}' 새 화자 만들기",
+  'nodeMerge.title': '같은 노드로 합칠까요?',
+  'nodeMerge.disappears': '사라짐',
+  'nodeMerge.survives': '남음',
+  'nodeMerge.body':
+      "'{source}'가 사라지고, 연결된 관계 {edges}개가 '{target}'으로 옮겨집니다. 일기 출처와 중요도도 함께 넘어갑니다.",
+  'nodeMerge.keepNameLabel': '남길 이름',
+  'nodeMerge.aliasNote': '고르지 않은 이름은 별칭으로 남아, 앞으로 그 이름이 나와도 이 노드로 연결됩니다.',
+  'nodeMerge.confirm': '합치기',
+  'nodeMerge.working': '노드 합치는 중…',
+  'nodeMerge.done': "'{name}'으로 합쳤습니다 · 관계 {edges}개 이동",
+  'nodeMerge.failed': '합치기 실패: {error}',
   'journalHub.pageTitle': '내 일기',
   'journalHub.emptyHint': '아직 일기가 없습니다',
   'journalHub.emptySubtitle': '일기 쓰기에서 첫 기록을 남겨 보세요',
@@ -1112,6 +1134,8 @@ const Map<String, String> _ko = {
   'reviewPanel.approveSwipeLabel': '승인',
   'reviewPanel.deleteSwipeLabel': '삭제',
   'reviewPanel.approveAllButton': '전체 승인 ({approved}/{total})',
+  'reviewPanel.draftTitle': '그래프 초안',
+  'reviewPanel.approveAllShort': '전체 승인',
   'reviewPanel.confirmNone': '지식그래프에 확정',
   'reviewPanel.confirmAllApproved': '전체 승인 — 지식그래프에 확정',
   'reviewPanel.confirmNeedsApproval': '모두 승인해야 확정 ({approved}/{total})',
@@ -1271,6 +1295,17 @@ const Map<String, String> _ko = {
   'kg.expressionHiddenHint': '정답이 될 수 있어 기본 화면에서는 숨겨두었어요',
   'kg.expressionSheetTitle': '추출된 학습 표현',
   'kg.expressionSheetWarning': '아래 내용은 문제의 정답이 될 수 있어요.',
+  // Expression sheet (선택 삭제)
+  'expressionSheet.selectAll': '전체 선택',
+  'expressionSheet.clearSelection': '선택 해제',
+  'expressionSheet.selectedCount': '{count}개 선택됨',
+  'expressionSheet.deleteAction': '{count}개 삭제',
+  'expressionSheet.deleteTitle': '선택한 표현을 삭제할까요?',
+  'expressionSheet.deleteBody':
+      '표현 {count}개를 단어장에서 지웁니다. 이 표현으로 만든 빈칸 문제도 함께 삭제돼요.',
+  'expressionSheet.deleteConfirm': '삭제',
+  'expressionSheet.deleted': '표현 {count}개를 삭제했어요.',
+  'expressionSheet.deletedWithQuizzes': '표현 {count}개와 관련 문제 {quizzes}개를 삭제했어요.',
   'kg.generatingQualityTitle': '좋은 문제를 만들고 있어요',
   'kg.generatingQualityBody': '문맥과 의미를 다시 확인해 통과한 문제만 추가합니다.',
   'kg.createFromStatement': '이 진술로 문제 만들기',
@@ -1349,6 +1384,15 @@ const Map<String, String> _en = {
   'common.cancel': 'Cancel',
   'account.title': 'Enter',
   'account.welcome': 'Type a registered ID to open your space.',
+  'account.brandTagline': 'Where what you write becomes a knowledge graph',
+  'account.signInTitle': 'Sign in',
+  'account.signInSubtitle':
+      'Continue with your registered ID. No password required.',
+  'account.signIn': 'Sign in',
+  'account.orDivider': 'or',
+  'account.savedOnDevice': 'Saved on this device',
+  'account.idPlaceholder': 'Enter your ID',
+  'account.privacyPolicy': 'Privacy policy',
   'account.newId': 'Registered ID',
   'account.hint': 'Ask an admin to create your ID first',
   'account.emptyHandle': 'Please enter an ID',
@@ -1958,6 +2002,8 @@ const Map<String, String> _en = {
   'client.connectionFailed':
       "Couldn't connect to the server. Please try again in a moment.",
   'client.speakersPendingError': 'Speaker confirmation needed: {names}',
+  'client.graphCommitFailed':
+      'The knowledge graph commit failed. Please try again in a moment.',
   // Graph review screen
   'graphReview.notEnoughContentSnackbar':
       'Nothing to commit — at least one Statement is required.',
@@ -2199,7 +2245,10 @@ const Map<String, String> _en = {
   'trash.loadingMessage': 'Loading trash…',
   'trash.emptyMessage': 'Trash is empty',
   'trash.impactSuffix': '+{orphans} nodes · {quizzes} quizzes',
-  'canvas.dragHint': 'Drag empty space=pan · drag node=move · wheel=zoom',
+  'canvas.dragHint':
+      'Drag empty space=pan · drag node=move · long-press+drag=merge · wheel=zoom',
+  'canvas.mergeDragHint': 'Drop it on the node to merge with',
+  'canvas.mergeDropOn': 'Release to merge into "{name}"',
   'canvas.zoomIn': 'Zoom in',
   'canvas.zoomOut': 'Zoom out',
   'canvas.fitView': 'Fit view',
@@ -2213,6 +2262,20 @@ const Map<String, String> _en = {
   'mention.fromGraphTrailing': 'Graph',
   'mention.connectionsTrailing': '{count} links',
   'mention.createNewSpeaker': 'Create speaker "{partial}"',
+  'nodeMerge.title': 'Merge these into one node?',
+  'nodeMerge.disappears': 'goes away',
+  'nodeMerge.survives': 'stays',
+  'nodeMerge.body':
+      '"{source}" disappears and its {edges} relations move to "{target}", '
+          'along with its journal sources and importance.',
+  'nodeMerge.keepNameLabel': 'Name to keep',
+  'nodeMerge.aliasNote':
+      'The name you do not keep stays on as an alias, so later mentions of it '
+          'still resolve to this node.',
+  'nodeMerge.confirm': 'Merge',
+  'nodeMerge.working': 'Merging nodes…',
+  'nodeMerge.done': 'Merged into "{name}" · {edges} relations moved',
+  'nodeMerge.failed': 'Merge failed: {error}',
   'journalHub.pageTitle': 'My journal',
   'journalHub.emptyHint': 'No entries yet',
   'journalHub.emptySubtitle': 'Write your first entry to get started',
@@ -2440,6 +2503,8 @@ const Map<String, String> _en = {
   'reviewPanel.approveSwipeLabel': 'Approve',
   'reviewPanel.deleteSwipeLabel': 'Delete',
   'reviewPanel.approveAllButton': 'Approve all ({approved}/{total})',
+  'reviewPanel.draftTitle': 'Graph draft',
+  'reviewPanel.approveAllShort': 'Approve all',
   'reviewPanel.confirmNone': 'Commit to knowledge graph',
   'reviewPanel.confirmAllApproved': 'Approve all — commit to knowledge graph',
   'reviewPanel.confirmNeedsApproval':
@@ -2606,6 +2671,18 @@ const Map<String, String> _en = {
   'kg.expressionHiddenHint': 'Hidden here because they may be quiz answers',
   'kg.expressionSheetTitle': 'Extracted learning expressions',
   'kg.expressionSheetWarning': 'The items below may reveal quiz answers.',
+  // Expression sheet (multi-select delete)
+  'expressionSheet.selectAll': 'Select all',
+  'expressionSheet.clearSelection': 'Clear',
+  'expressionSheet.selectedCount': '{count} selected',
+  'expressionSheet.deleteAction': 'Delete {count}',
+  'expressionSheet.deleteTitle': 'Delete the selected expressions?',
+  'expressionSheet.deleteBody':
+      'This removes {count} expression(s) from your wordbook, along with the cloze quizzes built from them.',
+  'expressionSheet.deleteConfirm': 'Delete',
+  'expressionSheet.deleted': 'Deleted {count} expression(s).',
+  'expressionSheet.deletedWithQuizzes':
+      'Deleted {count} expression(s) and {quizzes} related quiz(zes).',
   'kg.generatingQualityTitle': 'Crafting high-quality questions',
   'kg.generatingQualityBody':
       'Only questions that pass context and meaning checks are added.',

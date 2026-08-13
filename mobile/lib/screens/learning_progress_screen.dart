@@ -663,7 +663,10 @@ class _WeekCard extends StatelessWidget {
                         style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
                       ),
                       if (row['perfect'] == true)
-                        const Icon(Icons.star_rounded, size: 13, color: Color(0xFFFFB020))
+                        // A goal met is a checkmark, not a gold star — this is
+                        // a record of the week, not a sticker chart.
+                        const Icon(Icons.check_circle_rounded,
+                            size: 13, color: Color(0xFF35C08A))
                       else
                         const SizedBox(height: 13),
                     ],

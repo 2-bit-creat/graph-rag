@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../api/client.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/quiz/flip_card.dart';
@@ -16,6 +17,31 @@ class ExpressionDeckScreen extends StatefulWidget {
       fullscreenDialog: true,
       builder: (_) => ExpressionDeckScreen(items: items),
     );
+  }
+
+  /// Fetch the deck and open it, reporting empty/failed loads on the caller's
+  /// messenger. Lives here (not on a host screen) so any entry point — the
+  /// sidebar menu today, anything else later — opens the deck the same way.
+  static Future<void> open(BuildContext context) async {
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final data = await apiClient.graphExpressionCards();
+      final items = (data['items'] as List<dynamic>? ?? [])
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList();
+      if (items.isEmpty) {
+        messenger.showSnackBar(
+          SnackBar(content: Text(tr('expressionDeck.empty'))),
+        );
+        return;
+      }
+      await navigator.push(route(items));
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(tr('expressionDeck.loadFailed', {'error': e}))),
+      );
+    }
   }
 
   @override

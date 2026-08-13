@@ -172,7 +172,7 @@ class PipelineFlowGraph extends StatelessWidget {
                 ],
                 if (step['system_prompt'] != null)
                   _DetailSection(
-                    icon: Icons.psychology_outlined,
+                    icon: Icons.terminal_rounded,
                     title: 'System Prompt',
                     color: Colors.purple.shade700,
                     child: SelectableText(
@@ -515,7 +515,7 @@ class _FlowNode extends StatelessWidget {
   IconData _iconForType(String type) {
     switch (type) {
       case 'llm':
-        return Icons.psychology_outlined;
+        return Icons.memory_rounded;
       case 'api':
         return Icons.cloud_outlined;
       case 'graph':

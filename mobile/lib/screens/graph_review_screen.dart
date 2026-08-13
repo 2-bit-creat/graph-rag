@@ -421,7 +421,7 @@ class _ClaimCard extends StatelessWidget {
                     border: Border.all(color: const Color(0x55FFB020)),
                   ),
                   child: ListTile(
-                    leading: const Icon(Icons.auto_awesome,
+                    leading: const Icon(Icons.person_search_rounded,
                         color: Color(0xFFFFB020)),
                     title: Text(tr('graphReview.suggestConfirm', {'name': c.resName ?? ''})),
                     subtitle: Text(tr('graphReview.suggestSubtitle')),
@@ -548,7 +548,7 @@ class _ClaimCard extends StatelessWidget {
         backgroundColor: tone.withValues(alpha: 0.22),
         child: Icon(
           suggested
-              ? Icons.auto_awesome
+              ? Icons.person_search
               : (c.resIsSelf ? Icons.account_circle : Icons.person),
           size: 14,
           color: tone,

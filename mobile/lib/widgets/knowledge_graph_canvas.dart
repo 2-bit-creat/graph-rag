@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -5,6 +6,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
@@ -57,6 +59,7 @@ class KnowledgeGraphCanvas extends StatefulWidget {
     this.onNodeTap,
     this.onEdgeTap,
     this.onBackgroundTap,
+    this.onNodeMergeRequest,
   });
 
   final List<Map<String, dynamic>> nodes;
@@ -84,6 +87,17 @@ class KnowledgeGraphCanvas extends StatefulWidget {
   final void Function(Map<String, dynamic> node)? onNodeTap;
   final void Function(Map<String, dynamic> edge)? onEdgeTap;
   final VoidCallback? onBackgroundTap;
+
+  /// 노드를 길게 눌러 같은 종류의 다른 노드 위에 놓았을 때 — "이 둘은 같은
+  /// 것인가?"를 물어볼 차례라는 뜻이다. 확인·이름 선택·실제 병합은 화면의 몫이고
+  /// 캔버스는 제스처와 드롭 대상만 판정한다. null이면 길게 누르기 자체가 꺼진다.
+  ///
+  /// 놓은 노드는 항상 원래 자리로 되돌아간다. 사용자가 취소할 수 있으므로,
+  /// 확인 전에 레이아웃을 흐트러뜨리지 않는다.
+  final void Function(
+    Map<String, dynamic> source,
+    Map<String, dynamic> target,
+  )? onNodeMergeRequest;
 
   @override
   State<KnowledgeGraphCanvas> createState() => KnowledgeGraphCanvasState();
@@ -171,6 +185,26 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
   Offset _backgroundDownPos = Offset.zero;
   bool _backgroundTapCandidate = false;
   final _dragSamples = <({Duration t, Offset p})>[];
+
+  // ── 길게 눌러 병합 ────────────────────────────────────────────────────────
+  // 손가락을 떼지 않은 채로 길게 누르기 → 끌기 → 놓기가 한 동작이므로, 별도의
+  // LongPressGestureRecognizer가 아니라 이미 포인터를 받고 있는 히트 서피스에서
+  // 타이머로 판정한다. 제스처 아레나에 새 경쟁자를 넣지 않는 게 요점이다.
+  Timer? _mergeHoldTimer;
+  String? _mergeSourceId;
+  String? _mergeTargetId;
+  Offset? _mergeSourceOrigin;
+
+  /// 이번 드래그에서 놓을 수 있는 노드들. 데이터는 드래그 중에 바뀌지 않으므로
+  /// 시작할 때 한 번 계산한다 — 페인트 루프에서 노드마다 타입 문자열을 정규화하는
+  /// 것보다 싸고, 무엇보다 하이라이트와 드롭 판정이 같은 집합을 보게 된다.
+  Set<String> _mergeCandidateIds = const {};
+
+  /// 손가락을 떼기 전에 "얼마나 눌러야 병합 모드인가". 평범한 노드 끌기(위치
+  /// 조정)를 잡아먹지 않을 만큼 길고, 기다린다고 느끼지 않을 만큼 짧게.
+  static const _kMergeHold = Duration(milliseconds: 450);
+
+  bool get _mergeDragActive => _mergeSourceId != null;
 
   @override
   void initState() {
@@ -483,6 +517,26 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
   /// Clears the canvas-owned interaction state immediately. This is separate
   /// from the screen's selected-node state so an empty-map tap cannot leave a
   /// lingering hover/focus animation after the inspector has been closed.
+  /// Test seams for gesture and camera behavior.
+  ///
+  /// Both are things a test cannot reconstruct from the outside: node positions
+  /// come out of a force simulation, and the merge gesture plus the pan are
+  /// defined purely in screen space. Exposing the projection and the camera lets
+  /// a test drive the real hit test and the real transform instead of asserting
+  /// on a stub of them.
+  @visibleForTesting
+  Offset? debugScreenPositionOf(String id) {
+    final wp = _layout?.positions[id];
+    if (wp == null) return null;
+    return MatrixUtils.transformPoint(
+      _transformationController.value,
+      wp + _worldTranslate,
+    );
+  }
+
+  @visibleForTesting
+  Matrix4 get debugTransform => Matrix4.copy(_transformationController.value);
+
   void clearInteractionFocus() {
     _hoveredNodeId = null;
     _focusTarget = null;
@@ -579,6 +633,26 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
       ..scaleByDouble(scale, scale, 1, 1);
     _fitted = true;
     _lastViewport = viewport;
+  }
+
+  /// Absorb a viewport resize without re-framing: keep the scale, and keep the
+  /// world point that was at the center of the old viewport at the center of the
+  /// new one. A toolbar collapsing or the keyboard opening then costs the user
+  /// nothing — the graph stays exactly where they left it.
+  void _adoptViewportChange(Size viewport) {
+    if (viewport.width <= 0 || viewport.height <= 0) return;
+    final previous = _lastViewport;
+    _lastViewport = viewport;
+    if (previous == Size.zero) return;
+    final dx = (viewport.width - previous.width) / 2;
+    final dy = (viewport.height - previous.height) / 2;
+    if (dx.abs() < 0.5 && dy.abs() < 0.5) return;
+    // Screen-space shift: pre-multiply, so it is not scaled by the zoom.
+    _transformationController.value =
+        Matrix4.identity()
+          ..translateByDouble(dx, dy, 0, 1)
+          ..multiply(_transformationController.value);
+    _syncWorldFrame(viewport: viewport, preserveOrigin: true);
   }
 
   Size _worldSizeFor(Rect contentBounds, Size viewport) {
@@ -741,7 +815,10 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
   }
 
   /// Topmost node under a screen-space point (reverse paint order).
-  String? _hitNodeAt(Offset local) {
+  ///
+  /// [ignoreId] skips one node — the one being dragged sits directly under the
+  /// finger, so a drop target could never be found without this.
+  String? _hitNodeAt(Offset local, {String? ignoreId}) {
     final layout = _layout;
     if (layout == null) return null;
     final matrix = _transformationController.value;
@@ -749,6 +826,7 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     final adaptive = _adaptiveScaleFor(matrix);
     for (final node in _paintNodes.reversed) {
       final id = node['id'].toString();
+      if (id == ignoreId) continue;
       final wp = layout.positions[id];
       if (wp == null) continue;
       final sp = MatrixUtils.transformPoint(matrix, wp + _worldTranslate);
@@ -789,6 +867,7 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     _downPos = e.localPosition;
     _surfaceMoved = false;
     _dragSamples.clear();
+    _armMergeHold(_downNodeId);
   }
 
   void _onSurfaceMove(PointerMoveEvent e) {
@@ -799,6 +878,9 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     }
     if (!_surfaceMoved) {
       if ((e.localPosition - _downPos).distance < 4) return;
+      // Moved before the hold elapsed: this is an ordinary reposition drag, not
+      // a merge. Whichever comes first wins, and nothing switches mid-gesture.
+      _cancelMergeHold();
       _surfaceMoved = true;
       layout.pinnedId = id;
       layout.alphaTarget = 0.3;
@@ -812,10 +894,19 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
       _dragSamples.add((t: e.timeStamp, p: world));
       if (_dragSamples.length > 6) _dragSamples.removeAt(0);
     }
+    if (_mergeDragActive) _updateMergeTarget(e.localPosition);
     _frameNotifier.value++;
   }
 
   void _onSurfaceUp(PointerUpEvent e) {
+    _cancelMergeHold();
+    if (_mergeDragActive) {
+      _finishMergeDrag(commit: true);
+      _downNodeId = null;
+      _downEdge = null;
+      _surfaceMoved = false;
+      return;
+    }
     final id = _downNodeId;
     if (id == null) {
       final edge = _downEdge;
@@ -840,11 +931,105 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
   }
 
   void _onSurfaceCancel(PointerCancelEvent e) {
+    _cancelMergeHold();
+    if (_mergeDragActive) {
+      _finishMergeDrag(commit: false);
+      _downNodeId = null;
+      _downEdge = null;
+      _surfaceMoved = false;
+      return;
+    }
     final id = _downNodeId;
     if (id != null && _surfaceMoved) _releaseDrag(id, fling: false);
     _downNodeId = null;
     _downEdge = null;
     _surfaceMoved = false;
+  }
+
+  // ── 길게 눌러 병합: 판정과 상태 전이 ───────────────────────────────────────
+
+  void _armMergeHold(String? nodeId) {
+    _cancelMergeHold();
+    if (nodeId == null || widget.onNodeMergeRequest == null) return;
+    final node = _nodeById(nodeId);
+    // 병합 불가 노드(진술, 그리고 '나')는 길게 눌러도 아무 일도 없어야 한다 —
+    // 들어갈 수 없는 모드로 들여보내고 드롭 순간에 거절하는 것보다 낫다.
+    if (node == null || graphMergeGroup(node['type']?.toString()) == null) return;
+    if (isSelfNode(node)) return;
+    _mergeHoldTimer = Timer(_kMergeHold, () => _beginMergeDrag(nodeId));
+  }
+
+  void _cancelMergeHold() {
+    _mergeHoldTimer?.cancel();
+    _mergeHoldTimer = null;
+  }
+
+  void _beginMergeDrag(String id) {
+    final layout = _layout;
+    if (layout == null || !layout.positions.containsKey(id)) return;
+    if (_downNodeId != id) return; // 손을 뗐거나 다른 노드로 옮겨간 뒤
+    final sourceNode = _nodeById(id);
+    if (sourceNode == null) return;
+    HapticFeedback.mediumImpact();
+    _mergeSourceOrigin = layout.positions[id];
+    _mergeSourceId = id;
+    _mergeTargetId = null;
+    _mergeCandidateIds = {
+      for (final node in _paintNodes)
+        if (canMergeNodes(sourceNode, node)) node['id'].toString(),
+    };
+    // 시뮬레이션이 손가락 밑에서 노드를 끌고 가지 않도록 고정하고, 남은 속도를
+    // 지운다 — 놓는 순간 제자리로 돌려놓을 것이므로 관성은 방해만 된다.
+    layout.pinnedId = id;
+    layout.velocities[id] = Offset.zero;
+    // 이 포인터는 더 이상 탭이 아니다. 떼도 노드 상세가 열리면 안 된다.
+    _surfaceMoved = true;
+    setState(() => _draggingId = id);
+  }
+
+  void _updateMergeTarget(Offset local) {
+    final source = _mergeSourceId;
+    if (source == null) return;
+    final sourceNode = _nodeById(source);
+    if (sourceNode == null) return;
+    final hitId = _hitNodeAt(local, ignoreId: source);
+    final hitNode = hitId == null ? null : _nodeById(hitId);
+    final next = hitNode != null && canMergeNodes(sourceNode, hitNode)
+        ? hitId
+        : null;
+    if (next == _mergeTargetId) return;
+    if (next != null) HapticFeedback.selectionClick();
+    setState(() => _mergeTargetId = next);
+  }
+
+  /// 병합 드래그 종료. [commit]이면 대상이 있을 때 화면에 확인을 요청한다.
+  ///
+  /// 어느 쪽이든 끌던 노드는 원래 좌표로 돌아간다: 확인 다이얼로그를 취소했을 때
+  /// 노드가 남의 자리에 얹혀 있으면, 아무것도 안 했는데 그래프가 망가진 것처럼
+  /// 보인다.
+  void _finishMergeDrag({required bool commit}) {
+    final layout = _layout;
+    final source = _mergeSourceId;
+    final target = _mergeTargetId;
+    final origin = _mergeSourceOrigin;
+    _mergeSourceId = null;
+    _mergeTargetId = null;
+    _mergeSourceOrigin = null;
+    _mergeCandidateIds = const {};
+    if (layout != null && source != null) {
+      if (origin != null) layout.positions[source] = origin;
+      layout.velocities[source] = Offset.zero;
+      layout.pinnedId = null;
+      layout.alphaTarget = 0.0;
+      layout.reheat(0.15);
+      _ensureTicking();
+    }
+    setState(() => _draggingId = null);
+    if (!commit || source == null || target == null) return;
+    final sourceNode = _nodeById(source);
+    final targetNode = _nodeById(target);
+    if (sourceNode == null || targetNode == null) return;
+    widget.onNodeMergeRequest?.call(sourceNode, targetNode);
   }
 
   void _releaseDrag(String id, {required bool fling}) {
@@ -1187,6 +1372,47 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
         );
       }
 
+      // 병합 드래그 중의 세 가지 상태 — 무엇을 들고 있고, 어디에 놓을 수 있고,
+      // 지금 놓으면 어디에 붙는지. 색이 아니라 굵기로 구분한다: 노드 색은 이미
+      // 화자 신원을 뜻하므로 여기서 색을 덮으면 그 의미를 가린다.
+      if (_mergeDragActive) {
+        if (id == _mergeSourceId) {
+          canvas.drawCircle(
+            wp,
+            r + 5,
+            Paint()
+              ..color = AppColors.hubGraph
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 2.0 / zoom,
+          );
+        } else if (id == _mergeTargetId) {
+          canvas.drawCircle(
+            wp,
+            r * 1.25,
+            Paint()..color = AppColors.hubGraph.withValues(alpha: 0.28),
+          );
+          canvas.drawCircle(
+            wp,
+            r + 6,
+            Paint()
+              ..color = AppColors.hubGraph
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 4.0 / zoom,
+          );
+        } else if (_mergeCandidateIds.contains(id)) {
+          // 놓을 수 있는 곳을 미리 알려주는 힌트. 흐릿해야 한다 — 후보는 보통
+          // 여럿이고, 여기서 강하게 칠하면 그래프 전체가 깜빡이는 것처럼 보인다.
+          canvas.drawCircle(
+            wp,
+            r + 4,
+            Paint()
+              ..color = AppColors.hubGraph.withValues(alpha: 0.45)
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 1.2 / zoom,
+          );
+        }
+      }
+
       final ringColor = _darkCanvas ? Colors.white : const Color(0xFF334155);
       if (selected) {
         canvas.drawCircle(
@@ -1495,9 +1721,23 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     return LayoutBuilder(
       builder: (context, constraints) {
         final viewport = Size(constraints.maxWidth, constraints.maxHeight);
-        if (!_fitted || _lastViewport != viewport) {
+        // Fit ONCE. A resize keeps the camera the user set.
+        //
+        // This used to refit on every viewport change, and on a phone browser
+        // the viewport changes constantly: iOS Safari grows and shrinks the
+        // visual viewport by a few pixels as its toolbar collapses while you
+        // drag, and the keyboard/chat sheet move it too. Each of those pixels
+        // threw away the zoom and pan and re-framed the whole graph, which is
+        // what felt like the map being tugged out from under the finger and
+        // drifting off-target — worse the further in you were zoomed, because
+        // a refit at high zoom is a long way back to "fit".
+        if (!_fitted) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) _fitToView(viewport);
+          });
+        } else if (_lastViewport != viewport) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _adoptViewportChange(viewport);
           });
         }
 
@@ -1582,6 +1822,15 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
                 ),
               ),
             ),
+            // 병합 드래그 안내. 캔버스에 그리지 않고 위젯으로 올린다 — 화면
+            // 좌표에 고정되어야 하고(월드 변환 밖), 문구가 번역을 타야 한다.
+            if (_mergeDragActive)
+              Positioned(
+                left: 12,
+                right: 12,
+                bottom: 12 + widget.controlsBottomInset,
+                child: IgnorePointer(child: _mergeHintPill(context)),
+              ),
             if (widget.compactMode && widget.showControls)
               Positioned(
                 left: 10,
@@ -1635,8 +1884,56 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     );
   }
 
+  /// "합칠 노드 위로 끌어다 놓으세요" → 대상 위에 오면 그 이름을 말해 준다.
+  /// 놓기 전에 대상을 확인할 수 있는 유일한 지점이다 (손가락이 노드를 가린다).
+  Widget _mergeHintPill(BuildContext context) {
+    final target = _mergeTargetId == null ? null : _nodeById(_mergeTargetId!);
+    final onTarget = target != null;
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        decoration: BoxDecoration(
+          color: onTarget
+              ? AppColors.hubGraph
+              : Colors.black.withValues(alpha: 0.78),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: onTarget ? 0.35 : 0.14),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              onTarget ? Icons.merge_rounded : Icons.drag_indicator_rounded,
+              size: 15,
+              color: Colors.white,
+            ),
+            const SizedBox(width: 7),
+            Flexible(
+              child: Text(
+                onTarget
+                    ? tr('canvas.mergeDropOn',
+                        {'name': nodeDisplayLabel(target)})
+                    : tr('canvas.mergeDragHint'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
+    _cancelMergeHold();
     _ticker.dispose();
     _focusAnim.dispose();
     _cameraAnim.dispose();
@@ -1802,7 +2099,7 @@ class _ZoomControls extends StatelessWidget {
         _ZoomBtn(icon: Icons.add, tooltip: tr('canvas.zoomIn'), onTap: onZoomIn),
         _ZoomBtn(icon: Icons.remove, tooltip: tr('canvas.zoomOut'), onTap: onZoomOut),
         _ZoomBtn(icon: Icons.fit_screen, tooltip: tr('canvas.fitView'), onTap: onFit),
-        _ZoomBtn(icon: Icons.auto_awesome, tooltip: tr('canvas.relayout'), onTap: onRelayout),
+        _ZoomBtn(icon: Icons.bubble_chart_outlined, tooltip: tr('canvas.relayout'), onTap: onRelayout),
         Padding(
           padding: const EdgeInsets.only(top: 8, bottom: 2),
           child: SizedBox(

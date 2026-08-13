@@ -860,7 +860,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
               style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
           const Spacer(),
           Icon(
-            embCount > 0 ? Icons.auto_awesome : Icons.auto_awesome_outlined,
+            embCount > 0 ? Icons.scatter_plot : Icons.scatter_plot_outlined,
             size: 12,
             color: embCount > 0 ? const Color(0xFFB07BFF) : AppColors.textMuted,
           ),
@@ -897,7 +897,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
           alignment: Alignment.centerLeft,
           child: TextButton.icon(
             onPressed: _saving ? null : _reindexAliases,
-            icon: const Icon(Icons.auto_awesome, size: 15),
+            icon: const Icon(Icons.sync_rounded, size: 15),
             label: Text(tr('inspector.generateAliasEmbedding'),
                 style: const TextStyle(fontSize: 12)),
             style: TextButton.styleFrom(
@@ -1781,7 +1781,7 @@ class _EmbeddingStatusCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             _StatusRow(
-              icon: Icons.auto_awesome,
+              icon: Icons.scatter_plot,
               label: tr('inspector.aliasEmbeddingLabel'),
               ok: aliasEmbCount > 0,
               detail: aliasEmbCount > 0

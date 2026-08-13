@@ -105,7 +105,7 @@ class _SpeakerChip extends StatelessWidget {
     final icon = data.resolved
         ? Icons.person_rounded
         : data.suggested
-            ? Icons.auto_awesome_rounded
+            ? Icons.person_search_rounded
             : Icons.help_outline_rounded;
 
     final body = Container(

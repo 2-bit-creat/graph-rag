@@ -333,7 +333,7 @@ class _LinkHero extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.auto_awesome_rounded,
+              const Icon(Icons.manage_search_rounded,
                   color: AppColors.accent, size: 20),
               const SizedBox(width: AppSpacing.sm),
               Text(

@@ -665,7 +665,7 @@ class _FlowNodeCard extends StatelessWidget {
   IconData _typeIcon(String type) {
     switch (type) {
       case 'llm':
-        return Icons.psychology_outlined;
+        return Icons.memory_rounded;
       case 'api':
         return Icons.cloud_outlined;
       case 'graph':

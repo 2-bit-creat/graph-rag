@@ -547,7 +547,7 @@ class QuizGraphGenerateCard extends StatelessWidget {
     (type: 'scramble', icon: Icons.reorder, label: '문장 배열 퀴즈', primary: false),
     (
       type: 'mcq_nuance',
-      icon: Icons.psychology_alt,
+      icon: Icons.rule_rounded,
       label: '뉘앙스 선택 퀴즈',
       primary: false
     ),
@@ -643,7 +643,7 @@ class QuizGraphGenerateCard extends StatelessWidget {
                   color: AppColors.hubQuiz.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(Icons.auto_awesome_rounded,
+                child: const Icon(Icons.quiz_outlined,
                     color: AppColors.hubQuiz, size: 22),
               ),
               const SizedBox(width: AppSpacing.md),

@@ -1608,18 +1608,25 @@ class _AssistantBubble extends StatelessWidget {
           SizedBox(
             width: 22,
             height: 22,
+            // The same flat monogram the sidebar brands with — a gradient
+            // circle with a sparkle in it is the stock "an AI wrote this"
+            // badge and said nothing about this app.
             child: showAvatar
                 ? Container(
+                    alignment: Alignment.center,
                     decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [AppColors.hubGraph, AppColors.hubQuiz],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
+                      color: AppColors.hubGraph,
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.auto_awesome_rounded,
-                        size: 12, color: Colors.white),
+                    child: const Text(
+                      'D',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        height: 1.0,
+                      ),
+                    ),
                   )
                 : null,
           ),

@@ -587,7 +587,7 @@ class _UploadStagesCardState extends State<_UploadStagesCard> {
   static List<(IconData, String)> get _stages => [
     (Icons.cloud_upload_outlined, tr('audioCompose.stageUpload')),
     (Icons.hearing_outlined, tr('audioCompose.stageStt')),
-    (Icons.auto_fix_high_outlined, tr('audioCompose.stagePolish')),
+    (Icons.spellcheck_rounded, tr('audioCompose.stagePolish')),
   ];
 
   int _highlight = 0;

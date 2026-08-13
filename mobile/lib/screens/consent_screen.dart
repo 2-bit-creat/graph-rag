@@ -130,7 +130,8 @@ class _ConsentScreenState extends State<ConsentScreen> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.smart_toy_outlined, size: 18, color: shell.mutedText),
+                  Icon(Icons.info_outline_rounded,
+                      size: 18, color: shell.mutedText),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(

@@ -505,7 +505,8 @@ class _SuggestionHero extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.auto_awesome_rounded, color: AppColors.accent, size: 20),
+              Icon(Icons.person_search_rounded,
+                  color: AppColors.accent, size: 20),
               const SizedBox(width: AppSpacing.sm),
               Text(
                 tr('entityId.suggestedIdentity'),

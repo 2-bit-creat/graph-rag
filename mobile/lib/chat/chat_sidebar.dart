@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../auth/account_controller.dart';
 import '../compose/compose_session_controller.dart';
 import '../l10n/app_strings.dart';
+import '../screens/expression_deck_screen.dart';
 import '../screens/kg_timeline_screen.dart';
 import '../screens/learning_progress_screen.dart';
 import '../screens/menu_screen.dart';
@@ -33,6 +34,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
   bool _searching = false;
+  bool _deckLoading = false;
 
   @override
   void dispose() {
@@ -132,6 +134,22 @@ class _ChatSidebarState extends State<ChatSidebar> {
   }
 
   void _pushLearningProgress() => _push(const LearningProgressScreen());
+
+  /// The deck used to hang off a pill floating over the graph canvas, where it
+  /// competed with the search bar for the same corner. It is a destination
+  /// like the two tiles above it, so it belongs in the menu with them.
+  Future<void> _openExpressionDeck() async {
+    if (_deckLoading) return;
+    setState(() => _deckLoading = true);
+    // The deck is pushed on the root navigator, so close the drawer first —
+    // otherwise it reopens on top of the deck when the push settles.
+    widget.onNavigate?.call();
+    try {
+      await ExpressionDeckScreen.open(context);
+    } finally {
+      if (mounted) setState(() => _deckLoading = false);
+    }
+  }
 
   /// Single destination for the bottom profile row — a "계정 · 설정" hub
   /// (theme, account switch/delete, dev tools) with the profile/level editor
@@ -286,6 +304,11 @@ class _ChatSidebarState extends State<ChatSidebar> {
             icon: Icons.auto_stories_outlined,
             label: tr('sidebar.myJournal'),
             onTap: _pushTimeline),
+        _CompactNavTile(
+            icon: Icons.style_outlined,
+            label: tr('kg.expressionCards'),
+            busy: _deckLoading,
+            onTap: _openExpressionDeck),
         _CompactNavTile(
             icon: Icons.bar_chart_rounded,
             label: tr('sidebar.learningProgress'),
@@ -575,11 +598,18 @@ class _RoomTile extends StatelessWidget {
 /// with it for visual weight.
 class _CompactNavTile extends StatelessWidget {
   const _CompactNavTile(
-      {required this.icon, required this.label, required this.onTap});
+      {required this.icon,
+      required this.label,
+      required this.onTap,
+      this.busy = false});
 
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+
+  /// Destinations that have to fetch before they can open show the wait in
+  /// place of their icon rather than opening an empty screen.
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
@@ -600,9 +630,21 @@ class _CompactNavTile extends StatelessWidget {
                   color: Theme.of(context).colorScheme.surfaceContainerLow,
                   borderRadius: BorderRadius.circular(11),
                 ),
-                child: Icon(icon,
-                    size: 19,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant),
+                child: busy
+                    ? Center(
+                        child: SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      )
+                    : Icon(icon,
+                        size: 19,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
               const SizedBox(width: 13),
               Expanded(

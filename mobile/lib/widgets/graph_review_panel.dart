@@ -13,6 +13,45 @@ import 'mention_editor_core.dart' show CaretStableField;
 /// Inline or full-screen graph draft review — edit claims, then confirm.
 enum GraphReviewPresentation { full, chat }
 
+/// Review semantics, one colour each: approved, linked-to-self, fuzzy suggestion.
+/// Everything else in the chat presentation is hairline + text, so these three
+/// carry meaning instead of decoration.
+const Color _kApproved = Color(0xFF35C08A);
+const Color _kSelf = Color(0xFF4C8DFF);
+const Color _kSuggest = Color(0xFFB07BFF);
+
+/// Text-only affordance sized for a dense card (no 48px Material padding).
+class _TinyTextButton extends StatelessWidget {
+  const _TinyTextButton({
+    required this.label,
+    required this.onTap,
+    required this.tone,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+  final Color tone;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            color: tone,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class GraphReviewPanel extends StatefulWidget {
   const GraphReviewPanel({
     super.key,
@@ -28,7 +67,13 @@ class GraphReviewPanel extends StatefulWidget {
   final Map<String, dynamic> staging;
   final GraphReviewPresentation presentation;
 
-  /// Scroll area cap when embedded in chat cards.
+  /// Scroll-area cap for the [GraphReviewPresentation.full] embedding only.
+  ///
+  /// The chat presentation deliberately has NO cap and NO scrollable of its own:
+  /// it lives inside the chat feed's ListView, and a second viewport nested in
+  /// that one swallowed every vertical drag over the draft. The card's top could
+  /// then never be scrolled into view — it sat clipped just above the inner
+  /// viewport with no gesture able to reach it.
   final double maxBodyHeight;
 
   /// Called after a successful apply (optional — e.g. pop a route).
@@ -368,6 +413,46 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
         ? tr('reviewDate.mixedDates')
         : _dayLabel(common);
     final yesterday = _recordedDate.subtract(const Duration(days: 1));
+
+    // Chat: a single unboxed line. The question and its shortcuts sit on one
+    // row, and the whole block is muted unless the day was only inferred — a
+    // confirmed date is an answer, not an alert.
+    if (chatStyle) {
+      final quiet = !guessed;
+      return Row(
+        children: [
+          Icon(Icons.event_outlined,
+              size: 13, color: quiet ? context.shell.mutedText : tone),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              guessed
+                  ? tr('reviewDate.questionGuessed')
+                  : tr('reviewDate.questionKnown'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w600,
+                color: quiet ? context.shell.mutedText : tone,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          _TinyTextButton(
+            label: label,
+            onTap: () => _pickDate(),
+            tone: quiet ? context.shell.primaryText : tone,
+          ),
+          if (guessed && (common == null || !_sameDay(common, yesterday)))
+            _TinyTextButton(
+              label: tr('reviewDate.dayBefore'),
+              onTap: () => _setAllDates(yesterday),
+              tone: context.shell.mutedText,
+            ),
+        ],
+      );
+    }
 
     return Container(
       padding: EdgeInsets.symmetric(
@@ -711,96 +796,29 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
     );
   }
 
+  /// Chat presentation: one flat column, no viewport of its own.
+  ///
+  /// Everything here is sized by content and scrolls with the feed. The visual
+  /// language is deliberately quiet — a hairline card per claim, one accent
+  /// (progress + commit), and state carried by a single glyph rather than by
+  /// coloured pills, so a nine-turn draft reads as a list instead of a wall.
   Widget _buildChat(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: AppColors.hubGraph.withValues(alpha: 0.18),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.hub_outlined,
-                      size: 13, color: AppColors.hubGraph.withValues(alpha: 0.9)),
-                  const SizedBox(width: 4),
-                  Text(
-                    tr('reviewPanel.statementCountBadge', {'count': _claims.length}),
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.hubGraph.withValues(alpha: 0.95),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: AppColors.accent.withValues(alpha: 0.14),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                tr('reviewPanel.conceptCountBadge', {'count': _conceptCount}),
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.accent.withValues(alpha: 0.95),
-                ),
-              ),
-            ),
-            if (_approvedCount > 0)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF35C08A).withValues(alpha: 0.16),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  tr('reviewPanel.approvedCountBadge', {'approved': _approvedCount, 'total': _claims.length}),
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF2E9E74),
-                  ),
-                ),
-              ),
-            Text(
-              tr('reviewPanel.lockedAfterConfirm'),
-              style: TextStyle(
-                fontSize: 10,
-                color: context.shell.mutedText,
-              ),
-            ),
-          ],
-        ),
+        _chatHeader(context),
         const SizedBox(height: 10),
         if (widget.onReopenSpeakers != null) ...[
           _SpeakerLockBanner(onReopen: _handleReopenSpeakers),
           const SizedBox(height: 8),
         ],
         _dateHeader(context, chatStyle: true),
-        const SizedBox(height: 10),
-        ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: widget.maxBodyHeight),
-          child: ListView.separated(
-            shrinkWrap: true,
-            itemCount: _claims.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (context, i) =>
-                _swipeableClaim(context, i, chatStyle: true),
-          ),
-        ),
+        if (_claims.isNotEmpty) const SizedBox(height: 8),
+        for (var i = 0; i < _claims.length; i++) ...[
+          if (i > 0) const SizedBox(height: 6),
+          _swipeableClaim(context, i, chatStyle: true),
+        ],
         if (_claims.isEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 16),
@@ -813,16 +831,86 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
               ),
             ),
           ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 10),
         Text(
           tr('reviewPanel.swipeHint'),
           style: TextStyle(
-            fontSize: 10,
+            fontSize: 9.5,
+            height: 1.3,
             color: context.shell.mutedText,
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         _confirmButton(context, chatStyle: true),
+      ],
+    );
+  }
+
+  /// Title · progress · bulk approve, in the height a single badge used to take.
+  Widget _chatHeader(BuildContext context) {
+    final total = _claims.length;
+    final ratio = total == 0 ? 0.0 : _approvedCount / total;
+    final muted = context.shell.mutedText;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.hub_outlined,
+                size: 14, color: AppColors.hubGraph.withValues(alpha: 0.9)),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                tr('reviewPanel.draftTitle'),
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.1,
+                  color: context.shell.primaryText,
+                ),
+              ),
+            ),
+            Text(
+              '$_approvedCount/$total',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                fontFeatures: const [FontFeature.tabularFigures()],
+                color: _allApproved ? _kApproved : muted,
+              ),
+            ),
+            if (!_allApproved && total > 0 && !_submitting) ...[
+              const SizedBox(width: 2),
+              _TinyTextButton(
+                label: tr('reviewPanel.approveAllShort'),
+                onTap: _approveAll,
+                tone: _kApproved,
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 7),
+        // 2px rail — the one place progress is stated, replacing three badges.
+        ClipRRect(
+          borderRadius: BorderRadius.circular(2),
+          child: LinearProgressIndicator(
+            value: ratio,
+            minHeight: 2,
+            backgroundColor: context.shell.panelBorder,
+            valueColor: AlwaysStoppedAnimation(
+              _allApproved ? _kApproved : AppColors.hubGraph,
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          '${tr('reviewPanel.statementCountBadge', {'count': total})} · '
+          '${tr('reviewPanel.conceptCountBadge', {'count': _conceptCount})} · '
+          '${tr('reviewPanel.lockedAfterConfirm')}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 10, color: muted),
+        ),
       ],
     );
   }
@@ -879,13 +967,13 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
   }
 
   Widget _swipeBg({required bool approve}) {
-    final Color color = approve ? const Color(0xFF35C08A) : AppColors.accentWarm;
+    final Color color = approve ? _kApproved : AppColors.accentWarm;
     return Container(
       alignment: approve ? Alignment.centerLeft : Alignment.centerRight,
       padding: const EdgeInsets.symmetric(horizontal: 20),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.16),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -904,6 +992,62 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
 
   Widget _confirmButton(BuildContext context, {bool chatStyle = false}) {
     final enabled = !_submitting && _allApproved;
+
+    // Chat: one button, one job. The "전체 승인" escape hatch moved up into the
+    // header row, so the footer no longer stacks two competing full-width
+    // buttons — the gradient/glow pair read as two primary actions.
+    if (chatStyle) {
+      return SizedBox(
+        height: 42,
+        child: FilledButton(
+          onPressed: enabled ? _confirm : null,
+          style: FilledButton.styleFrom(
+            backgroundColor: AppColors.hubGraph,
+            disabledBackgroundColor: context.shell.subtleSurface,
+            disabledForegroundColor: context.shell.mutedText,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            padding: EdgeInsets.zero,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (_submitting)
+                const SizedBox(
+                  width: 15,
+                  height: 15,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white),
+                )
+              else
+                Icon(
+                  _allApproved
+                      ? Icons.check_rounded
+                      : Icons.lock_outline_rounded,
+                  size: 16,
+                ),
+              const SizedBox(width: 7),
+              Flexible(
+                child: Text(
+                  _submitting ? tr('graphReview.confirming') : _confirmLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.1,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     // "전체 승인" shortcut so gating never becomes a dead end — one tap approves
     // everything and lights up the confirm button.
     final approveAllRow = (!_allApproved && _claims.isNotEmpty && !_submitting)
@@ -926,81 +1070,23 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
           )
         : const SizedBox.shrink();
 
-    final Widget button;
-    if (chatStyle) {
-      button = DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: enabled
-                ? [
-                    AppColors.hubGraph,
-                    AppColors.hubGraph.withValues(alpha: 0.82),
-                  ]
-                : [
-                    AppColors.hubGraph.withValues(alpha: 0.3),
-                    AppColors.hubGraph.withValues(alpha: 0.25),
-                  ],
-          ),
-          borderRadius: BorderRadius.circular(10),
-          boxShadow: enabled
-              ? [
-                  BoxShadow(
-                    color: AppColors.hubGraph.withValues(alpha: 0.28),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ]
-              : null,
-        ),
-        child: FilledButton.icon(
-          style: FilledButton.styleFrom(
-            backgroundColor: Colors.transparent,
-            shadowColor: Colors.transparent,
-            foregroundColor: Colors.white,
-            disabledForegroundColor: Colors.white.withValues(alpha: 0.7),
-            padding: const EdgeInsets.symmetric(vertical: 13),
-          ),
-          onPressed: enabled ? _confirm : null,
-          icon: _submitting
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white,
-                  ),
-                )
-              : Icon(
-                  _allApproved
-                      ? Icons.check_circle_outline_rounded
-                      : Icons.lock_outline_rounded,
-                  size: 18),
-          label: Text(
-            _submitting ? tr('graphReview.confirming') : _confirmLabel,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      );
-    } else {
-      button = FilledButton.icon(
-        onPressed: enabled ? _confirm : null,
-        icon: _submitting
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : Icon(_allApproved
-                ? Icons.check_circle_outline
-                : Icons.lock_outline_rounded),
-        label: Text(
-          _submitting ? tr('graphReview.confirming') : _confirmLabel,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-      );
-    }
+    final Widget button = FilledButton.icon(
+      onPressed: enabled ? _confirm : null,
+      icon: _submitting
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Icon(_allApproved
+              ? Icons.check_circle_outline
+              : Icons.lock_outline_rounded),
+      label: Text(
+        _submitting ? tr('graphReview.confirming') : _confirmLabel,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1057,6 +1143,29 @@ class _ClaimCard extends StatelessWidget {
     if (date == null) return const SizedBox.shrink();
     final tone =
         sharesCommonDate ? context.shell.mutedText : AppColors.hubGraph;
+
+    // Chat: numeric and unboxed, riding the meta row instead of costing a row of
+    // its own. It only speaks up (colour + full label) when this claim's day
+    // breaks from the rest of the entry, which is the case worth noticing.
+    if (chatStyle) {
+      return InkWell(
+        onTap: onEditDate,
+        borderRadius: BorderRadius.circular(6),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+          child: Text(
+            sharesCommonDate ? '${date.month}.${date.day}' : _dayLabel(date),
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: sharesCommonDate ? FontWeight.w500 : FontWeight.w700,
+              fontFeatures: const [FontFeature.tabularFigures()],
+              color: tone,
+            ),
+          ),
+        ),
+      );
+    }
+
     return Padding(
       padding: EdgeInsets.only(bottom: chatStyle ? 6 : AppSpacing.xs),
       child: Align(
@@ -1158,6 +1267,44 @@ class _ClaimCard extends StatelessWidget {
   }
 
   Widget _speakerBadge(BuildContext context, String name, {required bool chatStyle}) {
+    // Chat: the speaker is a name, not a status — plain coloured text with a lock
+    // glyph, so it stops competing with the linked/suggested concept chips that
+    // genuinely need a filled background to be read as state.
+    if (chatStyle) {
+      final label = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: Text(
+              name.isEmpty ? tr('graphReview.speakerLabel') : name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.1,
+                color: AppColors.hubVoice,
+              ),
+            ),
+          ),
+          if (onReopenSpeakers != null) ...[
+            const SizedBox(width: 3),
+            Icon(Icons.lock_outline_rounded,
+                size: 10, color: AppColors.hubVoice.withValues(alpha: 0.5)),
+          ],
+        ],
+      );
+      if (onReopenSpeakers == null) return label;
+      return Tooltip(
+        message: tr('reviewPanel.speakerLockedTooltip'),
+        child: InkWell(
+          onTap: onReopenSpeakers,
+          borderRadius: BorderRadius.circular(6),
+          child: label,
+        ),
+      );
+    }
+
     final badge = Container(
       padding: EdgeInsets.symmetric(
         horizontal: chatStyle ? 8 : 10,
@@ -1254,7 +1401,7 @@ class _ClaimCard extends StatelessWidget {
         backgroundColor: tone.withValues(alpha: 0.22),
         child: Icon(
           suggested
-              ? Icons.auto_awesome
+              ? Icons.person_search
               : (c.resIsSelf ? Icons.account_circle : Icons.person),
           size: 14,
           color: tone,
@@ -1330,38 +1477,44 @@ class _ClaimCard extends StatelessWidget {
     return _buildFullCard(context);
   }
 
+  /// Compact claim card: hairline surface, one meta row, body, chips.
+  ///
+  /// The old card spent three stacked rows and four tinted containers per claim
+  /// (index chip, speaker pill, date pill, bordered field), so eight claims read
+  /// as a wall of boxes. Here the index and speaker share the meta row with the
+  /// date and the two actions, the statement field carries no border until
+  /// focus, and only linked/suggested chips take colour.
   Widget _buildChatCard(BuildContext context) {
+    final approvedTone = approved ? _kApproved : context.shell.mutedText;
     return Container(
       decoration: BoxDecoration(
         color: context.shell.panelBackground,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.shell.panelBorder),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: approved
+              ? _kApproved.withValues(alpha: 0.35)
+              : context.shell.panelBorder,
+        ),
       ),
-      padding: const EdgeInsets.fromLTRB(10, 8, 6, 10),
+      padding: const EdgeInsets.fromLTRB(11, 7, 5, 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 20,
-                height: 20,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: AppColors.hubGraph.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(5),
-                ),
-                child: Text(
-                  '$index',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.hubGraph.withValues(alpha: 0.95),
-                  ),
+              Text(
+                '$index',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                  color: context.shell.mutedText,
                 ),
               ),
               const SizedBox(width: 8),
+              // Expanded, not Flexible+Spacer: a loose Flexible would only claim
+              // its share of the free space, leaving the actions floating mid-row
+              // whenever the speaker name is short.
               Expanded(
                 child: _speakerBadge(
                   context,
@@ -1369,185 +1522,234 @@ class _ClaimCard extends StatelessWidget {
                   chatStyle: true,
                 ),
               ),
+              _dateChip(context),
               if (onToggleApproved != null)
                 IconButton(
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                  tooltip: approved ? tr('reviewPanel.unapproveTooltip') : tr('reviewPanel.approveTooltip'),
+                  constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+                  tooltip: approved
+                      ? tr('reviewPanel.unapproveTooltip')
+                      : tr('reviewPanel.approveTooltip'),
                   onPressed: onToggleApproved,
                   icon: Icon(
                     approved
                         ? Icons.check_circle_rounded
                         : Icons.check_circle_outline_rounded,
                     size: 17,
-                    color: approved
-                        ? const Color(0xFF35C08A)
-                        : context.shell.mutedText,
+                    color: approvedTone,
                   ),
                 ),
               IconButton(
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                constraints: const BoxConstraints(minWidth: 26, minHeight: 30),
                 tooltip: tr('common.delete'),
                 onPressed: onDelete,
                 icon: Icon(Icons.close_rounded,
-                    size: 16, color: context.shell.mutedText),
+                    size: 15,
+                    color: context.shell.mutedText.withValues(alpha: 0.75)),
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          _dateChip(context),
+          const SizedBox(height: 2),
           // Statement bodies are edited here and can run long, so they need the
           // same treatment as the composers. See [CaretStableField].
-          CaretStableField(
-            maxHeight: 96,
-            child: TextField(
-            controller: claim.statement,
-            minLines: 1,
-            maxLines: null,
-            style: TextStyle(
-              fontSize: 13,
-              height: 1.45,
-              color: context.shell.primaryText,
+          Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: CaretStableField(
+              maxHeight: 96,
+              child: TextField(
+                controller: claim.statement,
+                minLines: 1,
+                maxLines: null,
+                style: TextStyle(
+                  fontSize: 13,
+                  height: 1.45,
+                  color: context.shell.primaryText,
+                ),
+                decoration: InputDecoration(
+                  isDense: true,
+                  filled: true,
+                  fillColor: context.shell.subtleSurface,
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+                  // Borderless at rest — the fill already bounds the field, and
+                  // eight outlined boxes in a column read as a table.
+                  border: _statementBorder(Colors.transparent),
+                  enabledBorder: _statementBorder(Colors.transparent),
+                  focusedBorder: _statementBorder(
+                    AppColors.hubGraph.withValues(alpha: 0.5),
+                  ),
+                ),
+              ),
             ),
-            decoration: InputDecoration(
-              isDense: true,
-              filled: true,
-              fillColor: context.shell.subtleSurface,
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: context.shell.panelBorder),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: context.shell.panelBorder),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: AppColors.hubGraph.withValues(alpha: 0.45)),
-              ),
-            ),
-          ),
           ),
           if (claim.concepts.isEmpty) ...[
             const SizedBox(height: 6),
-            Text(
-              tr('reviewPanel.noConceptsChatHint'),
-              style: TextStyle(
-                fontSize: 10,
-                color: AppColors.accentWarm.withValues(alpha: 0.85),
-              ),
+            Row(
+              children: [
+                Icon(Icons.info_outline_rounded,
+                    size: 11,
+                    color: AppColors.accentWarm.withValues(alpha: 0.85)),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    tr('reviewPanel.noConceptsChatHint'),
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: AppColors.accentWarm.withValues(alpha: 0.85),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 5,
-            runSpacing: 5,
-            children: [
-              for (final c in claim.concepts)
-                if (c.isPerson)
-                  _chatPersonChip(context, c)
-                else
-                  _chatConceptChip(context, c),
-              _chatAddChip(context),
-            ],
+          const SizedBox(height: 7),
+          Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: [
+                for (final c in claim.concepts)
+                  if (c.isPerson)
+                    _chatPersonChip(context, c)
+                  else
+                    _chatConceptChip(context, c),
+                _chatAddChip(context),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
+  static OutlineInputBorder _statementBorder(Color color) => OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide(color: color),
+      );
+
+  /// One chip geometry for every chat-mode tag: 24px tall, hairline by default,
+  /// filled only when it carries state (linked / suggested / new identity). A
+  /// plain concept is the common case and now costs no colour at all — its
+  /// importance reads off a 4px dot instead of a filled numeral avatar.
+  Widget _chatChip(
+    BuildContext context, {
+    required String label,
+    required Color tone,
+    required bool filled,
+    required VoidCallback onTap,
+    required VoidCallback onDelete,
+    IconData? icon,
+    Widget? leading,
+    VoidCallback? onLongPress,
+  }) {
+    final chip = Material(
+      color: filled ? tone.withValues(alpha: 0.13) : Colors.transparent,
+      borderRadius: BorderRadius.circular(7),
+      child: InkWell(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        borderRadius: BorderRadius.circular(7),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(
+              color: filled
+                  ? tone.withValues(alpha: 0.34)
+                  : context.shell.panelBorder,
+            ),
+          ),
+          padding: const EdgeInsets.fromLTRB(6, 3, 3, 3),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (leading != null) ...[leading, const SizedBox(width: 5)],
+              if (icon != null) ...[
+                Icon(icon, size: 11, color: tone),
+                const SizedBox(width: 4),
+              ],
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: filled ? tone : context.shell.primaryText,
+                ),
+              ),
+              GestureDetector(
+                onTap: onDelete,
+                behavior: HitTestBehavior.opaque,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 2, 2, 2),
+                  child: Icon(Icons.close_rounded,
+                      size: 11,
+                      color: (filled ? tone : context.shell.mutedText)
+                          .withValues(alpha: 0.75)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    return chip;
+  }
+
   Widget _chatConceptChip(BuildContext context, _ConceptDraft c) {
     final suggested = c.resAction == 'suggest';
     final linked = c.resAction == 'link';
-    // Suggest = purple, confirmed link = green, plain = accent (importance-tinted).
-    final Color tone = suggested
-        ? const Color(0xFFB07BFF)
-        : linked
-            ? const Color(0xFF35C08A)
-            : AppColors.accent;
-    final Color bg = (suggested || linked)
-        ? tone.withValues(alpha: 0.16)
-        : AppColors.accent.withValues(alpha: 0.12 + 0.04 * c.importance);
-
-    return GestureDetector(
+    final Color tone =
+        suggested ? _kSuggest : (linked ? _kApproved : AppColors.accent);
+    return _chatChip(
+      context,
+      // Suggest/link → concept-link sheet; plain → cycle importance.
+      onTap: () {
+        if (suggested || linked) {
+          _resolveConceptLink(context, c);
+        } else {
+          c.importance = c.importance >= 5 ? 1 : c.importance + 1;
+          onConceptsChanged();
+        }
+      },
       onLongPress: () {
         c.kind = 'person';
         c.resAction = null;
         onConceptsChanged();
         _resolvePerson(context, c);
       },
-      child: Material(
-        color: bg,
-        borderRadius: BorderRadius.circular(7),
-        child: InkWell(
-          onTap: () {
-            // Suggest/link → open the concept-link sheet; plain → cycle importance.
-            if (suggested || linked) {
-              _resolveConceptLink(context, c);
-            } else {
-              c.importance = c.importance >= 5 ? 1 : c.importance + 1;
-              onConceptsChanged();
-            }
-          },
-          borderRadius: BorderRadius.circular(7),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(6, 4, 4, 4),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (suggested)
-                  Icon(Icons.link_rounded, size: 13, color: tone)
-                else if (linked)
-                  Icon(Icons.link_rounded, size: 13, color: tone)
-                else
-                  Container(
-                    width: 16,
-                    height: 16,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: AppColors.accent.withValues(alpha: 0.25),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Text(
-                      '${c.importance}',
-                      style: const TextStyle(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.accent,
-                      ),
-                    ),
-                  ),
-                const SizedBox(width: 4),
-                Text(
-                  suggested
-                      ? '${c.name} ${tr('graphReview.suggestedSuffix', {'name': c.resName ?? ''})}'
-                      : linked
-                          ? '${c.name} ${tr('graphReview.linkedSuffix', {'name': c.resName ?? ''})}'
-                          : c.name,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: tone,
-                  ),
-                ),
-                GestureDetector(
-                  onTap: () {
-                    claim.concepts.remove(c);
-                    onConceptsChanged();
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 2),
-                    child: Icon(Icons.close,
-                        size: 12, color: tone.withValues(alpha: 0.7)),
-                  ),
-                ),
-              ],
-            ),
+      onDelete: () {
+        claim.concepts.remove(c);
+        onConceptsChanged();
+      },
+      tone: tone,
+      filled: suggested || linked,
+      icon: (suggested || linked) ? Icons.link_rounded : null,
+      leading: (suggested || linked) ? null : _importanceDot(c.importance),
+      label: suggested
+          ? '${c.name} ${tr('graphReview.suggestedSuffix', {'name': c.resName ?? ''})}'
+          : linked
+              ? '${c.name} ${tr('graphReview.linkedSuffix', {'name': c.resName ?? ''})}'
+              : c.name,
+    );
+  }
+
+  /// Importance 1–5 as one dot that grows and gains opacity — the number itself
+  /// was never the point, the relative weight is.
+  Widget _importanceDot(int importance) {
+    final size = 3.0 + importance * 0.9;
+    return SizedBox(
+      width: 8,
+      height: 8,
+      child: Center(
+        child: Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: AppColors.accent.withValues(alpha: 0.35 + 0.13 * importance),
           ),
         ),
       ),
@@ -1558,9 +1760,9 @@ class _ClaimCard extends StatelessWidget {
     final linked = c.resAction == 'link';
     final suggested = c.resAction == 'suggest';
     final color = linked
-        ? (c.resIsSelf ? const Color(0xFF4C8DFF) : const Color(0xFF35C08A))
+        ? (c.resIsSelf ? _kSelf : _kApproved)
         : suggested
-            ? const Color(0xFFB07BFF)
+            ? _kSuggest
             : AppColors.accentWarm;
     final suffix = linked
         ? (c.resIsSelf
@@ -1569,72 +1771,43 @@ class _ClaimCard extends StatelessWidget {
         : suggested
             ? tr('graphReview.suggestedSuffix', {'name': c.resName ?? ''})
             : tr('graphReview.newEntitySuffix');
-    return Material(
-      color: color.withValues(alpha: 0.14),
-      borderRadius: BorderRadius.circular(7),
-      child: InkWell(
-        onTap: () => _resolvePerson(context, c),
-        borderRadius: BorderRadius.circular(7),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(6, 4, 4, 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                suggested ? Icons.auto_awesome : Icons.person_rounded,
-                size: 12,
-                color: color,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                '${c.name} $suffix',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: color,
-                ),
-              ),
-              GestureDetector(
-                onTap: () {
-                  claim.concepts.remove(c);
-                  onConceptsChanged();
-                },
-                child: Padding(
-                  padding: const EdgeInsets.only(left: 2),
-                  child: Icon(Icons.close, size: 12, color: color.withValues(alpha: 0.7)),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    return _chatChip(
+      context,
+      onTap: () => _resolvePerson(context, c),
+      onDelete: () {
+        claim.concepts.remove(c);
+        onConceptsChanged();
+      },
+      tone: color,
+      // A person mention always carries a resolution decision, so it always
+      // reads as state.
+      filled: true,
+      icon: suggested ? Icons.person_search_rounded : Icons.person_rounded,
+      label: '${c.name} $suffix',
     );
   }
 
+  /// Icon-only: "추가" spelled out was the widest chip in every card while being
+  /// the least interesting thing in it.
   Widget _chatAddChip(BuildContext context) {
-    final onSurface = context.shell.primaryText;
-    return Material(
-      color: context.shell.subtleSurface,
-      borderRadius: BorderRadius.circular(7),
-      child: InkWell(
-        onTap: () => _addConcept(context),
+    return Tooltip(
+      message: tr('graphReview.addConceptTitle'),
+      child: Material(
+        color: Colors.transparent,
         borderRadius: BorderRadius.circular(7),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.add, size: 13, color: onSurface),
-              const SizedBox(width: 2),
-              Text(
-                tr('common.add'),
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: onSurface,
-                ),
-              ),
-            ],
+        child: InkWell(
+          onTap: () => _addConcept(context),
+          borderRadius: BorderRadius.circular(7),
+          child: Container(
+            width: 26,
+            height: 24,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(7),
+              border: Border.all(color: context.shell.panelBorder),
+            ),
+            child: Icon(Icons.add_rounded,
+                size: 13, color: context.shell.mutedText),
           ),
         ),
       ),
@@ -1759,50 +1932,48 @@ class _ApprovedRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const green = Color(0xFF35C08A);
     final snippet = claim.title.text.trim().isNotEmpty
         ? claim.title.text.trim()
         : claim.statement.text.trim();
+    // 34px, one line, no fill: an approved claim is settled work and should
+    // recede. The check glyph is the only thing that has to stay legible — the
+    // "승인됨" label it used to carry said the same thing twice.
     return Material(
-      color: green.withValues(alpha: 0.08),
+      color: Colors.transparent,
       borderRadius: BorderRadius.circular(10),
       child: InkWell(
         onTap: onTap,
         onLongPress: onUnapprove,
         borderRadius: BorderRadius.circular(10),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          padding: const EdgeInsets.fromLTRB(9, 8, 8, 8),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: green.withValues(alpha: 0.3)),
+            border: Border.all(color: _kApproved.withValues(alpha: 0.28)),
           ),
           child: Row(
             children: [
-              const Icon(Icons.check_circle_rounded, size: 16, color: green),
+              const Icon(Icons.check_rounded, size: 14, color: _kApproved),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  snippet.isEmpty ? tr('reviewPanel.noContentPlaceholder') : snippet,
+                  snippet.isEmpty
+                      ? tr('reviewPanel.noContentPlaceholder')
+                      : snippet,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 12,
-                    color: context.shell.primaryText.withValues(alpha: 0.9),
+                    color: context.shell.primaryText.withValues(alpha: 0.75),
                   ),
                 ),
               ),
               const SizedBox(width: 6),
-              Text(
-                tr('reviewPanel.approvedLabel'),
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: green.withValues(alpha: 0.9),
-                ),
+              Tooltip(
+                message: tr('reviewPanel.approvedLabel'),
+                child: Icon(Icons.expand_more_rounded,
+                    size: 15, color: context.shell.mutedText),
               ),
-              const SizedBox(width: 4),
-              Icon(Icons.expand_more_rounded,
-                  size: 16, color: context.shell.mutedText),
             ],
           ),
         ),
@@ -1818,38 +1989,30 @@ class _SpeakerLockBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: AppColors.hubVoice.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.hubVoice.withValues(alpha: 0.25)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.lock_outline_rounded,
-              size: 14, color: AppColors.hubVoice.withValues(alpha: 0.85)),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              tr('reviewPanel.speakerLockedBanner'),
-              style: TextStyle(
-                fontSize: 10.5,
-                height: 1.35,
-                color: context.shell.primaryText.withValues(alpha: 0.85),
-              ),
+    // Unboxed and single-line: an informational note about a locked field does
+    // not need a tinted panel of its own above the list it annotates.
+    return Row(
+      children: [
+        Icon(Icons.lock_outline_rounded,
+            size: 12, color: AppColors.hubVoice.withValues(alpha: 0.8)),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            tr('reviewPanel.speakerLockedBanner'),
+            maxLines: 2,
+            style: TextStyle(
+              fontSize: 10,
+              height: 1.35,
+              color: context.shell.mutedText,
             ),
           ),
-          TextButton(
-            onPressed: onReopen,
-            style: TextButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-            ),
-            child: Text(tr('reviewPanel.reopenSpeakersButton'), style: const TextStyle(fontSize: 11)),
-          ),
-        ],
-      ),
+        ),
+        _TinyTextButton(
+          label: tr('reviewPanel.reopenSpeakersButton'),
+          onTap: onReopen,
+          tone: AppColors.hubVoice,
+        ),
+      ],
     );
   }
 }

@@ -303,7 +303,7 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
                     height: 18,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Icon(Icons.auto_awesome_rounded),
+                : const Icon(Icons.playlist_add_rounded),
             label: Text(
               _selectedLanguages.isEmpty
                   ? 'Target 언어를 선택하세요'
@@ -330,7 +330,7 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
             tint: AppColors.hubQuiz,
             child: const ListTile(
               contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.auto_awesome_rounded),
+              leading: Icon(Icons.inventory_2_outlined),
               title: Text('자동 학습 재고'),
               subtitle: Text(
                 '새 Statement는 자동 분석됩니다. 여기서는 특정 노드의 기존 문제를 확인하거나 추가 생성할 수 있습니다.',

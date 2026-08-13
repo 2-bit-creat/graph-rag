@@ -21,12 +21,13 @@ import '../widgets/graph_inspector_panel.dart';
 import '../widgets/knowledge_graph_canvas.dart';
 import '../widgets/measure_size.dart';
 import '../widgets/mention_editor_core.dart' show MentionAutocompleteFieldState;
+import '../widgets/node_expression_sheet.dart';
+import '../widgets/node_merge_sheet.dart';
 import '../widgets/ocr_review_sheet.dart';
 import '../widgets/ontology_settings_sheet.dart';
 import '../widgets/quiz/cloze_quiz_card.dart';
 import '../widgets/thinking_orbs.dart';
 import 'graph_trash_screen.dart';
-import 'expression_deck_screen.dart';
 
 /// Full-screen interactive knowledge graph with integrated chat panel.
 class KnowledgeGraphScreen extends StatefulWidget {
@@ -153,10 +154,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   bool _chatPeekThrough = false;
   Set<String> _glowIds = const {};
   int _glowSeq = 0;
-  // Dual view: "오늘" lights up the nodes behind today's due cards and hands
-  // exactly those quiz ids to the deck, so the highlight and the deck can
-  // never disagree about what "today" means.
-  bool _expressionDeckLoading = false;
   String? _generationNodeId;
   String? _generationNodeName;
   String? _generationLanguage;
@@ -166,6 +163,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   // Textract answers in a couple of seconds, but on a slow phone connection the
   // upload alone is long enough that a silent UI reads as a dead tap.
   bool _ocrBusy = false;
+  /// A drag-to-merge is in flight (edge surgery + optional rename + reload).
+  bool _merging = false;
   int _lastMsgCount = 0;
   ChatMode _lastChatMode = ChatMode.normal;
   bool _lastChatBusy = false;
@@ -858,35 +857,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       _glowSeq++;
     });
     _canvasKey.currentState?.focusOnNodes(known);
-  }
-
-  // ── Dual view: 그래프 ↔ 오늘 복습 ────────────────────────────────────────
-
-  /// Open a flip-card deck made from expressions extracted from Statements.
-  Future<void> _openExpressionDeck() async {
-    if (_expressionDeckLoading) return;
-    setState(() => _expressionDeckLoading = true);
-    try {
-      final data = await apiClient.graphExpressionCards();
-      final items = (data['items'] as List<dynamic>? ?? [])
-          .map((item) => Map<String, dynamic>.from(item as Map))
-          .toList();
-      if (!mounted) return;
-      setState(() => _expressionDeckLoading = false);
-      if (items.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr('expressionDeck.empty'))),
-        );
-        return;
-      }
-      await Navigator.push(context, ExpressionDeckScreen.route(items));
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _expressionDeckLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(tr('expressionDeck.loadFailed', {'error': e}))),
-      );
-    }
   }
 
   /// 사후 교정: 검토에서 놓친 개념/정체성을 그래프에 직접 추가한다.
@@ -1791,86 +1761,33 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     await _selectNode(node);
   }
 
+  /// The Statement's extracted wordbook — reviewable, and prunable.
+  ///
+  /// Extraction is the one step whose output the learner cannot correct
+  /// anywhere else, so this sheet owns selection and deletion (the server drops
+  /// the quizzes each deleted expression produced). Reload the study panel
+  /// afterwards so its counts match what is actually left.
   Future<void> _showSelectedExpressions(String nodeId) async {
     try {
       final data = await apiClient.getNodeExpressions(nodeId);
       if (!mounted || _selectedNodeId != nodeId) return;
       final raw = data['expressions_by_language'];
       final groups = raw is Map ? raw : const <String, dynamic>{};
-      final visibleGroups = Map.fromEntries(
-        groups.entries.where(
-          (entry) => entry.value is List && (entry.value as List).isNotEmpty,
-        ),
+      final visibleGroups = Map<String, dynamic>.fromEntries(
+        groups.entries
+            .where(
+              (entry) => entry.value is List && (entry.value as List).isNotEmpty,
+            )
+            .map((entry) => MapEntry(entry.key.toString(), entry.value)),
       );
-      await showModalBottomSheet<void>(
+      final changed = await showNodeExpressionSheet(
         context: context,
-        isScrollControlled: true,
-        builder: (sheetContext) => SafeArea(
-          child: SizedBox(
-            height: MediaQuery.sizeOf(sheetContext).height * .62,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.visibility_outlined),
-                  title: Text(tr('kg.expressionSheetTitle')),
-                  subtitle: Text(tr('kg.expressionSheetWarning')),
-                ),
-                const Divider(height: 1),
-                Expanded(
-                  child: visibleGroups.isEmpty
-                      ? Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(24),
-                            child: Text(
-                              tr('inspector.noExpressionsYetShort'),
-                              textAlign: TextAlign.center,
-                              style: Theme.of(sheetContext).textTheme.bodyLarge,
-                            ),
-                          ),
-                        )
-                      : ListView(
-                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
-                          children: [
-                            for (final entry in visibleGroups.entries) ...[
-                              Text(
-                                kLegacyLanguageLabelsKo[entry.key.toString()] ??
-                                    entry.key.toString(),
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              for (final item
-                                  in (entry.value as List? ?? const []))
-                                ListTile(
-                                  dense: true,
-                                  contentPadding: EdgeInsets.zero,
-                                  leading:
-                                      const Icon(Icons.auto_awesome, size: 18),
-                                  title: Text(
-                                    (item as Map)['expression']?.toString() ??
-                                        '',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  subtitle:
-                                      ((item)['meaning']?.toString() ?? '')
-                                              .isEmpty
-                                          ? null
-                                          : Text(item['meaning'].toString()),
-                                ),
-                              const SizedBox(height: 10),
-                            ],
-                          ],
-                        ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        nodeId: nodeId,
+        expressionsByLanguage: visibleGroups,
       );
+      if (changed && mounted && _selectedNodeId == nodeId) {
+        await _loadSelectedStudyQuizzes(nodeId);
+      }
     } catch (e) {
       if (mounted) chatSession.errors.value = e.toString();
     }
@@ -2094,6 +2011,68 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     }
   }
 
+  /// A node was dragged onto another one on the canvas: ask, then merge.
+  ///
+  /// The canvas only judges the gesture and whether the pair is mergeable
+  /// ([canMergeNodes]); the decision, the surviving name and the request live
+  /// here. Backend-side this is one call — `/kg/nodes/{id}/reclassify` with
+  /// `merge_into` — which reassigns edges, carries journal provenance, alias
+  /// embeddings and the importance score over, and learns the absorbed name as
+  /// an alias so future mentions resolve to the survivor on their own.
+  Future<void> _confirmNodeMerge(
+    Map<String, dynamic> source,
+    Map<String, dynamic> target,
+  ) async {
+    final sourceId = source['id'].toString();
+    final targetId = target['id'].toString();
+    final movingEdges = (_graph?['edges'] as List<dynamic>? ?? []).where((raw) {
+      if (raw is! Map) return false;
+      return raw['source_id'].toString() == sourceId ||
+          raw['target_id'].toString() == sourceId;
+    }).length;
+
+    final keptName = await NodeMergeSheet.show(
+      context,
+      source: source,
+      target: target,
+      movingEdgeCount: movingEdges,
+    );
+    if (keptName == null || !mounted) return;
+
+    setState(() => _merging = true);
+    try {
+      final result = await apiClient.reclassifyNode(
+        sourceId,
+        mergeInto: targetId,
+      );
+      // Renaming is a second call on purpose: the merge must land even if the
+      // rename fails, and the survivor keeps its own name in that case rather
+      // than the merge being rolled back over a label.
+      final targetName = nodeDisplayLabel(target);
+      if (keptName.trim().isNotEmpty && keptName != targetName) {
+        await apiClient.updateNode(
+          targetId,
+          name: keptName,
+          type: target['type']?.toString() ?? 'Identity',
+        );
+      }
+      if (!mounted) return;
+      // The merged node was the selected one on the canvas — its inspector now
+      // points at something that no longer exists.
+      if (_selectedNodeId == sourceId) _clearSelection();
+      _snack(tr('nodeMerge.done', {
+        'name': keptName,
+        'edges': '${(result['edges_reassigned'] as num?)?.toInt() ?? movingEdges}',
+      }));
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      _snack(tr('nodeMerge.failed', {'error': e}));
+    } finally {
+      if (mounted) setState(() => _merging = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -2206,6 +2185,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           onBackgroundTap: () {
             _clearSelection();
           },
+          onNodeMergeRequest: _confirmNodeMerge,
         ),
         // 모드 토글 — 기본 ↔ 화자 숨김(색상 인코딩).
         if (compactMode)
@@ -2413,7 +2393,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           const Positioned.fill(
             child: IgnorePointer(child: _EmptyGraphHint()),
           ),
-        if (_ocrBusy)
+        // Same blocking overlay for both: a merge rewrites edges, so the graph
+        // under the finger must not be tappable while it is in flight.
+        if (_ocrBusy || _merging)
           Positioned.fill(
             child: ColoredBox(
               color: Colors.black.withValues(alpha: 0.35),
@@ -2438,7 +2420,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
                       ),
                       const SizedBox(width: AppSpacing.md),
                       Text(
-                        tr('ocr.working'),
+                        _merging ? tr('nodeMerge.working') : tr('ocr.working'),
                         style: TextStyle(color: context.shell.primaryText),
                       ),
                     ],
@@ -2447,16 +2429,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
               ),
             ),
           ),
-        // Dual view toggle — sits under the search pill rather than inside it;
-        // that pill is already at its icon budget at 390px.
-        Positioned(
-          top: _graphToolsVisible ? chipsTop + 48 : chipsTop,
-          right: 12,
-          child: _ExpressionDeckPill(
-            loading: _expressionDeckLoading,
-            onTap: _openExpressionDeck,
-          ),
-        ),
         if (_graphToolsVisible)
           Positioned(
             top: chipsTop,
@@ -2609,73 +2581,6 @@ class _CompactGraphHeader extends StatelessWidget {
             icon: Icon(Icons.open_in_full, size: 20, color: shell.mutedText),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _ExpressionDeckPill extends StatelessWidget {
-  const _ExpressionDeckPill({
-    required this.loading,
-    required this.onTap,
-  });
-
-  final bool loading;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final shell = context.shell;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final surface = isDark ? const Color(0xE91A1A22) : const Color(0xF2FFFFFF);
-    return Container(
-      height: 40,
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        color: surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: shell.panelBorder),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.34 : 0.10),
-            blurRadius: 12,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: loading ? null : onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 13),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (loading)
-                  SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: shell.mutedText,
-                    ),
-                  )
-                else
-                  Icon(Icons.style_outlined, size: 18, color: shell.mutedText),
-                const SizedBox(width: 7),
-                Text(
-                  tr('kg.expressionCards'),
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: shell.primaryText,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }
