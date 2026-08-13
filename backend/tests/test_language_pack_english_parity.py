@@ -29,7 +29,13 @@ _LEVEL = 50
 # the pre-refactor prompt text (verified by diffing against the git history
 # of quiz_bundle.py before this test was added).
 _EXPECTED_HASHES = {
-    "plan": "ee2803357444c04c",
+    # Updated deliberately: the plan prompt now states the forbidden_entities
+    # contract (graph-known people/source names must stay in context_entities,
+    # including transliterations). Extraction was emitting friends' names as
+    # vocabulary ("es heißt eui-jun und seung-hyun"); the prompt rule pairs with
+    # the deterministic gate in app/expression_entity_guard.py. Nothing else in
+    # the English prompt changed.
+    "plan": "b5d28e90ed86a9e0",
     "plan_qa": "e5a002c6984cefb8",
     "inventory": "0b3b818e88b45492",
     "cloze": "9c47272cd631de57",

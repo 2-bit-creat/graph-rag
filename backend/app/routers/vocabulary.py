@@ -152,8 +152,9 @@ async def delete_statement_expression(
     expression: str,
     node_id: str | None = None,
     user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Delete an expression from the statement bank.
+    """Delete an expression from the statement bank, and its quizzes with it.
 
     A merged card (see ``get_statement_bank_for_language``) can span several
     origin Statement nodes. Passing ``node_id`` scopes the delete to that one
@@ -161,19 +162,38 @@ async def delete_statement_expression(
     removes the lemma from every origin so a surviving copy cannot bring it
     back. If all expressions for a node+language are removed, that node's
     extraction_done flag is reset so the worker will re-extract on next trigger.
+
+    The cloze cards built from the expression go too — a card whose whole point
+    is a word the learner just removed is not a card they should still be asked.
     """
     if node_id is not None:
         from ..node_expression_store import delete_node_expression
         removed = await delete_node_expression(user.id, node_id, language, expression)
         if not removed:
             raise HTTPException(status_code=404, detail="Expression not found")
-        return {"removed": expression, "node_id": node_id, "language": language}
+        quizzes = await crud.delete_quizzes_for_expressions(
+            session, user.id, language, [expression], node_id=uuid.UUID(node_id)
+        )
+        return {
+            "removed": expression,
+            "node_id": node_id,
+            "language": language,
+            "quizzes_deleted": quizzes,
+        }
 
     from ..node_expression_store import delete_expression_all_origins
     removed_count = await delete_expression_all_origins(user.id, language, expression)
     if not removed_count:
         raise HTTPException(status_code=404, detail="Expression not found")
-    return {"removed": expression, "origins_removed": removed_count, "language": language}
+    quizzes = await crud.delete_quizzes_for_expressions(
+        session, user.id, language, [expression]
+    )
+    return {
+        "removed": expression,
+        "origins_removed": removed_count,
+        "language": language,
+        "quizzes_deleted": quizzes,
+    }
 
 
 @router.delete("/statement-bank/language/{language}", tags=["vocabularies"])

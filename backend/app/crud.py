@@ -4989,6 +4989,68 @@ async def delete_quizzes_permanent_batch(
     }
 
 
+def _expression_identity(value: str) -> str:
+    """Same normalisation the extractor stores expressions under.
+
+    Mirrors ``quiz_bundle._expression_key``; kept here as a local copy so the
+    delete path does not import the whole generation module (and its OpenAI
+    client) just to casefold a phrase.
+    """
+    import re as _re
+
+    return " ".join(_re.findall(r"[\w'-]+", (value or "").casefold()))
+
+
+async def delete_quizzes_for_expressions(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    language: str,
+    expressions: Sequence[str],
+    *,
+    node_id: uuid.UUID | None = None,
+) -> int:
+    """Delete the cloze cards produced from these expressions. Returns the count.
+
+    An expression the learner removed must not keep asking them questions: the
+    cloze card *is* that expression (``quiz_data.canonical_form``), so it has no
+    meaning once the word is gone from the wordbook. Composition cards are left
+    alone — they drill a whole Statement, not one expression.
+
+    ``node_id`` scopes the delete to cards sourced from one Statement, matching
+    the per-origin delete in the expression store.
+    """
+    keys = {
+        _expression_identity(value)
+        for value in expressions
+        if _expression_identity(value)
+    }
+    if not keys:
+        return 0
+
+    rows = list((await session.execute(
+        select(Quiz).where(
+            Quiz.user_id == user_id,
+            Quiz.quiz_type == "cloze",
+            Quiz.language == (language or "").lower(),
+        )
+    )).scalars())
+    doomed: list[uuid.UUID] = []
+    for quiz in rows:
+        data = quiz.quiz_data if isinstance(quiz.quiz_data, dict) else {}
+        canonical = _expression_identity(str(data.get("canonical_form") or ""))
+        if canonical not in keys:
+            continue
+        if node_id is not None and not any(
+            str(source) == str(node_id) for source in (quiz.source_nodes or [])
+        ):
+            continue
+        doomed.append(quiz.id)
+    if not doomed:
+        return 0
+    result = await delete_quizzes_permanent_batch(session, doomed, user_id)
+    return int(result.get("quiz_count") or 0)
+
+
 async def reset_quiz_queue(session: AsyncSession, user_id: uuid.UUID) -> int:
     """Archive the full learning queue and reset every source circuit breaker.
 

@@ -588,6 +588,17 @@ class GraphApplyRequest(BaseModel):
     context_type: str | None = None
 
 
+class NodeExpressionDeleteItem(BaseModel):
+    """One expression to remove from a Statement node's wordbook."""
+
+    language: str
+    expression: str
+
+
+class NodeExpressionDeleteRequest(BaseModel):
+    items: list[NodeExpressionDeleteItem] = Field(default_factory=list)
+
+
 class ExampleSentence(BaseModel):
     en: str
     ko: str = ""

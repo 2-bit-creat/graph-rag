@@ -52,6 +52,8 @@ from ..schemas import (
 
     SpeakerRecommendResponse,
 
+    NodeExpressionDeleteRequest,
+
 )
 
 from ..speaker_confirmation import confirm_speaker_identity, recommend_speaker_node
@@ -1218,6 +1220,51 @@ async def get_node_expressions(
         seen.add(key)
 
     return {"node_id": str(node_id), "expressions_by_language": data}
+
+
+@router.post("/nodes/{node_id}/expressions/delete")
+async def delete_node_expressions(
+    node_id: uuid.UUID,
+    payload: NodeExpressionDeleteRequest,
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Delete selected expressions of one Statement, with their quizzes.
+
+    The learner is the last line of defence against a bad extraction (a name, a
+    duplicate, a phrase that is not worth learning), so removing one has to
+    remove what it produced too — otherwise its cloze card keeps coming back in
+    the queue and the deletion looks like it did nothing.
+    """
+    from ..node_expression_store import delete_node_expression
+
+    node = await session.get(Node, node_id)
+    if node is None or node.user_id != user.id or node.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="node not found")
+
+    removed: list[dict] = []
+    quizzes_deleted = 0
+    by_language: dict[str, list[str]] = {}
+    for item in payload.items:
+        language = (item.language or "").strip().lower()
+        expression = (item.expression or "").strip()
+        if not language or not expression:
+            continue
+        if await delete_node_expression(user.id, str(node_id), language, expression):
+            removed.append({"language": language, "expression": expression})
+            by_language.setdefault(language, []).append(expression)
+
+    for language, expressions in by_language.items():
+        quizzes_deleted += await crud.delete_quizzes_for_expressions(
+            session, user.id, language, expressions, node_id=node_id
+        )
+
+    return {
+        "node_id": str(node_id),
+        "removed": removed,
+        "removed_count": len(removed),
+        "quizzes_deleted": quizzes_deleted,
+    }
 
 
 @router.post("/admin/backfill-journal-links")

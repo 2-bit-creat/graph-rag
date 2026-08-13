@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import crud
 from .config import get_settings
+from .expression_entity_guard import EntityNameGuard, build_statement_entity_guard
 from .language_packs import native_quiz_pack, pair_rules, target_pack
 from .level_guidelines import cefr_label, get_level_band
 from .models import Quiz, User
@@ -707,6 +708,10 @@ def _build_plan_system_prompt(
         "and meaning_parts. This includes people, companies, brands, products, events, locations, dates, IDs, acronyms, and report or "
         "organization names. A common noun modified by a name must lose the name: source '앤톡 웹페이지에서' may teach 'on the webpage' "
         "or 'auf der Webseite', but NEVER 'at the Antock webpage' or 'auf der Webseite von Entok'. "
+        "The payload's forbidden_entities are names this diary's knowledge graph already knows for these people and sources. "
+        "They belong in context_entities only: never inside an expression, a meaning, or any transliteration of them "
+        "('의준' must not appear as eui-jun/euijun, '승현' not as seung-hyun/seunghyeon). An expression whose meaning is a fact "
+        "about a named person is not vocabulary — drop it and extract the reusable action instead. "
         "Do not create native-language questions, cloze, scramble, or multiple-choice content in this planning step. "
         "Native-language fields must use the native language and target-language fields must use the target language. "
         f"{_plan_prompt_extra_notes(language)}"
@@ -1510,9 +1515,18 @@ async def generate_quiz_bundle(
     system = _build_plan_system_prompt(
         native_label, target_label, level, lang_guide(language), language
     )
+    # Who this Statement is about, straight from the graph (speaker + mentioned
+    # identities). Told to the planner so it can keep the names in
+    # context_entities, and enforced below whatever the planner does with them.
+    entity_guard = (
+        await build_statement_entity_guard(session, user.id, seed_nodes[0])
+        if seed_nodes
+        else EntityNameGuard([])
+    )
     user_content = json.dumps(
         {
             "source_statement": str(seed.get("content_ko") or ""),
+            "forbidden_entities": sorted(entity_guard.native),
             "composition_units": [
                 {
                     "segment_index": index,
@@ -1872,6 +1886,17 @@ async def generate_quiz_bundle(
                     key_set = {candidate_key}
                     key = candidate_key
             if key not in key_set or key in seen_expression_keys:
+                continue
+            # Names are not vocabulary. The graph knows who this Statement is
+            # about, so a chunk that spells one of them ("es heißt eui-jun und
+            # seung-hyun") or glosses one of them ("의준이 승현이다") is dropped
+            # here regardless of what the planner scored it.
+            entity_leak = entity_guard.reason(
+                target=f"{canonical} {chunk.get('surface_form') or ''}",
+                native=_native_expression_meaning(chunk, native_language),
+            )
+            if entity_leak:
+                logger.info("expression rejected (%s): %s", entity_leak, canonical)
                 continue
             # A valid reusable canonical expression can arrive with a polluted
             # reference surface (for example ``auf der Webseite von Entok``).

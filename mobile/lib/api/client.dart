@@ -1644,6 +1644,25 @@ class ApiClient {
     }
   }
 
+  /// Delete selected expressions of one Statement node.
+  ///
+  /// Each item is `{language, expression}`. The server also deletes the cloze
+  /// quizzes built from them; the response reports both counts.
+  Future<Map<String, dynamic>> deleteNodeExpressions(
+    String nodeId,
+    List<Map<String, String>> items,
+  ) async {
+    try {
+      final resp = await _dio.post(
+        '/graph/nodes/$nodeId/expressions/delete',
+        data: {'items': items},
+      );
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '표현 삭제');
+    }
+  }
+
   /// Delete a single expression from the statement bank.
   /// Delete an expression from the statement bank. By default removes the lemma
   /// from ALL origin nodes (the merged card's "remove from vocab"); pass [nodeId]
