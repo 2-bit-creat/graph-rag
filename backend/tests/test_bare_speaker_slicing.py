@@ -6,8 +6,15 @@ line is "용어: 정의", which the un-bracketed speaker heuristic read as
 "people", and every financial term (약정액, ROE, 수탁은행, 컴플라이언스 …) was
 offered as a speaker and committed to the graph as an identity node.
 
-The discriminator is turns per speaker: a conversation has a few speakers who
-keep coming back, a definition list has a new name on every line.
+The heuristic is gone entirely — see ``pre_slice_by_speaker_lines``'s docstring.
+The turns-per-speaker discriminator that once tried to save it still let
+``질문:/답변:`` memos through, and the KakaoTalk exports it was written for never
+matched the regex anyway. Speakers now come only from explicit ``@이름`` mentions
+and their normalized ``[이름]:`` labels; screenshots arrive through OCR, which
+attaches the mentions itself.
+
+So these tests pin the *absence* of the heuristic: bare "이름: 내용" lines are
+prose, whatever they look like.
 """
 
 from __future__ import annotations
@@ -49,25 +56,27 @@ def test_glossary_terms_never_become_speakers() -> None:
         assert term not in speakers
 
 
-def test_real_chat_paste_still_splits() -> None:
-    """KakaoTalk-style paste — the feature this heuristic exists for."""
+def test_bare_name_chat_is_not_sliced() -> None:
+    """Even the shape the heuristic existed for stays prose now.
+
+    This looks like the clearest possible conversation, and it is still not
+    split: a chat capture reaches the composer through OCR, which labels it
+    "@제니: …", so nothing is lost by refusing to guess here — while guessing
+    costs a person node for every colon in a glossary.
+    """
     chat = """제니: 내일 몇 시에 만날까?
 나: 나는 7시 이후면 아무 때나 괜찮아
-제니: 그럼 7시 반에 강남역 어때
-나: 좋아 그때 보자"""
-    lines = pre_slice_by_speaker_lines(chat)
-    assert [line["speaker"] for line in lines] == ["제니", "나", "제니", "나"]
-    assert lines[0]["text"] == "내일 몇 시에 만날까?"
+제니: 그럼 7시 반에 강남역 어때"""
+    assert pre_slice_by_speaker_lines(chat) == []
 
 
-def test_lopsided_interview_still_splits() -> None:
-    """One person doing most of the talking is still a conversation."""
+def test_repeated_speaker_names_do_not_revive_the_heuristic() -> None:
+    """Turns-per-speaker was the last rescue attempt — it must stay dead."""
     interview = """기자: 이번 분기 실적을 어떻게 보시나요
 대표: 매출은 기대치를 넘었습니다
 대표: 다만 마케팅비가 늘어난 점은 아쉽습니다
 대표: 내년에는 효율을 더 끌어올릴 계획입니다"""
-    lines = pre_slice_by_speaker_lines(interview)
-    assert [line["speaker"] for line in lines] == ["기자", "대표", "대표", "대표"]
+    assert pre_slice_by_speaker_lines(interview) == []
 
 
 def test_bracketed_form_is_unaffected() -> None:

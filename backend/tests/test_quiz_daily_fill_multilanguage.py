@@ -15,7 +15,11 @@ async def test_daily_fill_explores_every_source_for_each_language(
     db_session, iso_user, monkeypatch
 ) -> None:
     iso_user.target_languages = ["english", "german"]
-    iso_user.daily_cloze_target = 2
+    # One slot per Statement. The daily goal is an inventory target and
+    # ``fill_daily_batch`` stops at the deficit, so a target below the source
+    # count would cap the fill before the last source ever contributes — and the
+    # assertions below would be measuring the cap, not per-language coverage.
+    iso_user.daily_cloze_target = 3
     iso_user.daily_composition_target = 1
     for index in range(3):
         db_session.add(Node(

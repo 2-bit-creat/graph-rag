@@ -126,6 +126,25 @@ async def test_dashboard_uses_attempts_for_today_and_xp(db_session, iso_user):
     assert result["current_streak"] == 1
 
 
+def _split_day_instant() -> tuple[object, str, str]:
+    """A UTC instant that is one calendar day in Seoul and the previous in LA.
+
+    Anchored to the current date rather than a literal one: ``dashboard`` reports
+    a rolling 7-day window, so a hardcoded timestamp silently stops being in the
+    window a week after it is written, and the assertion then fails for a reason
+    that has nothing to do with timezones.
+    """
+    from datetime import UTC, datetime, time, timedelta
+    from zoneinfo import ZoneInfo
+
+    seoul_today = datetime.now(UTC).astimezone(ZoneInfo("Asia/Seoul")).date()
+    day = seoul_today - timedelta(days=1)
+    # 02:00 UTC is 11:00 the same day in Seoul, but 19:00 the *previous* day in
+    # Los Angeles — the exact case a hardcoded Seoul default gets wrong.
+    instant = datetime.combine(day, time(2, 0), tzinfo=UTC)
+    return instant, day.isoformat(), (day - timedelta(days=1)).isoformat()
+
+
 @pytest.mark.asyncio
 async def test_dashboard_buckets_days_in_the_learners_timezone(db_session, iso_user):
     """The same attempt falls on different calendar days in different zones.
@@ -157,9 +176,8 @@ async def test_dashboard_buckets_days_in_the_learners_timezone(db_session, iso_u
         revealed_tokens=[],
         answer_revealed=False,
     )
-    # 02:00 UTC is 11:00 the same day in Seoul, but 19:00 the *previous* day in
-    # Los Angeles — the exact case a hardcoded Seoul default gets wrong.
-    attempt.answered_at = datetime(2026, 8, 7, 2, 0, tzinfo=UTC)
+    instant, seoul_day, la_day = _split_day_instant()
+    attempt.answered_at = instant
     await db_session.commit()
 
     def active_days(result: dict) -> set[str]:
@@ -168,8 +186,8 @@ async def test_dashboard_buckets_days_in_the_learners_timezone(db_session, iso_u
     seoul = await dashboard(db_session, iso_user, timezone_name="Asia/Seoul")
     la = await dashboard(db_session, iso_user, timezone_name="America/Los_Angeles")
 
-    assert active_days(seoul) == {"2026-08-07"}
-    assert active_days(la) == {"2026-08-06"}
+    assert active_days(seoul) == {seoul_day}
+    assert active_days(la) == {la_day}
 
 
 @pytest.mark.asyncio
@@ -197,13 +215,14 @@ async def test_dashboard_defaults_to_the_zone_stored_on_the_user(db_session, iso
         revealed_tokens=[],
         answer_revealed=False,
     )
-    attempt.answered_at = datetime(2026, 8, 7, 2, 0, tzinfo=UTC)
+    instant, _seoul_day, la_day = _split_day_instant()
+    attempt.answered_at = instant
     iso_user.timezone = "America/Los_Angeles"
     await db_session.commit()
 
     result = await dashboard(db_session, iso_user)
     assert result["timezone"] == "America/Los_Angeles"
-    assert {row["date"] for row in result["week"] if row["total"] > 0} == {"2026-08-06"}
+    assert {row["date"] for row in result["week"] if row["total"] > 0} == {la_day}
 
 
 def test_user_timezone_name_rejects_names_the_tz_database_does_not_know():
