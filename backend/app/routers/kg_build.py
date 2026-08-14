@@ -510,6 +510,36 @@ def _diary_user_prompt(
     )
 
 
+_CLEAN_LABEL_LINE_RE = re.compile(r"^\s*\[([^\]]+)\]\s*:?\s*(.+)$")
+
+
+def _clean_text_as_labeled(clean_text: str, speakers: list[str]) -> str | None:
+    """정제 전사를 다화자 추출의 라벨 원본으로 승격할 수 있으면 정규화해 돌려준다.
+
+    조건은 둘뿐이다: 모든 줄이 "[이름] 발화" 형태이고, 등장하는 이름이 세그먼트의
+    화자 집합 안에 있을 것. 정제 프롬프트는 라벨을 그대로 두라고 지시하지만
+    프롬프트는 지켜지지 않을 수 있고, 없는 이름 하나가 그래프의 인물 노드가 되기
+    때문에 파이썬에서 다시 검증한다(OCR 화자 검증과 같은 원칙). 줄 수가 세그먼트와
+    달라도 괜찮다 — 여기서 필요한 건 1:1 매핑이 아니라 화자가 붙은 정제 본문이다.
+    """
+    if not clean_text.strip() or not speakers:
+        return None
+    known = {s.strip() for s in speakers if s.strip()}
+    out: list[str] = []
+    for raw_line in clean_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        m = _CLEAN_LABEL_LINE_RE.match(line)
+        if not m:
+            return None
+        name = m.group(1).strip()
+        if name not in known:
+            return None
+        out.append(f"[{name}]: {m.group(2).strip()}")
+    return "\n".join(out) if out else None
+
+
 def _external_user_prompt(
     text: str,
     source_category: str,
@@ -1948,15 +1978,23 @@ async def extract_statement_graph_draft(
             if sp and sp not in speakers:
                 speakers.append(sp)
 
-    # CLEANED transcript = STT-corrected wording (e.g. 마차→말차) the graph must use.
-    # Raw labeled segments keep [Speaker_N] labels needed for attribution but the
-    # original mishearing. So: diary (single speaker) uses cleaned text directly;
-    # the external (multi-speaker) branch keeps the labeled raw for attribution and
-    # passes the cleaned text as a corrected-wording reference for the LLM.
+    # CLEANED transcript = STT/오타 교정을 마친 문장 — 그래프에 들어가야 하는 본문.
+    # 단일 화자(일기)는 이 텍스트를 그대로 쓰고, 다화자는 화자 귀속을 위해 라벨이
+    # 붙은 텍스트가 필요하다. 세그먼트는 정제본이 되매핑돼 있으면(정상 경로) 그대로
+    # 쓰면 되지만, 되매핑에 실패한 항목·과거 항목은 세그먼트가 원문 그대로다.
+    # 그럴 때는 정제본 자체가 이미 "[이름] 발화" 라벨을 유지하므로 그걸 라벨 원본으로
+    # 승격한다 — 교정본을 '참고'로만 덧붙이면 모델이 원문 표기를 그대로 베껴
+    # ("출근완") 진술 노드가 정제 전 텍스트로 남기 때문. 라벨이 세그먼트 화자 집합을
+    # 벗어나면(모델이 이름을 지어낸 경우) 승격하지 않는다.
     clean_text = (entry.transcript_clean_native or "").strip()
     raw_labeled = segments_to_paragraph_text(segments) if segments else ""
     diary_text = clean_text or (entry.transcript_native or "").strip()
     labeled_text = raw_labeled or clean_text or diary_text
+    if raw_labeled and clean_text and clean_text != raw_labeled:
+        clean_labeled = _clean_text_as_labeled(clean_text, speakers)
+        if clean_labeled:
+            labeled_text = clean_labeled
+            clean_text = ""  # 중복 참고 블록 제거 — 라벨 본문이 이미 정제본이다
     if not labeled_text.strip() and not diary_text:
         raise ValueError("empty transcript for graph build")
 

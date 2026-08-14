@@ -827,6 +827,19 @@ async def run_journal_text_pipeline(
         )
         raise
 
+    # 정제 결과를 세그먼트에 되매핑 — 음성 경로(위 apply_cleaned_text_to_segments
+    # 호출)와 동일하게. 이게 빠져 있어서 타이핑·OCR 입력의 다화자 글은 정제가
+    # 화면에만 남고 그래프에는 원문이 들어갔다: build_entry_claims의 다화자 분기는
+    # 세그먼트로 만든 라벨 텍스트([이름] 발화)를 추출 원본으로 쓰기 때문
+    # ("출근완" 그대로 진술이 됨). 단일 화자(일기) 분기는 transcript_clean_native를
+    # 직접 써서 멀쩡했고, 그래서 사진(대화 캡처)으로 만든 항목만 정제가 안 된 것처럼
+    # 보였다. 원문은 transcript_native와 각 세그먼트의 text_raw에 그대로 남는다.
+    cleaned_segments = apply_cleaned_text_to_segments(
+        segments, cleaned.get("transcript_clean_ko") or ""
+    )
+    segments_remapped = cleaned_segments is not segments
+    segments = cleaned_segments
+
     summary = tracer.begin_step(
         "fast_path_complete",
         "policy",
@@ -841,6 +854,7 @@ async def run_journal_text_pipeline(
             "translation_de_len": len(cleaned.get("translation_de", "")),
             "translation_langs": sorted((cleaned.get("translations") or {}).keys()),
             "entry_source": "precision_text",
+            "segments_cleaned": segments_remapped,
             "next": "auto_graph_ingest",
         },
     )
