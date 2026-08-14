@@ -1749,8 +1749,15 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         // itself, and report the empty result as its own outcome.
         if (!settled) continue;
         if (!produced && status != 'idle') {
+          // Those two causes are not the same news. "이미 카드가 다 있어요" sends
+          // the learner to a list that does not exist when the statement has no
+          // stored expressions at all — the quality gate (score < 70) rejected
+          // every candidate, which is what a short chat line normally yields.
+          final storedExpressions =
+              (((data['expressions'] as Map?)?['count']) as num?)?.toInt() ?? 0;
           setState(() {
-            _generationStatus = 'empty';
+            _generationStatus =
+                storedExpressions > 0 ? 'empty' : 'empty_no_expression';
             _generationError = generation['error']?.toString();
             _selectedRegenerating = false;
             _selectedGenerating = false;
@@ -3421,7 +3428,8 @@ class _GenerationStatusPill extends StatelessWidget {
     final complete = status == 'complete';
     final failed = status == 'failed';
     final timedOut = status == 'timeout';
-    final empty = status == 'empty';
+    final emptyNoExpression = status == 'empty_no_expression';
+    final empty = status == 'empty' || emptyNoExpression;
     final tone = complete
         ? AppColors.accent
         : failed
@@ -3435,20 +3443,24 @@ class _GenerationStatusPill extends StatelessWidget {
             ? tr('kg.generationFailed')
             : timedOut
                 ? tr('kg.generationTimedOut')
-                : empty
-                    ? tr('kg.generationEmpty')
-                    : tr('kg.generationInProgress');
+                : emptyNoExpression
+                    ? tr('kg.generationNoExpression')
+                    : empty
+                        ? tr('kg.generationEmpty')
+                        : tr('kg.generationInProgress');
     // The subtitle used to be the language plus a fixed reassurance, and the
     // real reason a run failed lived only in a Tooltip — which a touch device
     // never shows. Put it where it can actually be read.
     final detail = (failed || timedOut) && (error?.isNotEmpty ?? false)
         ? error!
-        : empty
-            ? tr('kg.generationEmptyHint')
-            : language == null
-                ? null
-                : '${langLabel(language!)} · '
-                    '${complete ? tr('kg.tapToOpen') : running ? tr('kg.youCanKeepBrowsing') : tr('kg.tapToOpen')}';
+        : emptyNoExpression
+            ? tr('kg.generationNoExpressionHint')
+            : empty
+                ? tr('kg.generationEmptyHint')
+                : language == null
+                    ? null
+                    : '${langLabel(language!)} · '
+                        '${complete ? tr('kg.tapToOpen') : running ? tr('kg.youCanKeepBrowsing') : tr('kg.tapToOpen')}';
     return Tooltip(
       message: failed ? (error ?? '') : nodeName,
       child: Material(
