@@ -66,7 +66,10 @@ const Map<String, String> _kActionLabelsEn = {
   '일기 삭제': 'Journal delete',
   '입장': 'Sign in',
   '작문 드릴 큐 조회': 'Writing drill queue lookup',
+  '저장공간 사용량': 'Storage usage',
+  '저장공간 삭제': 'Storage delete',
   '전체 삭제': 'Delete all',
+  '전체 초기화': 'Full reset',
   '지식 그래프': 'Knowledge graph',
   '지식 그래프 삭제': 'Knowledge graph delete',
   '지식 그래프 확정': 'Knowledge graph commit',
@@ -214,6 +217,39 @@ class ApiClient {
       await _dio.delete('/auth/admin/accounts/$handle');
     } on DioException catch (e) {
       throw _friendlyError(e, '계정 삭제');
+    }
+  }
+
+  /// Per-category storage usage for the signed-in account.
+  ///
+  /// The server sizes real rows and files to answer this, so call it on entry
+  /// to the storage screen and after a purge — never on a poll.
+  Future<Map<String, dynamic>> getStorageUsage() async {
+    try {
+      final resp = await _dio.get('/storage/usage');
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '저장공간 사용량');
+    }
+  }
+
+  /// Erase one storage category (images/audio/journals/graph/chats/quizzes/debug).
+  Future<Map<String, dynamic>> purgeStorageCategory(String key) async {
+    try {
+      final resp = await _dio.delete('/storage/categories/$key');
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '저장공간 삭제');
+    }
+  }
+
+  /// Reset the account to empty, keeping the account itself.
+  Future<Map<String, dynamic>> purgeAllStorage() async {
+    try {
+      final resp = await _dio.delete('/storage/all');
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '전체 초기화');
     }
   }
 

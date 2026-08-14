@@ -11,6 +11,7 @@ import '../l10n/languages.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import 'privacy_policy_screen.dart';
+import 'storage_manager_screen.dart';
 
 // ─── Static data ──────────────────────────────────────────────────────────────
 
@@ -546,6 +547,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               child: CircularProgressIndicator(strokeWidth: 2))
                           : const Icon(Icons.chevron_right),
                       onTap: _exporting ? null : _exportData,
+                    ),
+                    const Divider(height: 1),
+                    // 용량 확인·부분 삭제·전체 초기화의 단일 창구. 그래프 화면
+                    // 오버플로 메뉴(전체 삭제/휴지통)에 흩어져 있던 파괴적
+                    // 동작을 여기로 모았다 — 탐색 중 오조작 위험을 없애고,
+                    // 사진·음성처럼 삭제 수단이 아예 없던 데이터에 자리를 준다.
+                    ListTile(
+                      leading: const Icon(Icons.pie_chart_outline_rounded),
+                      title: Text(tr('storage.title')),
+                      subtitle: Text(tr('storage.menuSubtitle')),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const StorageManagerScreen()),
+                      ),
                     ),
                   ]),
                 ),

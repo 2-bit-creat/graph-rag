@@ -348,9 +348,17 @@ class AccountSummaryOut(BaseModel):
     journal_count: int
     node_count: int
     chat_session_count: int
+    # Approximate total this account holds: on-disk/S3 files plus the on-disk
+    # size of its database rows. The reason an unused account is worth deleting,
+    # so it belongs on the card itself rather than behind a detail tap.
+    storage_bytes: int = 0
     # The reserved "main" space, which administers the others and cannot be
     # deleted. Lets the UI mark it without re-deriving the rule client-side.
     is_main: bool = False
+    # False for rows whose "handle" is really a raw email (legacy password
+    # accounts, leftover test fixtures): /auth/simple cannot open them, so the
+    # UI must not offer to switch — only to delete.
+    can_enter: bool = True
 
 
 class AccountCreateRequest(BaseModel):

@@ -1800,7 +1800,7 @@ async def delete_journal_entry(
     afterward (a voice survives only while some entry references it). Best-effort
     removes the local audio file."""
     from .config import get_settings
-    from .storage import local_path
+    from .storage import local_path, purge_debug_runs
 
     await delete_entry_statement_nodes(session, entry.user_id, entry.id)
 
@@ -1812,8 +1812,17 @@ async def delete_journal_entry(
                 path.unlink()
         except OSError:
             pass
+    # The entry's build job and trace dump only ever belonged to this entry, but
+    # neither follows it: journal_entries.graph_job_id is SET NULL (so the job
+    # row survives with nothing pointing at it) and debug_runs/ is a directory
+    # the database knows nothing about.
+    entry_id = entry.id
+    graph_job_id = entry.graph_job_id
     await session.delete(entry)
+    if graph_job_id is not None:
+        await session.execute(delete(GraphJob).where(GraphJob.id == graph_job_id))
     await session.commit()
+    purge_debug_runs([entry_id])
 
     # Safety net: clean any extracted expressions left without a live source node.
     await prune_orphaned_node_expressions(session, entry.user_id)
@@ -1829,7 +1838,7 @@ async def delete_all_journal_entries(
     Returns the number of entries deleted.
     """
     from .config import get_settings
-    from .storage import local_path
+    from .storage import local_path, purge_debug_runs
 
     result = await session.execute(
         select(JournalEntry).where(JournalEntry.user_id == user_id)
@@ -1839,6 +1848,7 @@ async def delete_all_journal_entries(
         return 0
 
     use_local_audio = not get_settings().s3_bucket
+    entry_ids = [entry.id for entry in entries]
     for entry in entries:
         await delete_entry_statement_nodes(session, user_id, entry.id)
         if use_local_audio and entry.audio_url:
@@ -1849,7 +1859,12 @@ async def delete_all_journal_entries(
             except OSError:
                 pass
         await session.delete(entry)
+    # Same two strays as the single-entry path: the SET NULL build jobs and the
+    # trace directories. Every job for this user is unreachable once all their
+    # entries are gone.
+    await session.execute(delete(GraphJob).where(GraphJob.user_id == user_id))
     await session.commit()
+    purge_debug_runs(entry_ids)
     await prune_orphaned_node_expressions(session, user_id)
     return len(entries)
 
@@ -4938,7 +4953,12 @@ async def delete_quiz_permanent(
     await invalidate_quiz_generation_state(session, user_id, language)
     await session.commit()
     from .quiz_audio_assets import delete_audio_asset_objects
-    deleted_keys = await delete_audio_asset_objects(orphan_keys)
+    # Asset-backed clips are only half the story: quizzes synthesized before the
+    # asset table existed wrote straight to {quiz_id}.mp3 / {quiz_id}-answer.mp3,
+    # which no link ever pointed at and nothing ever deleted.
+    deleted_keys = await delete_audio_asset_objects(
+        orphan_keys + [str(quiz_id), f"{quiz_id}-answer"]
+    )
     return {"deleted": deleted_keys, "retained": retained_keys}
 
 
@@ -4987,8 +5007,10 @@ async def delete_quizzes_permanent_batch(
     await session.execute(delete(Quiz).where(Quiz.id.in_(ids), Quiz.user_id == user_id))
     await session.commit()
     from .quiz_audio_assets import delete_audio_asset_objects
+    # Plus the pre-asset-table {quiz_id}.mp3 files — see delete_quiz_permanent.
+    legacy_keys = [name for qid in ids for name in (str(qid), f"{qid}-answer")]
     return {
-        "deleted": await delete_audio_asset_objects(orphan_keys),
+        "deleted": await delete_audio_asset_objects(orphan_keys + legacy_keys),
         "retained": retained_keys,
         "quiz_count": len(quizzes),
     }

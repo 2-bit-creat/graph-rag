@@ -3,9 +3,11 @@ import 'package:intl/intl.dart';
 
 import '../api/client.dart';
 import '../auth/account_controller.dart';
+import '../l10n/app_strings.dart';
 import '../l10n/languages.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
+import 'storage_manager_screen.dart' show formatBytes;
 
 /// Account administration for the reserved "main" space: every account on the
 /// server + a rough DB-usage proxy (row counts, not disk bytes), plus create,
@@ -108,7 +110,9 @@ class _AccountsOverviewScreenState extends State<AccountsOverviewScreen> {
         title: Text('"$handle" 계정을 삭제할까요?'),
         content: Text(
           '일기 ${account['journal_count'] ?? 0}개 · 노드 ${account['node_count'] ?? 0}개 · '
-          '채팅방 ${account['chat_session_count'] ?? 0}개가 모두 지워지고, 되돌릴 수 없어요.',
+          '채팅방 ${account['chat_session_count'] ?? 0}개(${formatBytes(account['storage_bytes'])})가 '
+          '모두 지워지고, 되돌릴 수 없어요.\n\n'
+          '사진·음성 파일과 파이프라인 기록까지 함께 삭제되어 남는 데이터는 없습니다.',
         ),
         actions: [
           TextButton(
@@ -198,8 +202,14 @@ class _AccountsOverviewScreenState extends State<AccountsOverviewScreen> {
                       busy: busy,
                       // main administers the others and cannot delete itself;
                       // switching into the account you are already in is a no-op.
-                      onSwitch:
-                          (isCurrent || busy) ? null : () => _switchTo(handle),
+                      // Legacy rows (can_enter false) show a raw email as their
+                      // handle and /auth/simple cannot open them — offering the
+                      // switch would only produce a guaranteed error.
+                      onSwitch: (isCurrent ||
+                              busy ||
+                              account['can_enter'] == false)
+                          ? null
+                          : () => _switchTo(handle),
                       onDelete:
                           (account['is_main'] == true || isCurrent || busy)
                               ? null
@@ -264,6 +274,12 @@ class _AccountCard extends StatelessWidget {
                         ?.copyWith(fontWeight: FontWeight.w700)),
               ),
               if (account['is_main'] == true) _Badge(label: 'main', color: AppColors.hubGraph),
+              if (account['can_enter'] == false) ...[
+                const SizedBox(width: 6),
+                _Badge(
+                    label: tr('accounts.cannotEnter'),
+                    color: AppColors.textMuted),
+              ],
               if (isCurrent) ...[
                 const SizedBox(width: 6),
                 _Badge(label: '현재 계정', color: scheme.primary),
@@ -278,6 +294,25 @@ class _AccountCard extends StatelessWidget {
               _Stat(label: '일기', value: account['journal_count']),
               _Stat(label: '노드', value: account['node_count']),
               _Stat(label: '채팅방', value: account['chat_session_count']),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // 용량은 이 계정을 지울지 말지를 정하는 값이므로 상세 화면 뒤가 아니라
+          // 카드에 바로 있어야 한다 (파일 바이트 + DB 행 크기의 근사치).
+          Row(
+            children: [
+              Icon(Icons.sd_storage_outlined,
+                  size: 14, color: context.shell.mutedText),
+              const SizedBox(width: 5),
+              Text(formatBytes(account['storage_bytes']),
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleSmall
+                      ?.copyWith(fontWeight: FontWeight.w700)),
+              const SizedBox(width: 4),
+              Text(tr('accounts.storageLabel'),
+                  style:
+                      TextStyle(fontSize: 11.5, color: context.shell.mutedText)),
             ],
           ),
           if (createdAt != null) ...[

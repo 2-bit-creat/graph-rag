@@ -13,8 +13,9 @@ from ..db import get_session
 from ..deps import get_current_user, request_user_dep
 from ..dev_user import DEV_EMAIL, DEV_USER_ID, get_dev_user
 from ..languages import SUPPORTED_NATIVE
-from ..models import ChatSession, JournalEntry, Node, User
-from ..storage import purge_user_storage
+from ..models import ChatSession, JournalEntry, Node, Quiz, User
+from .. import storage_usage
+from ..storage import purge_debug_runs, purge_user_storage
 from ..schemas import (
     AccountCreateRequest,
     AccountSummaryOut,
@@ -111,18 +112,67 @@ async def delete_me(
             status_code=400,
             detail={"code": "protected", "message": "the primary account cannot be deleted"},
         )
+    await _delete_user_completely(session, user)
+    return {"status": "deleted"}
+
+
+async def _delete_user_completely(session: AsyncSession, user: User) -> None:
+    """Remove a user row and every artifact that outlives the FK cascade.
+
+    Three things do not go by themselves and each one used to become permanent
+    garbage: ``debug_runs/`` is keyed by journal entry (gone by the time the
+    cascade finishes), quiz TTS lives outside the per-user prefix under
+    ``static/audio``/``quiz-audio``, and ``quiz_audio_assets`` has no
+    ``user_id`` at all. So the ids are collected *before* the delete and the
+    files swept after it.
+    """
     user_id = user.id
-    # Collect entry ids before the cascade removes them — debug_runs/ is keyed by entry.
-    entry_id_rows = await session.execute(
-        select(JournalEntry.id).where(JournalEntry.user_id == user_id)
-    )
-    entry_ids = [row[0] for row in entry_id_rows.all()]
+    entry_ids = [
+        row[0]
+        for row in (
+            await session.execute(
+                select(JournalEntry.id).where(JournalEntry.user_id == user_id)
+            )
+        ).all()
+    ]
+    quiz_ids = [
+        row[0]
+        for row in (
+            await session.execute(select(Quiz.id).where(Quiz.user_id == user_id))
+        ).all()
+    ]
 
     await session.delete(user)
     await session.commit()
 
     await asyncio.to_thread(purge_user_storage, user_id, entry_ids)
-    return {"status": "deleted"}
+    # Quiz generation traces are keyed by quiz id, not entry id, so they are not
+    # part of the entry sweep above.
+    await asyncio.to_thread(purge_debug_runs, quiz_ids)
+    await storage_usage.purge_quiz_audio_for_quizzes(quiz_ids)
+    await storage_usage.gc_orphan_quiz_audio(session)
+
+
+async def resolve_admin_target(session: AsyncSession, handle: str) -> User | None:
+    """Find the account the overview displayed as ``handle``.
+
+    The overview lists *every* user row, and ``handle_from_email`` falls back to
+    the raw address for anything that is not a ``/auth/simple`` handle — legacy
+    password accounts and leftover test fixtures such as
+    ``journal_9f3972ea@test.com``. Looking those up as ``simple:{handle}@local``
+    finds nothing, which is why every delete on them 404'd with
+    ``account_not_found`` while the row stayed on the server forever. So try the
+    handle encoding first, then the literal address.
+    """
+    normalized = (handle or "").strip().lower()
+    if not normalized:
+        return None
+    user = await crud.get_user_by_email(session, f"simple:{normalized}@local")
+    if user is not None:
+        return user
+    return (
+        await session.execute(select(User).where(func.lower(User.email) == normalized))
+    ).scalars().first()
 
 
 def handle_from_email(email: str) -> str:
@@ -165,17 +215,40 @@ async def list_accounts(
         )).all()
     )
 
-    return [
-        AccountSummaryOut(
-            handle=handle_from_email(u.email),
-            created_at=u.created_at,
-            journal_count=journal_counts.get(u.id, 0),
-            node_count=node_counts.get(u.id, 0),
-            chat_session_count=chat_counts.get(u.id, 0),
-            is_main=u.id == DEV_USER_ID,
+    # Storage is what makes an unused account worth deleting, so the card shows
+    # it without a detail tap. Row bytes come from one grouped pass over every
+    # account; file bytes need a per-user listing, so that walk is threaded.
+    db_bytes = await storage_usage.total_bytes_by_user(session)
+    file_bytes = dict(
+        zip(
+            (u.id for u in users),
+            await asyncio.gather(
+                *(
+                    asyncio.to_thread(storage_usage.file_bytes_for_user, u.id)
+                    for u in users
+                )
+            ),
         )
-        for u in users
-    ]
+    )
+
+    out = []
+    for u in users:
+        handle = handle_from_email(u.email)
+        out.append(
+            AccountSummaryOut(
+                handle=handle,
+                created_at=u.created_at,
+                journal_count=journal_counts.get(u.id, 0),
+                node_count=node_counts.get(u.id, 0),
+                chat_session_count=chat_counts.get(u.id, 0),
+                storage_bytes=db_bytes.get(u.id, 0) + file_bytes.get(u.id, 0),
+                is_main=u.id == DEV_USER_ID,
+                # Legacy/test rows show their raw email as the "handle" and
+                # cannot be entered through /auth/simple — only deleted.
+                can_enter=u.id == DEV_USER_ID or bool(_HANDLE_RE.match(handle)),
+            )
+        )
+    return out
 
 
 @router.post(
@@ -247,23 +320,14 @@ async def delete_account(
             status_code=400,
             detail={"code": "protected", "message": "the primary account cannot be deleted"},
         )
-    target = await crud.get_user_by_email(session, f"simple:{normalized}@local")
+    target = await resolve_admin_target(session, normalized)
     if target is None or target.id == DEV_USER_ID:
         raise HTTPException(
             status_code=404,
             detail={"code": "account_not_found", "message": "No account is registered for this ID"},
         )
 
-    user_id = target.id
-    entry_id_rows = await session.execute(
-        select(JournalEntry.id).where(JournalEntry.user_id == user_id)
-    )
-    entry_ids = [row[0] for row in entry_id_rows.all()]
-
-    await session.delete(target)
-    await session.commit()
-
-    await asyncio.to_thread(purge_user_storage, user_id, entry_ids)
+    await _delete_user_completely(session, target)
     return {"status": "deleted", "handle": normalized}
 
 

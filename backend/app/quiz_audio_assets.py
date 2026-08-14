@@ -24,6 +24,11 @@ async def delete_audio_asset_objects(asset_keys: list[str]) -> list[str]:
     root = Path(__file__).resolve().parent.parent / "static" / "audio"
     for key in asset_keys:
         path = root / f"{key}.mp3"
+        # Report only what was actually there. Callers now also pass speculative
+        # legacy {quiz_id} names that usually have no file, and counting those
+        # as deletions would make the response fiction.
+        if not path.is_file():
+            continue
         path.unlink(missing_ok=True)
         deleted.append(key)
     return deleted

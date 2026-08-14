@@ -92,6 +92,12 @@ class Settings(BaseSettings):
     kg_extract_coverage_min_chars: int = 60
     # Debug artifacts older than this are swept at startup (0 disables the sweep).
     debug_runs_retention_days: int = 7
+    # Sweep data nothing references any more (rows whose owner is gone, files
+    # whose row is gone) shortly after startup. Runs in the background so it
+    # never delays readiness, and only ever removes things with no live owner —
+    # see storage_usage.gc_orphans. Set false to make the sweep manual-only
+    # (POST /storage/admin/gc).
+    orphan_gc_on_startup: bool = True
     s3_bucket: str = ""
     s3_endpoint: str = ""
     s3_region: str = "ap-northeast-2"

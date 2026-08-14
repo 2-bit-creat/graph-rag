@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../api/client.dart';
+import '../app_route_observer.dart';
 import '../chat/chat_mode_cards.dart';
 import '../chat/chat_session_controller.dart';
 import '../chat/chat_suggestions.dart';
@@ -27,7 +28,6 @@ import '../widgets/ocr_review_sheet.dart';
 import '../widgets/ontology_settings_sheet.dart';
 import '../widgets/quiz/cloze_quiz_card.dart';
 import '../widgets/thinking_orbs.dart';
-import 'graph_trash_screen.dart';
 
 /// Full-screen interactive knowledge graph with integrated chat panel.
 class KnowledgeGraphScreen extends StatefulWidget {
@@ -100,7 +100,7 @@ class KnowledgeGraphView extends StatefulWidget {
 }
 
 class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, RouteAware {
   Map<String, dynamic>? _graph;
   Map<String, dynamic>? _ontology;
   bool _loading = true;
@@ -673,7 +673,24 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // The graph home is the bottom of the stack, so anything that edits the
+    // graph from a pushed route — 저장공간 관리's graph/journal purges, the
+    // trash — lands back here. Without this the canvas kept painting nodes the
+    // server no longer had until a manual refresh.
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) appRouteObserver.subscribe(this, route);
+  }
+
+  @override
+  void didPopNext() {
+    _load();
+  }
+
+  @override
   void dispose() {
+    appRouteObserver.unsubscribe(this);
     _bottomPinTimer?.cancel();
     _chatPeekTimer?.cancel();
     _selectedStudyPollTimer?.cancel();
@@ -2013,55 +2030,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     // No refit: keep the camera where the user was exploring.
   }
 
-  Future<void> _clearGraph() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(tr('kg.clearGraphTitle')),
-        content: Text(tr('kg.clearGraphBody')),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(tr('common.cancel'))),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(tr('kg.clearGraphAction')),
-          ),
-        ],
-      ),
-    );
-    if (ok != true || !mounted) return;
-    try {
-      final stats = await apiClient.clearGraph();
-      if (!mounted) return;
-      setState(() {
-        _graph = {'nodes': [], 'edges': []};
-        _selectedNode = null;
-        _selectedNodeId = null;
-        _selectedEdge = null;
-        _selectedEdgeId = null;
-        _typeFilter = kAllTypesFilter;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            tr('kg.deletedStats', {
-              'nodes': stats['nodes_deleted'],
-              'edges': stats['edges_deleted'],
-              'chunks': stats['chunks_deleted'],
-            }),
-          ),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(tr('kg.deleteFailed', {'error': e}))),
-      );
-    }
-  }
-
   /// A node was dragged onto another one on the canvas: ask, then merge.
   ///
   /// The canvas only judges the gesture and whether the pair is mergeable
@@ -2511,11 +2479,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
               onApplied: _load,
               onFilterByType: (type) => setState(() => _typeFilter = type),
             ),
-            onTrash: () => Navigator.push(
-              context,
-              MaterialPageRoute<void>(builder: (_) => const GraphTrashScreen()),
-            ).then((_) => _load()),
-            onClearGraph: _clearGraph,
             onToggleGraphTools: () =>
                 setState(() => _graphToolsVisible = !_graphToolsVisible),
             graphToolsVisible: _graphToolsVisible,
@@ -2648,8 +2611,6 @@ class _FloatingSearchBar extends StatelessWidget {
     required this.onQueryChanged,
     required this.onRefresh,
     required this.onOntology,
-    required this.onTrash,
-    required this.onClearGraph,
     required this.onToggleGraphTools,
     required this.graphToolsVisible,
     this.onOpenMenu,
@@ -2661,8 +2622,6 @@ class _FloatingSearchBar extends StatelessWidget {
   final ValueChanged<String> onQueryChanged;
   final VoidCallback onRefresh;
   final VoidCallback onOntology;
-  final VoidCallback onTrash;
-  final VoidCallback onClearGraph;
   final VoidCallback onToggleGraphTools;
   final bool graphToolsVisible;
   final VoidCallback? onOpenMenu;
@@ -2742,8 +2701,6 @@ class _FloatingSearchBar extends StatelessWidget {
               onSelected: (v) {
                 if (v == 'ontology') onOntology();
                 if (v == 'refresh') onRefresh();
-                if (v == 'trash') onTrash();
-                if (v == 'clear') onClearGraph();
                 if (v == 'toggleGraphTools') onToggleGraphTools();
               },
               itemBuilder: (_) => [
@@ -2788,30 +2745,10 @@ class _FloatingSearchBar extends StatelessWidget {
                             TextStyle(color: shell.primaryText, fontSize: 13)),
                   ),
                 ),
-                PopupMenuItem(
-                  value: 'trash',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.delete_outline,
-                        color: AppColors.textMuted),
-                    title: Text(tr('kg.trash'),
-                        style:
-                            TextStyle(color: shell.primaryText, fontSize: 13)),
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'clear',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading:
-                        const Icon(Icons.delete_sweep, color: Colors.redAccent),
-                    title: Text(tr('kg.clearGraphMenu'),
-                        style: const TextStyle(
-                            color: Colors.redAccent, fontSize: 13)),
-                  ),
-                ),
+                // 휴지통·그래프 전체 삭제는 여기 없다: 되돌릴 수 없는 동작이
+                // 탐색용 토글 바로 옆에 있으면 안 되고, 사진·음성처럼 삭제
+                // 수단이 없던 데이터와 한 자리에서 다뤄야 한다.
+                // → 내 프로필 › 저장공간 관리 (StorageManagerScreen).
               ],
             ),
             const SizedBox(width: 4),

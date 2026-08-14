@@ -28,9 +28,15 @@ def _s3_key(user_id: uuid.UUID, filename: str) -> str:
 
 
 def _local_path(user_id: uuid.UUID, filename: str) -> Path:
-    root = Path(get_settings().upload_dir) / str(user_id)
-    root.mkdir(parents=True, exist_ok=True)
-    return root / filename
+    """Path to one user document. Pure — it creates nothing.
+
+    It used to mkdir here, so every *read* — including reads for a user id that
+    no longer exists, and the speculative reads these stores do on empty state —
+    left an empty ``uploads/{user_id}/`` behind. That is how the server
+    accumulated thousands of stray directories no account owned. Creating the
+    directory belongs to the one caller that actually writes (``write_doc``).
+    """
+    return Path(get_settings().upload_dir) / str(user_id) / filename
 
 
 def _s3_client():
@@ -80,4 +86,6 @@ def write_doc(user_id: uuid.UUID, filename: str, data: Any) -> None:
             ContentType="application/json",
         )
         return
-    _local_path(user_id, filename).write_text(body, encoding="utf-8")
+    path = _local_path(user_id, filename)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")

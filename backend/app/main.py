@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -8,7 +10,9 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .db import database_readiness, init_db, is_transient_database_error
-from .routers import auth, debug, graph, graph_chat, graph_chat_distill, jobs, journal, kg_build, legal, ocr, ontology, push, quiz, tutor, vocabulary
+from .routers import auth, debug, graph, graph_chat, graph_chat_distill, jobs, journal, kg_build, legal, ocr, ontology, push, quiz, storage, tutor, vocabulary
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -50,8 +54,43 @@ async def lifespan(app: FastAPI):
     await init_db()
     if settings.expression_extraction_enabled:
         start_worker()
+    gc_task = (
+        asyncio.create_task(_sweep_orphans())
+        if settings.orphan_gc_on_startup
+        else None
+    )
     yield
+    if gc_task is not None and not gc_task.done():
+        gc_task.cancel()
     await stop_worker()
+
+
+async def _sweep_orphans() -> None:
+    """Background startup sweep for data nothing references any more.
+
+    Deliberately not awaited inside the lifespan: it walks the upload tree and
+    debug dumps, and readiness must not wait on housekeeping. Failures are
+    logged and swallowed for the same reason a boot should never fail because a
+    stale directory could not be removed.
+
+    Complements ``cleanup_old_debug_runs`` above rather than duplicating it:
+    that one is time-based retention over one directory, this one is
+    reachability — an orphan is deleted because nothing points at it, at any
+    age. The routine delete paths already clean up after themselves, so on a
+    healthy server this finds nothing.
+    """
+    try:
+        from .db import async_session_factory
+        from .storage_usage import gc_orphans
+
+        async with async_session_factory() as session:
+            result = await gc_orphans(session)
+        if result["bytes_freed"] or any(result["rows"].values()):
+            logger.info("startup orphan sweep: %s", result)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("startup orphan sweep failed")
 
 
 app = FastAPI(title="Graph RAG Language Platform API", version="0.2.0", lifespan=lifespan)
@@ -138,6 +177,7 @@ app.include_router(ocr.router)
 app.include_router(push.router)
 app.include_router(ontology.router)
 app.include_router(legal.router)
+app.include_router(storage.router)
 
 @app.get("/health", tags=["health"])
 async def health() -> dict[str, str]:

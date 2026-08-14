@@ -8,6 +8,7 @@ import logging
 import re
 import tempfile
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
 
 from .config import get_settings
@@ -47,6 +48,35 @@ def answer_audio_asset_key(text: str, language: str) -> str:
 
 def audio_asset_relative_path(asset_key: str) -> str:
     return f"/static/audio/{asset_key}.mp3"
+
+
+def delete_audio_files(names: Iterable[str], storage_keys: Iterable[str] = ()) -> int:
+    """Remove synthesized MP3s: ``static/audio/{name}.mp3`` locally, or the
+    given bucket keys when S3 is configured.
+
+    Quiz TTS is the one artifact that lives outside the per-user prefix
+    ``purge_user_storage`` wipes — sentence files are named after the quiz id
+    and shared answer assets after a content digest — so deleting a quiz or an
+    account has to name them explicitly or they stay on disk forever with
+    nothing pointing at them. Best-effort by design; a missing file is the
+    desired end state either way.
+    """
+    settings = get_settings()
+    if settings.s3_bucket:
+        from .storage import delete_s3_keys
+
+        keys = [k for k in storage_keys if k]
+        return delete_s3_keys(keys) if keys else 0
+
+    removed = 0
+    for name in names:
+        path = AUDIO_DIR / f"{name}.mp3"
+        try:
+            path.unlink()
+            removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 def build_complete_cloze_sentence(
