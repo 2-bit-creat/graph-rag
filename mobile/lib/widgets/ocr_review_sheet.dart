@@ -2,8 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
+import '../utils/keep_keyboard_on_tap.dart';
 import 'mention_editor_core.dart'
-    show CaretStableField, NoTextScaling, colorForSpeaker, textScaleBakedIn;
+    show
+        CaretStableField,
+        NoTextScaling,
+        colorForSpeaker,
+        kNoMagnifier,
+        textScaleBakedIn;
 
 /// Review and correct OCR output before it becomes graph input.
 ///
@@ -82,6 +88,21 @@ class _SpeakerPill extends StatelessWidget {
 class _OcrReviewSheetState extends State<OcrReviewSheet> {
   late final TextEditingController _controller =
       TextEditingController(text: widget.initialText);
+
+  @override
+  void initState() {
+    super.initState();
+    // Take the DOM tap-suppressor down before this sheet covers the screen.
+    //
+    // The rect (see keep_keyboard_on_tap.dart) is a single global slot with
+    // several publishers, and it is published in screen coordinates for a
+    // widget on the route BELOW. Anything still standing when the sheet opens
+    // suppresses presses over the sheet's own field: index.html cancels the
+    // press, so the hidden <textarea> never focuses, Flutter still places a
+    // caret, and no keyboard comes up. Its owners withdraw it on their own
+    // transitions; this is the belt for whichever one has not yet.
+    keepKeyboardOverRect(null);
+  }
 
   @override
   void dispose() {
@@ -232,6 +253,11 @@ class _OcrReviewSheetState extends State<OcrReviewSheet> {
                     expands: false,
                     autofocus: false,
                     keyboardType: TextInputType.multiline,
+                    // iOS Safari leaves the loupe painted over the sheet after
+                    // the finger lifts — the pointer-up that should dismiss it
+                    // does not always arrive on web. See the note on
+                    // [kNoMagnifier].
+                    magnifierConfiguration: kNoMagnifier,
                     style: textScaleBakedIn(
                       context,
                       (theme.textTheme.bodyLarge ??

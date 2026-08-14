@@ -175,4 +175,37 @@ void main() {
     final after = state.debugScreenPositionOf('a')!;
     expect((after - origin).distance, lessThan(1.0));
   });
+
+  testWidgets('the target holds still while a merge is being aimed',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_host(onMerge: (_, __) {}));
+    final state = await _settled(tester);
+
+    final target = state.debugScreenPositionOf('b')!;
+    final gesture = await tester.startGesture(state.debugScreenPositionOf('a')!);
+    await tester.pump(const Duration(milliseconds: 600)); // hold → merge mode
+
+    // Carry the source right up to the target and sit there. Only the DRAGGED
+    // node used to be pinned, so the simulation kept running for everything
+    // else — and the source's own repulsion shoved the target away exactly as
+    // it was being aimed at. A drop target that flees is not a drop target.
+    for (var i = 0; i < 12; i++) {
+      await gesture.moveTo(Offset.lerp(
+        state.debugScreenPositionOf('a')!,
+        target,
+        0.5,
+      )!);
+      await tester.pump(const Duration(milliseconds: 32));
+    }
+
+    expect((state.debugScreenPositionOf('b')! - target).distance,
+        lessThan(1.0));
+
+    await gesture.up();
+    await tester.pump();
+  });
 }

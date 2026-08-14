@@ -5,10 +5,12 @@ import '../chat/journal_task_controller.dart';
 import '../compose/compose_session_controller.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
+import 'add_entity_dialog.dart';
 import 'app_ui.dart';
 import 'concept_link_sheet.dart';
 import 'entity_identity_sheet.dart';
-import 'mention_editor_core.dart' show CaretStableField;
+import 'mention_editor_core.dart'
+    show CaretStableField, RevealOnFocus, kNoMagnifier;
 
 /// Inline or full-screen graph draft review — edit claims, then confirm.
 enum GraphReviewPresentation { full, chat }
@@ -87,7 +89,8 @@ class GraphReviewPanel extends StatefulWidget {
 }
 
 class _PersonCandidate {
-  _PersonCandidate({required this.id, required this.name, required this.isSelf});
+  _PersonCandidate(
+      {required this.id, required this.name, required this.isSelf});
 
   final String id;
   final String name;
@@ -265,7 +268,8 @@ class _ClaimDraft {
   factory _ClaimDraft.fromMap(Map<String, dynamic> m) => _ClaimDraft(
         speaker: TextEditingController(text: (m['speaker'] ?? '').toString()),
         title: TextEditingController(text: (m['title'] ?? '').toString()),
-        statement: TextEditingController(text: (m['statement'] ?? '').toString()),
+        statement:
+            TextEditingController(text: (m['statement'] ?? '').toString()),
         concepts: ((m['concepts'] as List?) ?? [])
             .map(_ConceptDraft.fromRaw)
             .where((c) => c.name.isNotEmpty)
@@ -294,8 +298,7 @@ class _ClaimDraft {
         'temporal_precision': temporalPrecision,
         'temporal_confidence': temporalConfidence,
         'event_status': eventStatus,
-        if (dateOverride != null)
-          'event_date_override': _isoDay(dateOverride!),
+        if (dateOverride != null) 'event_date_override': _isoDay(dateOverride!),
       };
 
   void dispose() {
@@ -409,9 +412,8 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
     final common = _commonDate;
     final guessed = _dateIsGuessed;
     final tone = guessed ? AppColors.accentWarm : AppColors.hubGraph;
-    final label = common == null
-        ? tr('reviewDate.mixedDates')
-        : _dayLabel(common);
+    final label =
+        common == null ? tr('reviewDate.mixedDates') : _dayLabel(common);
     final yesterday = _recordedDate.subtract(const Duration(days: 1));
 
     // Chat: a single unboxed line. The question and its shortcuts sit on one
@@ -469,7 +471,8 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
         children: [
           Row(
             children: [
-              Icon(Icons.event_outlined, size: chatStyle ? 14 : 16, color: tone),
+              Icon(Icons.event_outlined,
+                  size: chatStyle ? 14 : 16, color: tone),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
@@ -612,7 +615,8 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
 
   /// Commit is gated on every claim being approved — that's what makes the
   /// swipe-right/tap-check triage meaningful. Empty list can't commit.
-  bool get _allApproved => _claims.isNotEmpty && _claims.every((c) => c.approved);
+  bool get _allApproved =>
+      _claims.isNotEmpty && _claims.every((c) => c.approved);
 
   void _approveAll() => setState(() {
         for (final c in _claims) {
@@ -917,7 +921,8 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
 
   /// A claim wrapped in swipe-to-triage (Feature B): swipe right = approve
   /// (card collapses, stays in the list), swipe left = delete with undo.
-  Widget _swipeableClaim(BuildContext context, int i, {required bool chatStyle}) {
+  Widget _swipeableClaim(BuildContext context, int i,
+      {required bool chatStyle}) {
     final claim = _claims[i];
     final Widget child = (claim.approved && !claim.expanded)
         ? _ApprovedRow(
@@ -978,12 +983,19 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(approve ? Icons.check_circle_rounded : Icons.delete_outline_rounded,
-              color: color, size: 20),
+          Icon(
+              approve
+                  ? Icons.check_circle_rounded
+                  : Icons.delete_outline_rounded,
+              color: color,
+              size: 20),
           const SizedBox(width: 6),
           Text(
-            approve ? tr('reviewPanel.approveSwipeLabel') : tr('reviewPanel.deleteSwipeLabel'),
-            style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 12),
+            approve
+                ? tr('reviewPanel.approveSwipeLabel')
+                : tr('reviewPanel.deleteSwipeLabel'),
+            style: TextStyle(
+                color: color, fontWeight: FontWeight.w700, fontSize: 12),
           ),
         ],
       ),
@@ -1057,7 +1069,8 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
               onPressed: _approveAll,
               icon: const Icon(Icons.done_all_rounded, size: 18),
               label: Text(
-                tr('reviewPanel.approveAllButton', {'approved': _approvedCount, 'total': _claims.length}),
+                tr('reviewPanel.approveAllButton',
+                    {'approved': _approvedCount, 'total': _claims.length}),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -1100,7 +1113,8 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
     final approved = _approvedCount;
     if (total == 0) return tr('reviewPanel.confirmNone');
     if (approved == total) return tr('reviewPanel.confirmAllApproved');
-    return tr('reviewPanel.confirmNeedsApproval', {'approved': approved, 'total': total});
+    return tr('reviewPanel.confirmNeedsApproval',
+        {'approved': approved, 'total': total});
   }
 }
 
@@ -1201,7 +1215,8 @@ class _ClaimCard extends StatelessWidget {
   }
 
   List<EntityPersonCandidate> get _entityCandidates => personCandidates
-      .map((p) => EntityPersonCandidate(id: p.id, name: p.name, isSelf: p.isSelf))
+      .map((p) =>
+          EntityPersonCandidate(id: p.id, name: p.name, isSelf: p.isSelf))
       .toList();
 
   Future<void> _resolvePerson(BuildContext context, _ConceptDraft c) async {
@@ -1240,7 +1255,8 @@ class _ClaimCard extends StatelessWidget {
   /// Concept auto-linking (Feature A): confirm/change/undo a link to an existing
   /// Concept node. Candidates come from the backend suggest pass; for an already
   /// linked concept we still offer the candidate list so the user can re-pick.
-  Future<void> _resolveConceptLink(BuildContext context, _ConceptDraft c) async {
+  Future<void> _resolveConceptLink(
+      BuildContext context, _ConceptDraft c) async {
     var cands = c.candidates;
     if (cands.isEmpty && c.resNodeId != null && (c.resName ?? '').isNotEmpty) {
       cands = [ConceptCandidate(nodeId: c.resNodeId!, name: c.resName!)];
@@ -1266,7 +1282,8 @@ class _ClaimCard extends StatelessWidget {
     onConceptsChanged();
   }
 
-  Widget _speakerBadge(BuildContext context, String name, {required bool chatStyle}) {
+  Widget _speakerBadge(BuildContext context, String name,
+      {required bool chatStyle}) {
     // Chat: the speaker is a name, not a status — plain coloured text with a lock
     // glyph, so it stops competing with the linked/suggested concept chips that
     // genuinely need a filled background to be read as state.
@@ -1354,31 +1371,11 @@ class _ClaimCard extends StatelessWidget {
   }
 
   Future<void> _addConcept(BuildContext context) async {
-    final controller = TextEditingController();
-    final value = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(tr('graphReview.addConceptTitle')),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: InputDecoration(hintText: tr('graphReview.addConceptHint')),
-          onSubmitted: (v) => Navigator.pop(ctx, v),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr('common.cancel'))),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, controller.text),
-            child: Text(tr('common.add')),
-          ),
-        ],
-      ),
-    );
-    final v = (value ?? '').trim();
-    if (v.isNotEmpty && !claim.concepts.any((c) => c.name == v)) {
-      claim.concepts.add(_ConceptDraft(name: v));
-      onConceptsChanged();
-    }
+    final added = await showAddEntityDialog(context);
+    if (added == null) return;
+    if (claim.concepts.any((c) => c.name == added.name)) return;
+    claim.concepts.add(_ConceptDraft(name: added.name, kind: added.kind));
+    onConceptsChanged();
   }
 
   Widget _personChip(BuildContext context, _ConceptDraft c) {
@@ -1438,9 +1435,13 @@ class _ClaimCard extends StatelessWidget {
             ),
           );
     final String label = suggested
-        ? '${c.name} ${tr('graphReview.suggestedSuffix', {'name': c.resName ?? ''})}'
+        ? '${c.name} ${tr('graphReview.suggestedSuffix', {
+                'name': c.resName ?? ''
+              })}'
         : linked
-            ? '${c.name} ${tr('graphReview.linkedSuffix', {'name': c.resName ?? ''})}'
+            ? '${c.name} ${tr('graphReview.linkedSuffix', {
+                    'name': c.resName ?? ''
+                  })}'
             // Importance already reads off the avatar badge (and its tint).
             // Repeating it as a "· 5" suffix showed the same number twice on
             // one chip and pushed longer concept names into an ellipsis.
@@ -1527,7 +1528,8 @@ class _ClaimCard extends StatelessWidget {
                 IconButton(
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+                  constraints:
+                      const BoxConstraints(minWidth: 30, minHeight: 30),
                   tooltip: approved
                       ? tr('reviewPanel.unapproveTooltip')
                       : tr('reviewPanel.approveTooltip'),
@@ -1557,29 +1559,34 @@ class _ClaimCard extends StatelessWidget {
           // same treatment as the composers. See [CaretStableField].
           Padding(
             padding: const EdgeInsets.only(right: 6),
-            child: CaretStableField(
-              maxHeight: 96,
-              child: TextField(
-                controller: claim.statement,
-                minLines: 1,
-                maxLines: null,
-                style: TextStyle(
-                  fontSize: 13,
-                  height: 1.45,
-                  color: context.shell.primaryText,
-                ),
-                decoration: InputDecoration(
-                  isDense: true,
-                  filled: true,
-                  fillColor: context.shell.subtleSurface,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
-                  // Borderless at rest — the fill already bounds the field, and
-                  // eight outlined boxes in a column read as a table.
-                  border: _statementBorder(Colors.transparent),
-                  enabledBorder: _statementBorder(Colors.transparent),
-                  focusedBorder: _statementBorder(
-                    AppColors.hubGraph.withValues(alpha: 0.5),
+            // Outside CaretStableField on purpose — see [RevealOnFocus].
+            child: RevealOnFocus(
+              builder: (focusNode) => CaretStableField(
+                maxHeight: 96,
+                child: TextField(
+                  controller: claim.statement,
+                  focusNode: focusNode,
+                  minLines: 1,
+                  maxLines: null,
+                  magnifierConfiguration: kNoMagnifier,
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.45,
+                    color: context.shell.primaryText,
+                  ),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    filled: true,
+                    fillColor: context.shell.subtleSurface,
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+                    // Borderless at rest — the fill already bounds the field, and
+                    // eight outlined boxes in a column read as a table.
+                    border: _statementBorder(Colors.transparent),
+                    enabledBorder: _statementBorder(Colors.transparent),
+                    focusedBorder: _statementBorder(
+                      AppColors.hubGraph.withValues(alpha: 0.5),
+                    ),
                   ),
                 ),
               ),
@@ -1729,9 +1736,13 @@ class _ClaimCard extends StatelessWidget {
       icon: (suggested || linked) ? Icons.link_rounded : null,
       leading: (suggested || linked) ? null : _importanceDot(c.importance),
       label: suggested
-          ? '${c.name} ${tr('graphReview.suggestedSuffix', {'name': c.resName ?? ''})}'
+          ? '${c.name} ${tr('graphReview.suggestedSuffix', {
+                  'name': c.resName ?? ''
+                })}'
           : linked
-              ? '${c.name} ${tr('graphReview.linkedSuffix', {'name': c.resName ?? ''})}'
+              ? '${c.name} ${tr('graphReview.linkedSuffix', {
+                      'name': c.resName ?? ''
+                    })}'
               : c.name,
     );
   }
@@ -1821,10 +1832,14 @@ class _ClaimCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Expanded(child: _speakerBadge(context, claim.speaker.text, chatStyle: false)),
+              Expanded(
+                  child: _speakerBadge(context, claim.speaker.text,
+                      chatStyle: false)),
               if (onToggleApproved != null)
                 IconButton(
-                  tooltip: approved ? tr('reviewPanel.unapproveTooltip') : tr('reviewPanel.approveTooltip'),
+                  tooltip: approved
+                      ? tr('reviewPanel.unapproveTooltip')
+                      : tr('reviewPanel.approveTooltip'),
                   onPressed: onToggleApproved,
                   icon: Icon(
                     approved
@@ -1838,21 +1853,26 @@ class _ClaimCard extends StatelessWidget {
               IconButton(
                 tooltip: tr('graphReview.deleteItemTooltip'),
                 onPressed: onDelete,
-                icon: const Icon(Icons.delete_outline, color: AppColors.accentWarm),
+                icon: const Icon(Icons.delete_outline,
+                    color: AppColors.accentWarm),
               ),
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
           _dateChip(context),
-          CaretStableField(
-            maxHeight: 96,
-            child: TextField(
-              controller: claim.statement,
-              minLines: 1,
-              maxLines: null,
-              decoration: InputDecoration(
-                labelText: tr('graphReview.statementLabel'),
-                isDense: true,
+          RevealOnFocus(
+            builder: (focusNode) => CaretStableField(
+              maxHeight: 96,
+              child: TextField(
+                controller: claim.statement,
+                focusNode: focusNode,
+                minLines: 1,
+                maxLines: null,
+                magnifierConfiguration: kNoMagnifier,
+                decoration: InputDecoration(
+                  labelText: tr('graphReview.statementLabel'),
+                  isDense: true,
+                ),
               ),
             ),
           ),

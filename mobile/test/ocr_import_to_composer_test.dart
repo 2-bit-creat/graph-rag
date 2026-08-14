@@ -79,7 +79,7 @@ void main() {
     );
   });
 
-  testWidgets('a second import replaces the draft rather than appending',
+  testWidgets('a second import replaces the draft, speakers and all',
       (tester) async {
     final field = await _pumpField(tester);
 
@@ -89,8 +89,16 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(field.text, '@민수: 두 번째 사진');
-    // 제니 stays a badge — the learner may still want to mention her by hand,
-    // and a name that was real a moment ago is not worth forgetting.
-    expect(field.badges, containsAll(<String>['나', '제니', '민수']));
+    // 제니 goes with the draft she came from. This used to assert the
+    // opposite — "a name that was real a moment ago is not worth forgetting" —
+    // and that reasoning is what made the badge list append-only. It cost more
+    // than it bought: with nothing ever pruned, half-deleted spellings from an
+    // edit in progress (Unis이영호, Uni이영호, Un이영호 …) became permanent
+    // speakers and filled the picker. See mention_badge_lifecycle_test.
+    //
+    // Nothing real is lost. A speaker who exists in the knowledge graph is
+    // still offered by the picker via _graphSpeakers; one who only ever
+    // appeared in a discarded photo import is exactly what should be dropped.
+    expect(field.badges, ['나', '민수']);
   });
 }

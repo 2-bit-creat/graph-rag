@@ -313,7 +313,35 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
 
   // ── Field sync ─────────────────────────────────────────────────────────────
 
+  /// Which node/edge the fields below currently hold, so a rebuild that changes
+  /// neither can leave them alone.
+  ///
+  /// [_syncFields] used to run unconditionally from [didUpdateWidget], and it
+  /// ends with `_editing = false` plus a full overwrite of every controller.
+  /// The graph screen rebuilds constantly — chat listeners, journal polling,
+  /// canvas frames — so pressing "수정" put the panel into edit mode only for
+  /// the next incidental rebuild to throw it straight back out, taking any
+  /// half-typed name with it. That is the header flickering between 수정 and
+  /// 취소 with the form appearing and vanishing.
+  String? _syncedNodeId;
+  String? _syncedEdgeId;
+
+  /// Re-read the server's values on the next rebuild even if the id is
+  /// unchanged — used after a save, where the response is the new truth.
+  void _invalidateSync() {
+    _syncedNodeId = null;
+    _syncedEdgeId = null;
+  }
+
   void _syncFields() {
+    final nodeId = widget.selectedNode?['id']?.toString();
+    final edgeId = widget.selectedEdge?['id']?.toString();
+    // Same selection as last time: the fields are already right, and the user
+    // may be typing into them.
+    if (nodeId == _syncedNodeId && edgeId == _syncedEdgeId) return;
+    _syncedNodeId = nodeId;
+    _syncedEdgeId = edgeId;
+
     final node = widget.selectedNode;
     if (node != null) {
       _nameCtrl.text = node['name']?.toString() ?? '';
@@ -417,6 +445,10 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
             : null,
       );
       _loadedOccurredAt = _occurredAt;
+      // The save response is the new truth (the server may normalize the name
+      // or realign the type), so let the reload it triggers re-seed the fields
+      // even though the node id has not changed.
+      _invalidateSync();
       widget.onUpdated?.call();
       if (mounted) {
         // A successful save drops back to read mode.

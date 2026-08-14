@@ -454,6 +454,21 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
       _frameNotifier.value++;
       return;
     }
+    // Merge drag freezes the WHOLE simulation, not just the node under the
+    // finger.
+    //
+    // Pinning the source alone (see [_beginMergeDrag]) leaves every other node
+    // simulating — and the source's own repulsion is what then shoves the
+    // intended target aside. Aiming at a node made it run away, which is the
+    // opposite of a drop gesture: the target has to hold still to be hit.
+    //
+    // Keep repainting, though. The candidate ring and the target highlight
+    // update on this notifier, and the drag would look dead without it.
+    if (_mergeDragActive) {
+      _lastTickTime = elapsed; // or dt explodes on the frame after release
+      _frameNotifier.value++;
+      return;
+    }
     var dt = _lastTickTime == Duration.zero
         ? 1 / 60
         : (elapsed - _lastTickTime).inMicroseconds / 1e6;

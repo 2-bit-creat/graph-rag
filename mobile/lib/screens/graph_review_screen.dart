@@ -5,7 +5,9 @@ import '../compose/compose_session_controller.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
-import '../widgets/mention_editor_core.dart' show CaretStableField;
+import '../widgets/add_entity_dialog.dart';
+import '../widgets/mention_editor_core.dart'
+    show CaretStableField, RevealOnFocus, kNoMagnifier;
 
 /// HITL review of a staged graph draft. The user edits/deletes the extracted
 /// claims, then confirms — committing them into immutable graph nodes. After
@@ -499,31 +501,11 @@ class _ClaimCard extends StatelessWidget {
   }
 
   Future<void> _addConcept(BuildContext context) async {
-    final controller = TextEditingController();
-    final value = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(tr('graphReview.addConceptTitle')),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: InputDecoration(hintText: tr('graphReview.addConceptHint')),
-          onSubmitted: (v) => Navigator.pop(ctx, v),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr('common.cancel'))),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, controller.text),
-            child: Text(tr('common.add')),
-          ),
-        ],
-      ),
-    );
-    final v = (value ?? '').trim();
-    if (v.isNotEmpty && !claim.concepts.any((c) => c.name == v)) {
-      claim.concepts.add(_ConceptDraft(name: v));
-      onConceptsChanged();
-    }
+    final added = await showAddEntityDialog(context);
+    if (added == null) return;
+    if (claim.concepts.any((c) => c.name == added.name)) return;
+    claim.concepts.add(_ConceptDraft(name: added.name, kind: added.kind));
+    onConceptsChanged();
   }
 
   Widget _personChip(BuildContext context, _ConceptDraft c) {
@@ -589,15 +571,19 @@ class _ClaimCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
-          CaretStableField(
-            maxHeight: 96,
-            child: TextField(
-              controller: claim.statement,
-              minLines: 1,
-              maxLines: null,
-              decoration: InputDecoration(
-                labelText: tr('graphReview.statementLabel'),
-                isDense: true,
+          RevealOnFocus(
+            builder: (focusNode) => CaretStableField(
+              maxHeight: 96,
+              child: TextField(
+                controller: claim.statement,
+                focusNode: focusNode,
+                minLines: 1,
+                maxLines: null,
+                magnifierConfiguration: kNoMagnifier,
+                decoration: InputDecoration(
+                  labelText: tr('graphReview.statementLabel'),
+                  isDense: true,
+                ),
               ),
             ),
           ),

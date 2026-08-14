@@ -49,6 +49,10 @@ class RecommendedNode:
     # Entity type (Person / Source / Identity / …) — lets the client distinguish
     # a person from an external source in the picker instead of assuming Person.
     type: str | None = None
+    # Set when ANOTHER speaker label in this same entry is already confirmed as
+    # this identity. The picker used to drop those rows entirely; see
+    # _list_person_nodes for why that made OCR typos unfixable.
+    claimed_by_label: str | None = None
 
 
 @dataclass
@@ -466,7 +470,6 @@ async def recommend_speaker_node(
     claimed_nodes = await _claimed_nodes_in_entry(
         session, user_id, journal_entry_id, exclude_label=speaker_label
     )
-    exclude_ids = set(claimed_nodes.keys())
 
     if profile.node_id is not None:
         node = await session.get(Node, profile.node_id)
@@ -493,7 +496,7 @@ async def recommend_speaker_node(
                     confirmed_node=person,
                     above_threshold=True,
                     person_nodes=await _list_person_nodes(
-                        session, user_id, exclude_node_ids=exclude_ids
+                        session, user_id, claimed=claimed_nodes
                     ),
                 )
             return SpeakerRecommendResult(
@@ -505,13 +508,13 @@ async def recommend_speaker_node(
                 confirmed_node=None,
                 above_threshold=True,
                 person_nodes=await _list_person_nodes(
-                    session, user_id, exclude_node_ids=exclude_ids
+                    session, user_id, claimed=claimed_nodes
                 ),
             )
 
     if profile.embedding is None:
         person_nodes = await _list_person_nodes(
-            session, user_id, exclude_node_ids=exclude_ids
+            session, user_id, claimed=claimed_nodes
         )
         return SpeakerRecommendResult(
             recommended_node=None,
@@ -587,7 +590,7 @@ async def recommend_speaker_node(
         )
 
     person_nodes = await _list_person_nodes(
-        session, user_id, exclude_node_ids=exclude_ids
+        session, user_id, claimed=claimed_nodes
     )
 
     display_score = best_score if above else excluded_best_score
@@ -612,14 +615,35 @@ async def _list_person_nodes(
     user_id: uuid.UUID,
     *,
     exclude_node_ids: set[uuid.UUID] | None = None,
+    claimed: dict[uuid.UUID, tuple[str, str]] | None = None,
 ) -> list[RecommendedNode]:
+    """Identities offered by "기존 정체성에서 고르기".
+
+    Identities already confirmed for a DIFFERENT speaker label in this entry are
+    labeled, not removed. They used to be excluded outright, on the assumption
+    that one identity means one speaker per entry — and that assumption breaks
+    on exactly the case the user hits most: OCR reads the same person's name two
+    ways ("정승헌" and "정승현"), producing two labels that really are one
+    person. Hiding the identity that one of them already claimed left the other
+    with nothing to point at and no way to say "these are the same".
+
+    [exclude_node_ids] is still a hard exclusion, for the one case where it is
+    genuinely meaningless to offer the row: the self node when the label already
+    IS 나.
+    """
     nodes = await crud.list_person_nodes_for_speaker_picker(
         session,
         user_id,
         exclude_node_ids=exclude_node_ids,
     )
+    claimed = claimed or {}
     return [
-        RecommendedNode(id=n.id, name=n.name, type=normalize_entity_type(n.type))
+        RecommendedNode(
+            id=n.id,
+            name=n.name,
+            type=normalize_entity_type(n.type),
+            claimed_by_label=(claimed.get(n.id) or (None, None))[1],
+        )
         for n in nodes
     ]
 

@@ -222,6 +222,68 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
   bool _isSourceType(Map<String, dynamic> node) =>
       (node['type']?.toString() ?? '').trim().toLowerCase() == 'source';
 
+  /// The OTHER speaker label in this entry already confirmed as this identity.
+  String? _claimedLabel(Map<String, dynamic> node) {
+    final label = node['claimed_by_label']?.toString().trim();
+    return (label == null || label.isEmpty) ? null : label;
+  }
+
+  /// Treat this label and the one that already owns the identity as one person.
+  ///
+  /// The case this exists for: OCR read the same name two ways ("정승헌" and
+  /// "정승현"), so the entry has two speaker labels that are one person. Simply
+  /// confirming both onto the same node is not enough — the transcript still
+  /// carries two speakers, and the graph would get two. Remapping the labels is
+  /// what actually merges them, and it stays reversible because the original
+  /// diarization label is kept per segment.
+  Future<void> _mergeWithLabel(Map<String, dynamic> node) async {
+    final target = _claimedLabel(node);
+    if (target == null || _submitting) return;
+    final source = widget.speakerLabel;
+    if (source == target) return;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('speakerId.mergeLabelsTitle')),
+        content: Text(tr(
+          'speakerId.mergeLabelsBody',
+          {'from': source, 'to': target},
+        )),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(tr('common.cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(tr('speakerId.mergeLabelsConfirm')),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      await apiClient.remapSpeakers(
+        widget.entryId,
+        merges: {source: target},
+      );
+      if (!mounted) return;
+      await _popResult(true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = e.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.viewInsetsOf(context).bottom;
@@ -447,17 +509,40 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
               children: items.map((node) {
                 final score = node['match_score'];
                 final isSource = _isSourceType(node);
+                // Already used by another label in THIS entry. Offered anyway —
+                // that is usually the same person under two OCR spellings, and
+                // hiding it was what left the typo unfixable. Tapping it merges
+                // the two labels instead of confirming a second link.
+                final claimed = _claimedLabel(node);
                 return ListTile(
                   dense: true,
                   leading: Icon(
-                    isSource ? Icons.menu_book_rounded : Icons.person_outline,
+                    claimed != null
+                        ? Icons.merge_rounded
+                        : isSource
+                            ? Icons.menu_book_rounded
+                            : Icons.person_outline,
                     size: 20,
+                    color: claimed != null
+                        ? Theme.of(context).colorScheme.primary
+                        : null,
                   ),
                   title: Text(node['name']?.toString() ?? ''),
-                  subtitle: score != null
-                      ? Text(tr('speakerId.voiceSimilarity', {'score': (score as num).toStringAsFixed(2)}))
-                      : Text(isSource ? tr('speakerId.sourceInGraph') : tr('speakerId.identityInGraph')),
-                  onTap: _submitting ? null : () => _confirmPicked(node),
+                  subtitle: claimed != null
+                      ? Text(
+                          tr('speakerId.claimedByLabel', {'label': claimed}),
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        )
+                      : score != null
+                          ? Text(tr('speakerId.voiceSimilarity', {'score': (score as num).toStringAsFixed(2)}))
+                          : Text(isSource ? tr('speakerId.sourceInGraph') : tr('speakerId.identityInGraph')),
+                  onTap: _submitting
+                      ? null
+                      : () => claimed != null
+                          ? _mergeWithLabel(node)
+                          : _confirmPicked(node),
                 );
               }).toList(),
             ),

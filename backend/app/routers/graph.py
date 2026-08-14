@@ -176,7 +176,12 @@ async def _speaker_recommend_handler(
         ],
 
         person_nodes=[
-            RecommendedNodeOut(id=n.id, name=n.name, type=n.type)
+            RecommendedNodeOut(
+                id=n.id,
+                name=n.name,
+                type=n.type,
+                claimed_by_label=n.claimed_by_label,
+            )
             for n in result.person_nodes
         ],
 

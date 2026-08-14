@@ -309,6 +309,27 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     }
   }
 
+  /// Whether this screen is still the route the user is looking at.
+  ///
+  /// `mounted` is not the same question. A modal sheet (the OCR review sheet,
+  /// the mode pickers) is pushed OVER this screen, which stays mounted with its
+  /// listeners live — so a chat reply landing, or a delayed retry fired before
+  /// the sheet opened, would still run the focus restores below and pull focus
+  /// out of the field the user is typing in.
+  ///
+  /// On iOS Safari that is not a cosmetic focus wobble. Flutter web backs the
+  /// focused field with a real DOM editable; moving focus programmatically tears
+  /// that element down, and the node can be left believing it is focused while
+  /// the browser has nothing to raise a keyboard for — the "커서는 찍히는데
+  /// 키보드가 안 올라온다" state this file already documents at
+  /// [_prepareWordQuizInput]. A tap cannot recover it, because Flutter sees no
+  /// focus change to act on.
+  ///
+  /// Every ASYNCHRONOUS focus call in this screen is therefore gated on this.
+  /// Synchronous ones made straight out of a user action are not: the user was
+  /// on this route when they tapped.
+  bool get _isTopRoute => ModalRoute.of(context)?.isCurrent ?? true;
+
   void _activateInputMode() {
     _expandChatForInput();
     // Let the actual TextField tap establish the browser's native IME
@@ -321,7 +342,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       Duration(milliseconds: 600),
     ]) {
       Future<void>.delayed(delay, () {
-        if (!mounted) return;
+        // Up to 600ms after the tap — long enough for the user to have opened
+        // a sheet on top in the meantime, at which point this would steal the
+        // sheet's keyboard rather than restore the composer's.
+        if (!mounted || !_isTopRoute) return;
         _chatInputFocusNode.requestFocus();
         _pinChatToBottom(window: const Duration(milliseconds: 180));
       });
@@ -354,7 +378,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   /// the Flutter field focused but with no keyboard to bring back on tap.
   void _restoreComposerFocusAfterBuild() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_inputEnabled) return;
+      if (!mounted || !_inputEnabled || !_isTopRoute) return;
       _chatInputFocusNode.unfocus();
       FocusScope.of(context).requestFocus(_chatInputFocusNode);
       _pinChatToBottom(window: const Duration(milliseconds: 180));
@@ -760,11 +784,15 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     if (enteredFooterMode && mode == ChatMode.journal) {
       _restoreComposerFocusAfterBuild();
     }
-    if (wordQuizJustSolved) {
+    if (wordQuizJustSolved && _isTopRoute) {
       // The next action is explicitly "Next question", so retaining the
       // composer focus only steals vertical space from the answer state.
       // Hide the platform IME as well as releasing Flutter focus; the latter
       // alone does not reliably dismiss iOS Safari's keyboard.
+      //
+      // Gated on the route: `primaryFocus` is whoever is actually editing, and
+      // with a sheet on top that is the SHEET's field — this would blur it and
+      // pull the keyboard down under the user's hands.
       _chatInputFocusNode.unfocus();
       FocusManager.instance.primaryFocus?.unfocus();
       unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.hide'));
@@ -775,7 +803,10 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     // next message can be typed immediately, same as the quiz re-focus above.
     if (mode == ChatMode.normal && _lastChatBusy && !chatSession.busy) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _chatInputFocusNode.requestFocus();
+        // A reply can land at any moment, including while the user is halfway
+        // through correcting OCR text in a sheet. Only reclaim the composer
+        // when the composer is what they are looking at.
+        if (mounted && _isTopRoute) _chatInputFocusNode.requestFocus();
       });
     }
     _lastChatMode = mode;
@@ -1242,9 +1273,22 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     // the textarea is the actual fix; re-focusing stays as a harmless backstop.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      // The published rect is a DOM-level tap suppressor: index.html cancels
+      // the default action of any press inside it, so the hidden <textarea>
+      // never takes focus. That is exactly right over this button and exactly
+      // wrong anywhere else — a rect left up while a sheet covers the screen
+      // sits over the SHEET's text field, where a tap then places a caret and
+      // raises no keyboard at all. The composer keeps rebuilding underneath a
+      // sheet, so this must withdraw the rect rather than re-publish it.
       final box = _wordQuizHintButtonKey.currentContext?.findRenderObject()
           as RenderBox?;
-      if (box == null || !box.hasSize) return;
+      if (!_isTopRoute || box == null || !box.hasSize) {
+        if (_hintButtonRectPublished) {
+          _hintButtonRectPublished = false;
+          keepKeyboardOverRect(null);
+        }
+        return;
+      }
       _hintButtonRectPublished = true;
       keepKeyboardOverRect(box.localToGlobal(Offset.zero) & box.size);
     });

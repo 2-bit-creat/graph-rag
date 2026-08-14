@@ -16,6 +16,23 @@ import '../utils/keep_keyboard_on_tap.dart';
 // 추출 품질이 급격히 떨어지는 지점 이전으로 캡 (백엔드 JournalTextEntryRequest와 동일).
 const kMaxJournalTextChars = 4000;
 
+/// No text-selection loupe. Use on every multi-line editor in this app.
+///
+/// Flutter decides the magnifier from the *platform*, and on iOS Safari that
+/// resolves to the Cupertino loupe — a widget Flutter paints itself, dismissed
+/// on the pointer-up that ends the drag. On web that pointer-up is not
+/// guaranteed to arrive (Safari retargets touches during its own selection
+/// gestures, and this app additionally cancels some presses at the DOM level —
+/// see keep_keyboard_on_tap.dart), and a loupe that never hears it stays
+/// painted over the text until the next rebuild that happens to drop it.
+///
+/// The magnifier is also worth less here than it is in a native iOS app: it
+/// magnifies the CANVAS, while the caret it is supposed to help you place is
+/// resolved by the hidden DOM input. Those two agree only because of the
+/// alignment work in [textScaleBakedIn] / [NoTextScaling], and blowing the
+/// canvas up does not make the DOM side any more precise.
+const kNoMagnifier = TextMagnifierConfiguration.disabled;
+
 /// Mentions used to render in one flat link blue, Slack-style, with per-speaker
 /// colors reserved for pickers and graph views. That was decided before color
 /// carried meaning: now a speaker's hue runs from the composer through the
@@ -525,6 +542,84 @@ class CaretStableField extends StatelessWidget {
   }
 }
 
+/// Scrolls its subtree into view once, when the field inside it takes focus.
+///
+/// The deliberate counterpart to [BlockShowOnScreen], and the thing its doc
+/// comment means by "the composer does it instead, where it can be limited to
+/// the cases the user wants".
+///
+/// A docked composer never needs this: it is already at the bottom of the
+/// screen, and every automatic reveal it received was the bug. A LIST of
+/// editable rows is the opposite case — the graph-draft review has a dozen
+/// statement fields stacked down the page, the keyboard takes the lower half of
+/// the viewport, and with the reveal swallowed nothing brought the tapped row
+/// back into it. Editing anything below the fold meant typing blind.
+///
+/// One reveal per focus gain, not per caret move, so it cannot turn into the
+/// yank [BlockShowOnScreen] exists to stop. It fires twice: once on the next
+/// frame, and once after the keyboard has finished animating — the viewport
+/// shrinks over ~250ms on iOS, and the first call cannot know the final height.
+///
+/// Wrap this OUTSIDE [CaretStableField]. Inside, `Scrollable.of` would find
+/// that widget's own scroll view instead of the list, and the row would never
+/// move.
+class RevealOnFocus extends StatefulWidget {
+  const RevealOnFocus({
+    super.key,
+    required this.builder,
+    this.alignment = 0.12,
+  });
+
+  final Widget Function(FocusNode node) builder;
+
+  /// Where in the viewport the row lands, 0 = top. Deliberately near the top:
+  /// the row has to clear the keyboard, and the keyboard's height is not known
+  /// at the moment the decision is made.
+  final double alignment;
+
+  @override
+  State<RevealOnFocus> createState() => _RevealOnFocusState();
+}
+
+class _RevealOnFocusState extends State<RevealOnFocus> {
+  final _node = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _node.addListener(_onFocusChanged);
+  }
+
+  @override
+  void dispose() {
+    _node.removeListener(_onFocusChanged);
+    _node.dispose();
+    super.dispose();
+  }
+
+  void _onFocusChanged() {
+    if (!_node.hasFocus) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _reveal());
+    Future<void>.delayed(const Duration(milliseconds: 320), _reveal);
+  }
+
+  void _reveal() {
+    // Focus may have moved on, or the row may have been deleted, between the
+    // schedule and the callback.
+    if (!mounted || !_node.hasFocus) return;
+    if (Scrollable.maybeOf(context) == null) return;
+    Scrollable.ensureVisible(
+      context,
+      alignment: widget.alignment,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(_node);
+}
+
 /// @멘션 자동완성 텍스트 필드 — 컴포즈·채팅 바가 각자 스타일링할 수 있도록
 /// min/maxLines·decoration·focusNode 등을 파라미터화한다.
 ///
@@ -596,7 +691,24 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
   String _lastText = '';
 
   /// 이 글에서 실제 배지로 인정되는 이름들(등장 순서 = 색 순서). '나'는 항상 첫째.
-  final List<String> _badges = ['나'];
+  ///
+  /// DERIVED from the text, never accumulated. It used to be an append-only
+  /// list fed by `_ensureBadge` on every keystroke, and nothing ever removed
+  /// from it — so deleting the "Unist" prefix off `@Unist이영호` one character
+  /// at a time permanently registered `Unis이영호`, `Uni이영호`, `Un이영호` and
+  /// `U이영호` as speakers, all of which then showed up in the picker forever.
+  /// Every intermediate state of an edit is not a speaker; only what the text
+  /// currently says is.
+  List<String> _badges = const ['나'];
+
+  /// Names the user chose from the picker (or that a chip rename registered).
+  ///
+  /// These need to survive independently for exactly one reason: [_applyMention]
+  /// writes `@이름 ` with a trailing SPACE and no colon yet, which
+  /// [atMentionLineSpeakers] does not recognise — so a just-picked speaker would
+  /// lose its badge on the very next keystroke. They are still pruned once the
+  /// token leaves the text, so they cannot accumulate either.
+  final List<String> _picked = [];
 
   /// 지식그래프에서 가져온 화자·출처 노드 (팝업 후보).
   List<SpeakerOption> _graphSpeakers = const [];
@@ -633,7 +745,10 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
   void ensureSpeaker(String name) {
     final normalized = normalizeMentionName(name);
     if (normalized.isEmpty) return;
-    _ensureBadge(normalized);
+    // Not pruned here: the caller may register the name before writing it into
+    // the text. The next text change prunes it if it never turned up.
+    _rememberPick(normalized);
+    _recomputeBadges();
     if (mounted) setState(() {});
   }
 
@@ -651,13 +766,65 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
 
   Color colorFor(String name) => colorForSpeaker(name, _badges);
 
-  void _ensureBadge(String name) {
+  void _rememberPick(String name) {
     final normalized = normalizeMentionName(name);
     if (normalized.isEmpty) return;
-    if (!_badges.any(
-        (badge) => _mentionNameKey(badge) == _mentionNameKey(normalized))) {
-      _badges.add(normalized);
+    if (_picked.any((n) => _mentionNameKey(n) == _mentionNameKey(normalized))) {
+      return;
     }
+    _picked.add(normalized);
+  }
+
+  /// Rebuild [_badges] from the text as it stands right now.
+  ///
+  /// Ordered by where each name first appears, not by when it was registered:
+  /// color is assigned by position in this list ([colorForSpeaker]), so
+  /// recomputing must not renumber the speakers of an unchanged draft just
+  /// because a name was picked in the middle of it rather than at the end.
+  ///
+  /// [prunePicks] drops picked names whose token has left the text. Only the
+  /// text-change path passes true — see [ensureSpeaker].
+  void _recomputeBadges({bool prunePicks = false}) {
+    final text = _controller.text;
+    if (prunePicks) {
+      _picked.removeWhere((name) => !text.contains('@$name'));
+    }
+
+    final candidates = <String>[];
+    void offer(String raw) {
+      final name = normalizeMentionName(raw);
+      if (name.isEmpty || name == '나') return;
+      if (candidates.any((n) => _mentionNameKey(n) == _mentionNameKey(name))) {
+        return;
+      }
+      candidates.add(name);
+    }
+
+    for (final name in atMentionLineSpeakers(text)) {
+      offer(name);
+    }
+    final legacy = parseDialogueLines(text);
+    if (legacy != null) {
+      for (final name in legacy.speakers) {
+        offer(name);
+      }
+    }
+    for (final name in _picked) {
+      offer(name);
+    }
+
+    int firstAt(String name) {
+      final idx = text.indexOf('@$name');
+      return idx < 0 ? text.length : idx;
+    }
+
+    candidates.sort((a, b) {
+      final byPos = firstAt(a).compareTo(firstAt(b));
+      return byPos != 0 ? byPos : a.compareTo(b);
+    });
+    // '나' is always first, with or without a mention of its own — the palette
+    // numbering in [colorForSpeaker] counts past it either way.
+    _badges = ['나', ...candidates];
   }
 
   void _onTextChanged() {
@@ -678,15 +845,9 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
         widget.onDirtyChanged?.call(dirty);
       }
       // "[이름]: …" / "@이름: …" 붙여넣기 → 화자를 배지로 자동 등록.
-      for (final name in atMentionLineSpeakers(text)) {
-        _ensureBadge(name);
-      }
-      final legacy = parseDialogueLines(text);
-      if (legacy != null) {
-        for (final name in legacy.speakers) {
-          _ensureBadge(name);
-        }
-      }
+      // Recomputed wholesale, so a name that just stopped being written that
+      // way stops being a speaker too.
+      _recomputeBadges(prunePicks: true);
     }
 
     final prevCtx = _mentionCtx;
@@ -766,6 +927,16 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
   List<SpeakerOption> debugMentionOptions(String partial) =>
       _computeMentionOptions(partial);
 
+  /// Whether the picker is currently offered, and for what typed fragment.
+  ///
+  /// The decision lives in `_computeMentionContext`, which reads the caret as
+  /// well as the text — neither of which `debugMentionOptions` can express. Two
+  /// bugs hid in exactly that gap (a picker opening over an already-chosen
+  /// speaker, and one refusing to reopen when the name was edited), so the test
+  /// seam has to reach the context itself.
+  @visibleForTesting
+  ({int at, String partial})? get debugMentionContext => _mentionCtx;
+
   Future<void> _loadGraphSpeakers() async {
     try {
       final graph = await apiClient.getGraph();
@@ -826,9 +997,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     // Seed badges from any restored draft — the assignment above predates the
     // listener, so nothing would have registered its speakers. The popup is not
     // touched here: its OverlayPortal is not mounted yet.
-    for (final name in atMentionLineSpeakers(widget.initialText)) {
-      _ensureBadge(name);
-    }
+    _recomputeBadges();
     _lastText = widget.initialText;
     _lastDirty = widget.initialText.trim().isNotEmpty;
     _focusNode.addListener(_onFocusChanged);
@@ -863,7 +1032,15 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
         return;
       }
       final box = _popupBoxKey.currentContext?.findRenderObject() as RenderBox?;
-      if (box == null || !box.hasSize) return;
+      // Withdraw rather than leave the previous rect standing. A rect is a
+      // DOM-level tap suppressor (see keep_keyboard_on_tap.dart); one that
+      // outlives the widget it was measured for suppresses presses over
+      // whatever moved into that space — including another surface's text
+      // field, which then takes a caret but raises no keyboard.
+      if (box == null || !box.hasSize) {
+        keepKeyboardOverRect(null);
+        return;
+      }
       keepKeyboardOverRect(box.localToGlobal(Offset.zero) & box.size);
     });
   }
@@ -891,6 +1068,29 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     final at = upto.lastIndexOf('@');
     if (at < 0) return null;
     if (at > 0 && !RegExp(r'\s').hasMatch(upto[at - 1])) return null;
+
+    // The caret sits on a mention that is already settled — do not reopen the
+    // picker over it.
+    //
+    // The separator check further down cannot see this case. It only looks at
+    // [upto], the text BEFORE the caret, so with the caret parked immediately
+    // right of the "@" of `@이영호: 오늘 자정퇴근` there is no name in front of
+    // it to recognise: `partial` came out empty and the picker helpfully
+    // offered the entire speaker list on top of a speaker that had already been
+    // chosen. Resolving the whole text against the known names instead answers
+    // the real question — is this "@" already a mention? — from both sides of
+    // the caret.
+    //
+    // The caret at the very END of the name is deliberately NOT suppressed:
+    // that is the "keep typing to make it somebody else" position, and it has
+    // to reach the picker so an existing identity can be completed rather than
+    // only invented. Relying on the name simply stopping matching does not work
+    // here — `@이영호s: …` still parses as a speaker label, so it registers
+    // itself and would look just as settled as the name it replaced.
+    for (final hit in findMentions(text, matchableNames())) {
+      if (hit.start == at && sel.start < hit.end) return null;
+    }
+
     final partial = upto.substring(at + 1);
     // A confirmed mention is followed by one separator before its message.
     // Detect it from the text itself (not ephemeral popup state), so rebuilds
@@ -995,7 +1195,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     if (ctx == null) return;
     final normalized = normalizeMentionName(name);
     if (normalized.isEmpty) return;
-    _ensureBadge(normalized);
+    _rememberPick(normalized);
     final text = _controller.text;
     final sel = _controller.selection;
     final replaced =
@@ -1337,6 +1537,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
                   minLines: widget.minLines,
                   maxLength: kMaxJournalTextChars,
                   maxLengthEnforcement: MaxLengthEnforcement.none,
+                  magnifierConfiguration: kNoMagnifier,
                   decoration: decoration,
                   onSubmitted: widget.onSubmitted,
                 ),

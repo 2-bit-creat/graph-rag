@@ -415,6 +415,11 @@ class RecommendedNodeOut(BaseModel):
     # Entity type (Person / Source / Identity / …) — lets the client render a
     # distinct icon and avoid assuming every speaker candidate is a person.
     type: str | None = None
+    # The other speaker label in THIS entry that is already confirmed as this
+    # identity, when there is one. The picker shows the row either way and
+    # offers to treat the two labels as the same person — see
+    # speaker_confirmation._list_person_nodes.
+    claimed_by_label: str | None = None
 
 
 class SpeakerCandidateOut(BaseModel):
