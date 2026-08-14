@@ -62,7 +62,16 @@ _KO_SIBLING_RE = re.compile(r"(?:면서|으며|하며|그리고|고서|뿐만\s*
 _KO_DICTIONARY_FORM_RE = re.compile(r"[가-힣]다$")
 _KO_INFLECTED_PAST_RE = re.compile(r"(?:았|었|였|겠)다$")
 _KO_SUBJECT_EOJEOL_RE = re.compile(r"\S+(?:은|는|이|가)$")
-_KO_SENTENCE_FINAL_RE = re.compile(r"(?:다|요|죠|까|네)[.?!]?$")
+# A bare 다-ending is the DICTIONARY form (검토하다) and the plain past
+# (검토했다), not a signal that the span is a finished sentence — this pack's
+# own ``base_form_reason`` requires canonical forms to end exactly that way.
+# Korean being verb-final, treating every 다-ending as sentence-final rejected
+# essentially every Korean verb phrase and cost en-ko most of its cards
+# (23 expressions proposed, 5 accepted, in a measured run). A span is only
+# terminal on a real closing ending, or on 다 followed by sentence punctuation.
+_KO_SENTENCE_FINAL_RE = re.compile(
+    r"(?:습니다|ㅂ니다|입니다|어요|아요|에요|예요|세요|죠|까|네)[.?!]?$|다[.?!]+$"
+)
 # A light heuristic, not a name database: catches the common "X그룹/X은행/
 # X회사/X증권" organization-suffix pattern the plan's context_entities list
 # might have missed, without false-positiving on ordinary short nouns (a
@@ -90,6 +99,9 @@ class KoreanTargetPack(TargetLanguagePack):
     # the Latin targets' word-level caps.
     max_words = {"verb_phrase": 4, "collocation": 3, "domain_term": 3}
     min_single_token_len = 1  # single-syllable Korean words are common and valid
+    # A Korean 어절 carries a particle and often a whole predicate, so two of
+    # them leave about as much context as three Latin words do.
+    min_stem_tokens = 2
 
     teaching_guide = (
         "Focus on particles (조사), verb/adjective endings and conjugation, "

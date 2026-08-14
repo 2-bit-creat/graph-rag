@@ -47,6 +47,12 @@ class TargetLanguagePack:
     word_re: re.Pattern[str] = _WORD_RE
     function_words: frozenset[str] = frozenset()
     leading_determiners: frozenset[str] = frozenset()
+    # Possessive determiners whose referent shifts with the speaker ("their
+    # shares" for the company, "my shares" for the investor telling the same
+    # story). Deixis is not vocabulary, so one inside an answer means the blank
+    # ran past the reusable expression into a sentence-specific object phrase.
+    # Empty here — a pack with no list keeps its old behaviour.
+    possessive_determiners: frozenset[str] = frozenset()
     coordinators: frozenset[str] = frozenset()
     # A separate, smaller stopword set for tautology detection (content words
     # only) — distinct from ``function_words``, which drives the teachability
@@ -107,8 +113,31 @@ class TargetLanguagePack:
             return R.reason(R.NOT_TEACHABLE, "answer has no word characters")
         if words[0].casefold() in self.leading_determiners:
             return R.reason(R.LEADING_DETERMINER, f"answer starts with determiner {words[0]!r}")
+        possessive_reason = self.internal_possessive_reason(words)
+        if possessive_reason:
+            return possessive_reason
         if len(words) == 1 and len(words[0]) < self.min_single_token_len:
             return R.reason(R.NOT_TEACHABLE, f"single token {words[0]!r} is too short")
+        return None
+
+    def internal_possessive_reason(self, words: list[str]) -> str | None:
+        """Reject an answer that swallows a possessive after its first word.
+
+        ``leading_determiners`` already blocks "their key results"; this is the
+        same rule one token later, for "buy back their shares or bonds" — the
+        blank there spans a reusable verb plus a possessed object, and the
+        native gloss has to pick a person ("내 주식") that the target text
+        renders from the other side ("their shares"). Trimming the blank back
+        to "buy back" leaves the possessive printed as context, where it needs
+        no guessing.
+        """
+        for index, word in enumerate(words[1:], start=1):
+            if word.casefold() in self.possessive_determiners:
+                return R.reason(
+                    R.INTERNAL_POSSESSIVE,
+                    f"answer contains possessive {word!r} at position {index}; "
+                    f"end the answer before it",
+                )
         return None
 
     def base_form_reason(self, canonical: str, kind: str) -> str | None:
@@ -199,6 +228,33 @@ class TargetLanguagePack:
 
     def sentence_language_reason(self, sentence: str) -> str | None:
         """Reject a sentence written mainly in a different script when known."""
+        return None
+
+    # How much of the sentence must survive outside the blank. Two tokens of
+    # stem is the floor: "Ich habe ___." tells the learner nothing about which
+    # expression belongs there.
+    min_stem_tokens: int = 3
+
+    def blank_context_reason(self, sentence: str, answer: str) -> str | None:
+        """Reject a blank that swallows the sentence it is supposed to sit in.
+
+        A cloze teaches by making the surrounding context select the answer.
+        When the blank takes the whole predicate and leaves a bare stem
+        ("Ich habe ___." for "die Präsentationsunterlagen genau geprüft"),
+        nothing in the prompt narrows the answer down and the card is a
+        translation exercise wearing a cloze's clothes — the learner cannot
+        get it right except by reproducing the reference sentence.
+        """
+        answer_tokens = len(self.tokens(answer))
+        if answer_tokens < 2:
+            return None  # a short blank always leaves the sentence standing
+        stem = len(self.tokens(sentence)) - answer_tokens
+        if stem < self.min_stem_tokens:
+            return R.reason(
+                R.SENTENCE_TOO_SHORT,
+                f"blank {answer!r} leaves only {stem} token(s) of context; "
+                f"lengthen the sentence or shorten the blank",
+            )
         return None
 
     # -- output-side -------------------------------------------------------------

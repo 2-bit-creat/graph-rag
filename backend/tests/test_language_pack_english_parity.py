@@ -35,6 +35,12 @@ _EXPECTED_HASHES = {
     # vocabulary ("es heißt eui-jun und seung-hyun"); the prompt rule pairs with
     # the deterministic gate in app/expression_entity_guard.py. Nothing else in
     # the English prompt changed.
+    #
+    # The possessive-answer work (see language_packs.reasons.INTERNAL_POSSESSIVE)
+    # deliberately changed NO prompt: a full-golden-set before/after showed the
+    # prompt wording cost ~10% of cards across all three pairs — including
+    # en-ko, which the rule does not even apply to — to remove 2 bad answers in
+    # 149 cards. The deterministic gate carries the rule for free instead.
     "plan": "b5d28e90ed86a9e0",
     "plan_qa": "e5a002c6984cefb8",
     "inventory": "0b3b818e88b45492",

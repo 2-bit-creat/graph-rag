@@ -187,6 +187,27 @@ def test_rejects_a_completed_sentence_that_contains_the_answer_twice() -> None:
     assert result is None
 
 
+def test_rejects_a_card_whose_native_fields_repeat_the_target_sentence() -> None:
+    # Observed in an eval run: the author copied the English sentence into both
+    # sentence_ko and target_ko, so every alignment check agreed with itself and
+    # the card shipped with its "문장 뜻" written in English.
+    sentence = (
+        "A put option gives investors the right to ask the company to buy back "
+        "their stocks or bonds when the stock price falls."
+    )
+    result = _normalize_bundle_cloze(
+        {
+            "sentence_en": sentence,
+            "blank": "buy back",
+            "sentence_ko": sentence,
+            "target_ko": "buy back",
+        },
+        language="english",
+    )
+
+    assert result is None
+
+
 def test_rejects_numbers_function_words_and_word_fragments_as_clozes() -> None:
     assert not _is_teachable_cloze("eight", language="english")
     assert not _is_teachable_cloze("has", language="english")
@@ -195,6 +216,89 @@ def test_rejects_numbers_function_words_and_word_fragments_as_clozes() -> None:
     assert not _is_teachable_cloze("their key results", language="english")
     assert _is_teachable_cloze("key results", language="english")
     assert _is_teachable_cloze("check out", language="english")
+
+
+def test_german_possessive_gate_respects_the_sein_homograph() -> None:
+    from app.language_packs import target_pack
+
+    de = target_pack("german")
+
+    def flagged(text: str) -> bool:
+        reason = de.teachability_reason(text)
+        return reason is not None and "internal_possessive" in reason
+
+    # "sein" is also the infinitive "to be" and "ihr" the pronoun "you/her",
+    # so a bare stem list would reject real expressions. German capitalizes
+    # nouns, which is what separates the two readings.
+    assert not flagged("überrascht sein")
+    assert not flagged("sich um eine Stunde verspäten")
+    assert not flagged("den Vertrag kündigen")
+    # A possessive before a noun is the same deixis problem English has.
+    assert flagged("in ihrer Freizeit")
+    assert flagged("auf seinen Vorschlag eingehen")
+    # Position 0 too: German's leading-determiner rule only covers answers of
+    # two words or fewer and lists articles only, so this is caught here.
+    assert flagged("ihre Unterlagen überarbeiten")
+    assert flagged("euer Angebot annehmen")
+
+
+def test_korean_verb_phrases_are_not_mistaken_for_whole_clauses() -> None:
+    # Korean is verb-final, so nearly every Korean verb phrase ends in a
+    # 다-form. The clause-answer rule used to reject any 3+ 어절 answer ending
+    # that way, which contradicted this same pack's base_form_reason (it
+    # REQUIRES canonical forms to be the 하다-lemma, i.e. to end in 다) and
+    # cost en-ko most of its cards.
+    from app.language_packs import target_pack
+
+    ko = target_pack("korean")
+
+    def rejected(text: str) -> bool:
+        return ko.teachability_reason(text) is not None
+
+    assert not rejected("회의를 정리했다")
+    assert not rejected("발표 자료를 검토했다")
+    assert not rejected("보수적인 할인율을 적용하다")
+    assert not rejected("예약을 오후로 옮겼다")
+    assert not rejected("지출 내역을 매주 정리했다")
+    # A real clause still goes, caught by its subject-marked eojeol.
+    assert rejected("나는 발표 자료를 검토했다")
+    assert rejected("그는 할인율을 적용하고 있다")
+    # A finished polite sentence is still a clause even with no subject.
+    assert rejected("오늘 회의를 모두 마쳤습니다")
+
+
+def test_blank_may_not_swallow_the_whole_sentence() -> None:
+    # "Ich habe ___." is a translation exercise, not a cloze: the stem carries
+    # no information the learner can use to choose the answer.
+    assert _normalize_bundle_cloze(
+        {
+            "sentence_en": "Ich habe die Präsentationsunterlagen genau geprüft.",
+            "blank": "die Präsentationsunterlagen genau geprüft",
+            "sentence_ko": "발표 자료를 자세히 검토했다.",
+            "target_ko": "발표 자료를 자세히 검토했다",
+        },
+        language="german",
+    ) is None
+    # The same answer keeps its card when real context remains around it.
+    assert _normalize_bundle_cloze(
+        {
+            "sentence_en": "Vor der Sitzung habe ich am Abend die Unterlagen genau geprüft.",
+            "blank": "die Unterlagen genau geprüft",
+            "sentence_ko": "회의 전에 저녁에 자료를 자세히 검토했다.",
+            "target_ko": "자료를 자세히 검토했다",
+        },
+        language="german",
+    ) is not None
+
+
+def test_rejects_a_blank_that_swallows_a_possessive_object() -> None:
+    # "buy back their shares or bonds" makes the learner guess a pronoun whose
+    # referent flips with the speaker: the Korean gloss says "내 주식/채권"
+    # while the English sentence says "their". Only "buy back" is vocabulary.
+    assert not _is_teachable_cloze("buy back their shares or bonds", language="english")
+    assert not _is_teachable_cloze("pay back his investment", language="english")
+    assert _is_teachable_cloze("buy back", language="english")
+    assert _is_teachable_cloze("pay back the investment", language="english")
 
 
 def test_production_validator_rejects_a_prompt_that_leaks_the_answer() -> None:
