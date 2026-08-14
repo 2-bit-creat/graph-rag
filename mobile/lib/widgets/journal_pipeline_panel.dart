@@ -292,6 +292,10 @@ class _JournalPipelinePanelState extends State<JournalPipelinePanel> {
 
       _syncPollTimer();
 
+      // Re-checked after _loadTrace: the earlier guard was before that await,
+      // so the panel may have been disposed while the trace was reloading.
+      if (!mounted) return;
+
       await showGraphIngestSnackBar(context, finalStatus);
 
     } catch (e) {
@@ -368,11 +372,11 @@ class _JournalPipelinePanelState extends State<JournalPipelinePanel> {
 
         }));
 
-    final manualStarted = ((trace['steps'] as List<dynamic>? ?? [])
-
-        .any((s) => (s as Map)['phase'] == 'manual_graph_path' ||
-
-            (s as Map)['name'] == 'manual_graph_trigger'));
+    final manualStarted = (trace['steps'] as List<dynamic>? ?? []).any((s) {
+      final step = s as Map;
+      return step['phase'] == 'manual_graph_path' ||
+          step['name'] == 'manual_graph_trigger';
+    });
 
     final autoStarted = graphStarted && !manualStarted;
 

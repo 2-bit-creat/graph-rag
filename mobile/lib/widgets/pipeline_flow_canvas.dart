@@ -42,7 +42,8 @@ class PipelineTraceCanvasState extends State<PipelineTraceCanvas> {
   final _transform = TransformationController();
   bool _panEnabled = false;
   double _viewportH = 360;
-  double? _lastLayoutWidth;
+  // The layout width is already part of _lastFitKey, so it needs no field of
+  // its own — one source of truth for "have we fitted this layout yet".
   String? _lastFitKey;
 
   @override
@@ -309,7 +310,6 @@ class PipelineTraceCanvasState extends State<PipelineTraceCanvas> {
                     '${w.toStringAsFixed(0)}:${canvasW.toStringAsFixed(0)}:${canvasH.toStringAsFixed(0)}';
                 if (_lastFitKey != fitKey) {
                   _lastFitKey = fitKey;
-                  _lastLayoutWidth = w;
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     if (mounted) {
                       _applyFit(

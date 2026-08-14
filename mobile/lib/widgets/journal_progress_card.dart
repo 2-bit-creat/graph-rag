@@ -176,8 +176,7 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
   }
 
   Future<void> _openGraphReview() async {
-    final navCtx = appNavigatorKey.currentContext;
-    if (navCtx == null) return;
+    if (appNavigatorKey.currentContext == null) return;
     Map<String, dynamic> fresh;
     try {
       fresh = await apiClient.getEntry(widget.entryId);
@@ -186,6 +185,10 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
     }
     final staging = fresh['graph_staging'];
     if (staging is! Map) return;
+    // Resolved after the fetch, not before it: a context captured ahead of an
+    // await can belong to a route that is already gone by the time we push.
+    final navCtx = appNavigatorKey.currentContext;
+    if (navCtx == null || !navCtx.mounted) return;
     final committed = await Navigator.of(navCtx).push<bool>(
       MaterialPageRoute(
         builder: (_) => GraphReviewScreen(
