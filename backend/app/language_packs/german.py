@@ -54,6 +54,21 @@ _DE_DETERMINERS = frozenset({
     "der", "die", "das", "den", "dem", "des",
     "ein", "eine", "einen", "einem", "einer", "eines",
 })
+# German possessives inflect for case/gender/number, so the bare stems are not
+# enough — "auf seinen Vorschlag" and "in ihrer Freizeit" have to be caught the
+# same way "in my spare time" is. Generated from the six stems rather than
+# written out, so no ending is quietly missing.
+_DE_POSSESSIVE_STEMS = ("mein", "dein", "sein", "ihr", "unser", "euer")
+_DE_POSSESSIVE_ENDINGS = ("", "e", "en", "em", "er", "es")
+_DE_POSSESSIVES = frozenset(
+    stem + ending
+    for stem in _DE_POSSESSIVE_STEMS
+    for ending in _DE_POSSESSIVE_ENDINGS
+    # "euer" loses its second e when inflected (eure, euren), and "unser"
+    # optionally does; include both spellings rather than guessing.
+) | frozenset({"eure", "euren", "eurem", "eurer", "eures",
+               "unsre", "unsren", "unsrem", "unsrer", "unsres"})
+
 _DE_IRREGULAR_INFINITIVES = frozenset({"sein", "tun"})
 _DE_WEAK_PRETERITE_RE = re.compile(r"(?:te|test|tet)$", re.IGNORECASE)
 
@@ -63,6 +78,7 @@ class GermanTargetPack(TargetLanguagePack):
     coverage = "full"
 
     word_re = _GERMAN_WORD_RE
+    possessive_determiners = _DE_POSSESSIVES
     coordinators = frozenset({"und", "während", "sowie", "bzw", "sowohl"})
     max_words = {"verb_phrase": 7, "collocation": 5}
     min_single_token_len = 3
@@ -110,8 +126,39 @@ class GermanTargetPack(TargetLanguagePack):
                 R.LEADING_DETERMINER,
                 f"answer starts with determiner {words[0]!r} and is too short to be useful alone",
             )
+        possessive_reason = self.internal_possessive_reason(words)
+        if possessive_reason:
+            return possessive_reason
         if len(words) == 1 and len(words[0]) < self.min_single_token_len:
             return R.reason(R.NOT_TEACHABLE, f"single token {words[0]!r} is too short")
+        return None
+
+    def internal_possessive_reason(self, words: list[str]) -> str | None:
+        """German-specific: a possessive only counts when a noun follows it.
+
+        ``sein`` and ``ihr`` are homographs of the infinitive "to be" and the
+        pronoun "you/her", so the English rule ("this token is a possessive")
+        would reject real expressions — ``überrascht sein`` is a genuine
+        canonical form from the eval set. German capitalizes nouns, so a
+        following capitalized token is what separates the possessive
+        determiner ``in seiner Freizeit`` from the verb ``überrascht sein``.
+
+        Unlike English this scans from the FIRST token. English relies on
+        ``leading_determiners`` to cover position 0, but German's leading
+        determiner rule only fires for answers of two words or fewer and its
+        list holds articles only — so without scanning position 0 here,
+        ``ihre Unterlagen überarbeiten`` is caught nowhere at all.
+        """
+        for index, word in enumerate(words):
+            if word.casefold() not in self.possessive_determiners:
+                continue
+            following = words[index + 1] if index + 1 < len(words) else ""
+            if following[:1].isupper():
+                return R.reason(
+                    R.INTERNAL_POSSESSIVE,
+                    f"answer contains possessive {word!r} before noun {following!r} "
+                    f"at position {index}; end the answer before it",
+                )
         return None
 
     def base_form_reason(self, canonical: str, kind: str) -> str | None:

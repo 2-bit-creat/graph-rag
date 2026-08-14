@@ -242,6 +242,7 @@ async def _run_pair(
         "statements": 0, "bundles": 0, "bundle_errors": 0,
         "chunks_proposed": 0, "chunks_selected": 0, "cards_emitted": 0,
         "gate_histogram": Counter(), "repair_gate_histogram": Counter(),
+        "rejection_samples": [],
         "qa_scores": [], "verdicts": Counter(),
         "repaired": 0, "fallback": 0, "pack_coverage": target_pack(target).coverage,
         "golden_checks": [], "golden_failures": 0,
@@ -290,6 +291,12 @@ async def _run_pair(
                     # in structural_rejections means a candidate was dropped.
                     for reason in struct_out.get("repair_path_rejections") or []:
                         metrics["repair_gate_histogram"][_gate_code(reason)] += 1
+                        # Keep a bounded sample of the raw text too. The
+                        # histogram buckets everything without a reason code
+                        # as "uncoded", which is exactly the bucket you need
+                        # to read when deciding what to fix next.
+                        if len(metrics["rejection_samples"]) < 60:
+                            metrics["rejection_samples"].append(reason[:300])
                     for reason in struct_out.get("quality_rejections") or []:
                         metrics["gate_histogram"][_gate_code(str(reason))] += 1
                     for step in trace.get("steps") or []:

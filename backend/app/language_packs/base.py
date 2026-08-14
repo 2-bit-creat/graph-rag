@@ -230,6 +230,33 @@ class TargetLanguagePack:
         """Reject a sentence written mainly in a different script when known."""
         return None
 
+    # How much of the sentence must survive outside the blank. Two tokens of
+    # stem is the floor: "Ich habe ___." tells the learner nothing about which
+    # expression belongs there.
+    min_stem_tokens: int = 3
+
+    def blank_context_reason(self, sentence: str, answer: str) -> str | None:
+        """Reject a blank that swallows the sentence it is supposed to sit in.
+
+        A cloze teaches by making the surrounding context select the answer.
+        When the blank takes the whole predicate and leaves a bare stem
+        ("Ich habe ___." for "die Präsentationsunterlagen genau geprüft"),
+        nothing in the prompt narrows the answer down and the card is a
+        translation exercise wearing a cloze's clothes — the learner cannot
+        get it right except by reproducing the reference sentence.
+        """
+        answer_tokens = len(self.tokens(answer))
+        if answer_tokens < 2:
+            return None  # a short blank always leaves the sentence standing
+        stem = len(self.tokens(sentence)) - answer_tokens
+        if stem < self.min_stem_tokens:
+            return R.reason(
+                R.SENTENCE_TOO_SHORT,
+                f"blank {answer!r} leaves only {stem} token(s) of context; "
+                f"lengthen the sentence or shorten the blank",
+            )
+        return None
+
     # -- output-side -------------------------------------------------------------
 
     def is_valid_blank(self, text: str) -> bool:

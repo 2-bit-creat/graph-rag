@@ -910,6 +910,8 @@ def _normalize_bundle_cloze(
     prompt = matcher.sub("___", full_sentence, count=1)
     if pack.sentence_length_reason(full_sentence) or pack.sentence_language_reason(full_sentence):
         return None
+    if pack.blank_context_reason(full_sentence, blank):
+        return None
 
     sentence_ko = str(item.get("sentence_ko") or "").strip()
     target_ko = str(item.get("target_ko") or "").strip()
@@ -1142,6 +1144,9 @@ def _cloze_structural_reason(
     native_markers = _BLANK_RUN_RE.findall(native_completed)
     if len(native_markers) == 1:
         native_completed = _BLANK_RUN_RE.sub(target_ko, native_completed, count=1)
+    context_reason = target_pack(language).blank_context_reason(completed, blank)
+    if context_reason:
+        return f"candidate {raw_index}: " + context_reason
     native = native_quiz_pack(native_language)
     native_script = native.script_re
     if not native_script.search(sentence_ko):
