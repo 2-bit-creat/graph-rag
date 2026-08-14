@@ -33,6 +33,7 @@ from . import crud
 from .config import get_settings
 from .expression_entity_guard import EntityNameGuard, build_statement_entity_guard
 from .language_packs import native_quiz_pack, pair_rules, target_pack
+from .language_packs import reasons as R
 from .level_guidelines import cefr_label, get_level_band
 from .models import Quiz, User
 from .pipeline_trace import PipelineTracer
@@ -916,7 +917,16 @@ def _normalize_bundle_cloze(
         return None
     native_pack = native_quiz_pack(native_language)
     native_script = native_pack.script_re
-    if target_ko and native_script.search(sentence_ko) and not native_script.search(target_ko):
+    # The author sometimes copies the target-language sentence into BOTH native
+    # fields verbatim, so sentence_ko and target_ko agree with each other and
+    # every alignment check below passes — the card ships with its "문장 뜻"
+    # rendered in the language the learner is supposed to be producing. The
+    # older check right after this one only fired when sentence_ko was in the
+    # native language, so it skipped exactly this case. A whole native sentence
+    # always carries native script, so requiring it here costs nothing.
+    if not native_script.search(sentence_ko):
+        return None
+    if target_ko and not native_script.search(target_ko):
         return None
     # Some models incorrectly blank the native translation too. Unlike guessing
     # a translation, restoring the explicitly supplied target_ko into one marker
@@ -1134,6 +1144,17 @@ def _cloze_structural_reason(
         native_completed = _BLANK_RUN_RE.sub(target_ko, native_completed, count=1)
     native = native_quiz_pack(native_language)
     native_script = native.script_re
+    if not native_script.search(sentence_ko):
+        # Coded rather than free text: this one has to be countable in the eval
+        # histogram, because a card it drops was already broken (its "문장 뜻"
+        # was target-language text), and that has to be distinguishable from a
+        # card genuinely lost to a tightened rule.
+        return f"candidate {raw_index}: " + R.reason(
+            R.WRONG_LANGUAGE,
+            f"sentence_ko {sentence_ko[:60]!r} contains no {native.script_label} text; "
+            f"sentence_ko must translate sentence_en into {native.script_label}, "
+            "never repeat the target-language sentence",
+        )
     if native_script.search(sentence_ko) and not native_script.search(target_ko):
         return (
             f"candidate {raw_index}: target_ko {target_ko!r} is target-language text; "
@@ -1189,6 +1210,13 @@ def _prepare_cloze_candidates(
         )
         if scope_reason:
             reasons.append(f"candidate {raw_index}: {scope_reason}")
+            continue
+        # The teachability gate had been dead code: defined and unit-tested but
+        # never called from the generation path, so answers its own tests call
+        # unteachable ("the two reports", "their key results") still shipped.
+        teachability_reason = target_pack(language).teachability_reason(blank)
+        if teachability_reason:
+            reasons.append(f"candidate {raw_index}: {teachability_reason}")
             continue
         blank_key = blank.casefold()
         if blank_key in seen_blanks:
@@ -1258,8 +1286,15 @@ def _structural_feedback_by_expression(
     language: str,
     level: int,
     native_language: str,
+    sink: list[str] | None = None,
 ) -> dict[str, list[str]]:
-    """Turn deterministic failures into targeted author-repair instructions."""
+    """Turn deterministic failures into targeted author-repair instructions.
+
+    ``sink`` collects the same reasons for the trace. Without it the eval's
+    gate histogram sees only the final structural pass, so a gate that fires
+    here — drives a repair, and is then satisfied — is invisible, which reads
+    in a report as "the gate never fired" rather than "the gate worked".
+    """
     contracts = {str(chunk.get("expression_id")): chunk for chunk in chunks}
     feedback: dict[str, list[str]] = {}
     for item in items:
@@ -1274,6 +1309,8 @@ def _structural_feedback_by_expression(
         )
         if not candidates:
             feedback[expression_id] = reasons or ["structural_validation_failed"]
+            if sink is not None:
+                sink.extend(reasons)
     return feedback
 
 
@@ -1986,6 +2023,10 @@ async def generate_quiz_bundle(
     # independent release editor to spot semantic and pedagogical defects.
     cloze_items: list[Any] = []
     quality_rejections: list[str] = []
+    # Gate reasons raised while authoring/repairing, as opposed to the final
+    # structural pass. Traced separately so a gate that fires and is then
+    # repaired is still counted.
+    repair_path_rejections: list[str] = []
     if accepted_chunks and materialize_cloze:
         cloze_step = tracer.begin_step(
             "bundle_cloze_individual_author", "llm", phase="quiz_path",
@@ -2035,6 +2076,7 @@ async def generate_quiz_bundle(
             language=language,
             level=level,
             native_language=native_language,
+            sink=repair_path_rejections,
         )
         # Missing reviews (including a reviewer outage) are failures. Shipping
         # an unchecked card is worse than returning a smaller bundle.
@@ -2083,6 +2125,7 @@ async def generate_quiz_bundle(
                 language=language,
                 level=level,
                 native_language=native_language,
+                sink=repair_path_rejections,
             )
             for expression_id, issues in _quality_feedback_for_items(
                 repaired, repaired_reviews
@@ -2112,6 +2155,7 @@ async def generate_quiz_bundle(
             language=language,
             level=level,
             native_language=native_language,
+            sink=repair_path_rejections,
         )
         if post_repair_feedback:
             cloze_items = [
@@ -2146,6 +2190,7 @@ async def generate_quiz_bundle(
             language=language,
             level=level,
             native_language=native_language,
+            sink=repair_path_rejections,
         )
         safe_fallbacks = [
             item
@@ -2218,6 +2263,7 @@ async def generate_quiz_bundle(
     tracer.finish_step(tracer_step, output={
         "accepted_count": len(cloze_candidates),
         "structural_rejections": structural_reasons,
+        "repair_path_rejections": repair_path_rejections,
         "quality_rejections": quality_rejections,
         "llm_quality_gate": "individual_author_batch_review_repair",
     })

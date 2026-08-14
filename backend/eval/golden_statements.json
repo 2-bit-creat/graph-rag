@@ -184,6 +184,17 @@
       }
     },
     {
+      "id": "ko-026",
+      "quality_case_id": "possessive-deixis-put-option-001",
+      "native": "korean",
+      "text": "풋옵션은 주가 하락이나 약정된 조건 도달 시 투자자가 피투자사 또는 대주주에게 투자금과 약정 이자를 내놓고 내 주식이나 채권을 다시 사가라고 요구할 수 있는 조기 회수 권리입니다.",
+      "tags": ["possessive_deixis", "answer_boundary", "domain_term"],
+      "note": "한국어 원문은 1인칭 소유격('내 주식')인데 영어 문장은 3인칭('their shares')으로 쓴다. 소유격을 빈칸에 넣으면 학습자가 지시대상을 추측해야 하므로, 빈칸은 재사용 가능한 동사구에서 끝나야 함.",
+      "expect_cloze": {
+        "target_forbidden_words": ["my", "your", "his", "her", "its", "our", "their"]
+      }
+    },
+    {
       "id": "en-001",
       "native": "english",
       "text": "I carefully reviewed the presentation before the meeting.",

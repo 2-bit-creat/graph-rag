@@ -187,6 +187,27 @@ def test_rejects_a_completed_sentence_that_contains_the_answer_twice() -> None:
     assert result is None
 
 
+def test_rejects_a_card_whose_native_fields_repeat_the_target_sentence() -> None:
+    # Observed in an eval run: the author copied the English sentence into both
+    # sentence_ko and target_ko, so every alignment check agreed with itself and
+    # the card shipped with its "문장 뜻" written in English.
+    sentence = (
+        "A put option gives investors the right to ask the company to buy back "
+        "their stocks or bonds when the stock price falls."
+    )
+    result = _normalize_bundle_cloze(
+        {
+            "sentence_en": sentence,
+            "blank": "buy back",
+            "sentence_ko": sentence,
+            "target_ko": "buy back",
+        },
+        language="english",
+    )
+
+    assert result is None
+
+
 def test_rejects_numbers_function_words_and_word_fragments_as_clozes() -> None:
     assert not _is_teachable_cloze("eight", language="english")
     assert not _is_teachable_cloze("has", language="english")
@@ -195,6 +216,16 @@ def test_rejects_numbers_function_words_and_word_fragments_as_clozes() -> None:
     assert not _is_teachable_cloze("their key results", language="english")
     assert _is_teachable_cloze("key results", language="english")
     assert _is_teachable_cloze("check out", language="english")
+
+
+def test_rejects_a_blank_that_swallows_a_possessive_object() -> None:
+    # "buy back their shares or bonds" makes the learner guess a pronoun whose
+    # referent flips with the speaker: the Korean gloss says "내 주식/채권"
+    # while the English sentence says "their". Only "buy back" is vocabulary.
+    assert not _is_teachable_cloze("buy back their shares or bonds", language="english")
+    assert not _is_teachable_cloze("pay back his investment", language="english")
+    assert _is_teachable_cloze("buy back", language="english")
+    assert _is_teachable_cloze("pay back the investment", language="english")
 
 
 def test_production_validator_rejects_a_prompt_that_leaks_the_answer() -> None:

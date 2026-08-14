@@ -110,17 +110,33 @@ def _check_golden_expectation(statement: dict, views: list[dict]) -> dict | None
     forbidden_exact = {
         str(v).strip().casefold() for v in expected.get("native_forbidden_exact") or []
     }
+    # A word that must never appear in ANY cloze answer for this statement.
+    # Unlike the positive checks above, which need one card to match and so
+    # ride on which expressions the planner happened to pick, this holds for
+    # every card — the right shape for a boundary invariant such as "no cloze
+    # answer may contain a possessive determiner".
+    forbidden_words = {
+        str(v).strip().casefold() for v in expected.get("target_forbidden_words") or []
+    }
     matching = []
+    violations = []
     for view in views:
         if view.get("quiz_type") != "cloze":
             continue
         target = str(view.get("surface_answer") or "").casefold()
         native = str(view.get("target_native") or "").strip().casefold()
+        if forbidden_words & set(target.split()):
+            violations.append(target)
         if all(term in target for term in target_terms):
             matching.append((target, native))
-    passed = any(
-        all(term in native for term in native_terms) and native not in forbidden_exact
-        for _target, native in matching
+    passed = not violations and (
+        any(
+            all(term in native for term in native_terms) and native not in forbidden_exact
+            for _target, native in matching
+        )
+        # A statement that only states a forbidden-word invariant passes on
+        # not violating it; it must not require a positive match it never set.
+        or (not target_terms and not native_terms)
     )
     return {
         "statement_id": statement["id"],
@@ -128,6 +144,7 @@ def _check_golden_expectation(statement: dict, views: list[dict]) -> dict | None
         "passed": passed,
         "expected": expected,
         "matching_clozes": matching,
+        "forbidden_word_violations": violations,
     }
 
 
@@ -224,7 +241,8 @@ async def _run_pair(
         "pair": pair, "native": native, "target": target,
         "statements": 0, "bundles": 0, "bundle_errors": 0,
         "chunks_proposed": 0, "chunks_selected": 0, "cards_emitted": 0,
-        "gate_histogram": Counter(), "qa_scores": [], "verdicts": Counter(),
+        "gate_histogram": Counter(), "repair_gate_histogram": Counter(),
+        "qa_scores": [], "verdicts": Counter(),
         "repaired": 0, "fallback": 0, "pack_coverage": target_pack(target).coverage,
         "golden_checks": [], "golden_failures": 0,
         "usage": {
@@ -266,6 +284,12 @@ async def _run_pair(
                     struct_out = (struct_step or {}).get("output") or {}
                     for reason in struct_out.get("structural_rejections") or []:
                         metrics["gate_histogram"][_gate_code(reason)] += 1
+                    # Gates that fired during authoring/repair. Counted in a
+                    # separate histogram because a hit here usually means the
+                    # gate WORKED (the repair then satisfied it), while a hit
+                    # in structural_rejections means a candidate was dropped.
+                    for reason in struct_out.get("repair_path_rejections") or []:
+                        metrics["repair_gate_histogram"][_gate_code(reason)] += 1
                     for reason in struct_out.get("quality_rejections") or []:
                         metrics["gate_histogram"][_gate_code(str(reason))] += 1
                     for step in trace.get("steps") or []:
@@ -314,6 +338,7 @@ async def _run_pair(
                         await cleanup_session.delete(fresh_user)
                         await cleanup_session.commit()
     metrics["gate_histogram"] = dict(metrics["gate_histogram"])
+    metrics["repair_gate_histogram"] = dict(metrics["repair_gate_histogram"])
     metrics["verdicts"] = dict(metrics["verdicts"])
     metrics["cards_per_statement"] = (
         metrics["cards_emitted"] / metrics["statements"] if metrics["statements"] else 0.0
@@ -334,6 +359,7 @@ def _write_report(cards: list[dict], metrics_by_pair: dict[str, dict], out_dir: 
             f"- pack coverage: {metrics['pack_coverage']}\n"
             f"- semantic golden failures: {metrics['golden_failures']} / {len(metrics['golden_checks'])}\n"
             f"- gate histogram: {metrics['gate_histogram']}\n"
+            f"- repair-path gate histogram: {metrics['repair_gate_histogram']}\n"
         )
         by_statement: dict[str, list[dict]] = {}
         for card in cards:

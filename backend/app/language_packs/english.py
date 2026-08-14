@@ -29,6 +29,9 @@ _ENGLISH_LEADING_DETERMINERS = frozenset({
     "a", "an", "the", "this", "that", "these", "those", "my", "your", "his",
     "her", "its", "our", "their",
 })
+_ENGLISH_POSSESSIVES = frozenset({
+    "my", "your", "his", "her", "its", "our", "their",
+})
 _IRREGULAR_PAST = frozenset({
     "took", "went", "made", "saw", "did", "had", "was", "were", "wrote",
     "spoke", "bought",
@@ -47,6 +50,7 @@ class EnglishTargetPack(TargetLanguagePack):
     word_re = _ENGLISH_WORD_RE
     function_words = _TRIVIAL_ENGLISH_CLOZES
     leading_determiners = _ENGLISH_LEADING_DETERMINERS
+    possessive_determiners = _ENGLISH_POSSESSIVES
     coordinators = frozenset({"and", "while"})
     max_words = {"verb_phrase": 7, "collocation": 5}
     min_single_token_len = 4
@@ -79,6 +83,9 @@ class EnglishTargetPack(TargetLanguagePack):
             return R.reason(R.NOT_TEACHABLE, f"{normalized!r} is not purely word characters")
         if words[0].casefold() in self.leading_determiners:
             return R.reason(R.LEADING_DETERMINER, f"answer starts with determiner {words[0]!r}")
+        possessive_reason = self.internal_possessive_reason(words)
+        if possessive_reason:
+            return possessive_reason
         if len(words) == 1 and len(words[0]) < self.min_single_token_len:
             return R.reason(R.NOT_TEACHABLE, f"single token {words[0]!r} is too short")
         return None
