@@ -691,40 +691,43 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     );
   }
 
-  /// Keep the graph content from drifting completely off-screen.
-  /// When the graph fits in the viewport, panning is left free.
-  void _clampTransformToViewport(Size viewport, {bool recenterIfFits = false}) {
+  /// Keep the graph from being panned completely out of sight.
+  ///
+  /// Nothing more than that. This used to demand that the content reach within
+  /// 48px of every far edge whenever it was larger than the viewport — which is
+  /// a scroll-to-the-end rule, not an off-screen guard. Panning even slightly
+  /// past the edge of the graph was undone the moment the finger lifted, with
+  /// no animation and no rubber band, so exploring a zoomed-in graph felt like
+  /// the canvas was shoving back. Empty space around the graph is legitimate:
+  /// it is where you drag a node to, and where you look while reading a label
+  /// near the boundary.
+  ///
+  /// It runs on interaction end, so whatever it does is a jump. That is another
+  /// reason to keep it rare — with this rule it fires only when the graph is
+  /// genuinely about to leave the screen.
+  void _clampTransformToViewport(Size viewport) {
     if (_layout == null || viewport == Size.zero) return;
 
     final m = Matrix4.copy(_transformationController.value);
-    final bounds = _layoutBounds;
-    final contentRect = bounds.shift(_worldTranslate);
-
+    final contentRect = _layoutBounds.shift(_worldTranslate);
     final tl = MatrixUtils.transformPoint(m, contentRect.topLeft);
     final br = MatrixUtils.transformPoint(m, contentRect.bottomRight);
-    final graphW = br.dx - tl.dx;
-    final graphH = br.dy - tl.dy;
 
-    const pad = 48.0;
+    // How much of the graph has to stay reachable. Less than a node and its
+    // label is indistinguishable from having lost it entirely.
+    const keep = 96.0;
     var dx = 0.0;
     var dy = 0.0;
 
-    if (graphW <= viewport.width - pad * 2) {
-      if (recenterIfFits) {
-        dx = (viewport.width - graphW) / 2 - tl.dx;
-      }
-    } else {
-      if (tl.dx > pad) dx = pad - tl.dx;
-      if (br.dx < viewport.width - pad) dx = viewport.width - pad - br.dx;
+    if (br.dx < keep) {
+      dx = keep - br.dx; // dragged off past the left edge
+    } else if (tl.dx > viewport.width - keep) {
+      dx = viewport.width - keep - tl.dx; // …or the right
     }
-
-    if (graphH <= viewport.height - pad * 2) {
-      if (recenterIfFits) {
-        dy = (viewport.height - graphH) / 2 - tl.dy;
-      }
-    } else {
-      if (tl.dy > pad) dy = pad - tl.dy;
-      if (br.dy < viewport.height - pad) dy = viewport.height - pad - br.dy;
+    if (br.dy < keep) {
+      dy = keep - br.dy;
+    } else if (tl.dy > viewport.height - keep) {
+      dy = viewport.height - keep - tl.dy;
     }
 
     if (dx.abs() > 0.5 || dy.abs() > 0.5) {
