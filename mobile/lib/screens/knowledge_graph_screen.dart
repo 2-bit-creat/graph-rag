@@ -619,6 +619,50 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   /// 스크림 + 상시 임베드된 채팅 시트 + 시트 밖에 도킹된 입력바. 그래프 영역
   /// 실제 높이를 LayoutBuilder로 얻어 시트 비율 계산의 기준으로 쓴다.
   /// [overlays]는 스크림 아래에 깔려 포커스 시 함께 어두워진다.
+  /// Scrim + spinner shown while an OCR read or a node merge is in flight.
+  ///
+  /// Must be the LAST child of whatever Stack shows it. It used to live inside
+  /// the canvas stack, which put it *under* the chat sheet: picking a photo
+  /// looked like nothing happened at all for the length of a paid OCR call,
+  /// and the scrim blocked only the graph it was already covering while the
+  /// panel on top of it stayed tappable — the opposite of what it is for.
+  Widget _busyOverlay() {
+    if (!_ocrBusy && !_merging) return const SizedBox.shrink();
+    return Positioned.fill(
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: 0.35),
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.xl,
+              vertical: AppSpacing.lg,
+            ),
+            decoration: BoxDecoration(
+              color: context.shell.panelBackground,
+              borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+              border: Border.all(color: context.shell.panelBorder),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                Text(
+                  _merging ? tr('nodeMerge.working') : tr('ocr.working'),
+                  style: TextStyle(color: context.shell.primaryText),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _canvasWithChat({
     required List<Map<String, dynamic>> nodes,
     required List<Map<String, dynamic>> edges,
@@ -682,6 +726,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
               ),
             ),
             _buildPersistentInputBar(),
+            // Last: it has to cover the chat sheet and the composer, not sit
+            // behind them.
+            _busyOverlay(),
           ],
         );
       },
@@ -2591,42 +2638,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           const Positioned.fill(
             child: IgnorePointer(child: _EmptyGraphHint()),
           ),
-        // Same blocking overlay for both: a merge rewrites edges, so the graph
-        // under the finger must not be tappable while it is in flight.
-        if (_ocrBusy || _merging)
-          Positioned.fill(
-            child: ColoredBox(
-              color: Colors.black.withValues(alpha: 0.35),
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.xl,
-                    vertical: AppSpacing.lg,
-                  ),
-                  decoration: BoxDecoration(
-                    color: context.shell.panelBackground,
-                    borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                    border: Border.all(color: context.shell.panelBorder),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                      const SizedBox(width: AppSpacing.md),
-                      Text(
-                        _merging ? tr('nodeMerge.working') : tr('ocr.working'),
-                        style: TextStyle(color: context.shell.primaryText),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
+        // The OCR/merge scrim used to sit here. `overlays` is explicitly the
+        // layer *below* the chat scrim and sheet, so it was invisible for the
+        // whole of a paid OCR call — _canvasWithChat now paints it last.
         if (_graphToolsVisible)
           Positioned(
             top: chipsTop,
