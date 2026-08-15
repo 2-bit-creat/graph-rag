@@ -626,23 +626,20 @@ class _SectionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Text(title, style: Theme.of(context).textTheme.titleMedium),
-              if (subtitle != null) ...[
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    subtitle!,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                    overflow: TextOverflow.ellipsis,
+          // Title over description, not beside it. Sharing one line left the
+          // description ~180px on a 375px screen, so the sentence that explains
+          // what the setting does was cut mid-word ("계정 생…") on every phone.
+          // Same stacking as AppSectionHeader, which these cards sit alongside.
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          if (subtitle != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              subtitle!,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
-                ),
-              ],
-            ],
-          ),
+            ),
+          ],
           const SizedBox(height: AppSpacing.sm),
           child,
         ],

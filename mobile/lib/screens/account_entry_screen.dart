@@ -120,6 +120,38 @@ class _AccountEntryScreenState extends State<AccountEntryScreen> {
                 children: [
                   const _BrandLockup(),
                   const SizedBox(height: AppSpacing.xxl),
+                  // Says why they are here, when they were sent back by an
+                  // expired token rather than by tapping 계정 전환.
+                  if (accountController.sessionExpired) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.sm,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.accentWarm.withValues(alpha: 0.12),
+                        borderRadius:
+                            BorderRadius.circular(AppSpacing.radiusSm),
+                        border: Border.all(
+                          color: AppColors.accentWarm.withValues(alpha: 0.35),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.schedule_rounded,
+                              size: 16, color: AppColors.accentWarm),
+                          const SizedBox(width: AppSpacing.sm),
+                          Expanded(
+                            child: Text(
+                              tr('accountEntry.sessionExpired'),
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                  ],
                   _card(context, saved),
                   const SizedBox(height: AppSpacing.lg),
                   _footer(context),

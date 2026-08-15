@@ -1765,6 +1765,23 @@ async def prune_orphaned_node_expressions(
     return await prune_expressions_not_in(user_id, valid_node_ids)
 
 
+async def entry_has_graph_links(
+    session: AsyncSession, entry_id: uuid.UUID
+) -> bool:
+    """True when this entry has already produced graph nodes.
+
+    Provenance rows (JournalGraphLink) are written when a draft is committed, so
+    their presence means Statement nodes were derived from this entry's text.
+    Re-running cleanup would rewrite the text underneath them.
+    """
+    row = await session.execute(
+        select(JournalGraphLink.id)
+        .where(JournalGraphLink.journal_entry_id == entry_id)
+        .limit(1)
+    )
+    return row.first() is not None
+
+
 async def delete_entry_statement_nodes(
     session: AsyncSession, user_id: uuid.UUID, entry_id: uuid.UUID
 ) -> int:

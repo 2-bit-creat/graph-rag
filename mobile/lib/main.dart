@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'api/client.dart';
@@ -22,6 +24,10 @@ Future<void> main() async {
   // No-op on native; on web this starts the visualViewport listener that
   // KeyboardInsetScope feeds into MediaQuery.
   startKeyboardInsetTracking();
+  // A rejected token sends the user back to the entry screen instead of
+  // stranding them on whichever screen made the call.
+  setApiUnauthorizedHandler(() => unawaited(accountController.handleUnauthorized()));
+
   // Independent local reads (prefs + secure storage) — run them together
   // instead of one after another, since nothing here needs another's result.
   await Future.wait([

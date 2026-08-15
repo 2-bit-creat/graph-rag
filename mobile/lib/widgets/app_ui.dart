@@ -90,15 +90,20 @@ class AppHubTile extends StatelessWidget {
     super.key,
     required this.icon,
     required this.title,
-    required this.subtitle,
     required this.color,
     required this.onTap,
+    this.subtitle,
     this.badge,
   });
 
   final IconData icon;
   final String title;
-  final String subtitle;
+
+  /// Optional. Callers with nothing to say here passed `''`, which still built
+  /// a Text and reserved a line — the title then sat above the tile's centre
+  /// while tiles that did have a subtitle stayed centred, so a list of them
+  /// read as misaligned. Omitted and empty now mean the same thing: no line.
+  final String? subtitle;
   final Color color;
   final VoidCallback onTap;
   final String? badge;
@@ -136,15 +141,18 @@ class AppHubTile extends StatelessWidget {
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(title, style: Theme.of(context).textTheme.titleSmall),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
+                    if (subtitle != null && subtitle!.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
                   ],
                 ),
               ),

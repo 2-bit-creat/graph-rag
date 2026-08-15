@@ -775,6 +775,37 @@ async def run_journal_text_pipeline(
             attribution_kind=attribution_kind,
             attribution_name=attribution_name,
         )
+    return await _clean_and_persist_text_entry(
+        session,
+        user_id,
+        entry,
+        lines=lines,
+        labeled=labeled,
+        source_type=source_type,
+        attribution_kind=attribution_kind,
+    )
+
+
+async def _clean_and_persist_text_entry(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    entry,
+    *,
+    lines: list,
+    labeled: str,
+    source_type: str | None,
+    attribution_kind: str | None,
+) -> tuple[object, dict]:
+    """Cleanup → segment remap → type gate → persist, for an existing entry row.
+
+    Split out of run_journal_text_pipeline so a retry of a failed entry runs
+    exactly this, rather than a second copy that can drift from it. Everything
+    here is keyed to ``entry`` and rewrites only derived columns, so it is safe
+    to run again on an entry whose earlier attempt failed — see
+    reprocess_journal_text_entry for the guards that decide when that is true.
+    """
+    from .precision_text import segments_from_dialogue
+
     tracer = PipelineTracer(entry.id)
 
     step = tracer.begin_step(
@@ -895,6 +926,123 @@ async def run_journal_text_pipeline(
     )
     refreshed = await crud.get_journal_entry(session, entry.id, user_id)
     return refreshed or entry, trace
+
+
+class ReprocessNotAllowed(Exception):
+    """The entry is not in a state where re-running cleanup is safe."""
+
+
+async def reprocess_journal_text_entry(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    entry,
+) -> tuple[object, dict]:
+    """Re-run the cleanup stage for a typed entry whose first attempt failed.
+
+    The entry already holds what the user wrote (``transcript_native`` is the
+    labeled text the failed run fed to the model), so nothing has to be retyped
+    — only the derived half is missing. Deleting the entry and asking for it
+    again, which is what the UI used to suggest, throws away the sole stored
+    copy of their writing.
+
+    Everything that could tangle a second run is dealt with before it starts:
+
+    * ``status`` is flipped to ``processing`` and committed first, so a second
+      tap finds a non-``failed`` entry and is refused rather than racing a
+      duplicate pipeline onto the same row.
+    * The previous run's trace dump is purged. ``debug_runs/`` is keyed by
+      entry id, not by run, so a retry would otherwise write its steps into a
+      directory still holding the failed attempt's.
+    * Every derived column the earlier attempt may have half-written is reset,
+      so a second failure cannot leave a mix of two runs behind.
+
+    Raises [ReprocessNotAllowed] when the entry is not a failed typed entry, or
+    when graph work already exists — re-cleaning would rewrite the text that
+    committed Statement nodes were derived from.
+    """
+    from .precision_text import (
+        dialogue_to_transcript,
+        is_precision_text_entry,
+        normalize_dialogue,
+        pre_slice_by_speaker_lines,
+        segments_to_paragraph_text,
+    )
+    from .storage import purge_debug_runs
+
+    if entry.status != "failed":
+        raise ReprocessNotAllowed(
+            "이 기록은 재처리 대상이 아니에요 (실패한 기록만 다시 처리할 수 있어요)."
+        )
+    if not is_precision_text_entry(entry):
+        raise ReprocessNotAllowed("텍스트로 쓴 기록만 다시 처리할 수 있어요.")
+    if entry.graph_staging or entry.graph_job_id:
+        raise ReprocessNotAllowed(
+            "이미 그래프 작업이 시작된 기록이라 다시 처리할 수 없어요."
+        )
+    if await crud.entry_has_graph_links(session, entry.id):
+        raise ReprocessNotAllowed(
+            "이미 지식그래프에 반영된 기록이라 다시 처리할 수 없어요."
+        )
+
+    # Rebuild the lines the same way the create path does, so a retry cannot
+    # split speakers differently from the attempt the user already saw. The
+    # stored segments are the authority; transcript_native is the fallback for
+    # a run that failed before they were written.
+    stored_segments = entry.transcript_segments or []
+    paragraph_text = (
+        segments_to_paragraph_text(stored_segments)
+        if stored_segments
+        else (entry.transcript_native or "")
+    ).strip()
+    if not paragraph_text:
+        raise ReprocessNotAllowed("다시 처리할 원문이 남아 있지 않아요.")
+
+    lines = normalize_dialogue(pre_slice_by_speaker_lines(paragraph_text))
+    labeled = (
+        dialogue_to_transcript(lines) if lines else paragraph_text
+    )
+
+    source_type = entry.source_type
+    attribution_kind = entry.attribution_kind
+
+    # Claim the entry before any slow work, and clear the earlier attempt's
+    # derived columns in the same write.
+    await crud.update_journal_entry(
+        session,
+        entry,
+        status="processing",
+        transcript_clean_native=None,
+        translation_en="",
+        translation_de="",
+        translations={},
+        suggested_source_type=None,
+        pipeline_trace=None,
+        debug_run_dir=None,
+    )
+    purge_debug_runs([entry.id])
+
+    try:
+        return await _clean_and_persist_text_entry(
+            session,
+            user_id,
+            entry,
+            lines=lines,
+            labeled=labeled,
+            source_type=source_type,
+            attribution_kind=attribution_kind,
+        )
+    except Exception:
+        # Never leave the entry claimed. _clean_and_persist_text_entry marks it
+        # failed itself when the model call is what broke, but anything raised
+        # before that handler (an import, a bad segment payload) would strand
+        # the row in `processing` — where the retry guard above then refuses
+        # every future attempt, so one bad run would make the entry
+        # permanently unrecoverable.
+        try:
+            await crud.update_journal_entry(session, entry, status="failed")
+        except Exception:
+            logger.exception("Could not restore failed status on %s", entry.id)
+        raise
 
 
 async def run_journal_pipeline(

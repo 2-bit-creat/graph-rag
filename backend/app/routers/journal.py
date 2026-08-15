@@ -11,6 +11,8 @@ from ..deps import daily_quota, request_user_dep
 from ..rate_limit import KIND_STT
 from ..models import User
 from ..pipeline_runner import (
+    ReprocessNotAllowed,
+    reprocess_journal_text_entry,
     run_entry_graph_commit,
     run_entry_graph_draft,
     run_graph_ingest_pipeline,
@@ -355,6 +357,35 @@ async def _reject_if_graph_locked(session: AsyncSession, entry) -> None:
                 "수정하려면 그래프를 삭제 후 다시 생성하세요.",
             },
         )
+
+
+@router.post("/entries/{entry_id}/reprocess", response_model=JournalEntryOut)
+async def reprocess_entry(
+    entry_id: uuid.UUID,
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> JournalEntryOut:
+    """Re-run cleanup for a typed entry whose first attempt failed.
+
+    The text the user wrote is already stored on the entry, so this needs no
+    payload — and the entry must not be deleted first, which is what the app
+    used to tell people to do with the only copy of their writing.
+    """
+    entry = await crud.get_journal_entry(session, entry_id, user.id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    try:
+        entry, _trace = await reprocess_journal_text_entry(session, user.id, entry)
+    except ReprocessNotAllowed as exc:
+        # 409: the request was well-formed, the entry is just not in a state
+        # where re-running is safe. The message is written for the user.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Reprocess failed for entry %s", entry_id)
+        raise HTTPException(status_code=500, detail="Processing failed") from exc
+
+    await session.refresh(entry)
+    return await _entry_out(session, user.id, entry)
 
 
 @router.patch("/entries/{entry_id}/source-type", response_model=JournalEntryOut)

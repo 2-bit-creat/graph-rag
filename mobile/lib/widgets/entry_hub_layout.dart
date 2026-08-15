@@ -353,6 +353,15 @@ class _EntryListTile extends StatelessWidget {
   final VoidCallback onTap;
   final bool showSourceBadge;
 
+  /// First sentence of [value], or null when it carries no text to show.
+  static String? _firstSentence(Object? value) {
+    final text = value?.toString().trim() ?? '';
+    if (text.isEmpty) return null;
+    final head = text.split('.').first.trim();
+    // A leading "." would otherwise blank the row out again.
+    return head.isEmpty ? text : head;
+  }
+
   @override
   Widget build(BuildContext context) {
     final created = DateTime.tryParse(entry['created_at']?.toString() ?? '');
@@ -361,8 +370,13 @@ class _EntryListTile extends StatelessWidget {
         : '';
     final status = entry['status']?.toString() ?? '';
     final processing = status == 'processing' || status == 'graph_processing';
-    final preview = entry['translation_en']?.toString().split('.').first ??
-        entry['transcript_ko']?.toString().split('.').first ??
+    // Fall through on blank as well as null. `??` only skips null, and the
+    // server sends translation_en as "" for every entry since the translation
+    // pass was removed — so "" won the chain and each row rendered an empty
+    // preview. The list became 50 rows of bare timestamps with no way to tell
+    // one entry from another.
+    final preview = _firstSentence(entry['translation_en']) ??
+        _firstSentence(entry['transcript_ko']) ??
         tr('entryHub.processingLabel');
     final isText = entry['entry_source']?.toString() == 'precision_text';
     final entryIcon = isText ? Icons.edit_note_rounded : Icons.mic_rounded;
@@ -630,7 +644,14 @@ class _EntryHubNavigatorState extends State<EntryHubNavigator> with RouteAware {
                       ],
                     )
                   : ListView.builder(
-                      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                      // Clear the extended FAB. With a symmetric 8px the last
+                      // entry stayed under it however far the list was
+                      // scrolled, so the newest-but-one record could not be
+                      // read or tapped.
+                      padding: EdgeInsets.only(
+                        top: AppSpacing.sm,
+                        bottom: widget.onNewEntry == null ? AppSpacing.sm : 88,
+                      ),
                       itemCount: _entries.length,
                       itemBuilder: (context, i) {
                         final e = _entries[i] as Map<String, dynamic>;

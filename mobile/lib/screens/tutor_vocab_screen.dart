@@ -76,7 +76,13 @@ class _TutorVocabScreenState extends State<TutorVocabScreen> {
     return Scaffold(
       appBar: AppHubAppBar(
         title: tr('tutorVocab.pageTitle'),
-        subtitle: _loading ? null : tr('tutorVocab.subtitle', {'count': _items.length}),
+        // The count carries the long-press hint, so it is only shown once
+        // there is something to long-press. An empty list read
+        // "0개 · 길게 눌러 삭제" — teaching a gesture for rows that do not
+        // exist, directly above an empty state saying so.
+        subtitle: _loading || _items.isEmpty
+            ? null
+            : tr('tutorVocab.subtitle', {'count': _items.length}),
       ),
       body: _loading
           ? const AppLoadingScreen()

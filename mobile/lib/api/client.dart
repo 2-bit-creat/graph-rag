@@ -26,6 +26,7 @@ const Map<String, String> _kActionLabelsEn = {
   '그래프 대화': 'Graph chat',
   '기록 목록': 'Entry list',
   '기록 상세': 'Entry detail',
+  '다시 처리': 'Reprocess',
   '노드 복구': 'Node restore',
   '노드 상세': 'Node detail',
   '노드 수정': 'Node edit',
@@ -110,6 +111,17 @@ const Map<String, String> _kActionLabelsEn = {
 String? _apiAuthToken;
 void setApiAuthToken(String? token) => _apiAuthToken = token;
 
+/// Called when the server rejects our bearer token (HTTP 401).
+///
+/// A callback rather than an import of the account controller, for the same
+/// reason [setApiAuthToken] is a module-level setter: client.dart must not
+/// depend on auth. Tokens expire after a week, and until this existed nothing
+/// in the app noticed — every screen just showed "(HTTP 401) Invalid token"
+/// with a retry button that could never succeed.
+void Function()? _onUnauthorized;
+void setApiUnauthorizedHandler(void Function()? handler) =>
+    _onUnauthorized = handler;
+
 class ApiClient {
   ApiClient() {
     _dio = Dio(BaseOptions(
@@ -128,6 +140,16 @@ class ApiClient {
           options.headers['Authorization'] = 'Bearer $token';
         }
         handler.next(options);
+      },
+      onError: (e, handler) {
+        // The login call answers 401 for a bad handle; reacting to that would
+        // sign the user out of the account they are trying to enter.
+        final path = e.requestOptions.path;
+        final isAuthCall = path.startsWith('/auth/');
+        if (e.response?.statusCode == 401 && !isAuthCall) {
+          _onUnauthorized?.call();
+        }
+        handler.next(e);
       },
       onResponse: (response, handler) {
         // Dio's web adapter can expose JSON objects as LegacyJavaScriptObject.
@@ -307,9 +329,30 @@ class ApiClient {
     }
   }
 
+  /// The server's reason, without the shape it arrived in.
+  ///
+  /// FastAPI returns `{"detail": "..."}`, and calling `toString()` on the
+  /// decoded map put Dart's own map syntax on screen — the user was shown
+  /// `{detail: There was an error parsing the body}`, braces and all. The
+  /// reason itself is deliberately surfaced verbatim (see the error card in
+  /// journal_progress_card.dart); only the wrapper is noise.
+  static String? _errorDetailText(Object? data) {
+    if (data == null) return null;
+    if (data is Map) {
+      final detail = data['detail'] ?? data['message'] ?? data['error'];
+      if (detail is String && detail.trim().isNotEmpty) return detail.trim();
+      // A validation error's detail is a list of per-field objects; its
+      // toString() is worse than useless to a reader, so fall through to null
+      // and let the status code carry the message.
+      if (detail != null && detail is! String) return null;
+    }
+    final text = data.toString().trim();
+    return text.isEmpty ? null : text;
+  }
+
   Exception _friendlyError(DioException e, String action) {
     final status = e.response?.statusCode;
-    final detail = e.response?.data?.toString();
+    final detail = _errorDetailText(e.response?.data);
     // A response (including HTTP 500) reached the backend.  Do not hide that
     // useful fact behind the generic offline message; Dio labels browser/CORS
     // failures as `unknown`, but actual HTTP failures retain a response.
@@ -330,6 +373,20 @@ class ApiClient {
           '$action 실패 (HTTP $status)${detail != null ? ': $detail' : ''}');
     }
     return Exception('$action 실패: ${e.message}');
+  }
+
+  /// Re-run cleanup for a typed entry whose first attempt failed.
+  ///
+  /// Takes no body: the text the user wrote is already on the entry. The server
+  /// answers 409 with a reason when the entry is not safe to re-run (already in
+  /// the graph, not a failed typed entry).
+  Future<Map<String, dynamic>> reprocessEntry(String id) async {
+    try {
+      final resp = await _dio.post('/journal/entries/$id/reprocess');
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '다시 처리');
+    }
   }
 
   Future<Map<String, dynamic>> getEntry(String id) async {

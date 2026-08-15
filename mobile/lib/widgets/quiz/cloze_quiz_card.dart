@@ -19,9 +19,16 @@ class ClozeQuizCard extends StatefulWidget {
     this.externalCompletedWords = const [],
     this.externalLiveDraft = '',
     this.onHintRequested,
+    this.questionId,
   });
 
   final Map<String, dynamic> quizData;
+
+  /// Identifies which question this is, so the card can tell "rebuilt" from
+  /// "moved on". [quizData] is rebuilt into a fresh Map on every build, so it
+  /// cannot answer that itself. Null on the chat-driven path, which resets
+  /// through [externalInput] instead.
+  final String? questionId;
   final Future<bool> Function(String answer) onSubmit;
   final VoidCallback onSolved;
   final String? audioUrl;
@@ -141,6 +148,24 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
   @override
   void didUpdateWidget(covariant ClozeQuizCard oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // A new question arrived in the same card. QuizSessionScreen hands every
+    // question to one ClozeQuizCard held by a single GlobalKey, so this State —
+    // and with it "already solved", "answer revealed" and the typed text —
+    // survives the move unless it is cleared here. It was not: answering the
+    // first question correctly left the second one rendered as already solved,
+    // with no input to type in and no next button, which ended the session at
+    // question one. Only the external (chat-driven) path reset anything, and
+    // only its hint level.
+    if (!widget.externalInput &&
+        widget.questionId != null &&
+        widget.questionId != oldWidget.questionId) {
+      _hintLevel = 0;
+      _answerRevealed = false;
+      _graded = null;
+      _solved = false;
+      _submitting = false;
+      _controller.clear();
+    }
     // Grading is what makes feedback appear, and in the composer-driven word
     // quiz it arrives as a new `externalResult` rather than a setState here.
     if (_effectiveGrade != null || _effectiveAnswerRevealed) {
