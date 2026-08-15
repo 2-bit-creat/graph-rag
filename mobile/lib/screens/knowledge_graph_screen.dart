@@ -1442,34 +1442,54 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     if (chatSession.quizRefilling) {
       return Padding(
         padding: const EdgeInsets.all(AppSpacing.md),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        tr('quiz.preparing'),
+                        style: TextStyle(
+                            color: context.shell.primaryText,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        tr('quiz.preparingHint'),
+                        style: TextStyle(
+                            color: context.shell.mutedText, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: AppSpacing.sm),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    tr('quiz.preparing'),
-                    style: TextStyle(
-                        color: context.shell.primaryText,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: _exitInputMode,
+                  child: Text(tr('quiz.close')),
+                ),
+                if (chatSession.quizType != 'composition')
+                  TextButton(
+                    onPressed: () => chatSession.startQuiz('composition'),
+                    child: Text(tr('quiz.tryComposition')),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    tr('quiz.preparingHint'),
-                    style:
-                        TextStyle(color: context.shell.mutedText, fontSize: 12),
-                  ),
-                ],
-              ),
+              ],
             ),
           ],
         ),
@@ -1483,6 +1503,45 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
               width: 18,
               height: 18,
               child: CircularProgressIndicator(strokeWidth: 2)),
+        ),
+      );
+    }
+    if (chatSession.quizUnavailable) {
+      final wordQuiz = chatSession.quizType != 'composition';
+      return Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              tr(wordQuiz ? 'quiz.noWordCardsTitle' : 'quiz.noCardsTitle'),
+              style: TextStyle(
+                color: context.shell.primaryText,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              tr(wordQuiz ? 'quiz.noWordCardsBody' : 'quiz.noCardsBody'),
+              style: TextStyle(color: context.shell.mutedText, fontSize: 12),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: _exitInputMode,
+                  child: Text(tr('quiz.close')),
+                ),
+                if (wordQuiz)
+                  FilledButton(
+                    onPressed: () => chatSession.startQuiz('composition'),
+                    child: Text(tr('quiz.tryComposition')),
+                  ),
+              ],
+            ),
+          ],
         ),
       );
     }
@@ -2972,10 +3031,15 @@ class _SelectionInfoCard extends StatelessWidget {
     final failed = statuses.contains('failed');
     final storedExpressionCount = (expressions['count'] as num?)?.toInt() ?? 0;
     final wordCount = (word['count'] as num?)?.toInt() ?? 0;
+    final compositionCount = (composition['count'] as num?)?.toInt() ?? 0;
     final expressionCount =
         storedExpressionCount > wordCount ? storedExpressionCount : wordCount;
     final availableCount =
         (expressions['available_count'] as num?)?.toInt() ?? 0;
+    final settledWithoutWordQuiz = statuses.isNotEmpty &&
+        statuses.every((status) => status == 'ready') &&
+        availableCount == 0 &&
+        wordCount == 0;
 
     Widget quizAction(String type, Map<String, dynamic> group, String label) {
       final count = (group['count'] as num?)?.toInt() ?? 0;
@@ -3036,27 +3100,36 @@ class _SelectionInfoCard extends StatelessWidget {
           ]),
         )
       else ...[
-        quizAction('cloze', word, tr('kg.wordQuiz')),
+        if (settledWithoutWordQuiz)
+          _StudyActionRow(
+            onPressed: null,
+            icon: Icons.text_fields_rounded,
+            label: tr('kg.noWordQuizForStatement'),
+            trailing: compositionCount > 0 ? tr('kg.compositionOnly') : null,
+          )
+        else
+          quizAction('cloze', word, tr('kg.wordQuiz')),
         quizAction('composition', composition, tr('kg.compositionQuiz')),
-        _StudyActionRow(
-          onPressed: failed
-              ? onRegenerate
-              : availableCount > 0 || wordCount == 0
-                  ? onGenerate
-                  : onRegenerate,
-          icon: failed ? Icons.refresh_rounded : Icons.add_rounded,
-          label: failed
-              ? tr('kg.retryAnalysis')
-              : availableCount > 0
-                  ? tr('kg.createMoreShort')
-                  : wordCount == 0
-                      ? tr('kg.createFromStatement')
-                      : tr('kg.rebuildQuestions'),
-          trailing: availableCount > 0
-              ? tr('kg.remainingExpressions', {'count': availableCount})
-              : null,
-          showDivider: false,
-        ),
+        if (!settledWithoutWordQuiz || compositionCount == 0)
+          _StudyActionRow(
+            onPressed: failed
+                ? onRegenerate
+                : availableCount > 0 || wordCount == 0
+                    ? onGenerate
+                    : onRegenerate,
+            icon: failed ? Icons.refresh_rounded : Icons.add_rounded,
+            label: failed
+                ? tr('kg.retryAnalysis')
+                : availableCount > 0
+                    ? tr('kg.createMoreShort')
+                    : wordCount == 0
+                        ? tr('kg.createFromStatement')
+                        : tr('kg.rebuildQuestions'),
+            trailing: availableCount > 0
+                ? tr('kg.remainingExpressions', {'count': availableCount})
+                : null,
+            showDivider: false,
+          ),
       ],
     ]);
   }

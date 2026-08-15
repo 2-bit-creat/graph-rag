@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     quiz_author_model: str = "gpt-5.4-mini"
     quiz_quality_model: str = "gpt-5.4-mini"
+    # en->ko measured better and cheaper with the inexpensive author plus the
+    # stronger semantic editor. Empty values fall back to the global roles.
+    quiz_author_model_en_ko: str = "gpt-4o-mini"
+    quiz_quality_model_en_ko: str = "gpt-5.4-mini"
     # Cap each LLM request so a hung/slow OpenAI call surfaces as a fast failure
     # instead of leaving the graph build stuck in 'graph_processing' (the default
     # SDK timeout is 600s × retries — perceived as an indefinite buffering spinner).

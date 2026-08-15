@@ -23,15 +23,14 @@ class _Completions:
         )
 
 
-def test_cloze_author_prompt_requires_complete_native_translation() -> None:
-    """The single-card author must translate the complete target sentence and
-    copy the exact corresponding native span, without a separate translation call."""
+def test_cloze_author_prompt_freezes_reviewed_bilingual_sentences() -> None:
     prompt = quiz_bundle._build_cloze_system_prompt(
         "Korean (한국어)", "English", 50, quiz_bundle.lang_guide("english"), "english"
     )
-    assert "sentence_native must be the complete sentence" in prompt
-    assert "completely translate sentence_target" in prompt
-    assert "answer_native must be copied verbatim" in prompt
+    assert "[PAIR ko-en ALIGNMENT]" in prompt
+    assert "sentences are frozen and must not be rewritten" in prompt
+    assert "Copy answer_en" in prompt
+    assert "meaning_ko" in prompt
 
 
 def test_release_prompt_rejects_conservative_rate_scope_mismatch() -> None:
@@ -45,16 +44,33 @@ def test_release_prompt_rejects_conservative_rate_scope_mismatch() -> None:
     assert "part of the faithful short source sentence" in prompt
 
 
-def test_author_prompt_uses_language_neutral_model_fields() -> None:
+def test_author_prompt_uses_en_ko_concrete_language_fields() -> None:
     prompt = quiz_bundle._build_cloze_system_prompt(
-        "English", "Korean (한국어)", 50, quiz_bundle.lang_guide("korean"), "korean"
+        "English", "Korean (한국어)", 50, quiz_bundle.lang_guide("korean"), "korean", "english"
     )
-    assert "sentence_target to that complete reference answer" in prompt
-    assert "sentence_native must be the complete sentence" in prompt
-    assert "answer_native must be copied verbatim" in prompt
-    assert '"sentence_native"' in prompt
-    assert '"answer_native"' in prompt
-    assert "sibling expression may remain as context outside surface_answer" in prompt
+    assert "[PAIR en-ko ALIGNMENT]" in prompt
+    assert "Copy answer_ko" in prompt
+    assert "meaning_en" in prompt
+    assert "answer_native" not in prompt
+
+
+def test_plan_schema_uses_concrete_native_gloss_field() -> None:
+    profile = quiz_bundle.get_quiz_prompt_profile("english", "korean")
+    response_format = quiz_bundle._plan_response_format(profile)
+    expression_schema = response_format["json_schema"]["schema"]["properties"][
+        "segments"
+    ]["items"]["properties"]["expressions"]["items"]
+
+    assert "meaning_en" in expression_schema["required"]
+    assert "meaning_en" in expression_schema["properties"]
+    assert "meaning" not in expression_schema["properties"]
+
+    normalized = quiz_bundle._normalize_plan_language_fields({"segments": [{
+        "expressions": [{"meaning_en": "to apply a conservative discount rate"}]
+    }]}, profile)
+    assert normalized["segments"][0]["expressions"][0]["meaning"] == (
+        "to apply a conservative discount rate"
+    )
 
 
 def test_language_neutral_model_fields_map_to_legacy_storage_fields() -> None:
@@ -103,6 +119,16 @@ def test_missing_or_low_quality_review_fails_closed() -> None:
     }
 
 
+def test_multiword_expression_cannot_repair_to_bare_verb() -> None:
+    assert quiz_bundle._surface_answer_contract_reason(
+        answer="moved",
+        sentence_target="His colleague moved his appointment to the afternoon.",
+        canonical_form="move an appointment to the afternoon",
+        excluded_target_terms=[],
+        language="english",
+    ) == "answer_boundary: repaired answer collapsed a multiword expression to one token"
+
+
 @pytest.mark.asyncio
 async def test_card_is_saved_after_independent_full_translation(
     db_session, iso_user, monkeypatch
@@ -116,40 +142,32 @@ async def test_card_is_saved_after_independent_full_translation(
     )
     db_session.add(node)
     await db_session.commit()
-    plan = {
-        "composition": {
-            "prompt": source,
-            "model_answers": [{"text": "I carefully compared two reports."}],
-        },
-        "expression_chunks": [
-            {
-                "text": "carefully compared",
-                "meaning": "꼼꼼히 비교했다",
-                "kind": "collocation",
-            }
-        ],
-    }
-    cloze = {
-        "cloze": [
-            {
-                "expression": "carefully compared",
-                "question_ko": "표현을 완성하세요.",
-                "sentence_ko": source,
-                "target_ko": "꼼꼼히 비교했다",
-                "sentence_en": "I carefully compared two reports.",
-                "blank": "carefully compared",
-            }
-        ]
-    }
-    review = {
-        "reviews": [{
-            "expression_id": "0:0",
-            "verdict": "pass",
-            "score": 94,
-            "issues": [],
+    plan = {"segments": [{
+        "segment_index": 0,
+        "source_text": source,
+        "prompt_native": source,
+        "grammar_focus": ["past tense"],
+        "context_entities": [],
+        "reference_answers": [{
+            "text": "I carefully compared two reports.",
+            "register": "neutral",
+            "note": "과거의 비교 행동",
         }],
-    }
-    completions = _Completions([plan, plan, cloze, review])
+        "expressions": [{
+            "canonical_form": "carefully compare",
+            "surface_form": "carefully compared",
+            "surface_segments": ["carefully compared"],
+            "meaning": "꼼꼼히 비교하다",
+            "meaning_parts": [{
+                "target": "carefully compared",
+                "native": "꼼꼼히 비교했다",
+            }],
+            "kind": "collocation",
+            "quality_score": 96,
+            "quality_reason": "재사용 가능한 동사 결합",
+        }],
+    }]}
+    completions = _Completions([plan, plan])
     monkeypatch.setattr(
         quiz_bundle,
         "_client",
@@ -175,21 +193,20 @@ async def test_card_is_saved_after_independent_full_translation(
     )
 
     assert [quiz.quiz_type for quiz in created] == ["composition", "cloze"]
+    assert next(quiz for quiz in created if quiz.quiz_type == "cloze").quiz_data["_origin"] == "reviewed_plan"
     assert [item["expression"] for item in saved] == ["carefully compared"]
-    assert len(completions.calls) == 4  # plan + plan review + individual card + batch review
+    assert saved[0]["release_reviewed"] is True
+    assert saved[0]["review_contract_version"] == "pair-release-v1"
+    assert len(completions.calls) == 2  # draft + one shared composition/cloze release review
     assert completions.calls[0]["response_format"]["type"] == "json_schema"
     assert completions.calls[0]["response_format"]["json_schema"]["strict"] is True
     assert completions.calls[1]["response_format"]["type"] == "json_schema"
-    assert completions.calls[2]["response_format"]["json_schema"]["strict"] is True
     assert source in completions.calls[0]["messages"][1]["content"]
     assert "Return only the composition and cloze arrays" not in completions.calls[0]["messages"][0]["content"]
-    cloze_payload = json.loads(completions.calls[2]["messages"][1]["content"])
-    assert cloze_payload["source_statement"] == source
-    assert cloze_payload["expression"]["canonical_form"] == "carefully compared"
 
 
 @pytest.mark.asyncio
-async def test_quality_review_repairs_only_the_failed_card(
+async def test_reviewed_plan_does_not_pay_for_duplicate_cloze_review(
     db_session, iso_user, monkeypatch
 ) -> None:
     source = "회의 전에 핵심 지표를 꼼꼼히 검토했다."
@@ -214,39 +231,7 @@ async def test_quality_review_repairs_only_the_failed_card(
             "quality_score": 94,
         }],
     }]}
-    first_card = {"cloze": [{
-        "expression_id": "0:0",
-        "canonical_form": "carefully review",
-        "surface_answer": "carefully reviewed",
-        "question_ko": "빈칸을 완성하세요.",
-        "sentence_ko": "회의 전에 핵심 지표를 검토했습니다.",
-        "target_ko": "검토했습니다",
-        "sentence_target": "I carefully reviewed the key metrics before the meeting.",
-    }]}
-    review = {"reviews": [{
-        "expression_id": "0:0",
-        "verdict": "repair",
-        "score": 74,
-        "issues": ["translation_omission"],
-    }]}
-    repaired_card = {"cloze": [{
-        "expression_id": "0:0",
-        "canonical_form": "carefully review",
-        "surface_answer": "carefully reviewed",
-        "question_ko": "빈칸을 완성하세요.",
-        "sentence_ko": "회의 전에 핵심 지표를 꼼꼼히 검토했습니다.",
-        "target_ko": "꼼꼼히 검토했습니다",
-        "sentence_target": "I carefully reviewed the key metrics before the meeting.",
-    }]}
-    repaired_review = {"reviews": [{
-        "expression_id": "0:0",
-        "verdict": "pass",
-        "score": 96,
-        "issues": [],
-    }]}
-    completions = _Completions([
-        plan, plan, first_card, review, repaired_card, repaired_review
-    ])
+    completions = _Completions([plan, plan])
     monkeypatch.setattr(
         quiz_bundle,
         "_client",
@@ -265,13 +250,16 @@ async def test_quality_review_repairs_only_the_failed_card(
     )
 
     cloze = next(quiz for quiz in created if quiz.quiz_type == "cloze")
-    assert cloze.quiz_data["sentence_ko"] == "회의 전에 핵심 지표를 꼼꼼히 검토했습니다."
+    assert cloze.quiz_data["_origin"] == "reviewed_plan"
+    assert cloze.quiz_data["sentence_ko"] == source
     review_step = next(
         step for step in trace["steps"]
         if step["name"] == "bundle_cloze_batch_quality_review"
     )
-    assert review_step["output"]["repair_count"] == 1
-    assert len(completions.calls) == 6
+    assert review_step["output"]["repair_count"] == 0
+    assert review_step["output"]["reused_plan_review_count"] == 1
+    assert review_step["output"]["review_count"] == 0
+    assert len(completions.calls) == 2
     assert review_step["output"]["fail_closed"] is True
     assert review_step["output"]["release_score"] == 92
 
@@ -395,18 +383,84 @@ def test_expression_selection_rejects_inflected_or_multi_action_canonical_forms(
     assert [item["canonical_form"] for item in selected] == ["take a walk"]
 
 
-def test_safe_reference_fallback_requires_exact_source_alignment() -> None:
-    fallback = quiz_bundle._safe_reference_fallback({
+def test_reviewed_expression_becomes_primary_cloze_without_fallback() -> None:
+    card = quiz_bundle._cloze_from_reviewed_expression({
         "expression_id": "0:0",
         "canonical_form": "go for a walk",
         "surface_form": "went for a walk",
         "source_segment": "비가 왔지만 산책을 갔다.",
         "reference_answers": [{"text": "Although it rained, I went for a walk."}],
         "meaning_parts": [{"target": "went for a walk", "native": "산책을 갔다"}],
-    }, target_language="english")
+    }, native_language="korean", target_language="english")
 
-    assert fallback is not None
-    assert fallback["target_ko"] == "산책을 갔다"
+    assert card is not None
+    assert card["surface_answer"] == "went for a walk"
+    assert card["target_ko"] == "산책을 갔다"
+
+
+def test_source_alignment_span_covers_inflected_english_verb_and_object() -> None:
+    chunk = {
+        "meaning_parts": [
+            {"target": "할인율", "native": "discount rate"},
+            {"target": "적용하다", "native": "apply"},
+        ]
+    }
+
+    assert quiz_bundle._source_alignment_span(
+        "He is applying a conservative discount rate to account for uncertainty.",
+        chunk,
+    ) == "is applying a conservative discount rate"
+
+
+def test_source_alignment_span_rejects_partial_meaning_part_coverage() -> None:
+    assert quiz_bundle._source_alignment_span(
+        "그는 보수적인 할인율을 적용하고 있다.",
+        {
+            "meaning_parts": [
+                {"target": "discount rate", "native": "보수적인 할인율"},
+                {"target": "apply", "native": "적용하다"},
+            ]
+        },
+    ) == ""
+
+
+def test_reviewed_expression_uses_complete_native_gloss() -> None:
+    card = quiz_bundle._cloze_from_reviewed_expression({
+        "expression_id": "0:0",
+        "canonical_form": "할인율 적용하다",
+        "surface_form": "할인율을 적용하고 있다",
+        "source_segment": "He is applying a conservative discount rate to account for uncertainty.",
+        "meaning": "apply a conservative discount rate",
+        "reference_answers": [{
+            "text": "그는 불확실성을 고려하여 보수적인 할인율을 적용하고 있다."
+        }],
+        "meaning_parts": [
+            {"target": "할인율", "native": "discount rate"},
+            {"target": "적용하다", "native": "apply"},
+        ],
+    }, native_language="english", target_language="korean")
+
+    assert card is not None
+    assert card["target_ko"] == "apply a conservative discount rate"
+
+
+def test_en_ko_uses_measured_hybrid_model_roles() -> None:
+    settings = SimpleNamespace(
+        openai_model="gpt-4o-mini",
+        quiz_author_model="gpt-5.4-mini",
+        quiz_quality_model="gpt-5.4-mini",
+        quiz_author_model_en_ko="gpt-4o-mini",
+        quiz_quality_model_en_ko="gpt-5.4-mini",
+    )
+
+    assert quiz_bundle._quiz_role_models(settings, "english", "korean") == (
+        "gpt-4o-mini",
+        "gpt-5.4-mini",
+    )
+    assert quiz_bundle._quiz_role_models(settings, "korean", "english") == (
+        "gpt-5.4-mini",
+        "gpt-5.4-mini",
+    )
 
 
 def test_cloze_candidate_with_antock_in_blank_is_rejected() -> None:
@@ -446,7 +500,8 @@ def test_target_language_prompt_uses_localized_quality_rubric() -> None:
 
     assert "Formuliere idiomatisches, modernes Deutsch" in prompt
     assert "context_entities" in prompt
-    assert "auf der Webseite von Entok" in prompt
+    assert "dedicated ko-de curriculum planner" in prompt
+    assert "never apply rules or field roles from another direction" in prompt
 
 
 def test_statement_is_split_into_stable_composition_units() -> None:
@@ -683,6 +738,244 @@ def test_subordinate_and_dangling_composition_fragments_are_rejected() -> None:
     assert quiz_bundle._plan_has_incomplete_units(complete) is False
 
 
+def test_enko_merges_leading_adverbial_fragment_with_next_clause() -> None:
+    units = [
+        "After coming home.",
+        "I dried my wet shoes while checking next week's travel schedule.",
+    ]
+
+    assert quiz_bundle._merge_english_leading_fragments(units) == [
+        "After coming home. I dried my wet shoes while checking next week's travel schedule."
+    ]
+
+
+def test_enko_merges_not_just_tail_with_previous_clause() -> None:
+    assert quiz_bundle._merge_english_leading_fragments([
+        "I closely reviewed the presentation materials.",
+        "not just glanced at them.",
+    ]) == [
+        "I closely reviewed the presentation materials — not just glanced at them."
+    ]
+
+
+def test_domain_contract_requires_established_lost_update_terms() -> None:
+    generic_german = [{
+        "reference_answers": [{
+            "text": "Bei der Aktualisierung des Kontostands kann es zu Verlusten kommen."
+        }]
+    }]
+    correct_german = [{
+        "reference_answers": [{
+            "text": "Bei gleichzeitigen Anfragen kann ein Lost Update auftreten."
+        }],
+        "expressions": [{
+            "canonical_form": "ein Lost Update",
+            "surface_form": "ein Lost Update",
+        }],
+    }]
+
+    assert quiz_bundle._plan_domain_contract_reason(
+        "잔액에 갱신 손실이 발생할 수 있다.",
+        generic_german,
+        native_language="korean",
+        target_language="german",
+    ) is not None
+    assert quiz_bundle._plan_domain_contract_reason(
+        "잔액에 갱신 손실이 발생할 수 있다.",
+        correct_german,
+        native_language="korean",
+        target_language="german",
+    ) is None
+    assert quiz_bundle._plan_domain_contract_reason(
+        "잔액에 갱신 손실이 발생할 수 있다.",
+        [{"reference_answers": [{
+            "text": "Gleichzeitige Anfragen können einen Aktualisierungsverlust verursachen."
+        }], "expressions": [{
+            "canonical_form": "ein Aktualisierungsverlust",
+            "surface_form": "einen Aktualisierungsverlust",
+        }]}],
+        native_language="korean",
+        target_language="german",
+    ) is None
+    assert quiz_bundle._plan_domain_contract_reason(
+        "잔액에 갱신 손실이 발생할 수 있다.",
+        [{"reference_answers": [{"text": "A lost update may occur to the balance."}]}],
+        native_language="korean",
+        target_language="english",
+    ) is not None
+
+
+def test_domain_contract_requires_term_in_expression_candidate() -> None:
+    references_only = [{
+        "reference_answers": [{
+            "text": "When requests overlap, they can cause a lost update."
+        }],
+        "expressions": [{
+            "canonical_form": "overlapping requests",
+            "surface_form": "requests overlap",
+        }],
+    }]
+    includes_term = [{
+        **references_only[0],
+        "expressions": [{
+            "canonical_form": "a lost update",
+            "surface_form": "a lost update",
+        }],
+    }]
+
+    assert quiz_bundle._plan_domain_contract_reason(
+        "동시에 여러 요청이 들어오면 잔액에 갱신 손실이 발생할 수 있다.",
+        references_only,
+        native_language="korean",
+        target_language="english",
+    ) is not None
+    assert quiz_bundle._plan_domain_contract_reason(
+        "동시에 여러 요청이 들어오면 잔액에 갱신 손실이 발생할 수 있다.",
+        includes_term,
+        native_language="korean",
+        target_language="english",
+    ) is None
+
+
+def test_enko_domain_contract_requires_korean_term_in_expression() -> None:
+    references_only = [{
+        "reference_answers": [{"text": "동시 요청은 갱신 손실을 일으킬 수 있다."}],
+        "expressions": [{
+            "canonical_form": "동시에 요청하다",
+            "surface_form": "동시 요청은",
+        }],
+    }]
+
+    assert quiz_bundle._plan_domain_contract_reason(
+        "Concurrent requests can cause a lost update.",
+        references_only,
+        native_language="english",
+        target_language="korean",
+    ) is not None
+
+
+def test_near_duplicate_segment_does_not_create_second_composition() -> None:
+    segments = [
+        {
+            "source_text": "동시에 여러 요청이 들어오면 잔액에 갱신 손실이 발생할 수 있다.",
+            "prompt_native": "동시에 여러 요청이 들어오면 잔액에 갱신 손실이 발생할 수 있다.",
+        },
+        {
+            "source_text": "여러 요청이 들어오면 잔액에 갱신 손실이 발생할 수 있다.",
+            "prompt_native": "여러 요청이 들어오면 잔액에 갱신 손실이 발생할 수 있다.",
+        },
+    ]
+
+    quiz_bundle._trim_overlapping_segment_sources(segments)
+
+    assert len(segments) == 1
+
+
+def test_pair_plan_rejects_dangling_english_prompt_and_hangul_in_german() -> None:
+    dangling = [{
+        "prompt_native": "so I moved my reservation to the afternoon.",
+        "reference_answers": [{"text": "그래서 예약을 오후로 옮겼다."}],
+    }]
+    german_leak = [{
+        "prompt_native": "담당자에게 계약 해지를 물어봤다.",
+        "reference_answers": [{"text": "Ich habe den 담당자 nach der Kündigung gefragt."}],
+    }]
+
+    assert quiz_bundle._plan_has_incomplete_units(
+        dangling, native_language="english", target_language="korean"
+    ) is True
+    assert quiz_bundle._plan_has_incomplete_units(
+        german_leak, native_language="korean", target_language="german"
+    ) is True
+
+
+def test_pair_plan_rejects_noncontiguous_or_possessive_german_surface() -> None:
+    broken = [{
+        "prompt_native": "그는 보수적인 할인율을 적용한다.",
+        "reference_answers": [{"text": "Er wendet einen konservativen Diskontsatz an."}],
+        "expressions": [{"surface_form": "einen konservativen Diskontsatz anwendet"}],
+    }]
+    possessive = [{
+        "prompt_native": "그는 남는 시간에 자료를 다듬었다.",
+        "reference_answers": [{"text": "Er hat in seiner freien Zeit die Unterlagen überarbeitet."}],
+        "expressions": [{"surface_form": "in seiner freien Zeit"}],
+    }]
+
+    assert quiz_bundle._plan_has_incomplete_units(
+        broken, native_language="korean", target_language="german"
+    ) is True
+    assert quiz_bundle._plan_has_incomplete_units(
+        possessive, native_language="korean", target_language="german"
+    ) is True
+
+
+def test_german_frozen_expression_normalizes_only_reviewed_exact_spans() -> None:
+    possessive = quiz_bundle._normalize_german_frozen_expression(
+        {
+            "canonical_form": "Präsentation überarbeiten",
+            "surface_form": "seine Präsentation überarbeitet",
+            "kind": "verb_phrase",
+        },
+        "Er hat seine Präsentation überarbeitet.",
+    )
+    separable = quiz_bundle._normalize_german_frozen_expression(
+        {
+            "canonical_form": "einen konservativen Diskontsatz anwenden",
+            "surface_form": "einen konservativen Diskontsatz anwendet",
+            "kind": "verb_phrase",
+            "meaning": "보수적인 할인율을 적용하다",
+            "meaning_parts": [
+                {"target": "einen konservativen Diskontsatz", "native": "보수적인 할인율"},
+                {"target": "anwenden", "native": "적용하다"},
+            ],
+        },
+        "Er wendet einen konservativen Diskontsatz an.",
+    )
+
+    assert possessive["surface_form"] == "Präsentation überarbeitet"
+    assert possessive["canonical_form"] == "Präsentation überarbeiten"
+    assert separable["surface_form"] == "einen konservativen Diskontsatz"
+    assert separable["meaning"] == "보수적인 할인율"
+    assert separable["kind"] == "domain_term"
+
+
+def test_german_separable_action_cannot_keep_only_the_stranded_prefix() -> None:
+    from app.language_packs import target_pack
+
+    reason = target_pack("german").surface_boundary_reason(
+        answer="einen konservativen Diskontsatz an",
+        sentence_target="Er wendet einen konservativen Diskontsatz an.",
+        canonical_form="einen konservativen Diskontsatz anwenden",
+    )
+
+    assert reason is not None
+    assert "de_separable_split" in reason
+
+
+def test_german_surface_answer_cannot_end_with_coordinator() -> None:
+    from app.language_packs import target_pack
+
+    reason = target_pack("german").surface_boundary_reason(
+        answer="zahlt und",
+        sentence_target="Die Gesellschaft zahlt und kauft die Aktien zurück.",
+        canonical_form="zahlen",
+    )
+
+    assert reason is not None
+    assert "sibling_join" in reason
+
+
+def test_german_subject_predicate_clause_is_not_teachable() -> None:
+    from app.language_packs import target_pack
+
+    reason = target_pack("german").teachability_reason(
+        "Eine Put-Option gibt einem Investor das Recht"
+    )
+
+    assert reason is not None
+    assert "not_teachable" in reason
+
+
 @pytest.mark.asyncio
 async def test_multiple_segments_and_inflected_surface_answers_are_created(
     db_session, iso_user, monkeypatch
@@ -724,33 +1017,20 @@ async def test_multiple_segments_and_inflected_surface_answers_are_created(
             },
         ]
     }
-    cloze = {"cloze": [
-        {
-            "expression_id": "0:0",
-            "canonical_form": "review a report",
-            "surface_answer": "reviewed the report",
-            "sentence_target": "I reviewed the report before the meeting.",
-            "sentence_ko": "회의 전에 보고서를 검토했습니다.",
-            "target_ko": "보고서를 검토했습니다",
-            "question_ko": "빈칸을 완성하세요.",
-        },
-        {
-            "expression_id": "1:0",
-            "canonical_form": "take a closer look at",
-            "surface_answer": "took a closer look at",
-            "sentence_target": "I took a closer look at the screen.",
-            "sentence_ko": "화면을 더 자세히 살펴봤습니다.",
-            "target_ko": "더 자세히 살펴봤습니다",
-            "question_ko": "빈칸을 완성하세요.",
-        },
-    ]}
-    first_card = {"cloze": [cloze["cloze"][0]]}
-    second_card = {"cloze": [cloze["cloze"][1]]}
     review = {"reviews": [
         {"expression_id": "0:0", "verdict": "pass", "score": 92, "issues": []},
         {"expression_id": "1:0", "verdict": "pass", "score": 95, "issues": []},
     ]}
-    completions = _Completions([plan, plan, first_card, second_card, review])
+    repaired = {"alignments": [{
+        "expression_id": "0:0",
+        "canonical_form": "review a report",
+        "answer_en": "reviewed",
+        "meaning_ko": "검토했다",
+    }]}
+    repaired_review = {"reviews": [{
+        "expression_id": "0:0", "verdict": "pass", "score": 94, "issues": [],
+    }]}
+    completions = _Completions([plan, plan, repaired, repaired_review])
     monkeypatch.setattr(
         quiz_bundle,
         "_client",
@@ -766,16 +1046,14 @@ async def test_multiple_segments_and_inflected_surface_answers_are_created(
     )
 
     assert [quiz.quiz_type for quiz in created] == [
-        "composition", "composition", "cloze", "cloze"
+        "composition", "composition", "cloze"
     ]
     compositions = [quiz for quiz in created if quiz.quiz_type == "composition"]
     assert [quiz.question_native for quiz in compositions] == [
         "보고서를 확인했습니다.", "화면을 더 자세히 살펴봤습니다."
     ]
-    closer = next(
-        quiz for quiz in created
-        if (quiz.quiz_data or {}).get("canonical_form") == "take a closer look at"
-    )
-    assert closer.quiz_data["surface_form"] == "took a closer look at"
-    assert closer.quiz_data["meaning"] == "더 자세히 살펴봤습니다"
-    assert len(completions.calls) == 5
+    clozes = [quiz for quiz in created if quiz.quiz_type == "cloze"]
+    assert {quiz.quiz_data["surface_form"] for quiz in clozes} == {
+        "took a closer look at"
+    }
+    assert len(completions.calls) == 3

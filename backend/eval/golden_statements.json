@@ -181,6 +181,13 @@
         "target_contains": ["conservative", "discount rate"],
         "native_contains": ["보수적", "할인율", "적용"],
         "native_forbidden_exact": ["보수적으로"]
+      },
+      "expect_cloze_by_target": {
+        "german": {
+          "target_contains": ["konservativ", "diskontsatz"],
+          "native_contains": ["보수적", "할인율"],
+          "native_forbidden_exact": ["보수적으로"]
+        }
       }
     },
     {

@@ -235,6 +235,8 @@ def test_german_possessive_gate_respects_the_sein_homograph() -> None:
     assert not flagged("den Vertrag kündigen")
     # A possessive before a noun is the same deixis problem English has.
     assert flagged("in ihrer Freizeit")
+    assert flagged("in seiner freien Zeit")
+    assert flagged("den Rückkauf der eigenen Aktien oder Anleihen")
     assert flagged("auf seinen Vorschlag eingehen")
     # Position 0 too: German's leading-determiner rule only covers answers of
     # two words or fewer and lists articles only, so this is caught here.
@@ -265,6 +267,83 @@ def test_korean_verb_phrases_are_not_mistaken_for_whole_clauses() -> None:
     assert rejected("그는 할인율을 적용하고 있다")
     # A finished polite sentence is still a clause even with no subject.
     assert rejected("오늘 회의를 모두 마쳤습니다")
+
+
+def test_repair_feedback_uses_the_actual_target_language_pack() -> None:
+    # The caller passed native_language but never language, so `language`
+    # defaulted to "english" for every pair. A Korean sentence tokenized by
+    # the English pack yields zero tokens, and the author was told
+    # "sentence has 0 tokens, need 3" about a perfectly good Korean sentence.
+    from app.quiz_bundle import _cloze_structural_reason
+
+    item = {
+        "surface_answer": "발표를 검토했다",
+        "sentence_target": "회의 전에 발표를 검토했다.",
+        "sentence_ko": "I reviewed the presentation before the meeting.",
+        "target_ko": "reviewed the presentation",
+    }
+    korean = _cloze_structural_reason(item, 0, "english", "korean")
+    assert "0 tokens" not in korean
+
+    # German answers must not be measured with English word boundaries either.
+    german = _cloze_structural_reason(
+        {
+            "surface_answer": "die Unterlagen überarbeitet",
+            "sentence_target": "Ich habe im Café die Unterlagen überarbeitet.",
+            "sentence_ko": "카페에서 자료를 다듬었다.",
+            "target_ko": "자료를 다듬었다",
+        },
+        0,
+        "korean",
+        "german",
+    )
+    assert "0 tokens" not in german
+
+
+def test_korean_gloss_must_reach_the_predicate_for_a_verb_phrase() -> None:
+    # "예약을" cannot be the meaning of "die Reservierung ... verschoben": the
+    # gloss stops where the Korean verb should start. The planner's `kind` is
+    # what keeps this safe for noun-phrase answers.
+    from app.language_packs import native_quiz_pack
+
+    ko = native_quiz_pack("korean")
+
+    assert ko.gloss_scope_reason("예약을", "verb_phrase") is not None
+    assert ko.gloss_scope_reason("계약을", "verb_phrase") is not None
+    assert ko.gloss_scope_reason("보수적인 할인율", "verb_phrase") is not None
+    assert ko.gloss_scope_reason("젖은 신발을 말리", "verb_phrase") is not None
+    assert ko.gloss_scope_reason("보수적인 할인율을 적용하고", "verb_phrase") is not None
+    assert ko.gloss_scope_reason("예약을 오후로 옮겼다", "verb_phrase") is None
+    assert ko.gloss_scope_reason("보험금을 지급한다", "verb_phrase") is None
+    # A noun-phrase answer is legitimately glossed with an object-marked span.
+    assert ko.gloss_scope_reason("두 보고서를", "domain_term") is None
+    assert ko.gloss_scope_reason("두 보고서를", "collocation") is None
+
+
+def test_cloze_origin_survives_candidate_normalization() -> None:
+    from app.quiz_bundle import _prepare_cloze_candidates
+
+    candidates, reasons = _prepare_cloze_candidates(
+        [{
+            "_origin": "reviewed_plan",
+            "expression_id": "0:0",
+            "canonical_form": "review a report",
+            "surface_answer": "reviewed the report",
+            "sentence_target": "I carefully reviewed the report before lunch.",
+            "sentence_ko": "점심 전에 보고서를 꼼꼼히 검토했다.",
+            "target_ko": "보고서를 꼼꼼히 검토했다",
+        }],
+        language="english",
+        level=50,
+        source_meta={"node_id": "node-1"},
+        expression_contracts={
+            "0:0": {"canonical_form": "review a report", "kind": "verb_phrase"}
+        },
+        native_language="korean",
+    )
+
+    assert reasons == []
+    assert candidates[0]["spec"]["quiz_data"]["_origin"] == "reviewed_plan"
 
 
 def test_blank_may_not_swallow_the_whole_sentence() -> None:

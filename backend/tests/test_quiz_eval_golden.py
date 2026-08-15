@@ -1,6 +1,11 @@
 """Semantic golden contracts for learner-facing quiz translations."""
 
-from scripts.quiz_eval import _accumulate_usage, _check_golden_expectation, _load_golden
+from scripts.quiz_eval import (
+    _accumulate_usage,
+    _check_golden_expectation,
+    _estimated_usage_cost,
+    _load_golden,
+)
 
 
 CASE_ID = "polysemy-conservative-rate-001"
@@ -63,3 +68,22 @@ def test_usage_accounting_includes_review_repair_and_cache_details() -> None:
     assert totals["cached_prompt_tokens"] == 80
     assert totals["reasoning_tokens"] == 4
     assert totals["by_model"]["quality-model"]["prompt_tokens"] == 140
+
+
+def test_usage_cost_prices_cached_tokens_only_once() -> None:
+    cost, by_model = _estimated_usage_cost({
+        "by_model": {
+            "gpt-5.4-mini": {
+                "prompt_tokens": 1_000_000,
+                "cached_prompt_tokens": 600_000,
+                "completion_tokens": 100_000,
+            }
+        }
+    })
+    # 400k uncached input + 600k cached input + 100k output.
+    assert cost == 0.795
+    assert by_model == {"gpt-5.4-mini": 0.795}
+
+
+def test_usage_cost_refuses_to_guess_unknown_model_price() -> None:
+    assert _estimated_usage_cost({"by_model": {"future-model": {}}}) == (None, {})

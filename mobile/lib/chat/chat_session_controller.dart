@@ -58,12 +58,14 @@ class ChatSessionController extends ChangeNotifier {
   /// first cards to land. The feed shows a "만드는 중" card instead of bouncing
   /// the learner out of quiz mode — see [startQuiz].
   bool _quizRefilling = false;
+  bool _quizUnavailable = false;
 
   /// Bumped whenever a quiz mode is entered or left, so a refill wait that is
   /// still polling can tell its session ended and stop touching state.
   int _quizEpoch = 0;
 
   bool get quizRefilling => _quizRefilling;
+  bool get quizUnavailable => _quizUnavailable;
 
   /// Set by the graph screen so referenced nodes glow + the camera flies to them.
   ValueChanged<Set<String>>? onReferencedNodes;
@@ -154,6 +156,7 @@ class ChatSessionController extends ChangeNotifier {
     _quizLanguage = null;
     _quizFeedback = null;
     _wordQuizSolved = false;
+    _quizUnavailable = false;
     _clozeCompletedWords.clear();
     _clozeLiveDraft = '';
     _distillSentences.clear();
@@ -339,6 +342,7 @@ class ChatSessionController extends ChangeNotifier {
       // does not resurrect quiz state after the learner has left it.
       _quizEpoch++;
       _quizRefilling = false;
+      _quizUnavailable = false;
       _quizItems.clear();
       _quizIndex = 0;
       _quizFeedback = null;
@@ -700,6 +704,7 @@ class ChatSessionController extends ChangeNotifier {
     _quizIndex = 0;
     _quizFeedback = null;
     _wordQuizSolved = false;
+    _quizUnavailable = false;
     _clozeCompletedWords.clear();
     _clozeLiveDraft = '';
     _busy = true;
@@ -773,8 +778,10 @@ class ChatSessionController extends ChangeNotifier {
         }
       }
       if (epoch != _quizEpoch) return;
-      errors.value = tr('quiz.refillSlow');
-      _mode = ChatMode.normal;
+      // Quality-first generation may legitimately yield composition only.
+      // Keep that outcome in context instead of presenting it as a timeout or
+      // immediately retrying the same expensive generation path.
+      _quizUnavailable = true;
     } catch (e) {
       if (epoch != _quizEpoch) return;
       errors.value = _clean(e);

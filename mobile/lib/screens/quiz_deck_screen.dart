@@ -170,7 +170,9 @@ class _QuizDeckScreenState extends State<QuizDeckScreen> {
         (item['sentence_target'] ?? item['sentence_en'])?.toString();
     if (sentence != null && sentence.trim().isNotEmpty) return sentence;
     final accepted = quizData['accepted_answers'];
-    if (accepted is List && accepted.isNotEmpty) return accepted.first.toString();
+    if (accepted is List && accepted.isNotEmpty) {
+      return accepted.first.toString();
+    }
     return quizData['blank']?.toString() ?? '';
   }
 
@@ -187,6 +189,7 @@ class _QuizDeckScreenState extends State<QuizDeckScreen> {
     }
 
     if (_total == 0) {
+      final wordQuiz = widget.quizType != 'composition';
       return Scaffold(
         body: SafeArea(
           child: Column(
@@ -195,8 +198,12 @@ class _QuizDeckScreenState extends State<QuizDeckScreen> {
               Expanded(
                 child: AppEmptyState(
                   icon: Icons.style_outlined,
-                  title: tr('quizDeck.emptyTitle'),
-                  subtitle: tr('quizDeck.emptySubtitle'),
+                  title: tr(wordQuiz
+                      ? 'quizDeck.emptyWordTitle'
+                      : 'quizDeck.emptyTitle'),
+                  subtitle: tr(wordQuiz
+                      ? 'quizDeck.emptyWordSubtitle'
+                      : 'quizDeck.emptySubtitle'),
                 ),
               ),
             ],

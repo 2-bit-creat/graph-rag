@@ -5064,8 +5064,11 @@ async def delete_quizzes_for_expressions(
     doomed: list[uuid.UUID] = []
     for quiz in rows:
         data = quiz.quiz_data if isinstance(quiz.quiz_data, dict) else {}
-        canonical = _expression_identity(str(data.get("canonical_form") or ""))
-        if canonical not in keys:
+        identities = {
+            _expression_identity(str(data.get("canonical_form") or "")),
+            _expression_identity(str(data.get("surface_form") or data.get("blank") or "")),
+        }
+        if not (identities & keys):
             continue
         if node_id is not None and not any(
             str(source) == str(node_id) for source in (quiz.source_nodes or [])

@@ -6,7 +6,7 @@ more (native, target) pairs, and writes a review bundle to
 ``backend/eval/runs/<timestamp>_<git-sha>/``:
 
 - ``report.md``   — every generated card, rendered like a learner would see
-                     it, with QA score and origin (author/repair/fallback).
+                     it, with QA score and origin (reviewed_plan/repair).
                      Read this to judge quality.
 - ``failures.md``  — every rejected candidate with its gate reason code.
                      Read this to find what to tighten next.
@@ -57,6 +57,11 @@ _RUNS_DIR = Path(__file__).resolve().parent.parent / "eval" / "runs"
 
 _PAIR_CODES = {"ko-en": ("korean", "english"), "ko-de": ("korean", "german"), "en-ko": ("english", "korean")}
 
+_MODEL_PRICES = {
+    "gpt-4o-mini": {"input": 0.15, "cached_input": 0.075, "output": 0.60},
+    "gpt-5.4-mini": {"input": 0.75, "cached_input": 0.075, "output": 4.50},
+}
+
 
 _CANDIDATE_PREFIX_RE = __import__("re").compile(r"^candidate \d+:\s*")
 
@@ -100,9 +105,12 @@ def _load_golden(ids: set[str] | None) -> list[dict]:
     return statements
 
 
-def _check_golden_expectation(statement: dict, views: list[dict]) -> dict | None:
+def _check_golden_expectation(
+    statement: dict, views: list[dict], *, target_language: str = "english"
+) -> dict | None:
     """Check a narrow semantic regression contract on the generated cloze."""
-    expected = statement.get("expect_cloze")
+    by_target = statement.get("expect_cloze_by_target") or {}
+    expected = by_target.get(target_language) or statement.get("expect_cloze")
     if not isinstance(expected, dict):
         return None
     target_terms = [str(v).casefold() for v in expected.get("target_contains") or []]
@@ -188,6 +196,9 @@ def _card_view(quiz: Quiz) -> dict:
     }
     if quiz.quiz_type == "cloze":
         view.update({
+            # How this card was produced: directly from the independently
+            # reviewed plan, or by a focused alignment repair.
+            "origin": qd.get("_origin"),
             "canonical_form": qd.get("canonical_form"),
             "surface_answer": qd.get("blank"),
             "prompt_target": qd.get("prompt_en"),
@@ -200,6 +211,25 @@ def _card_view(quiz: Quiz) -> dict:
             "model_answers": [m.get("text") for m in (qd.get("model_answers") or [])],
         })
     return view
+
+
+def _estimated_usage_cost(usage: dict) -> tuple[float | None, dict[str, float]]:
+    """Price recorded usage without double-counting cached prompt tokens."""
+    by_model: dict[str, float] = {}
+    for model, model_usage in (usage.get("by_model") or {}).items():
+        prices = _MODEL_PRICES.get(model)
+        if prices is None:
+            return None, {}
+        cached = int(model_usage.get("cached_prompt_tokens") or 0)
+        prompt = int(model_usage.get("prompt_tokens") or 0)
+        uncached = max(0, prompt - cached)
+        completion = int(model_usage.get("completion_tokens") or 0)
+        by_model[model] = (
+            uncached * prices["input"]
+            + cached * prices["cached_input"]
+            + completion * prices["output"]
+        ) / 1_000_000
+    return sum(by_model.values()), by_model
 
 
 async def _make_eval_user(session, *, native: str, target: str, level: int, run_id: str, pair: str) -> User:
@@ -241,10 +271,12 @@ async def _run_pair(
         "pair": pair, "native": native, "target": target,
         "statements": 0, "bundles": 0, "bundle_errors": 0,
         "chunks_proposed": 0, "chunks_selected": 0, "cards_emitted": 0,
+        "cloze_cards_saved": 0, "cloze_origin_counts": Counter(),
         "gate_histogram": Counter(), "repair_gate_histogram": Counter(),
         "rejection_samples": [],
         "qa_scores": [], "verdicts": Counter(),
-        "repaired": 0, "fallback": 0, "pack_coverage": target_pack(target).coverage,
+        "repair_attempts": 0, "semantic_reviews_reused": 0,
+        "pack_coverage": target_pack(target).coverage,
         "golden_checks": [], "golden_failures": 0,
         "usage": {
             "prompt_tokens": 0, "completion_tokens": 0,
@@ -299,6 +331,8 @@ async def _run_pair(
                             metrics["rejection_samples"].append(reason[:300])
                     for reason in struct_out.get("quality_rejections") or []:
                         metrics["gate_histogram"][_gate_code(str(reason))] += 1
+                        if len(metrics["rejection_samples"]) < 60:
+                            metrics["rejection_samples"].append(str(reason)[:300])
                     for step in trace.get("steps") or []:
                         usage = (step.get("output") or {}).get("usage")
                         if usage is not None:
@@ -308,14 +342,31 @@ async def _run_pair(
                     qa_step = _extract_step(trace, "bundle_cloze_batch_quality_review")
                     if qa_step:
                         qa_output = qa_step.get("output") or {}
-                        metrics["repaired"] += int(qa_output.get("repair_count") or 0)
-                        metrics["fallback"] += int(
-                            qa_output.get("safe_reference_fallback_count") or 0
+                        metrics["repair_attempts"] += int(qa_output.get("repair_count") or 0)
+                        metrics["semantic_reviews_reused"] += int(
+                            qa_output.get("reused_plan_review_count") or 0
                         )
-                    metrics["chunks_selected"] += sum(1 for q in created if q.quiz_type == "cloze")
+                        for review in (
+                            list(qa_output.get("initial_reviews") or [])
+                            + list(qa_output.get("repair_reviews") or [])
+                        ):
+                            if not isinstance(review, dict):
+                                continue
+                            metrics["qa_scores"].append(int(review.get("score") or 0))
+                            metrics["verdicts"][str(review.get("verdict") or "missing")] += 1
+                    saved_clozes = [q for q in created if q.quiz_type == "cloze"]
+                    metrics["cloze_cards_saved"] += len(saved_clozes)
+                    # Compatibility alias: this field historically counted
+                    # saved cloze cards despite its misleading name.
+                    metrics["chunks_selected"] += len(saved_clozes)
+                    for quiz in saved_clozes:
+                        origin = str((quiz.quiz_data or {}).get("_origin") or "unknown")
+                        metrics["cloze_origin_counts"][origin] += 1
                     metrics["cards_emitted"] += len(created)
                     created_views = [_card_view(quiz) for quiz in created]
-                    golden_check = _check_golden_expectation(statement, created_views)
+                    golden_check = _check_golden_expectation(
+                        statement, created_views, target_language=target
+                    )
                     if golden_check is not None:
                         metrics["golden_checks"].append(golden_check)
                         if not golden_check["passed"]:
@@ -346,12 +397,29 @@ async def _run_pair(
                         await cleanup_session.commit()
     metrics["gate_histogram"] = dict(metrics["gate_histogram"])
     metrics["repair_gate_histogram"] = dict(metrics["repair_gate_histogram"])
+    metrics["cloze_origin_counts"] = dict(metrics["cloze_origin_counts"])
     metrics["verdicts"] = dict(metrics["verdicts"])
     metrics["cards_per_statement"] = (
         metrics["cards_emitted"] / metrics["statements"] if metrics["statements"] else 0.0
     )
-    metrics["fallback_rate"] = (
-        metrics["fallback"] / metrics["chunks_selected"] if metrics["chunks_selected"] else 0.0
+    saved_clozes = metrics["cloze_cards_saved"]
+    metrics["clozes_per_statement"] = (
+        saved_clozes / metrics["statements"] if metrics["statements"] else 0.0
+    )
+    metrics["reviewed_plan_card_rate"] = (
+        metrics["cloze_origin_counts"].get("reviewed_plan", 0) / saved_clozes if saved_clozes else 0.0
+    )
+    metrics["repair_card_rate"] = (
+        metrics["cloze_origin_counts"].get("repair", 0) / saved_clozes if saved_clozes else 0.0
+    )
+    cost, cost_by_model = _estimated_usage_cost(metrics["usage"])
+    metrics["estimated_cost_usd"] = cost
+    metrics["estimated_cost_by_model_usd"] = cost_by_model
+    metrics["estimated_cost_per_bundle_usd"] = (
+        cost / metrics["bundles"] if cost is not None and metrics["bundles"] else None
+    )
+    metrics["estimated_cost_per_saved_cloze_usd"] = (
+        cost / saved_clozes if cost is not None and saved_clozes else None
     )
     return cards, metrics
 
@@ -362,8 +430,11 @@ def _write_report(cards: list[dict], metrics_by_pair: dict[str, dict], out_dir: 
         lines.append(f"## {pair} ({metrics['native']} -> {metrics['target']})\n")
         lines.append(
             f"- statements: {metrics['statements']}, bundles: {metrics['bundles']}, "
-            f"cards emitted: {metrics['cards_emitted']}, cards/statement: {metrics['cards_per_statement']:.2f}\n"
+            f"cards emitted: {metrics['cards_emitted']}, clozes/statement: {metrics['clozes_per_statement']:.2f}\n"
             f"- pack coverage: {metrics['pack_coverage']}\n"
+            f"- saved cloze origins: {metrics['cloze_origin_counts']}\n"
+            f"- reused shared semantic reviews: {metrics['semantic_reviews_reused']}\n"
+            f"- estimated API cost: ${metrics['estimated_cost_usd']:.4f}\n"
             f"- semantic golden failures: {metrics['golden_failures']} / {len(metrics['golden_checks'])}\n"
             f"- gate histogram: {metrics['gate_histogram']}\n"
             f"- repair-path gate histogram: {metrics['repair_gate_histogram']}\n"
@@ -381,7 +452,7 @@ def _write_report(cards: list[dict], metrics_by_pair: dict[str, dict], out_dir: 
                     continue
                 if card["quiz_type"] == "cloze":
                     lines.append(
-                        f"- **cloze** `{card.get('canonical_form')}` — {card.get('prompt_target')} "
+                        f"- **cloze** [{card.get('origin') or 'unknown'}] `{card.get('canonical_form')}` — {card.get('prompt_target')} "
                         f"→ **{card.get('surface_answer')}** (native: {card.get('target_native')})\n"
                     )
                 else:
@@ -418,7 +489,6 @@ def _compare(prev_dir: Path, metrics_by_pair: dict[str, dict]) -> str:
         lines.append(
             f"## {pair}\n- cards/statement: {prev['cards_per_statement']:.2f} -> "
             f"{metrics['cards_per_statement']:.2f} ({delta_cps:+.2f})\n"
-            f"- fallback_rate: {prev['fallback_rate']:.2%} -> {metrics['fallback_rate']:.2%}\n"
         )
         prev_hist = prev.get("gate_histogram", {})
         cur_hist = metrics["gate_histogram"]
@@ -439,8 +509,6 @@ def _assert_baseline(baseline_path: Path, metrics_by_pair: dict[str, dict]) -> i
             continue
         if metrics["cards_per_statement"] < base["cards_per_statement"] * 0.85:
             failures.append(f"{pair}: cards_per_statement dropped >15% ({base['cards_per_statement']:.2f} -> {metrics['cards_per_statement']:.2f})")
-        if metrics["fallback_rate"] > base["fallback_rate"] + 0.10:
-            failures.append(f"{pair}: fallback_rate rose >10pp ({base['fallback_rate']:.2%} -> {metrics['fallback_rate']:.2%})")
         if metrics["pack_coverage"] != "full" and base.get("pack_coverage") == "full":
             failures.append(f"{pair}: pack_coverage regressed from full to {metrics['pack_coverage']}")
     if failures:
@@ -508,8 +576,7 @@ async def main_async(args: argparse.Namespace) -> int:
         metrics_by_pair[code] = metrics
         print(
             f"  {code}: {metrics['cards_emitted']} cards from {metrics['bundles']} bundles "
-            f"(cards/statement={metrics['cards_per_statement']:.2f}, "
-            f"fallback_rate={metrics['fallback_rate']:.2%})"
+            f"(cards/statement={metrics['cards_per_statement']:.2f})"
         )
 
     (out_dir / "cards.json").write_text(

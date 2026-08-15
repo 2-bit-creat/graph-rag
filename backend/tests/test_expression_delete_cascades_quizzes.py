@@ -78,7 +78,7 @@ async def test_deleting_an_expression_removes_its_cloze_only(db_session, iso_use
     assert out["quizzes_deleted"] == 1
 
     remaining = await get_node_expressions(iso_user.id, str(stmt.id), "german")
-    assert [item["expression"] for item in remaining] == ["ins schwimmbad gehen"]
+    assert [item["expression"] for item in remaining] == ["ins Schwimmbad gehen"]
 
     quizzes = list((await db_session.execute(
         select(Quiz).where(Quiz.user_id == iso_user.id)

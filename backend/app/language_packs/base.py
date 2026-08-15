@@ -314,6 +314,16 @@ class NativeQuizPack:
             return f"Write a sentence in {target_label}."
         return f"Complete the {target_label} exercise."
 
+    def gloss_scope_reason(self, gloss: str, kind: str) -> str | None:
+        """Whether the native gloss is too small to cover the answer.
+
+        ``kind`` comes from the planner, so a ``verb_phrase`` is known to
+        contain a verb without having to detect one in the target language.
+        Generic packs have no opinion; a native language whose word order
+        makes a truncated gloss likely overrides this.
+        """
+        return None
+
     def subject_marked(self, native_part: str) -> bool:
         """Whether ``native_part`` (a fragment from ``meaning_parts[].native``)
         looks like a marked grammatical subject in this native language —

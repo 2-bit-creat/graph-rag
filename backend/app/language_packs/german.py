@@ -57,8 +57,11 @@ _DE_DETERMINERS = frozenset({
 # German possessives inflect for case/gender/number, so the bare stems are not
 # enough — "auf seinen Vorschlag" and "in ihrer Freizeit" have to be caught the
 # same way "in my spare time" is. Generated from the six stems rather than
-# written out, so no ending is quietly missing.
-_DE_POSSESSIVE_STEMS = ("mein", "dein", "sein", "ihr", "unser", "euer")
+# written out, so no ending is quietly missing. ``eigen-`` is included because
+# a cloze such as ``die eigenen Aktien`` still asks the learner to infer whose
+# shares they are, even though it is grammatically an adjective rather than a
+# possessive determiner.
+_DE_POSSESSIVE_STEMS = ("mein", "dein", "sein", "ihr", "unser", "euer", "eigen")
 _DE_POSSESSIVE_ENDINGS = ("", "e", "en", "em", "er", "es")
 _DE_POSSESSIVES = frozenset(
     stem + ending
@@ -126,6 +129,20 @@ class GermanTargetPack(TargetLanguagePack):
                 R.LEADING_DETERMINER,
                 f"answer starts with determiner {words[0]!r} and is too short to be useful alone",
             )
+        finite_clause_verbs = {
+            "gibt", "hat", "ist", "sind", "kann", "können", "wird", "werden",
+            "tritt", "treten", "verursacht", "entsteht", "entstehen",
+        }
+        if (
+            len(words) >= 5
+            and lowered[0] in _DE_DETERMINERS
+            and any(word[:1].isupper() for word in words[1:3])
+            and any(word in finite_clause_verbs for word in lowered[2:4])
+        ):
+            return R.reason(
+                R.NOT_TEACHABLE,
+                f"{answer!r} is a subject plus finite predicate clause, not a reusable expression",
+            )
         possessive_reason = self.internal_possessive_reason(words)
         if possessive_reason:
             return possessive_reason
@@ -152,11 +169,16 @@ class GermanTargetPack(TargetLanguagePack):
         for index, word in enumerate(words):
             if word.casefold() not in self.possessive_determiners:
                 continue
-            following = words[index + 1] if index + 1 < len(words) else ""
-            if following[:1].isupper():
+            # German adjectives sit between determiner and capitalized noun:
+            # ``seiner freien Zeit`` is just as deictic as ``seine Unterlagen``.
+            noun = next(
+                (candidate for candidate in words[index + 1:index + 3] if candidate[:1].isupper()),
+                "",
+            )
+            if noun:
                 return R.reason(
                     R.INTERNAL_POSSESSIVE,
-                    f"answer contains possessive {word!r} before noun {following!r} "
+                    f"answer contains possessive {word!r} before noun {noun!r} "
                     f"at position {index}; end the answer before it",
                 )
         return None
@@ -197,11 +219,33 @@ class GermanTargetPack(TargetLanguagePack):
     def surface_boundary_reason(
         self, *, answer: str, sentence_target: str, canonical_form: str
     ) -> str | None:
+        answer_words = self.tokens(answer)
+        if answer_words and (
+            answer_words[0].casefold() in self.coordinators
+            or answer_words[-1].casefold() in self.coordinators
+        ):
+            return R.reason(
+                R.SIBLING_JOIN,
+                f"surface_answer {answer!r} begins or ends with a coordinator",
+            )
         canonical_words = self.tokens(canonical_form)
         if canonical_words:
-            first = canonical_words[0].lower()
+            # The verb may follow its object in a canonical phrase
+            # (``einen Diskontsatz anwenden``), so inspect every token rather
+            # than assuming the first token is the verb.
+            verb_word = next(
+                (
+                    word.lower()
+                    for word in reversed(canonical_words)
+                    if word.lower().endswith(("en", "eln", "ern"))
+                ),
+                canonical_words[0].lower(),
+            )
             prefix = next(
-                (p for p in DE_SEPARABLE_PREFIXES if first == p or (first.startswith(p) and len(first) > len(p) + 2)),
+                (
+                    p for p in DE_SEPARABLE_PREFIXES
+                    if verb_word == p or (verb_word.startswith(p) and len(verb_word) > len(p) + 2)
+                ),
                 None,
             )
             if prefix:
@@ -216,6 +260,14 @@ class GermanTargetPack(TargetLanguagePack):
                         f"missing from surface_answer {answer!r}; rewrite with a subordinate "
                         "clause, the perfect tense, or a modal so the prefix stays present",
                     )
+                verb_stem = verb_word[len(prefix):]
+                if len(verb_stem) >= 3 and not any(verb_stem[:4] in token for token in surface_lowered):
+                    return R.reason(
+                        R.DE_SEPARABLE_SPLIT,
+                        f"surface_answer {answer!r} keeps prefix {prefix!r} but omits the "
+                        f"verb stem from {verb_word!r}; an object plus a stranded prefix is "
+                        "not the complete action",
+                    )
             if canonical_words[0].lower() in _DE_DETERMINERS and len(canonical_words) > 1:
                 canonical_noun = canonical_words[1]
                 surface_words = self.tokens(answer)
@@ -226,7 +278,6 @@ class GermanTargetPack(TargetLanguagePack):
                         f"{canonical_noun!r} from {canonical_form!r}",
                     )
 
-        answer_words = self.tokens(answer)
         if not answer_words:
             return None
         answer_at_sentence_start = sentence_target.lstrip().casefold().startswith(answer.casefold())

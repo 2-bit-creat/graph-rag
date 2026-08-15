@@ -26,21 +26,6 @@ from . import json_doc_store
 
 _FILENAME = "user_node_expressions.json"
 
-# German definite/indefinite articles to strip from the front of expressions.
-# This ensures quiz blanks test the noun/verb itself, not the article.
-_DE_ARTICLES = frozenset(
-    ["der", "die", "das", "den", "dem", "des", "ein", "eine", "einen", "einem", "einer", "eines"]
-)
-
-
-def _strip_german_article(expr: str) -> str:
-    """Remove leading article from a German expression (lowercase input expected)."""
-    parts = expr.split(None, 1)
-    if len(parts) == 2 and parts[0] in _DE_ARTICLES:
-        return parts[1]
-    return expr
-
-
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -107,32 +92,38 @@ async def save_node_expressions(
     *,
     node_name: str = "",
 ) -> None:
-    is_german = (language or "").strip().lower() == "german"
-
     def _save() -> None:
         store = _read_store_sync(user_id)
         node_exprs = store["expressions"].setdefault(node_id, {})
         if node_name:
             node_exprs["node_name"] = node_name
         lang_exprs = node_exprs.get(language, [])
-        seen = {e.get("expression", "").lower() for e in lang_exprs}
+        seen = {e.get("expression", "").casefold() for e in lang_exprs}
         now = _utc_now()
         for item in expressions:
-            expr_key = (item.get("expression") or "").strip().lower()
-            if is_german:
-                expr_key = _strip_german_article(expr_key)
-            if not expr_key:
+            expression = (item.get("expression") or "").strip()
+            expr_key = expression.casefold()
+            if not expression:
                 continue
             if expr_key in seen:
                 # Keep accumulated learning state, but enrich older entries
                 # when a newer analysis has better provenance/metadata.
                 existing = next(
-                    (entry for entry in lang_exprs if (entry.get("expression") or "").lower() == expr_key),
+                    (entry for entry in lang_exprs if (entry.get("expression") or "").casefold() == expr_key),
                     None,
                 )
                 if existing is not None:
+                    # Review provenance must also be able to move from true to
+                    # false. Treating false like an empty optional field would
+                    # let a failed re-analysis inherit an older release pass.
+                    existing["release_reviewed"] = bool(item.get("release_reviewed"))
+                    existing["review_model"] = (item.get("review_model") or "").strip()
+                    existing["review_contract_version"] = (
+                        item.get("review_contract_version") or ""
+                    ).strip()
                     for key, value in {
                         "meaning": (item.get("meaning_ko") or item.get("meaning") or "").strip(),
+                        "canonical_form": (item.get("canonical_form") or "").strip(),
                         "example": (item.get("example_en") or item.get("example") or "").strip(),
                         "surface_form": (item.get("surface_form") or "").strip(),
                         "meaning_parts": item.get("meaning_parts") or [],
@@ -151,7 +142,8 @@ async def save_node_expressions(
             if cefr not in {"A1", "A2", "B1", "B2", "C1", "C2"}:
                 cefr = ""
             lang_exprs.append({
-                "expression": expr_key,
+                "expression": expression,
+                "canonical_form": (item.get("canonical_form") or "").strip(),
                 "meaning": (item.get("meaning_ko") or item.get("meaning") or "").strip(),
                 "example": (item.get("example_en") or item.get("example") or "").strip(),
                 "surface_form": (item.get("surface_form") or "").strip(),
@@ -164,6 +156,15 @@ async def save_node_expressions(
                 "source_segment": (item.get("source_segment") or "").strip(),
                 "reference_answers": item.get("reference_answers") or [],
                 "surface_segments": item.get("surface_segments") or [],
+                # A reviewed expression is a frozen bilingual release contract,
+                # not merely a planner suggestion. This provenance lets the
+                # cloze stage avoid a duplicate semantic LLM call while old
+                # inventory (field absent/false) continues to fail closed.
+                "release_reviewed": bool(item.get("release_reviewed")),
+                "review_model": (item.get("review_model") or "").strip(),
+                "review_contract_version": (
+                    item.get("review_contract_version") or ""
+                ).strip(),
                 "quiz_status": (item.get("quiz_status") or "available").strip(),
                 "rejection_reason": (item.get("rejection_reason") or "").strip(),
                 "added_at": now,

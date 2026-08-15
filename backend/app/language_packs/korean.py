@@ -62,6 +62,9 @@ _KO_SIBLING_RE = re.compile(r"(?:면서|으며|하며|그리고|고서|뿐만\s*
 _KO_DICTIONARY_FORM_RE = re.compile(r"[가-힣]다$")
 _KO_INFLECTED_PAST_RE = re.compile(r"(?:았|었|였|겠)다$")
 _KO_SUBJECT_EOJEOL_RE = re.compile(r"\S+(?:은|는|이|가)$")
+# An object-marked tail: the span ends where the verb should begin.
+_KO_OBJECT_TAIL_RE = re.compile(r"(?:을|를)$")
+_KO_PREDICATE_TAIL_RE = re.compile(r"(?:다|요|니다|습니다)$")
 # A bare 다-ending is the DICTIONARY form (검토하다) and the plain past
 # (검토했다), not a signal that the span is a finished sentence — this pack's
 # own ``base_form_reason`` requires canonical forms to end exactly that way.
@@ -265,6 +268,36 @@ class KoreanNativePack(NativeQuizPack):
         if quiz_type == "mcq_nuance":
             return f"문맥에 맞는 {target_label} 표현을 고르세요."
         return f"{target_label} 문제를 풀어보세요."
+
+    def gloss_scope_reason(self, gloss: str, kind: str) -> str | None:
+        """A verb phrase glossed by a bare object is missing its predicate.
+
+        Korean is verb-final, so a gloss that stops at the object particle
+        을/를 is an argument still waiting for its verb — "예약을" cannot be
+        the meaning of "die Reservierung auf den Nachmittag verschoben". The
+        planner's ``kind`` is what makes this safe: a noun-phrase answer such
+        as "die beiden Berichte" is legitimately glossed "두 보고서를", and it
+        is not a verb_phrase, so it is never touched here.
+
+        Stating the rule in the author prompt alone did not work — a measured
+        round left the defect rate flat (4 -> 6) — so it is enforced here.
+        """
+        if kind != "verb_phrase":
+            return None
+        cleaned = (gloss or "").strip().rstrip(".,!?…，。")
+        if _KO_OBJECT_TAIL_RE.search(cleaned):
+            return R.reason(
+                R.NATIVE_TARGET_MISALIGNMENT,
+                f"gloss {gloss!r} stops at the object particle but the answer is a "
+                "verb phrase; extend the gloss through the Korean 서술어",
+            )
+        if cleaned and not _KO_PREDICATE_TAIL_RE.search(cleaned):
+            return R.reason(
+                R.NATIVE_TARGET_MISALIGNMENT,
+                f"gloss {gloss!r} has no Korean predicate ending but the answer is a "
+                "verb phrase; include the full action, not only its noun or stem",
+            )
+        return None
 
     def subject_marked(self, native_part: str) -> bool:
         return bool(_KO_SUBJECT_MARK_RE.search((native_part or "").strip()))
