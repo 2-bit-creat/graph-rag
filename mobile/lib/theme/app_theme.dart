@@ -166,6 +166,15 @@ extension AppShellThemeX on BuildContext {
   Color get subtleText => shell.mutedText;
 }
 
+/// The app's one font family.
+///
+/// `ThemeData(fontFamily:)` only reaches `textTheme`/`primaryTextTheme`. Any
+/// other style a theme carries — an AppBar title, a button label, a chip label
+/// — keeps whatever family its own `TextStyle` names, and a bare `TextStyle()`
+/// names none. Those styles have to say the family themselves, so it is a
+/// constant rather than a literal repeated per component.
+const String appFontFamily = 'Pretendard';
+
 ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
   final isDark = brightness == Brightness.dark;
   final scheme = ColorScheme.fromSeed(
@@ -178,6 +187,9 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
 
   final shell = isDark ? AppShellTheme.dark : AppShellTheme.light;
 
+  // `.apply(fontFamily:)` at the end, so styles derived from this theme below
+  // (the AppBar title) inherit the family too. ThemeData would otherwise apply
+  // it only to the copy it stores, leaving those derived styles familyless.
   final textTheme = TextTheme(
     headlineMedium: TextStyle(
       fontSize: 26,
@@ -221,7 +233,7 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
       fontWeight: FontWeight.w600,
       letterSpacing: 0.1,
     ),
-  );
+  ).apply(fontFamily: appFontFamily);
 
   return ThemeData(
     useMaterial3: true,
@@ -273,7 +285,11 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
         ),
-        textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+        textStyle: const TextStyle(
+          fontFamily: appFontFamily,
+          fontWeight: FontWeight.w600,
+          fontSize: 14,
+        ),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
@@ -317,6 +333,7 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
       backgroundColor: scheme.surfaceContainerHighest.withValues(alpha: isDark ? 0.6 : 0.5),
       side: BorderSide(color: scheme.outlineVariant),
       labelStyle: TextStyle(
+        fontFamily: appFontFamily,
         fontSize: 12,
         fontWeight: FontWeight.w500,
         color: scheme.onSurfaceVariant,

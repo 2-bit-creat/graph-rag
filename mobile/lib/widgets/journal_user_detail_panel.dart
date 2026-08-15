@@ -27,6 +27,10 @@ class JournalUserDetailPanel extends StatefulWidget {
 }
 
 class _JournalUserDetailPanelState extends State<JournalUserDetailPanel> {
+  /// Guards the retry so a double tap cannot start two runs. The server also
+  /// refuses the second one, but the button should not look tappable meanwhile.
+  bool _reprocessing = false;
+
   bool get _isText => widget.entry['entry_source']?.toString() == 'precision_text';
 
   bool get _hasGraph {
@@ -101,6 +105,31 @@ class _JournalUserDetailPanelState extends State<JournalUserDetailPanel> {
     if (nav.canPop()) nav.pop();
   }
 
+  /// Re-run cleanup for an entry whose first attempt failed.
+  ///
+  /// The entry keeps what the user wrote, so this needs nothing from them — the
+  /// panel used to tell them to delete the entry and start over, which meant
+  /// deleting the only stored copy of their own writing.
+  Future<void> _reprocess() async {
+    if (_reprocessing) return;
+    setState(() => _reprocessing = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await apiClient.reprocessEntry(widget.entryId);
+      await widget.onRefresh();
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            tr('journalDetail.reprocessFailed', {'error': friendlyError(e)}),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _reprocessing = false);
+    }
+  }
+
   /// Open the HITL review screen for the freshly-staged draft. On confirmation
   /// the entry is refreshed so the committed "지식그래프 보기" banner appears.
   Future<void> _openReview() async {
@@ -149,6 +178,11 @@ class _JournalUserDetailPanelState extends State<JournalUserDetailPanel> {
         currentStep: 0,
         error: true,
         message: tr('journalDetail.msgFailed'),
+        // Only typed entries can be re-cleaned from stored text; an audio entry
+        // would need its recording put back through transcription.
+        ctaLabel: _isText ? tr('journalDetail.ctaReprocess') : null,
+        ctaIcon: Icons.refresh_rounded,
+        onCta: _isText && !_reprocessing ? _reprocess : null,
       );
     }
     if (status == 'graph_processing' || graphStatus == 'graph_processing') {

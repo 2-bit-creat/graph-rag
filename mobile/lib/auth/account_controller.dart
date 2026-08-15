@@ -98,6 +98,7 @@ class AccountController extends ChangeNotifier {
         nativeLanguage: nativeLanguage, create: create);
     _tokens[h] = token;
     _current = h;
+    _sessionExpired = false;
     _resetConsent();
     setApiAuthToken(token);
     // chatSession is a single app-wide singleton keyed by nothing but "the
@@ -188,6 +189,30 @@ class AccountController extends ChangeNotifier {
   }
 
   /// Sign out of the current account without deleting anything.
+  /// True after the server rejected our token, until the next successful entry.
+  /// The entry screen shows it so the user learns why they were sent back.
+  bool _sessionExpired = false;
+  bool get sessionExpired => _sessionExpired;
+  void clearSessionExpired() {
+    if (!_sessionExpired) return;
+    _sessionExpired = false;
+    notifyListeners();
+  }
+
+  /// The server rejected the bearer token — sign out and send the user back to
+  /// the entry screen.
+  ///
+  /// The cached token is dropped too, not just the current handle: tokens live
+  /// a week, and keeping the dead one would make re-entering the same handle
+  /// reuse it and fail again with no way forward.
+  Future<void> handleUnauthorized() async {
+    if (_current == null) return;
+    _tokens.remove(_current);
+    _sessionExpired = true;
+    await _persist();
+    await signOut();
+  }
+
   Future<void> signOut() async {
     _current = null;
     _resetConsent();

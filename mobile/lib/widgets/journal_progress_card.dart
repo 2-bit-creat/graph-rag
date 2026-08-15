@@ -164,7 +164,7 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
     // they're assigned, acknowledging continues the pipeline into the auto-build.
     final nav = appNavigatorKey.currentContext;
     if (nav == null) return;
-    await JournalHubScreen.openEntryDetail(nav, widget.entryId);
+    await JournalEntryDetailScreen.open(nav, widget.entryId);
     if (_isLive) {
       await journalTask.refresh();
       if (!speakersPending(journalTask.entry)) {
@@ -458,8 +458,14 @@ class _CardBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final step = _activeStep;
+    // Working is included: a graph draft takes ten-odd seconds during which the
+    // card had no close and no cancel, so the only way out of the feed's newest
+    // item was to wait it out. Closing is local only — the draft keeps running
+    // and the entry stays in the feed and the timeline.
     final showDismiss = onDismiss != null &&
-        (phase == ComposePhase.done || phase == ComposePhase.error);
+        (phase == ComposePhase.done ||
+            phase == ComposePhase.error ||
+            phase == ComposePhase.working);
     // Every live pipeline gets a way out. A gate waiting on the user is exactly
     // where a mistaken submit (wrong speakers) has to be undoable.
     final showCancel =
@@ -488,7 +494,9 @@ class _CardBody extends StatelessWidget {
                 Tooltip(
                   message: showCancel
                       ? tr('progressCard.cancelTooltip')
-                      : tr('common.close'),
+                      : phase == ComposePhase.working
+                          ? tr('progressCard.hideKeepsRunning')
+                          : tr('common.close'),
                   child: InkWell(
                     onTap: showCancel ? onCancel : onDismiss,
                     child: Padding(
@@ -528,6 +536,16 @@ class _CardBody extends StatelessWidget {
               ],
             ],
           ),
+          // The card carries a body for each gate it can sit at, but had none
+          // for "working" — so while the graph draft ran, the entry the user
+          // had just been reading collapsed to a title and a progress strip for
+          // ten-odd seconds. Keep their own words on screen through the wait.
+          if (phase == ComposePhase.working &&
+              !showSpeakerConfirm &&
+              !showGraphReview) ...[
+            const SizedBox(height: 12),
+            _WorkingPreview(entry: entry),
+          ],
           if (showSpeakerConfirm) ...[
             const SizedBox(height: 12),
             _InlineSpeakerConfirm(
@@ -825,5 +843,49 @@ Future<void> openJournalReviewFallback(
     }
     return;
   }
-  await JournalHubScreen.openEntryDetail(context, entryId);
+  await JournalEntryDetailScreen.open(context, entryId);
+}
+
+/// What the learner wrote, held on screen while a background step runs.
+///
+/// Deliberately quiet — a couple of muted lines, no actions. The step above it
+/// is the status; this is only here so the card is not empty and the entry
+/// stays recognisable among the other cards in the feed.
+class _WorkingPreview extends StatelessWidget {
+  const _WorkingPreview({required this.entry});
+
+  final Map<String, dynamic>? entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final e = entry;
+    if (e == null) return const SizedBox.shrink();
+    final text = [
+      e['transcript_clean_native'],
+      e['transcript_native'],
+      e['transcript_ko'],
+    ].map((v) => v?.toString().trim() ?? '').firstWhere(
+          (v) => v.isNotEmpty,
+          orElse: () => '',
+        );
+    if (text.isEmpty) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: context.shell.subtleSurface,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        text,
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 12,
+          height: 1.4,
+          color: context.shell.mutedText,
+        ),
+      ),
+    );
+  }
 }

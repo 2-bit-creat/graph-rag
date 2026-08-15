@@ -103,7 +103,6 @@ class _MenuScreenState extends State<MenuScreen> {
             AppHubTile(
               icon: Icons.menu_book_rounded,
               title: tr('sidebar.vocabBank'),
-              subtitle: '',
               color: AppColors.hubQuiz,
               onTap: () => _open(const VocabularyHubScreen()),
             ),
@@ -132,14 +131,16 @@ class _MenuScreenState extends State<MenuScreen> {
             ),
             const SizedBox(height: AppSpacing.xl),
 
+            // The header names the group, the tile names the action. They used
+            // to both read "계정 전환" with the same handle under each, so the
+            // screen said the same two things twice in a row.
             AppSectionHeader(
-                title: tr('account.switch'),
-                subtitle: accountController.current ?? ''),
+                title: tr('menu.sectionAccount'),
+                subtitle: accountController.current),
             const SizedBox(height: AppSpacing.sm),
             AppHubTile(
               icon: Icons.switch_account_rounded,
               title: tr('account.switch'),
-              subtitle: accountController.current ?? '',
               color: AppColors.hubGraph,
               onTap: () async {
                 final nav = Navigator.of(context);
@@ -151,7 +152,6 @@ class _MenuScreenState extends State<MenuScreen> {
             AppHubTile(
               icon: Icons.delete_forever_rounded,
               title: tr('account.deleteData'),
-              subtitle: '',
               color: Colors.red,
               onTap: _confirmDeleteAccount,
             ),

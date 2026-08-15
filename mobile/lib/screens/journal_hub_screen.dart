@@ -2,27 +2,26 @@ import 'package:flutter/material.dart';
 
 import '../api/client.dart';
 import '../app_route_observer.dart';
-import '../chat/chat_session_controller.dart' show openChatJournalCompose;
 import '../l10n/app_strings.dart';
 import '../widgets/app_ui.dart';
 import '../widgets/entry_hub_layout.dart';
 import '../widgets/journal_user_detail_panel.dart';
 
-/// 사용자용 일기 목록 — 번역·내용 확인 (파이프라인 trace 없음).
-class JournalHubScreen extends StatelessWidget {
-  const JournalHubScreen({super.key, this.initialEntryId});
+/// Standalone journal entry detail — pushed directly so back returns to caller.
+///
+/// There used to be a `JournalHubScreen` list above this: a full record list
+/// with its own search, delete-all and split-pane detail. Nothing in the app
+/// ever constructed it. The sidebar's 내 일기 opens [KgTimelineScreen], and the
+/// only paths into journal content push this detail screen straight from the
+/// timeline or the progress card. The list was removed rather than wired up,
+/// since the timeline already answers "what have I recorded" with more (type
+/// filters, per-day grouping, speakers, calendar).
+class JournalEntryDetailScreen extends StatefulWidget {
+  const JournalEntryDetailScreen({super.key, required this.entryId});
 
-  final String? initialEntryId;
-
-  /// 새 일기 쓰기 — 팝업 작성 창 대신 홈(대화)의 채팅 일기 쓰기 모드로 이동.
-  static Future<void> openCompose(BuildContext context) {
-    openChatJournalCompose();
-    return Future.value();
-  }
-
-  /// Open a single entry's detail directly (e.g. from the Timeline), so pressing
-  /// back returns to the caller (timeline/calendar) — NOT the journal list.
-  static Future<void> openEntryDetail(BuildContext context, String entryId) {
+  /// Open a single entry's detail, so pressing back returns to the caller
+  /// (timeline / calendar / progress card).
+  static Future<void> open(BuildContext context, String entryId) {
     return Navigator.push(
       context,
       MaterialPageRoute(
@@ -30,34 +29,6 @@ class JournalHubScreen extends StatelessWidget {
       ),
     );
   }
-
-  @override
-  Widget build(BuildContext context) {
-    if (initialEntryId != null) {
-      return JournalEntryDetailScreen(entryId: initialEntryId!);
-    }
-    return EntryHubNavigator(
-      title: tr('journalHub.pageTitle'),
-      initialEntryId: initialEntryId,
-      emptyHint: tr('journalHub.emptyHint'),
-      emptySubtitle: tr('journalHub.emptySubtitle'),
-      onNewEntry: () => openCompose(context),
-      entryDeletable: true,
-      allDeletable: true,
-      detailBuilder: (context, entry, entryId, refresh) {
-        return JournalUserDetailPanel(
-          entryId: entryId,
-          entry: entry,
-          onRefresh: refresh,
-        );
-      },
-    );
-  }
-}
-
-/// Standalone journal entry detail — pushed directly so back returns to caller.
-class JournalEntryDetailScreen extends StatefulWidget {
-  const JournalEntryDetailScreen({super.key, required this.entryId});
 
   final String entryId;
 

@@ -168,7 +168,7 @@ class _KgTimelineScreenState extends State<KgTimelineScreen> with RouteAware {
   Future<void> _onEntryTap(Map<String, dynamic> card) async {
     final entryId = card['entry_id']?.toString();
     if (entryId == null || entryId.isEmpty) return;
-    await JournalHubScreen.openEntryDetail(context, entryId);
+    await JournalEntryDetailScreen.open(context, entryId);
   }
 
   List<Map<String, dynamic>> get _filteredCards {

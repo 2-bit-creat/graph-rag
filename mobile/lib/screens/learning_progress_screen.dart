@@ -5,6 +5,7 @@ import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import 'kg_insight_screen.dart';
+import 'quiz_deck_screen.dart';
 import 'quiz_session_screen.dart';
 
 List<String> get _weekdays => [
@@ -94,6 +95,15 @@ class _LearningProgressScreenState extends State<LearningProgressScreen>
       context,
       MaterialPageRoute(builder: (_) => QuizSessionScreen(quizType: type)),
     );
+    await _load();
+  }
+
+  /// Quizlet-style review over the same cloze queue, graded by the learner.
+  ///
+  /// `cloze` rather than `composition`: a flip card shows a prompt and its
+  /// answer, which a written composition has no single one of.
+  Future<void> _openReviewDeck() async {
+    await Navigator.of(context).push(QuizDeckScreen.route(quizType: 'cloze'));
     await _load();
   }
 
@@ -285,6 +295,19 @@ class _LearningProgressScreenState extends State<LearningProgressScreen>
             onCloze: () => _start('cloze'),
             onComposition: () => _start('composition'),
             onEdit: _editGoals,
+          ),
+          const SizedBox(height: 12),
+          // The self-graded flip deck. It sits under the mission card because
+          // it draws from the same queue as 단어 above — the difference is who
+          // grades: there you type an answer the server checks, here you flip
+          // the card and judge yourself.
+          AppPrimaryBanner(
+            icon: Icons.style_rounded,
+            title: tr('progress.reviewDeckTitle'),
+            subtitle: tr('progress.reviewDeckSubtitle'),
+            actionLabel: tr('progress.reviewDeckAction'),
+            color: AppColors.hubQuiz,
+            onTap: _openReviewDeck,
           ),
           const SizedBox(height: 18),
           _SectionTitle(

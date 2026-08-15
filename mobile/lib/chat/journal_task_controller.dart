@@ -378,7 +378,15 @@ class JournalTaskController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void dismiss() => release();
+  /// Put the live card away. The pipeline is NOT cancelled.
+  ///
+  /// [release] is entirely local — it stops this client polling and forgets the
+  /// entry; it sends nothing to the server. The graph draft keeps running and
+  /// the entry keeps its place in the feed and the timeline, so closing the
+  /// card during a long step costs the user nothing. Forced, because otherwise
+  /// the guard in [release] makes this a no-op for exactly the phase where a
+  /// way out matters most.
+  void dismiss() => release(force: true);
 
   @override
   void dispose() {
