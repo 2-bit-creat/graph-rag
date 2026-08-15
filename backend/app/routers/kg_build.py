@@ -247,6 +247,27 @@ def _parse_stmt_description(description: str | None) -> tuple[str, str]:
         return parts[0].strip() or "미분류", parts[1].strip() if len(parts) > 1 else ""
 
 
+def _timeline_preview(text: str, limit: int = 160) -> str:
+    """First line or so of an entry that has no graph yet, for the timeline card.
+
+    This used to be a bare ``[:60]``. Two problems, both visible on the card:
+    60 characters filled only two of the three lines the client renders, and a
+    hard slice landed mid-word with nothing to mark it ("자금 집행의 주체(고유계정 vs"),
+    which reads as damaged text rather than as a preview. Cut on whitespace when
+    one is near the limit and append an ellipsis so the truncation is legible.
+    """
+    flat = " ".join(text.split())
+    if len(flat) <= limit:
+        return flat
+    head = flat[:limit]
+    space = head.rfind(" ")
+    # Only honour a word boundary in the last quarter — otherwise a long
+    # unbroken run (a URL, Korean prose with few spaces) would cut far too short.
+    if space > limit * 0.75:
+        head = head[:space]
+    return head.rstrip() + "…"
+
+
 def _claim_key(entry_id: _uuid.UUID | None, index: int, statement: str) -> str:
     """Stable identity for an event claim; display title is deliberately excluded."""
     namespace = entry_id or _uuid.UUID("00000000-0000-0000-0000-000000000000")
@@ -2729,7 +2750,9 @@ async def kg_timeline(
         if statements_out:
             preview = " · ".join(st["title"] for st in statements_out[:2])
         else:
-            preview = (entry.transcript_clean_native or entry.transcript_native or "").strip()[:60]
+            preview = _timeline_preview(
+                entry.transcript_clean_native or entry.transcript_native or ""
+            )
 
         cards.append({
             "entry_id": str(entry.id),

@@ -27,6 +27,7 @@ import '../widgets/node_merge_sheet.dart';
 import '../widgets/ocr_review_sheet.dart';
 import '../widgets/ontology_settings_sheet.dart';
 import '../widgets/quiz/cloze_quiz_card.dart';
+import '../widgets/quiz/quiz_viewport_scope.dart';
 import '../widgets/thinking_orbs.dart';
 
 /// Full-screen interactive knowledge graph with integrated chat panel.
@@ -163,6 +164,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   // Textract answers in a couple of seconds, but on a slow phone connection the
   // upload alone is long enough that a silent UI reads as a dead tap.
   bool _ocrBusy = false;
+
   /// A drag-to-merge is in flight (edge surgery + optional rename + reload).
   bool _merging = false;
   int _lastMsgCount = 0;
@@ -273,7 +275,11 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         _chatExpandedForInput = true;
         _chatManuallySized = false;
       });
-      _animateChatSheet(_sheetFocusSize);
+      // remember: false — 90% is the typing posture, not a browsing height the
+      // user picked. Recording it meant one tap on the composer permanently
+      // redefined "restore to the height you last chose", so every later
+      // restore (leaving a quiz, switching rooms) buried the graph.
+      _animateChatSheet(_sheetFocusSize, remember: false);
       _pinChatToBottom();
       return;
     }
@@ -283,10 +289,12 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     if (_chatFocused) setState(() => _chatFocused = false);
   }
 
-  void _animateChatSheet(double target) {
+  /// [remember] records [target] as the height to come back to. Pass false for
+  /// heights the app chose on the user's behalf rather than ones they set.
+  void _animateChatSheet(double target, {bool remember = true}) {
     final min = _sheetMinChildSize(context, _chatAreaHeight);
     final next = target.clamp(min, _sheetFocusSize).toDouble();
-    if (next > min + 0.01) {
+    if (remember && next > min + 0.01) {
       _chatRestoredSize = next;
     }
     setState(() {
@@ -371,6 +379,20 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     FocusManager.instance.primaryFocus?.unfocus();
     unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.hide'));
     chatSession.exitMode();
+    // Entering a quiz/journal mode raises the sheet to 90% (_expandChatForInput)
+    // so the card has room. Leaving one never lowered it again, so closing a
+    // quiz dropped the user on a wall of chat with the graph — the whole point
+    // of this screen — still buried behind it, recoverable only by dragging a
+    // handle they have no reason to know about. Restore the height they last
+    // chose, the same way switching rooms does.
+    if (!mounted) return;
+    setState(() {
+      _chatExpandedForInput = false;
+      _chatManuallySized = false;
+      _chatSheetSize = _chatRestoredSize > _sheetDefaultSize
+          ? _chatRestoredSize
+          : _sheetDefaultSize;
+    });
   }
 
   /// Recreate the platform text-input connection after an async mode switch.
@@ -542,6 +564,17 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     Map<String, Map<String, dynamic>> nodeById = const {},
   }) {
     _activeChatScrollController = _chatScrollController;
+    // The graph is edge-to-edge, but the floating search/menu pill remains the
+    // screen's navigation chrome. Leave it visible above a focused chat/quiz
+    // instead of placing the first message or a long-running quiz status under
+    // the system bar and search controls.
+    final expandedTopInset = MediaQuery.paddingOf(context).top + 72.0;
+    final expandedHeight = (graphAreaHeight - expandedTopInset)
+        .clamp(
+          0.0,
+          graphAreaHeight,
+        )
+        .toDouble();
     // When the chat is collapsed, do not leave the sheet at its minimum
     // height. That exposed only the rounded top edge and shadow above the
     // composer. The composer is docked independently, so the chat sheet can
@@ -557,9 +590,14 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       // the IME — on web that only holds because KeyboardInsetScope injects the
       // measured keyboard height into MediaQuery (see utils/keyboard_inset.dart);
       // without it the browser reports no inset and the keyboard covers the feed.
+      // Keep system chrome and primary navigation readable, whichever path set
+      // the height. Capping only the IME-expanded branch left every other route
+      // to a tall sheet — a restored 0.9 height, a drag — free to run the feed
+      // up under the status bar, where the first message collided with the
+      // clock and the search pill showed through the panel.
       height: (_chatExpandedForInput && !_chatManuallySized)
-          ? graphAreaHeight
-          : _chatSheetSize * graphAreaHeight,
+          ? expandedHeight
+          : (_chatSheetSize * graphAreaHeight).clamp(0.0, expandedHeight),
       child: AnimatedOpacity(
         opacity: _chatPeekThrough ? 0.18 : 1,
         duration: const Duration(milliseconds: 260),
@@ -1249,15 +1287,29 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       chatSession.mode != ChatMode.quizWord ||
       (chatSession.wordQuizUsesComposer && !chatSession.wordQuizSolved);
 
+  /// Placeholder for a quiz composer with no question behind it, or null when
+  /// a card is loaded and the mode's normal hint applies.
+  String? _quizlessInputHint() {
+    if (chatSession.activeQuiz != null) return null;
+    if (chatSession.quizUnavailable || chatSession.quizExhausted) {
+      return tr('chat.hint.quizNone');
+    }
+    return tr('chat.hint.quizWaiting');
+  }
+
   String get _inputHint {
     if (_quizStarting && _modeLabel() == null) return tr('chat.hint.word');
     switch (chatSession.mode) {
       case ChatMode.distill:
         return tr('chat.hint.distill');
       case ChatMode.quizComposition:
-        return tr('chat.hint.composition');
+        // "Write your answer" over an empty screen invites typing an answer to
+        // a question that has not arrived. Say what the app is doing instead —
+        // and distinguish "still coming" from "there is nothing to ask", which
+        // are the same blank composer but opposite advice.
+        return _quizlessInputHint() ?? tr('chat.hint.composition');
       case ChatMode.quizWord:
-        return tr('chat.hint.word');
+        return _quizlessInputHint() ?? tr('chat.hint.word');
       case ChatMode.journal:
         return tr('chat.hint.journal');
       case ChatMode.normal:
@@ -1271,7 +1323,11 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   bool _hintButtonRectPublished = false;
 
   Widget? _wordQuizComposerActions() {
+    // No card loaded yet (first fetch, or a refill after the last question) is
+    // not a state a hint belongs in: there is nothing to reveal, so the button
+    // was a live-looking control whose only behaviour was to do nothing.
     if (chatSession.mode != ChatMode.quizWord ||
+        chatSession.activeQuiz == null ||
         !chatSession.wordQuizUsesComposer ||
         chatSession.wordQuizSolved) {
       if (_hintButtonRectPublished) {
@@ -1440,8 +1496,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     // Checked before `busy`, which stays true for the whole refill wait: a bare
     // 18px spinner for ~20s reads as a hang. Name the work and its cost instead.
     if (chatSession.quizRefilling) {
-      return Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
+      return _QuizStatusPanel(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -1484,8 +1539,12 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
                   onPressed: _exitInputMode,
                   child: Text(tr('quiz.close')),
                 ),
+                // Filled, matching the "nothing to ask" state below: through a
+                // ~20s wait this is the only thing the learner can actually do,
+                // and as a second flat text button it read as an afterthought
+                // next to 닫기 — the one action that loses them.
                 if (chatSession.quizType != 'composition')
-                  TextButton(
+                  FilledButton(
                     onPressed: () => chatSession.startQuiz('composition'),
                     child: Text(tr('quiz.tryComposition')),
                   ),
@@ -1496,20 +1555,59 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       );
     }
     if (chatSession.busy) {
-      return const Padding(
-        padding: EdgeInsets.all(AppSpacing.md),
-        child: Center(
-          child: SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2)),
+      return _QuizStatusPanel(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2.4),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        tr('quiz.loading'),
+                        style: TextStyle(
+                          color: context.shell.primaryText,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        tr('quiz.loadingHint'),
+                        style: TextStyle(
+                          color: context.shell.mutedText,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _exitInputMode,
+                child: Text(tr('quiz.close')),
+              ),
+            ),
+          ],
         ),
       );
     }
     if (chatSession.quizUnavailable) {
       final wordQuiz = chatSession.quizType != 'composition';
-      return Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
+      return _QuizStatusPanel(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1546,8 +1644,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       );
     }
     if (chatSession.quizExhausted) {
-      return Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
+      return _QuizStatusPanel(
         child: Row(
           children: [
             Expanded(
@@ -1903,7 +2000,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       final visibleGroups = Map<String, dynamic>.fromEntries(
         groups.entries
             .where(
-              (entry) => entry.value is List && (entry.value as List).isNotEmpty,
+              (entry) =>
+                  entry.value is List && (entry.value as List).isNotEmpty,
             )
             .map((entry) => MapEntry(entry.key.toString(), entry.value)),
       );
@@ -2140,7 +2238,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       if (_selectedNodeId == sourceId) _clearSelection();
       _snack(tr('nodeMerge.done', {
         'name': keptName,
-        'edges': '${(result['edges_reassigned'] as num?)?.toInt() ?? movingEdges}',
+        'edges':
+            '${(result['edges_reassigned'] as num?)?.toInt() ?? movingEdges}',
       }));
       await _load();
     } catch (e) {
@@ -2202,7 +2301,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       return _EmptyGraphHint(compact: true);
     }
 
-    return SizedBox.expand(
+    final body = SizedBox.expand(
       child: widget.compact
           ? _buildCompactGraph(
               nodes: nodes,
@@ -2217,6 +2316,27 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
               relationTypes: relationTypes,
               typeColors: typeColors,
             ),
+    );
+    if (widget.compact) return body;
+
+    // Android's back key hides the IME at the platform level without telling
+    // Flutter to drop focus, and the view kept the keyboard's inset afterwards:
+    // the app stayed drawn into the shortened viewport with a ~700px black band
+    // where the keyboard had been, and it did not recover on its own. Taking
+    // back ourselves — release focus, hide the IME through the same channel the
+    // app uses everywhere else — resolves the inset and also gives back its
+    // expected Android meaning here (leave the input posture, don't leave the
+    // app). A second press still pops.
+    return PopScope(
+      canPop: !_chatInputFocusNode.hasFocus,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || !_chatInputFocusNode.hasFocus) return;
+        _chatInputFocusNode.unfocus();
+        FocusManager.instance.primaryFocus?.unfocus();
+        unawaited(
+            SystemChannels.textInput.invokeMethod<void>('TextInput.hide'));
+      },
+      child: body,
     );
   }
 
@@ -2544,6 +2664,47 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Shared frame for the quiz footer's non-question states: preparing, loading,
+/// nothing to ask, session finished.
+///
+/// The footer slot is top-aligned inside a sheet stretched to the whole graph
+/// area, which is right for a question card (it can be taller than the screen)
+/// and wrong for these. A ~20s refill wait rendered as two lines of text pinned
+/// under the floating search pill with a thousand pixels of empty graph below
+/// it — indistinguishable from a screen that failed to load. Filling the
+/// viewport and centring the message makes the wait read as a state the app is
+/// deliberately in, and putting it on a bordered surface stops the text from
+/// floating loose over the canvas.
+class _QuizStatusPanel extends StatelessWidget {
+  const _QuizStatusPanel({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final shell = context.shell;
+    final card = Container(
+      decoration: BoxDecoration(
+        color: shell.subtleSurface,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
+        border: Border.all(color: shell.panelBorder),
+      ),
+      padding: const EdgeInsets.all(AppSpacing.md),
+      child: child,
+    );
+    final available = QuizViewportScope.maybeHeightOf(context);
+    if (available == null || available <= 0) return card;
+    return SizedBox(
+      height: available,
+      // Scrollable so a long "nothing to ask" body still reaches its buttons
+      // when the keyboard has taken most of the sheet.
+      child: Center(
+        child: SingleChildScrollView(child: card),
+      ),
     );
   }
 }

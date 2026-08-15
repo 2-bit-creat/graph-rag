@@ -300,19 +300,25 @@ class _ChatSidebarState extends State<ChatSidebar> {
         // Each item opens its destination directly — no intermediate menu
         // hub page to pass through first. (myJournal = the timeline view;
         // the old separate JournalHub was near-duplicate and removed.)
-        _CompactNavTile(
-            icon: Icons.auto_stories_outlined,
-            label: tr('sidebar.myJournal'),
-            onTap: _pushTimeline),
-        _CompactNavTile(
-            icon: Icons.style_outlined,
-            label: tr('kg.expressionCards'),
-            busy: _deckLoading,
-            onTap: _openExpressionDeck),
-        _CompactNavTile(
-            icon: Icons.bar_chart_rounded,
-            label: tr('sidebar.learningProgress'),
-            onTap: _pushLearningProgress),
+        //
+        // Withdrawn while a search is open: with the keyboard up these three
+        // rows cost about half the space left for results, and someone who is
+        // typing a chat title is not on their way to the expression deck.
+        if (!_searching) ...[
+          _CompactNavTile(
+              icon: Icons.auto_stories_outlined,
+              label: tr('sidebar.myJournal'),
+              onTap: _pushTimeline),
+          _CompactNavTile(
+              icon: Icons.style_outlined,
+              label: tr('kg.expressionCards'),
+              busy: _deckLoading,
+              onTap: _openExpressionDeck),
+          _CompactNavTile(
+              icon: Icons.bar_chart_rounded,
+              label: tr('sidebar.learningProgress'),
+              onTap: _pushLearningProgress),
+        ],
         const SizedBox(height: 8),
         Divider(height: 1, color: shell.panelBorder),
 
@@ -351,13 +357,42 @@ class _ChatSidebarState extends State<ChatSidebar> {
                       return title.contains(query) || preview.contains(query);
                     }).toList();
               if (sessions.isEmpty) {
-                return Center(
+                // "No chat rooms yet — start with New chat" is a lie when the
+                // rooms exist and the query simply missed them, and it sends
+                // the user off to create a duplicate room instead of fixing
+                // their search.
+                final noMatch = query.isNotEmpty;
+                // Centred is right for "you have no rooms at all" — it owns the
+                // whole empty panel. It is wrong for a failed search: the eye
+                // is on the field the query was typed into, and centring parked
+                // the answer ~600px below it, just above the keyboard.
+                return Align(
+                  alignment: noMatch ? Alignment.topCenter : Alignment.center,
                   child: Padding(
                     padding: const EdgeInsets.all(20),
-                    child: Text(tr('sidebar.noRoomsYet'),
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                            fontSize: 12.5, color: context.shell.mutedText)),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                            noMatch
+                                ? tr('sidebar.noSearchMatch', {
+                                    'query': _searchController.text.trim(),
+                                  })
+                                : tr('sidebar.noRoomsYet'),
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                fontSize: 12.5,
+                                color: context.shell.mutedText)),
+                        if (noMatch)
+                          TextButton(
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() {});
+                            },
+                            child: Text(tr('sidebar.clearSearch')),
+                          ),
+                      ],
+                    ),
                   ),
                 );
               }
@@ -474,9 +509,14 @@ String? _roomStamp(String? iso) {
   }
   if (diff == 1) return tr('sidebar.yesterday');
   if (diff < 7) {
+    // A bare one-character weekday ("월", "화") made several auto-titled
+    // rooms look identical. Keep the compact weekday, but anchor it to a real
+    // date so the row is recognizable at a glance.
     // Mon-first, matching DateTime.weekday (1 = Monday).
     final names = tr('sidebar.weekdaysShort').split(',');
-    if (names.length == 7) return names[at.weekday - 1];
+    if (names.length == 7) {
+      return '${at.month}/${at.day} ${names[at.weekday - 1]}';
+    }
   }
   if (at.year != now.year) return '${at.year % 100}.${at.month}.${at.day}';
   return '${at.month}/${at.day}';

@@ -407,7 +407,8 @@ class _TimelineSubView extends StatelessWidget {
     final groups = <String, List<Map<String, dynamic>>>{};
     for (final c in cards) {
       final raw = c['created_at'] as String? ?? '';
-      final date = raw.length >= 10 ? raw.substring(0, 10) : tr('common.unknown');
+      final date =
+          raw.length >= 10 ? raw.substring(0, 10) : tr('common.unknown');
       groups.putIfAbsent(date, () => []).add(c);
     }
     final sortedDates = groups.keys.toList()..sort((a, b) => b.compareTo(a));
@@ -505,6 +506,13 @@ class _EntryCard extends StatelessWidget {
     final statements = ((card['statements'] as List?) ?? [])
         .map((e) => Map<String, dynamic>.from(e as Map))
         .toList();
+    // The timeline is for scanning, not reading an entire transcript. A long
+    // conversation used to render every statement and could make one card
+    // taller than the phone, burying the next day and putting the FAB over the
+    // text. The detail screen remains one tap away.
+    const statementPreviewLimit = 3;
+    final statementPreview = statements.take(statementPreviewLimit).toList();
+    final hiddenStatementCount = statements.length - statementPreview.length;
     final speakers = ((card['speakers'] as List?) ?? [])
         .map((e) => e.toString())
         .where((s) => s.isNotEmpty)
@@ -556,7 +564,9 @@ class _EntryCard extends StatelessWidget {
                     ),
                     if (statements.length > 1) ...[
                       const SizedBox(width: 8),
-                      Text(tr('timeline.statementCountSuffix', {'count': statements.length}),
+                      Text(
+                          tr('timeline.statementCountSuffix',
+                              {'count': statements.length}),
                           style: TextStyle(
                               fontSize: 11.5,
                               color: theme.colorScheme.onSurfaceVariant
@@ -581,8 +591,8 @@ class _EntryCard extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 14.5,
                         height: 1.4,
-                        color: theme.colorScheme.onSurface
-                            .withValues(alpha: 0.85),
+                        color:
+                            theme.colorScheme.onSurface.withValues(alpha: 0.85),
                       ),
                     ),
                   ...() {
@@ -618,8 +628,8 @@ class _EntryCard extends StatelessWidget {
                       ),
                     ];
                   }(),
-                ] else
-                  for (final s in statements)
+                ] else ...[
+                  for (final s in statementPreview)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 7),
                       child: Row(
@@ -640,12 +650,40 @@ class _EntryCard extends StatelessWidget {
                               s['content']?.toString().trim().isNotEmpty == true
                                   ? s['content'].toString()
                                   : (s['title']?.toString() ?? ''),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(fontSize: 14, height: 1.4),
                             ),
                           ),
                         ],
                       ),
                     ),
+                  if (hiddenStatementCount > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 1, bottom: 5),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            tr('timeline.moreStatements', {
+                              'count': hiddenStatementCount,
+                            }),
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: theme.colorScheme.primary,
+                            ),
+                          ),
+                          const SizedBox(width: 2),
+                          Icon(
+                            Icons.arrow_forward_rounded,
+                            size: 14,
+                            color: theme.colorScheme.primary,
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
                 if (speakers.isNotEmpty) ...[
                   const SizedBox(height: 3),
                   Wrap(
@@ -697,8 +735,10 @@ class _DateHeader extends StatelessWidget {
     if (dt != null) {
       final wd = _kWeekdayLabels[dt.weekday - 1];
       label = isToday
-          ? tr('timeline.dateTodayLabel', {'month': dt.month, 'day': dt.day, 'weekday': wd})
-          : tr('timeline.dateLabel', {'month': dt.month, 'day': dt.day, 'weekday': wd});
+          ? tr('timeline.dateTodayLabel',
+              {'month': dt.month, 'day': dt.day, 'weekday': wd})
+          : tr('timeline.dateLabel',
+              {'month': dt.month, 'day': dt.day, 'weekday': wd});
     } else {
       label = date;
     }
@@ -813,10 +853,14 @@ class _CalendarSubViewState extends State<_CalendarSubView> {
     messenger.hideCurrentSnackBar();
     messenger.showSnackBar(
       SnackBar(
-        content: Text(isToday ? tr('timeline.noEntriesToday') : tr('timeline.noEntriesDay')),
+        content: Text(isToday
+            ? tr('timeline.noEntriesToday')
+            : tr('timeline.noEntriesDay')),
         duration: const Duration(seconds: 2),
         action: isToday && widget.onAddEntry != null
-            ? SnackBarAction(label: tr('timeline.recordAction'), onPressed: widget.onAddEntry!)
+            ? SnackBarAction(
+                label: tr('timeline.recordAction'),
+                onPressed: widget.onAddEntry!)
             : null,
       ),
     );
@@ -857,7 +901,8 @@ class _CalendarSubViewState extends State<_CalendarSubView> {
                   ),
                   Expanded(
                     child: Text(
-                      tr('timeline.monthYearLabel', {'year': month.year, 'month': month.month}),
+                      tr('timeline.monthYearLabel',
+                          {'year': month.year, 'month': month.month}),
                       style: theme.textTheme.titleMedium
                           ?.copyWith(fontWeight: FontWeight.w700),
                       textAlign: TextAlign.center,
@@ -1082,56 +1127,77 @@ class _DayCell extends StatelessWidget {
     }
     final showDots = types.isNotEmpty;
 
+    // The whole cell stays tappable, but only a compact pill around the number
+    // is painted. Decorating the cell itself meant a ~200px-tall slab per day,
+    // and adjacent recorded days fused into one block that read as a table
+    // rather than as separate days.
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: isSelected
-              ? AppColors.primary.withOpacity(0.15)
-              : isToday
-                  ? AppColors.primary.withOpacity(0.05)
-                  : null,
-          borderRadius: BorderRadius.circular(6),
-          border: isToday
-              ? Border.all(color: AppColors.primary, width: 1.5)
-              : isSelected
-                  ? Border.all(color: AppColors.primary.withOpacity(0.5))
-                  : null,
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              '$day',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: isToday ? FontWeight.w800 : FontWeight.w500,
-                color: isToday
-                    ? AppColors.primary
+      behavior: HitTestBehavior.opaque,
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+          decoration: BoxDecoration(
+            // A recorded day earns a fill, not just dots: the one question this
+            // screen exists to answer ("which days did I record?") was legible
+            // only on close inspection of 4px dots. Ranked below today/selected
+            // so those still read first.
+            color: isSelected
+                ? AppColors.primary.withValues(alpha: 0.15)
+                : isToday
+                    ? AppColors.primary.withValues(alpha: 0.05)
                     : hasData
-                        ? theme.colorScheme.onSurface
-                        : theme.colorScheme.onSurface.withOpacity(0.35),
+                        ? theme.colorScheme.onSurface.withValues(alpha: 0.07)
+                        : null,
+            borderRadius: BorderRadius.circular(12),
+            border: isToday
+                ? Border.all(color: AppColors.primary, width: 1.5)
+                : isSelected
+                    ? Border.all(
+                        color: AppColors.primary.withValues(alpha: 0.5))
+                    : null,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '$day',
+                style: TextStyle(
+                  // Sized for the cell it actually lives in. 11px was phone-widget
+                  // small in a cell four times that tall.
+                  fontSize: 15,
+                  fontWeight: isToday
+                      ? FontWeight.w800
+                      : hasData
+                          ? FontWeight.w700
+                          : FontWeight.w400,
+                  color: isToday
+                      ? AppColors.primary
+                      : hasData
+                          ? theme.colorScheme.onSurface
+                          : theme.colorScheme.onSurface.withValues(alpha: 0.35),
+                ),
               ),
-            ),
-            if (showDots) ...[
-              const SizedBox(height: 1),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: types
-                    .take(3)
-                    .map((t) => Container(
-                          width: 4,
-                          height: 4,
-                          margin: const EdgeInsets.symmetric(horizontal: 1),
-                          decoration: BoxDecoration(
-                            color: _colorFor(t),
-                            shape: BoxShape.circle,
-                          ),
-                        ))
-                    .toList(),
-              ),
+              if (showDots) ...[
+                const SizedBox(height: 5),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: types
+                      .take(3)
+                      .map((t) => Container(
+                            width: 6,
+                            height: 6,
+                            margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                            decoration: BoxDecoration(
+                              color: _colorFor(t),
+                              shape: BoxShape.circle,
+                            ),
+                          ))
+                      .toList(),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -1236,7 +1302,8 @@ class _ErrorView extends StatelessWidget {
             const SizedBox(height: 12),
             Text(error, textAlign: TextAlign.center),
             const SizedBox(height: 16),
-            FilledButton.tonal(onPressed: onRetry, child: Text(tr('common.retry'))),
+            FilledButton.tonal(
+                onPressed: onRetry, child: Text(tr('common.retry'))),
           ],
         ),
       ),

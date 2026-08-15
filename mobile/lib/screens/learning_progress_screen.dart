@@ -9,10 +9,14 @@ import 'quiz_deck_screen.dart';
 import 'quiz_session_screen.dart';
 
 List<String> get _weekdays => [
-  tr('progress.weekdayMon'), tr('progress.weekdayTue'), tr('progress.weekdayWed'),
-  tr('progress.weekdayThu'), tr('progress.weekdayFri'), tr('progress.weekdaySat'),
-  tr('progress.weekdaySun'),
-];
+      tr('progress.weekdayMon'),
+      tr('progress.weekdayTue'),
+      tr('progress.weekdayWed'),
+      tr('progress.weekdayThu'),
+      tr('progress.weekdayFri'),
+      tr('progress.weekdaySat'),
+      tr('progress.weekdaySun'),
+    ];
 
 /// 내 학습률 — quiz progress AND the record insights that used to live on their
 /// own "기록 인사이트" page.
@@ -133,7 +137,8 @@ class _LearningProgressScreenState extends State<LearningProgressScreen>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(tr('progress.goalSheetTitle'), style: Theme.of(context).textTheme.titleLarge),
+                Text(tr('progress.goalSheetTitle'),
+                    style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 4),
                 Text(tr('progress.goalSheetSubtitle')),
                 const SizedBox(height: 16),
@@ -147,7 +152,8 @@ class _LearningProgressScreenState extends State<LearningProgressScreen>
                     ])
                       ChoiceChip(
                         label: Text(preset.$1),
-                        selected: cloze == preset.$2 && composition == preset.$3,
+                        selected:
+                            cloze == preset.$2 && composition == preset.$3,
                         onSelected: (_) => setSheetState(() {
                           cloze = preset.$2;
                           composition = preset.$3;
@@ -166,7 +172,8 @@ class _LearningProgressScreenState extends State<LearningProgressScreen>
                   label: tr('progress.writing'),
                   value: composition,
                   max: 50,
-                  onChanged: (value) => setSheetState(() => composition = value),
+                  onChanged: (value) =>
+                      setSheetState(() => composition = value),
                 ),
                 const SizedBox(height: 20),
                 FilledButton(
@@ -263,7 +270,8 @@ class _LearningProgressScreenState extends State<LearningProgressScreen>
         icon: Icons.cloud_off_rounded,
         title: tr('progress.loadFailed'),
         subtitle: '$_error',
-        action: FilledButton(onPressed: _load, child: Text(tr('progress.retry'))),
+        action:
+            FilledButton(onPressed: _load, child: Text(tr('progress.retry'))),
       );
     }
     final data = _dashboard!;
@@ -280,7 +288,8 @@ class _LearningProgressScreenState extends State<LearningProgressScreen>
     final startXp = (data['level_start_xp'] as num?)?.toInt() ?? 0;
     final nextXp = (data['next_level_xp'] as num?)?.toInt() ?? 100;
     final levelProgress =
-        ((totalXp - startXp) / (nextXp - startXp).clamp(1, 1 << 30)).clamp(0.0, 1.0);
+        ((totalXp - startXp) / (nextXp - startXp).clamp(1, 1 << 30))
+            .clamp(0.0, 1.0);
 
     return RefreshIndicator(
       onRefresh: _load,
@@ -323,7 +332,8 @@ class _LearningProgressScreenState extends State<LearningProgressScreen>
                 child: _MetricCard(
                   icon: Icons.local_fire_department_rounded,
                   color: const Color(0xFFFF7A45),
-                  value: tr('progress.days', {'count': data['longest_streak'] ?? 0}),
+                  value: tr(
+                      'progress.days', {'count': data['longest_streak'] ?? 0}),
                   label: tr('progress.longestStreak'),
                 ),
               ),
@@ -332,7 +342,8 @@ class _LearningProgressScreenState extends State<LearningProgressScreen>
                 child: _MetricCard(
                   icon: Icons.task_alt_rounded,
                   color: const Color(0xFF5B67F1),
-                  value: tr('progress.items', {'count': data['week_completed'] ?? 0}),
+                  value: tr(
+                      'progress.items', {'count': data['week_completed'] ?? 0}),
                   label: tr('progress.weekCompleted'),
                 ),
               ),
@@ -461,7 +472,8 @@ class _HeroCard extends StatelessWidget {
                             : (atRisk
                                 ? tr('progress.streakAtRisk')
                                 : tr('progress.streakOnTrack')),
-                        style: TextStyle(color: Colors.white.withValues(alpha: .84)),
+                        style: TextStyle(
+                            color: Colors.white.withValues(alpha: .84)),
                       ),
                     ],
                   ),
@@ -472,12 +484,17 @@ class _HeroCard extends StatelessWidget {
             Row(
               children: [
                 Text(
-                  tr('progress.growthLevel', {'level': data['growth_level'] ?? 1}),
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+                  tr('progress.growthLevel',
+                      {'level': data['growth_level'] ?? 1}),
+                  style: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.w800),
                 ),
                 const Spacer(),
                 Text(
-                  tr('progress.xpSummary', {'total': data['total_xp'] ?? 0, 'today': data['today_xp'] ?? 0}),
+                  tr('progress.xpSummary', {
+                    'total': data['total_xp'] ?? 0,
+                    'today': data['today_xp'] ?? 0
+                  }),
                   style: TextStyle(color: Colors.white.withValues(alpha: .9)),
                 ),
               ],
@@ -520,7 +537,9 @@ class _TodayMissionCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    today['perfect'] == true ? tr('progress.missionDone') : tr('progress.missionTitle'),
+                    today['perfect'] == true
+                        ? tr('progress.missionDone')
+                        : tr('progress.missionTitle'),
                     style: Theme.of(context)
                         .textTheme
                         .titleLarge
@@ -535,7 +554,8 @@ class _TodayMissionCard extends StatelessWidget {
               ],
             ),
             Text(
-              tr('progress.missionSubtitle', {'count': today['language_count'] ?? 1}),
+              tr('progress.missionSubtitle',
+                  {'count': today['language_count'] ?? 1}),
               style: const TextStyle(color: AppColors.textMuted),
             ),
             const SizedBox(height: 16),
@@ -580,6 +600,12 @@ class _MissionRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final progress = goal == 0 ? 0.0 : (current / goal).clamp(0.0, 1.0);
+    // Both rows used to offer the same neutral "Study" button, so a finished
+    // goal and an untouched one looked equally unfinished — the day's remaining
+    // work took a moment of arithmetic to find. Marking the met goal done and
+    // promoting the other one to a filled button makes the next action obvious
+    // and gives finishing a goal something to show for it.
+    final met = goal > 0 && current >= goal;
     return Row(
       children: [
         Container(
@@ -598,7 +624,12 @@ class _MissionRow extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+                  Text(label,
+                      style: const TextStyle(fontWeight: FontWeight.w800)),
+                  if (met) ...[
+                    const SizedBox(width: 5),
+                    Icon(Icons.check_circle_rounded, size: 15, color: color),
+                  ],
                   const Spacer(),
                   Text('$current / $goal'),
                 ],
@@ -617,7 +648,11 @@ class _MissionRow extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 10),
-        FilledButton.tonal(onPressed: onStart, child: Text(tr('progress.startStudy'))),
+        met
+            ? FilledButton.tonal(
+                onPressed: onStart, child: Text(tr('progress.startStudy')))
+            : FilledButton(
+                onPressed: onStart, child: Text(tr('progress.startStudy'))),
       ],
     );
   }
@@ -659,15 +694,19 @@ class _WeekCard extends StatelessWidget {
                     children: [
                       Text(
                         '${((row['cloze'] as num?)?.toInt() ?? 0) + ((row['composition'] as num?)?.toInt() ?? 0)}',
-                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                        style: const TextStyle(
+                            fontSize: 11, fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(height: 4),
                       Flexible(
                         child: FractionallySizedBox(
-                          heightFactor: ((((row['cloze'] as num?)?.toDouble() ?? 0) +
-                                      ((row['composition'] as num?)?.toDouble() ?? 0)) /
-                                  maxValue)
-                              .clamp(.06, 1.0),
+                          heightFactor:
+                              ((((row['cloze'] as num?)?.toDouble() ?? 0) +
+                                          ((row['composition'] as num?)
+                                                  ?.toDouble() ??
+                                              0)) /
+                                      maxValue)
+                                  .clamp(.06, 1.0),
                           child: Container(
                             decoration: BoxDecoration(
                               gradient: const LinearGradient(
@@ -683,7 +722,8 @@ class _WeekCard extends StatelessWidget {
                       const SizedBox(height: 6),
                       Text(
                         _weekdayLabel(row['date']),
-                        style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+                        style: const TextStyle(
+                            fontSize: 11, color: AppColors.textMuted),
                       ),
                       if (row['perfect'] == true)
                         // A goal met is a checkmark, not a gold star — this is
@@ -721,7 +761,9 @@ class _MetricCard extends StatelessWidget {
           children: [
             Icon(icon, color: color),
             const SizedBox(height: 6),
-            Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+            Text(value,
+                style:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
             Text(
               label,
               textAlign: TextAlign.center,
@@ -760,10 +802,13 @@ class _AchievementCard extends StatelessWidget {
           children: [
             CircleAvatar(
               radius: 25,
-              backgroundColor: (unlocked ? const Color(0xFFFFB020) : AppColors.textMuted)
-                  .withValues(alpha: .14),
+              backgroundColor:
+                  (unlocked ? const Color(0xFFFFB020) : AppColors.textMuted)
+                      .withValues(alpha: .14),
               child: Icon(
-                unlocked ? Icons.workspace_premium_rounded : Icons.lock_outline_rounded,
+                unlocked
+                    ? Icons.workspace_premium_rounded
+                    : Icons.lock_outline_rounded,
                 color: unlocked ? const Color(0xFFFFA000) : AppColors.textMuted,
               ),
             ),
@@ -800,7 +845,10 @@ class _SectionTitle extends StatelessWidget {
         children: [
           Text(
             title,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+            style: Theme.of(context)
+                .textTheme
+                .titleLarge
+                ?.copyWith(fontWeight: FontWeight.w900),
           ),
           Text(subtitle, style: const TextStyle(color: AppColors.textMuted)),
         ],
@@ -822,9 +870,12 @@ class _GoalStepper extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Row(
         children: [
-          Expanded(child: Text(label, style: const TextStyle(fontWeight: FontWeight.w800))),
+          Expanded(
+              child: Text(label,
+                  style: const TextStyle(fontWeight: FontWeight.w800))),
           IconButton(
-            onPressed: value <= 0 ? null : () => onChanged((value - 1).clamp(0, max)),
+            onPressed:
+                value <= 0 ? null : () => onChanged((value - 1).clamp(0, max)),
             icon: const Icon(Icons.remove_circle_outline),
           ),
           SizedBox(
@@ -832,7 +883,9 @@ class _GoalStepper extends StatelessWidget {
             child: Text('$value', textAlign: TextAlign.center),
           ),
           IconButton(
-            onPressed: value >= max ? null : () => onChanged((value + 1).clamp(0, max)),
+            onPressed: value >= max
+                ? null
+                : () => onChanged((value + 1).clamp(0, max)),
             icon: const Icon(Icons.add_circle_outline),
           ),
         ],

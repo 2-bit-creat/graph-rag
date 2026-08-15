@@ -90,6 +90,8 @@ const Map<String, String> _ko = {
   'chat.hint.distill': '고칠 부분을 말해보세요. 예) 첫 문장 빼줘',
   'chat.hint.composition': '영어로 작문해서 보내기',
   'chat.hint.word': '빈칸에 들어갈 표현을 입력하세요',
+  'chat.hint.quizWaiting': '문제를 준비하는 중이에요…',
+  'chat.hint.quizNone': '지금은 풀 문제가 없어요',
   'chat.hint.journal': '그냥 쓰면 나의 일기 · @로 화자 지정',
   // Tappable options offered above the composer (see chat/chat_suggestions.dart)
   'chat.suggest.start.whatsInGraph': '내 그래프에 뭐가 있어?',
@@ -101,6 +103,8 @@ const Map<String, String> _ko = {
   'quiz.empty': '아직 풀 문제가 없어요. 방금 문제를 만들기 시작했으니 잠시 후 다시 눌러 주세요.',
   'quiz.preparing': '내 지식그래프에서 문제를 만들고 있어요',
   'quiz.preparingHint': '통과한 표현만 카드로 만듭니다. 기다리는 동안 작문으로 전환할 수 있어요.',
+  'quiz.loading': '다음 문제를 불러오고 있어요',
+  'quiz.loadingHint': '학습 기록과 난이도에 맞는 문제를 고르는 중이에요.',
   'quiz.refillSlow': '문제 만드는 데 오래 걸리고 있어요. 잠시 후 다시 눌러 주세요.',
   'quiz.noWordCardsTitle': '아직 단어 퀴즈가 없어요',
   'quiz.noWordCardsBody': '품질 기준을 통과한 표현이 없는 문장은 작문 문제만 제공될 수 있어요.',
@@ -292,6 +296,8 @@ const Map<String, String> _ko = {
   'sidebar.quizQueue': '퀴즈 큐',
   'sidebar.recentChats': '최근 대화',
   'sidebar.noRoomsYet': '아직 채팅방이 없어요.\n"새 채팅"으로 시작하세요.',
+  'sidebar.noSearchMatch': '「{query}」와 맞는 대화가 없어요.',
+  'sidebar.clearSearch': '검색 지우기',
   'sidebar.newRoomDefaultTitle': '새 대화',
   'sidebar.yesterday': '어제',
   'sidebar.weekdaysShort': '월,화,수,목,금,토,일',
@@ -890,6 +896,7 @@ const Map<String, String> _ko = {
   'timeline.hintGraphFailed': '그래프 생성 실패 — 탭해서 다시 시도',
   'timeline.hintMakeGraph': '탭해서 지식그래프 만들기',
   'timeline.statementCountSuffix': '· 진술 {count}',
+  'timeline.moreStatements': '나머지 {count}개 보기',
   'timeline.dateTodayLabel': '오늘 · {month}/{day}({weekday})',
   'timeline.dateLabel': '{month}/{day}({weekday})',
   'timeline.noEntriesToday': '오늘은 아직 기록이 없어요',
@@ -1127,7 +1134,8 @@ const Map<String, String> _ko = {
   'speakerId.identityInGraph': '지식 그래프에 있는 정체성',
   'speakerId.claimedByLabel': '이 일기에서 이미 「{label}」 화자로 지정됨 · 탭하면 같은 사람으로 합칩니다',
   'speakerId.mergeLabelsTitle': '같은 사람으로 합치기',
-  'speakerId.mergeLabelsBody': '「{from}」의 발화를 「{to}」에게 옮깁니다. 그래프에는 「{to}」 한 사람으로 기록됩니다. 원래 화자 구분은 보관되므로 되돌릴 수 있습니다.',
+  'speakerId.mergeLabelsBody':
+      '「{from}」의 발화를 「{to}」에게 옮깁니다. 그래프에는 「{to}」 한 사람으로 기록됩니다. 원래 화자 구분은 보관되므로 되돌릴 수 있습니다.',
   'speakerId.mergeLabelsConfirm': '합치기',
   'speakerId.backButton': '뒤로',
   'speakerId.manualIntro': '지식 그래프에 새 정체성을 만들고 이 화자에 연결합니다.',
@@ -1292,7 +1300,7 @@ const Map<String, String> _ko = {
   'progress.goalTooltip': '목표 설정',
   'progress.goalEditTooltip': '목표 편집',
   'progress.goalSheetTitle': '일일 학습 목표',
-  'progress.goalSheetSubtitle': '활성 Target 언어마다 적용됩니다.',
+  'progress.goalSheetSubtitle': '현재 학습 중인 언어마다 적용됩니다.',
   'progress.presetLight': '가볍게',
   'progress.presetSteady': '꾸준히',
   'progress.presetIntense': '집중',
@@ -1318,7 +1326,7 @@ const Map<String, String> _ko = {
   'progress.xpSummary': '{total} XP · 오늘 +{today}',
   'progress.missionTitle': '오늘의 미션',
   'progress.missionDone': '오늘의 미션 완료!',
-  'progress.missionSubtitle': '{count}개 Target 언어의 목표를 합산합니다',
+  'progress.missionSubtitle': '{count}개 학습 언어의 목표를 합산했어요',
   'progress.startStudy': '학습',
   'progress.days': '{count}일',
   'progress.items': '{count}개',
@@ -1349,7 +1357,8 @@ const Map<String, String> _ko = {
   'kg.generationEmpty': '새로 추가할 문제가 없어요',
   'kg.generationEmptyHint': '이 진술의 표현에는 이미 카드가 다 있어요. 눌러서 확인해 보세요.',
   'kg.generationNoExpression': '카드로 만들 표현을 찾지 못했어요',
-  'kg.generationNoExpressionHint': '이 진술에서는 학습할 만한 표현이 나오지 않았어요. 문장이 짧거나 잡담이면 그럴 수 있어요.',
+  'kg.generationNoExpressionHint':
+      '이 진술에서는 학습할 만한 표현이 나오지 않았어요. 문장이 짧거나 잡담이면 그럴 수 있어요.',
   'kg.generationBusy': '\'{name}\'의 문제를 아직 만들고 있어요. 끝난 뒤에 다시 눌러 주세요.',
   'kg.youCanKeepBrowsing': '다른 작업을 해도 됩니다',
   'kg.tapToOpen': '눌러서 보기',
@@ -1419,6 +1428,8 @@ const Map<String, String> _en = {
   'chat.hint.distill': 'Tell me what to fix. e.g. "drop the first sentence"',
   'chat.hint.composition': 'Write your answer and send',
   'chat.hint.word': 'Type the expression for the blank',
+  'chat.hint.quizWaiting': 'Getting your question ready…',
+  'chat.hint.quizNone': 'No questions to answer right now',
   'chat.hint.journal': 'Just type — it\'s your journal · @ to tag a speaker',
   'chat.suggest.start.whatsInGraph': "What's in my graph?",
   'chat.suggest.start.recentThemes': 'What have I been talking about lately?',
@@ -1433,6 +1444,9 @@ const Map<String, String> _en = {
   'quiz.preparing': 'Building questions from your knowledge graph',
   'quiz.preparingHint':
       'Only expressions that pass the quality bar become cards. You can switch to writing while you wait.',
+  'quiz.loading': 'Loading your next question',
+  'quiz.loadingHint':
+      'Choosing a question that matches your history and level.',
   'quiz.refillSlow':
       'Questions are taking longer than usual. Please try again in a moment.',
   'quiz.noWordCardsTitle': 'No vocabulary cards yet',
@@ -1642,6 +1656,8 @@ const Map<String, String> _en = {
   'sidebar.quizQueue': 'Quiz queue',
   'sidebar.recentChats': 'Recent chats',
   'sidebar.noRoomsYet': 'No chat rooms yet.\nStart with "New chat".',
+  'sidebar.noSearchMatch': 'No chats match "{query}".',
+  'sidebar.clearSearch': 'Clear search',
   'sidebar.newRoomDefaultTitle': 'New chat',
   'sidebar.yesterday': 'Yesterday',
   'sidebar.weekdaysShort': 'Mon,Tue,Wed,Thu,Fri,Sat,Sun',
@@ -1775,18 +1791,22 @@ const Map<String, String> _en = {
   'storage.itemsSuffix': '{count} items',
   'storage.deleteAction': 'Delete',
   'storage.deleteTitle': 'Delete {label}',
-  'storage.deleteBody': '{size} of {label} will be erased. This cannot be undone.',
+  'storage.deleteBody':
+      '{size} of {label} will be erased. This cannot be undone.',
   'storage.deleted': 'Deleted {label}',
   'storage.resetSectionTitle': 'Full reset',
-  'storage.resetSubtitle': 'Keep the account, erase everything in it and start over.',
+  'storage.resetSubtitle':
+      'Keep the account, erase everything in it and start over.',
   'storage.resetAction': 'Erase everything and start over',
   'storage.resetConfirmTitle': 'Erase all data?',
-  'storage.resetConfirmBody': 'Photos, audio, journals, the knowledge graph, chats and '
-      'quizzes will all be erased. Your account and sign-in stay, the data cannot be recovered.',
+  'storage.resetConfirmBody':
+      'Photos, audio, journals, the knowledge graph, chats and '
+          'quizzes will all be erased. Your account and sign-in stay, the data cannot be recovered.',
   'storage.resetDone': 'All data erased',
   'storage.trashTitle': 'Knowledge graph trash',
   'storage.trashSubtitle': 'Restore or permanently delete removed nodes',
-  'storage.approxNote': 'Sizes are approximate — file bytes plus database row size.',
+  'storage.approxNote':
+      'Sizes are approximate — file bytes plus database row size.',
   'storage.categoryLabel.images': 'Photos',
   'storage.categoryLabel.audio': 'Audio files',
   'storage.categoryLabel.journals': 'Journals',
@@ -1796,10 +1816,13 @@ const Map<String, String> _en = {
   'storage.categoryLabel.debug': 'Debug traces',
   'storage.categoryDesc.images': 'Original images read by OCR',
   'storage.categoryDesc.audio': 'Original recordings (transcripts are kept)',
-  'storage.categoryDesc.journals': 'Journal text, transcripts and speakers (with their statement nodes)',
-  'storage.categoryDesc.graph': 'Nodes, relations, retrieval chunks and extracted expressions',
+  'storage.categoryDesc.journals':
+      'Journal text, transcripts and speakers (with their statement nodes)',
+  'storage.categoryDesc.graph':
+      'Nodes, relations, retrieval chunks and extracted expressions',
   'storage.categoryDesc.chats': 'Chat rooms and their messages',
-  'storage.categoryDesc.quizzes': 'Generated quizzes, study history and vocabulary files',
+  'storage.categoryDesc.quizzes':
+      'Generated quizzes, study history and vocabulary files',
   'storage.categoryDesc.debug': 'Pipeline trace dumps',
   'accounts.storageLabel': 'Storage',
   'accounts.cannotEnter': 'Cannot switch (legacy)',
@@ -2302,6 +2325,7 @@ const Map<String, String> _en = {
   'timeline.hintGraphFailed': 'Graph build failed — tap to retry',
   'timeline.hintMakeGraph': 'Tap to build knowledge graph',
   'timeline.statementCountSuffix': '· {count} statements',
+  'timeline.moreStatements': 'View {count} more',
   'timeline.dateTodayLabel': 'Today · {month}/{day} ({weekday})',
   'timeline.dateLabel': '{month}/{day} ({weekday})',
   'timeline.noEntriesToday': 'Nothing recorded today yet',
@@ -2556,9 +2580,11 @@ const Map<String, String> _en = {
       'No identities registered yet. Type a name to create one.',
   'speakerId.sourceInGraph': 'Source in the knowledge graph',
   'speakerId.identityInGraph': 'Identity in the knowledge graph',
-  'speakerId.claimedByLabel': 'Already assigned to "{label}" in this entry · tap to treat them as the same person',
+  'speakerId.claimedByLabel':
+      'Already assigned to "{label}" in this entry · tap to treat them as the same person',
   'speakerId.mergeLabelsTitle': 'Merge into one person',
-  'speakerId.mergeLabelsBody': 'Moves what "{from}" said to "{to}". The graph will record one person, "{to}". The original split is kept, so this can be undone.',
+  'speakerId.mergeLabelsBody':
+      'Moves what "{from}" said to "{to}". The graph will record one person, "{to}". The original split is kept, so this can be undone.',
   'speakerId.mergeLabelsConfirm': 'Merge',
   'speakerId.backButton': 'Back',
   'speakerId.manualIntro':
