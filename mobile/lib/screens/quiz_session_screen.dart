@@ -40,6 +40,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
   bool? _lastCorrect;
   bool _clozeSolved = false;
   String? _feedback;
+  String? _revealedAnswer;
   int? _lastQuality;
 
   final _audioKey = GlobalKey<QuizAudioButtonState>();
@@ -95,6 +96,16 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
   Map<String, dynamic>? get _current =>
       _items.isEmpty || _index >= _items.length ? null : _items[_index];
 
+  String? _clozeAnswer(Map<String, dynamic> quizData) {
+    final blank = quizData['blank']?.toString();
+    if (blank != null && blank.isNotEmpty) return blank;
+    final accepted = quizData['accepted_answers'];
+    if (accepted is List && accepted.isNotEmpty) {
+      return accepted.first.toString();
+    }
+    return null;
+  }
+
   String? _compositionFeedback(dynamic raw) {
     if (raw is! Map) return null;
     final parts = <String>[];
@@ -117,6 +128,10 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
 
   Future<void> _handleResult(Map<String, dynamic> result) async {
     final correct = result['correct'] == true;
+    final item = _current!;
+    final quizData = Map<String, dynamic>.from(
+      (item['quiz_data'] as Map?)?.cast<String, dynamic>() ?? {},
+    );
 
     setState(() {
       _answered = true;
@@ -124,6 +139,9 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
       _lastQuality = (result['quality'] as num?)?.toInt();
       final tutorFeedback = result['tutor_feedback'];
       _feedback = result['explanation']?.toString() ?? _compositionFeedback(tutorFeedback);
+      if (!correct && widget.quizType == 'cloze') {
+        _revealedAnswer = _clozeAnswer(quizData);
+      }
     });
 
     // Cloze owns its answer-reveal transition and plays the prepared sequence
@@ -146,6 +164,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
         _lastCorrect = null;
         _clozeSolved = false;
         _feedback = null;
+        _revealedAnswer = null;
         _lastQuality = null;
       });
     } else {
@@ -290,11 +309,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
                     ),
                   ),
                   const SizedBox(height: AppSpacing.xl),
-                  // CompositionQuizCard renders this same string as its own
-                  // prompt, so showing it here too printed the sentence twice
-                  // on one phone screen — once muted, once as the prompt. The
-                  // other card types do not, and still need it.
-                  if (questionKo.isNotEmpty && widget.quizType != 'composition')
+                  if (questionKo.isNotEmpty)
                     Text(
                       questionKo,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
@@ -350,16 +365,18 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
                                           : Colors.red.shade800,
                                     ),
                                   ),
-                                  // No answer here. It was only ever filled in
-                                  // for cloze, and ClozeQuizCard owns that
-                                  // reveal on purpose: "a wrong attempt must
-                                  // never auto-reveal the answer, so the
-                                  // learner keeps guessing (with hints)". This
-                                  // panel printed it immediately anyway, so the
-                                  // card was telling the learner to try again
-                                  // with hints while the answer sat right below
-                                  // — and the retry, the 글자 힌트 and the
-                                  // 정답 보기 button all became pointless.
+                                  if (!_lastCorrect! && _revealedAnswer != null)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 6),
+                                      child: Text(
+                                        tr('quizSession.answerLabel', {'answer': _revealedAnswer}),
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.red.shade900,
+                                        ),
+                                      ),
+                                    ),
                                   if (_feedback != null && _feedback!.isNotEmpty)
                                     Padding(
                                       padding: const EdgeInsets.only(top: 8),
@@ -447,7 +464,6 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
       case 'cloze':
         return ClozeQuizCard(
           key: _clozeKey,
-          questionId: _current?['id']?.toString(),
           quizData: quizData,
           audioUrl: audioUrl,
           answerAudioUrl: answerAudioUrl,
