@@ -1127,6 +1127,15 @@ class _DayCell extends StatelessWidget {
     }
     final showDots = types.isNotEmpty;
 
+    // One alpha does not carry across both themes. 7% white over the near-black
+    // dark surface is a clear pill; the same 7% of a dark onSurface over the
+    // #F8F9FC light surface lands under the perceptual floor and the pill
+    // vanished entirely in light mode — leaving exactly the "hunt for 4px dots"
+    // this was meant to fix. Light needs the heavier value.
+    final recordedFill = theme.colorScheme.onSurface.withValues(
+      alpha: theme.brightness == Brightness.dark ? 0.07 : 0.11,
+    );
+
     // The whole cell stays tappable, but only a compact pill around the number
     // is painted. Decorating the cell itself meant a ~200px-tall slab per day,
     // and adjacent recorded days fused into one block that read as a table
@@ -1147,7 +1156,7 @@ class _DayCell extends StatelessWidget {
                 : isToday
                     ? AppColors.primary.withValues(alpha: 0.05)
                     : hasData
-                        ? theme.colorScheme.onSurface.withValues(alpha: 0.07)
+                        ? recordedFill
                         : null,
             borderRadius: BorderRadius.circular(12),
             border: isToday
@@ -1181,6 +1190,11 @@ class _DayCell extends StatelessWidget {
               if (showDots) ...[
                 const SizedBox(height: 5),
                 Row(
+                  // Without this the Row claims the full cell width, which
+                  // widened the pill to match and left consecutive recorded
+                  // days touching — a run like the 9th-14th read as one bar
+                  // rather than six days.
+                  mainAxisSize: MainAxisSize.min,
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: types
                       .take(3)
