@@ -27,6 +27,18 @@ from app.routers.kg_build import _claim_head_type
 from app.schemas import GraphApplyRequest
 
 
+@pytest.fixture(autouse=True)
+def _disable_llm_learning_materials(monkeypatch):
+    """Source-attribution tests cover graph types, not LLM-backed quiz generation."""
+
+    async def _noop(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "app.quiz_materials.analyse_nodes_and_refill_background", _noop
+    )
+
+
 # ─── Pure helpers ──────────────────────────────────────────────────────────────
 
 def test_source_never_merges_with_a_plain_identity():

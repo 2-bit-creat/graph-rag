@@ -21,6 +21,18 @@ from app.routers.journal import apply_entry_graph
 from app.schemas import GraphApplyRequest
 
 
+@pytest.fixture(autouse=True)
+def _disable_llm_learning_materials(monkeypatch):
+    """Graph-apply tests cover persistence, not LLM-backed quiz generation."""
+
+    async def _noop(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "app.quiz_materials.analyse_nodes_and_refill_background", _noop
+    )
+
+
 async def _staged_entry(db_session, user_id) -> JournalEntry:
     entry = JournalEntry(
         user_id=user_id,
