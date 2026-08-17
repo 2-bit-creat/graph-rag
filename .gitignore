@@ -19,6 +19,10 @@ debug_runs/
 
 # Codex/editor scratch app-data
 .codex-dart-appdata/
+.claude/settings.local.json
+
+# Local agent handoff notes (may contain environment-specific evaluation details)
+HANDOFF_quiz_quality.md
 
 # Flutter
 mobile/.dart_tool/
