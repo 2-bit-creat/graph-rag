@@ -41,6 +41,18 @@ class AppLocaleController extends ChangeNotifier {
       await prefs.setString(_prefsKey, next);
     } catch (_) {}
   }
+
+  /// Lets widget tests exercise both supported UI languages without touching
+  /// platform storage. Production code must use [setFromNativeLanguage].
+  @visibleForTesting
+  void setLocaleForTesting(String locale) {
+    if (locale != 'en' && locale != 'ko') {
+      throw ArgumentError.value(locale, 'locale', 'Expected en or ko');
+    }
+    if (_locale == locale) return;
+    _locale = locale;
+    notifyListeners();
+  }
 }
 
 /// Global singleton — wired into the top-level ListenableBuilder in main.dart so
@@ -1104,11 +1116,12 @@ const Map<String, String> _ko = {
   'progressCard.defaultLabel': '일기 처리',
   'progressCard.hideKeepsRunning': '닫아도 계속 진행돼요',
   'progressCard.cancelTooltip': '이 일기 중단',
-  'progressCard.cancelTitle': '이 일기를 중단할까요?',
-  'progressCard.cancelBody': '일기는 그대로 남아 있어요. 나중에 이 카드에서 이어서 검토할 수 있고, '
-      '지금 다시 쓰면 원래 쓴 내용이 입력창으로 돌아옵니다.',
-  'progressCard.cancelPark': '나중에 이어서',
-  'progressCard.cancelRewrite': '처음부터 다시 쓰기',
+  'progressCard.cancelTitle': '이 일기 검수를 나갈까요?',
+  'progressCard.cancelBody': '삭제되는 내용은 없어요. 초안을 보관하고 나중에 검수하거나, '
+      '원문을 입력창으로 되돌려 지금 수정할 수 있어요.',
+  'progressCard.cancelContinue': '검수 계속하기',
+  'progressCard.cancelPark': '초안 보관하고 나중에 검수',
+  'progressCard.cancelRewrite': '원문 수정하기',
   'progressCard.stepTranscribe': '받아쓰기',
   'progressCard.stepSpeakerConfirm': '화자 확인',
   'progressCard.stepGraphBuild': '그래프 생성',
@@ -2554,12 +2567,13 @@ const Map<String, String> _en = {
   'progressCard.defaultLabel': 'Processing journal entry',
   'progressCard.hideKeepsRunning': 'Hide — this keeps running',
   'progressCard.cancelTooltip': 'Stop this entry',
-  'progressCard.cancelTitle': 'Stop working on this entry?',
+  'progressCard.cancelTitle': 'Leave this journal review?',
   'progressCard.cancelBody':
-      'The entry is kept. You can pick the review back up from this card later, '
-          'or rewrite now and get your original text back in the composer.',
-  'progressCard.cancelPark': 'Finish later',
-  'progressCard.cancelRewrite': 'Rewrite from scratch',
+      'Nothing will be deleted. Keep this draft and review it later, or return '
+          'your original text to the composer and edit it now.',
+  'progressCard.cancelContinue': 'Continue reviewing',
+  'progressCard.cancelPark': 'Keep draft for later',
+  'progressCard.cancelRewrite': 'Edit original text',
   'progressCard.stepTranscribe': 'Transcribe',
   'progressCard.stepSpeakerConfirm': 'Confirm speakers',
   'progressCard.stepGraphBuild': 'Build graph',

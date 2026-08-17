@@ -453,17 +453,17 @@ class ChatSessionController extends ChangeNotifier {
     }
   }
 
-  /// Persist user echo + journal_progress card and hand work to [journalTask].
+  /// Persist the user's journal echo and hand processing to [journalTask].
+  ///
+  /// Detailed progress belongs to the compact app-wide activity tab; the feed
+  /// only keeps a one-line contextual pointer so the learner can keep chatting
+  /// or taking quizzes while this runs.
   Future<void> saveJournalText(String labeledText,
       {String? displayText}) async {
     if (!_claimJournalPipeline()) return;
     await _ensureSession();
     try {
       _appendJournalSubmit(displayText ?? labeledText);
-      // The API does refinement synchronously before it can return an entry id.
-      // Put a real in-feed status card up first, rather than leaving the only
-      // feedback as the tiny spinner in the send button.
-      _appendJournalSubmissionProgress();
       final entry =
           await journalTask.submitText(labeledText, sourceText: displayText);
       final id = entry['id']?.toString();
@@ -471,10 +471,9 @@ class ChatSessionController extends ChangeNotifier {
         errors.value = tr('chat.journalSaveFailed');
         return;
       }
-      _promoteJournalSubmissionProgress(id);
+      _appendJournalProgress(id);
       exitMode();
     } catch (e) {
-      _failJournalSubmissionProgress(_clean(e));
       errors.value = _clean(e);
     }
   }
@@ -489,7 +488,6 @@ class ChatSessionController extends ChangeNotifier {
     await _ensureSession();
     try {
       _appendJournalSubmit(filename);
-      _appendJournalSubmissionProgress();
       late Map<String, dynamic> entry;
       if (bytes != null) {
         entry = await journalTask.uploadAudioBytes(
@@ -508,10 +506,9 @@ class ChatSessionController extends ChangeNotifier {
         errors.value = tr('chat.journalSaveFailed');
         return;
       }
-      _promoteJournalSubmissionProgress(id);
+      _appendJournalProgress(id);
       exitMode();
     } catch (e) {
-      _failJournalSubmissionProgress(_clean(e));
       errors.value = _clean(e);
     }
   }
@@ -542,6 +539,8 @@ class ChatSessionController extends ChangeNotifier {
     return '${trimmed.substring(0, maxLen)}…';
   }
 
+  /// A compact, contextual pointer to the app-wide journal activity tab.
+  /// It intentionally contains no review controls or progress strip.
   void _appendJournalProgress(String entryId) {
     final msg = GraphChatMessage(
       role: 'assistant',
@@ -556,56 +555,10 @@ class ChatSessionController extends ChangeNotifier {
         _activeId!,
         role: 'assistant',
         kind: 'journal_progress',
-        content: tr('chat.journalProcessing'),
-        meta: {'entry_id': entryId},
+        content: msg.content,
+        meta: msg.meta,
       ));
     }
-  }
-
-  void _appendJournalSubmissionProgress() {
-    _messages.add(GraphChatMessage(
-      role: 'assistant',
-      kind: 'journal_submission_progress',
-      content: tr('chat.journalSending'),
-    ));
-    notifyListeners();
-  }
-
-  void _promoteJournalSubmissionProgress(String entryId) {
-    final index = _messages.lastIndexWhere(
-        (message) => message.kind == 'journal_submission_progress');
-    if (index >= 0) {
-      _messages[index] = GraphChatMessage(
-        role: 'assistant',
-        kind: 'journal_progress',
-        content: tr('chat.journalProcessing'),
-        meta: {'entry_id': entryId},
-      );
-      notifyListeners();
-      if (_activeId != null) {
-        unawaited(apiClient.appendChatEvent(
-          _activeId!,
-          role: 'assistant',
-          kind: 'journal_progress',
-          content: tr('chat.journalProcessing'),
-          meta: {'entry_id': entryId},
-        ));
-      }
-      return;
-    }
-    _appendJournalProgress(entryId);
-  }
-
-  void _failJournalSubmissionProgress(String detail) {
-    final index = _messages.lastIndexWhere(
-        (message) => message.kind == 'journal_submission_progress');
-    if (index < 0) return;
-    _messages[index] = GraphChatMessage(
-      role: 'assistant',
-      kind: 'journal_submission_failed',
-      content: detail,
-    );
-    notifyListeners();
   }
 
   Future<void> sendMessage(String text) async {
@@ -1111,7 +1064,6 @@ class ChatSessionController extends ChangeNotifier {
 
     try {
       _appendJournalSubmit(paragraph);
-      _appendJournalSubmissionProgress();
       final entry = await journalTask.submitText(
         paragraph,
         attributionKind: attributionKind,
@@ -1121,10 +1073,9 @@ class ChatSessionController extends ChangeNotifier {
         errors.value = tr('chat.journalSaveFailed');
         return;
       }
-      _promoteJournalSubmissionProgress(id);
+      _appendJournalProgress(id);
       exitMode();
     } catch (e) {
-      _failJournalSubmissionProgress(_clean(e));
       errors.value = _clean(e);
     }
   }

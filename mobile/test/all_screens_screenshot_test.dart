@@ -12,6 +12,9 @@ library;
 /// set SHOT_ICON_FONT=...path to MaterialIcons-Regular.otf
 /// set SHOT_HANDLE=main
 /// set SHOT_STAGING_ENTRY=...entry id whose graph_staging is populated
+/// set SHOT_LOCALE=en
+/// set SHOT_WIDTH=320
+/// set SHOT_TEXT_SCALE=1.2
 /// flutter test test/all_screens_screenshot_test.dart --update-goldens ^
 ///     --dart-define=API_BASE_URL=http://localhost:8000
 /// ```
@@ -22,7 +25,8 @@ library;
 /// Requires the backend to be up; screens that fail to load are captured in
 /// whatever state they reach, because an error/empty state is part of the audit.
 /// PNGs are gitignored (mobile/test/screenshots/) — they render real journal
-/// content and this repository is public.
+/// content and this repository is public. Run this for Korean and English at
+/// compact phone widths to catch localization overflow before a release.
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -30,6 +34,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:graphrag_mobile/api/client.dart';
 import 'package:graphrag_mobile/chat/chat_sidebar.dart';
+import 'package:graphrag_mobile/l10n/app_strings.dart';
 import 'package:graphrag_mobile/screens/account_entry_screen.dart';
 import 'package:graphrag_mobile/screens/consent_screen.dart';
 import 'package:graphrag_mobile/screens/pipeline_debug_hub_screen.dart';
@@ -57,6 +62,13 @@ import 'package:graphrag_mobile/theme/app_theme.dart';
 final _fontDir = Platform.environment['QUIZ_SHOT_FONT_DIR'] ?? '';
 final _handle = Platform.environment['SHOT_HANDLE'] ?? 'main';
 final _skipUnlessFont = _fontDir.isEmpty;
+final _shotLocale = Platform.environment['SHOT_LOCALE'] == 'en' ? 'en' : 'ko';
+final _shotWidth =
+    double.tryParse(Platform.environment['SHOT_WIDTH'] ?? '') ?? 375.0;
+final _shotHeight =
+    double.tryParse(Platform.environment['SHOT_HEIGHT'] ?? '') ?? 812.0;
+final _shotTextScale =
+    double.tryParse(Platform.environment['SHOT_TEXT_SCALE'] ?? '') ?? 1.0;
 
 Future<void> _loadFontFile(String family, String path) async {
   final file = File(path);
@@ -113,7 +125,10 @@ Widget _harness({
     debugShowCheckedModeBanner: false,
     theme: theme,
     home: MediaQuery(
-      data: MediaQueryData(size: size),
+      data: MediaQueryData(
+        size: size,
+        textScaler: TextScaler.linear(_shotTextScale),
+      ),
       // Some of these are tab bodies, not routes (KgInsightScreen lives inside
       // LearningProgressScreen), so they carry no Scaffold and rendered on a
       // bare grey ground here — which reads as a contrast bug that does not
@@ -126,10 +141,13 @@ Widget _harness({
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  const phone = Size(375, 812);
+  final phone = Size(_shotWidth, _shotHeight);
   var loggedIn = false;
 
-  setUpAll(_loadAppFont);
+  setUpAll(() async {
+    appLocaleController.setLocaleForTesting(_shotLocale);
+    await _loadAppFont();
+  });
 
   /// Signs in once, from inside the real async zone.
   ///
@@ -186,9 +204,16 @@ void main() {
     }
     await tester.pump(const Duration(milliseconds: 300));
 
+    // Flutter reports RenderFlex overflow as a framework exception. Capturing
+    // the screenshot alone made those yellow-striped layouts look like a
+    // successful audit, so fail immediately in every locale/viewport run.
+    expect(tester.takeException(), isNull);
+
     await expectLater(
       find.byType(MaterialApp),
-      matchesGoldenFile('screenshots/screen_$name.png'),
+      matchesGoldenFile(
+        'screenshots/screen_${_shotLocale}_${_shotWidth.toInt()}x${_shotHeight.toInt()}_${_shotTextScale}_$name.png',
+      ),
     );
   }
 
@@ -231,7 +256,8 @@ void main() {
     }, skip: _skipUnlessFont);
 
     testWidgets('statement bank', (t) async {
-      await shot(t, 'statement_bank', const StatementBankScreen(language: 'en'));
+      await shot(
+          t, 'statement_bank', const StatementBankScreen(language: 'en'));
     }, skip: _skipUnlessFont);
 
     testWidgets('quiz queue', (t) async {
@@ -316,8 +342,8 @@ void main() {
     }, skip: _skipUnlessFont);
 
     testWidgets('quiz session cloze', (t) async {
-      await shot(t, 'quiz_session_cloze',
-          const QuizSessionScreen(quizType: 'cloze'));
+      await shot(
+          t, 'quiz_session_cloze', const QuizSessionScreen(quizType: 'cloze'));
     }, skip: _skipUnlessFont);
 
     testWidgets('quiz session scramble', (t) async {

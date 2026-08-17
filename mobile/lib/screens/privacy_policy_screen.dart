@@ -32,7 +32,9 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
       _error = null;
     });
     try {
-      final policy = await apiClient.getPrivacyPolicy();
+      final policy = await apiClient.getPrivacyPolicy(
+        language: appLocaleController.locale,
+      );
       if (!mounted) return;
       setState(() {
         _markdown = policy['content_markdown']?.toString() ?? '';
@@ -61,7 +63,8 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
                 preferredSize: const Size.fromHeight(20),
                 child: Padding(
                   padding: const EdgeInsets.only(bottom: 6),
-                  child: Text(tr('privacyPolicy.versionLabel', {'version': _version}),
+                  child: Text(
+                      tr('privacyPolicy.versionLabel', {'version': _version}),
                       style: TextStyle(color: shell.mutedText, fontSize: 12)),
                 ),
               ),
@@ -102,13 +105,20 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
       if (line.isEmpty) {
         widgets.add(const SizedBox(height: 8));
       } else if (line.startsWith('# ')) {
-        widgets.add(_para(line.substring(2), shell.primaryText, 20, FontWeight.w800, top: 4));
+        widgets.add(_para(
+            line.substring(2), shell.primaryText, 20, FontWeight.w800,
+            top: 4));
       } else if (line.startsWith('## ')) {
-        widgets.add(_para(line.substring(3), shell.primaryText, 16, FontWeight.w700, top: 14));
+        widgets.add(_para(
+            line.substring(3), shell.primaryText, 16, FontWeight.w700,
+            top: 14));
       } else if (line.startsWith('> ')) {
-        widgets.add(_para(line.substring(2), shell.mutedText, 12.5, FontWeight.w400, italic: true));
+        widgets.add(_para(
+            line.substring(2), shell.mutedText, 12.5, FontWeight.w400,
+            italic: true));
       } else if (line.startsWith('|')) {
-        widgets.add(_para(line, shell.mutedText, 11.5, FontWeight.w400, mono: true));
+        widgets.add(
+            _para(line, shell.mutedText, 11.5, FontWeight.w400, mono: true));
       } else {
         widgets.add(_para(line, shell.primaryText, 13.5, FontWeight.w400));
       }
@@ -139,7 +149,8 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
       // backticks byte-for-byte rather than reflowing them as inline markup.
       child: mono
           ? Text(text, style: base)
-          : Text.rich(TextSpan(children: _inlineSpans(text, base)), style: base),
+          : Text.rich(TextSpan(children: _inlineSpans(text, base)),
+              style: base),
     );
   }
 

@@ -20,6 +20,43 @@ class JournalActivityHost extends StatefulWidget {
   State<JournalActivityHost> createState() => _JournalActivityHostState();
 }
 
+/// Opens the single detailed surface shared by the global activity tab and the
+/// small contextual status card left in the chat that started the journal.
+Future<void> openJournalActivityDetails() async {
+  final navContext = appNavigatorKey.currentContext;
+  if (navContext == null || !navContext.mounted) return;
+  final id = journalTask.entryId;
+  await showModalBottomSheet<void>(
+    context: navContext,
+    useRootNavigator: true,
+    isScrollControlled: true,
+    showDragHandle: true,
+    backgroundColor: Theme.of(navContext).colorScheme.surface,
+    builder: (context) => SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * .82,
+        ),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+          child: id == null
+              ? _WaitingDetails(
+                  summary: journalTaskSummary(
+                    entryId: journalTask.entryId,
+                    entry: journalTask.entry,
+                    phase: journalTask.phase,
+                    stageLabel: journalTask.stageLabel,
+                    awaitingSpeakerAck: journalTask.awaitingSpeakerAck,
+                    speakerReviewOverride: journalTask.speakerReviewOverride,
+                  ),
+                )
+              : JournalProgressCard(entryId: id),
+        ),
+      ),
+    ),
+  );
+}
+
 class _JournalActivityHostState extends State<JournalActivityHost> {
   JournalAttention _lastAttention = JournalAttention.none;
   String? _lastEntryId;
@@ -85,29 +122,7 @@ class _JournalActivityHostState extends State<JournalActivityHost> {
   }
 
   Future<void> _openDetails() async {
-    final id = journalTask.entryId;
-    final navContext = appNavigatorKey.currentContext;
-    if (navContext == null || !navContext.mounted) return;
-    await showModalBottomSheet<void>(
-      context: navContext,
-      useRootNavigator: true,
-      isScrollControlled: true,
-      showDragHandle: true,
-      backgroundColor: Theme.of(navContext).colorScheme.surface,
-      builder: (context) => SafeArea(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(context).height * .82,
-          ),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-            child: id == null
-                ? _WaitingDetails(summary: _summary)
-                : JournalProgressCard(entryId: id),
-          ),
-        ),
-      ),
-    );
+    await openJournalActivityDetails();
   }
 
   @override
@@ -118,7 +133,7 @@ class _JournalActivityHostState extends State<JournalActivityHost> {
     if (!active || _dismissedTerminal) return const SizedBox.shrink();
     final summary = _summary;
     final keyboard = MediaQuery.viewInsetsOf(context).bottom;
-    final bottom = keyboard > 0 ? keyboard + 78.0 : 82.0;
+    final bottom = keyboard > 0 ? keyboard + 70.0 : 74.0;
     final attention = summary.attention != JournalAttention.none;
     final scheme = Theme.of(context).colorScheme;
 
@@ -131,23 +146,23 @@ class _JournalActivityHostState extends State<JournalActivityHost> {
         child: Align(
           alignment: Alignment.bottomCenter,
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
+            constraints: const BoxConstraints(maxWidth: 390),
             child: Material(
               elevation: 10,
               shadowColor: Colors.black.withValues(alpha: .28),
               color: attention
                   ? scheme.tertiaryContainer
                   : context.shell.barBackground,
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(16),
               clipBehavior: Clip.antiAlias,
               child: InkWell(
                 onTap: _openDetails,
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 11, 10, 11),
+                  padding: const EdgeInsets.fromLTRB(12, 8, 10, 8),
                   child: Row(
                     children: [
                       _ActivityIcon(summary: summary),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -158,7 +173,7 @@ class _JournalActivityHostState extends State<JournalActivityHost> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                fontSize: 13,
+                                fontSize: 12.5,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
@@ -169,14 +184,14 @@ class _JournalActivityHostState extends State<JournalActivityHost> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                fontSize: 11.5,
+                                fontSize: 10.5,
                                 color: context.shell.mutedText,
                               ),
                             ),
                           ],
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 6),
                       Icon(Icons.expand_less_rounded,
                           size: 20, color: context.shell.mutedText),
                     ],

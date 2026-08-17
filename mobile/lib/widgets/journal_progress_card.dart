@@ -229,7 +229,7 @@ class _JournalProgressCardState extends State<JournalProgressCard> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text(tr('common.cancel')),
+            child: Text(tr('progressCard.cancelContinue')),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, 'park'),

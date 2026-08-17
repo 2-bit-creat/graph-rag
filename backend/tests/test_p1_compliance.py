@@ -28,9 +28,16 @@ def _prod(monkeypatch) -> None:
     get_settings.cache_clear()
 
 
-async def _new_handle_user(client) -> tuple[str, str]:
+async def _new_handle_user(
+    client, native_language: str = "korean"
+) -> tuple[str, str]:
     handle = "p1" + uuid.uuid4().hex[:8]
-    token = (await client.post("/auth/simple", json={"handle": handle, "native_language": "korean"})).json()["access_token"]
+    token = (
+        await client.post(
+            "/auth/simple",
+            json={"handle": handle, "native_language": native_language},
+        )
+    ).json()["access_token"]
     return handle, token
 
 
@@ -53,15 +60,28 @@ async def test_legal_endpoints_are_public(client):
     assert ai.status_code == 200
     assert "AI" in ai.json()["notice"]
 
+    pp_en = await client.get("/legal/privacy-policy", params={"language": "en"})
+    assert pp_en.status_code == 200
+    assert pp_en.json()["language"] == "en"
+    assert "Privacy Policy" in pp_en.json()["content_markdown"]
+
+    ai_en = await client.get("/legal/ai-disclosure", params={"language": "en"})
+    assert ai_en.status_code == 200
+    assert ai_en.json()["language"] == "en"
+    assert "generative AI" in ai_en.json()["notice"]
+
 
 async def test_consent_recorded_and_withdrawable(client, monkeypatch):
     _prod(monkeypatch)
     try:
-        handle, token = await _new_handle_user(client)
+        handle, token = await _new_handle_user(client, native_language="english")
         auth = {"Authorization": f"Bearer {token}"}
 
         # Initially no consent.
         me0 = (await client.get("/auth/me", headers=auth)).json()
+        # The mobile client uses this field to choose the consent-screen locale
+        # before the user is allowed into the rest of the app.
+        assert me0["native_language"] == "english"
         assert me0["consented_at"] is None
         assert me0["speaker_id_consent_at"] is None
 

@@ -38,8 +38,9 @@ class _ConsentScreenState extends State<ConsentScreen> {
       _loadError = null;
     });
     try {
-      final policy = await apiClient.getPrivacyPolicy();
-      final notice = await apiClient.getAiDisclosure();
+      final language = appLocaleController.locale;
+      final policy = await apiClient.getPrivacyPolicy(language: language);
+      final notice = await apiClient.getAiDisclosure(language: language);
       if (!mounted) return;
       setState(() {
         _policyVersion = policy['version']?.toString() ?? '';
@@ -117,7 +118,8 @@ class _ConsentScreenState extends State<ConsentScreen> {
           Text(
             tr('consent.intro'),
             textAlign: TextAlign.center,
-            style: TextStyle(color: shell.mutedText, height: 1.5, fontSize: 13.5),
+            style:
+                TextStyle(color: shell.mutedText, height: 1.5, fontSize: 13.5),
           ),
           const SizedBox(height: 20),
           if (_aiNotice.isNotEmpty)
@@ -227,7 +229,8 @@ class _ConsentTile extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    style: TextStyle(color: shell.mutedText, fontSize: 12, height: 1.4),
+                    style: TextStyle(
+                        color: shell.mutedText, fontSize: 12, height: 1.4),
                   ),
                 ],
               ),

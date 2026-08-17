@@ -105,13 +105,51 @@ Also classify the content so the app can suggest a type and detect over-split:
   that medium) — never 대화/회의록."""
 
 
-def build_cleanup_only_system_prompt() -> str:
+def build_cleanup_only_system_prompt(native_language: str = "korean") -> str:
     """Cleanup + classification only — NO translation.
 
     Fast write path: producing translations for long text (esp. multiple target
     languages) triples output tokens and dominates latency. Diary writing wants the
     refined Korean immediately; translation is deferred to an on-demand step.
     """
+    if (native_language or "").strip().lower() == "english":
+        return """You are a linguistic engine for English STT/text cleanup.
+
+[STT CLEANUP]
+Fix transcription mistakes, filler words, and genuine grammar errors. Apply
+real-world logic when resolving a likely phonetic mishearing.
+
+[VOICE — DO NOT REWRITE]
+This is the user's own journal. Cleanup repairs errors; it never rewrites,
+summarises, expands, formalises, or changes the writer's tone. Keep the
+writer's wording, sentence order, first-person point of view, and meaningful
+paragraph breaks wherever possible.
+
+[SPEAKER LABELS]
+- Keep [Speaker_N] labels unchanged in all outputs — never replace them with names.
+- Keep one line per speaker turn; fix only the text, not the label.
+
+[TEXT STRUCTURE]
+- Preserve meaningful paragraph breaks in typed text.
+- For a one-speaker journal, use readable short paragraphs without changing content.
+- For multi-speaker text, keep one line per speaker turn.
+
+[CONTENT CLASSIFICATION]
+Also classify the content using exactly one of these internal categories:
+[일기, 대화, 회의록, 책, 뉴스, 강연, 논문].
+Set "single_speaker" to true only for one first-person narrator. Automatic
+[Speaker_N] labels alone do not prove that there are multiple real speakers.
+
+[OUTPUT FORMAT]
+Respond with valid JSON only (no markdown). Keys:
+- "transcript_clean_native": refined English, with speaker labels preserved
+- "content_type": one of the internal categories above
+- "single_speaker": boolean
+
+Example:
+Input: "I went out for dinner with a coworker but my boss wasnt there"
+Output: {"transcript_clean_native": "I went out for dinner with a coworker, but my boss wasn't there.", "content_type": "일기", "single_speaker": true}"""
+
     return f"""You are a linguistic engine for Korean STT/text cleanup.
 
 {_CLEANUP_BODY}
@@ -324,7 +362,12 @@ async def _call_cleanup_llm(korean_text: str, system_prompt: str | None = None) 
     if content_type not in _VALID_TYPES:
         content_type = ""
     return {
-        "transcript_clean_ko": data.get("transcript_clean_ko", korean_text),
+        # ``transcript_clean_ko`` is the legacy internal key retained while the
+        # database migration aliases it to transcript_clean_native. New prompts
+        # return the language-neutral key, so both account types use this path.
+        "transcript_clean_ko": data.get(
+            "transcript_clean_native", data.get("transcript_clean_ko", korean_text)
+        ),
         "translation_en": translation_en,
         "translation_de": translation_de,
         "translations": translations,
@@ -381,14 +424,16 @@ async def cleanup_and_translate(
     return result
 
 
-async def cleanup_only(korean_text: str) -> dict[str, Any]:
+async def cleanup_only(
+    korean_text: str, native_language: str = "korean"
+) -> dict[str, Any]:
     """Write path: STT/text cleanup + classification, NO translation.
 
     2026-07-04 결정으로 일기 통번역 기능 자체를 제거 — 쓰기 경로(음성·텍스트 공통)는
     이 함수만 사용한다. Returns the same shape as [cleanup_and_translate] but with
     empty translations. Anomaly retries still run on the Korean cleanup (마차→말차).
     """
-    system_prompt = build_cleanup_only_system_prompt()
+    system_prompt = build_cleanup_only_system_prompt(native_language)
     correction = ""
     result: dict = {
         "transcript_clean_ko": korean_text,

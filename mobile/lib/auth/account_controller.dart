@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/client.dart';
 import '../chat/chat_session_controller.dart';
+import '../l10n/app_strings.dart';
 
 /// ID-entry accounts: no signup form, just a handle. Each handle maps to its own
 /// backend space (JWT); bearer tokens are cached in platform secure storage
@@ -155,6 +156,11 @@ class AccountController extends ChangeNotifier {
     if (!hasAccount) return;
     try {
       final me = await apiClient.getMe();
+      // Consent is the first authenticated screen. Sync the UI locale from the
+      // same /auth/me response before opening that gate, rather than waiting
+      // for ChatHomeShell (which is mounted only after consent).
+      await appLocaleController
+          .setFromNativeLanguage(me['native_language']?.toString());
       _consented = me['consented_at'] != null;
       _speakerIdConsent = me['speaker_id_consent_at'] != null;
     } catch (_) {

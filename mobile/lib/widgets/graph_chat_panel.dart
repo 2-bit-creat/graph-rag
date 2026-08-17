@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../chat/chat_session_controller.dart' show chatSession;
+import '../chat/journal_task_controller.dart';
 import '../chat/chat_suggestions.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
@@ -12,7 +13,8 @@ import '../utils/graph_layout.dart';
 import 'audio_record_core.dart';
 import 'chat_rich_text.dart';
 import 'chat_suggestion_rail.dart';
-import 'journal_progress_card.dart';
+import 'journal_activity_host.dart' show openJournalActivityDetails;
+import 'journal_progress_card.dart' show openJournalReviewFallback;
 import 'mention_editor_core.dart';
 import 'quiz/quiz_viewport_scope.dart';
 import 'thinking_orbs.dart';
@@ -105,7 +107,8 @@ class GraphChatPanel extends StatelessWidget {
               // shrinks rather than disappears: the drag is still how the sheet
               // gets out of the way, so the target has to stay hittable.
               _SheetDragHandle(
-                compact: quizMode && MediaQuery.viewInsetsOf(context).bottom > 0,
+                compact:
+                    quizMode && MediaQuery.viewInsetsOf(context).bottom > 0,
                 onDragUpdate: onHandleDragUpdate,
                 onDragEnd: onHandleDragEnd,
               ),
@@ -222,15 +225,17 @@ class GraphChatPanel extends StatelessWidget {
         final entranceKey = m.id ?? '${i}_${m.role}_${m.content.hashCode}';
         Widget child;
         if (m.kind == 'journal_submission_progress') {
-          child = const JournalSubmissionProgressCard();
+          // Legacy rooms can still contain progress events written before the
+          // app-wide journal activity tab existed. Keep history readable, but
+          // never recreate a competing progress surface in the chat feed.
+          child = const SizedBox.shrink();
         } else if (m.kind == 'journal_submission_failed') {
-          child = JournalSubmissionProgressCard(errorDetail: m.content);
+          child = const SizedBox.shrink();
         } else if (m.kind == 'journal_progress') {
           final entryId = m.meta?['entry_id']?.toString();
-          if (entryId != null && entryId.isNotEmpty) {
-            return JournalProgressCard(entryId: entryId);
-          }
-          child = const SizedBox.shrink();
+          child = entryId == null || entryId.isEmpty
+              ? const SizedBox.shrink()
+              : _JournalActivityFeedCard(entryId: entryId);
         } else if (m.kind == 'journal_mode') {
           child = _JournalModeBanner(text: m.content);
         } else if (m.kind == 'journal_submit' && m.role == 'user') {
@@ -272,6 +277,75 @@ class GraphChatPanel extends StatelessWidget {
           key: ValueKey(entranceKey),
           entranceKey: entranceKey,
           child: child,
+        );
+      },
+    );
+  }
+}
+
+/// A contextual pointer left in the chat that started a journal. It mirrors the
+/// app-wide activity tab's live status, but deliberately never expands into the
+/// speaker/graph review UI inside the feed.
+class _JournalActivityFeedCard extends StatelessWidget {
+  const _JournalActivityFeedCard({required this.entryId});
+
+  final String entryId;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: journalTask,
+      builder: (context, _) {
+        final current = journalTask.entryId == entryId;
+        final working = current && journalTask.systemProcessing;
+        final label = current && journalTask.stageLabel.isNotEmpty
+            ? journalTask.stageLabel
+            : tr('journalActivity.contentReview');
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Material(
+            color: context.shell.subtleSurface,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => current
+                  ? openJournalActivityDetails()
+                  : openJournalReviewFallback(context, entryId),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                child: Row(
+                  children: [
+                    working
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.auto_stories_rounded, size: 17),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 12, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    Text(
+                      tr('journalActivity.open'),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         );
       },
     );
@@ -1048,67 +1122,28 @@ class _InputBarState extends State<_InputBar> {
                     onTap: _journalSaving ? null : _openFullEditor,
                   ),
               ],
-          Expanded(
-            child: journalMode
-                // Grows to a cap, then scrolls — ordinary composer behavior.
-                // Two things make tap-to-place-caret actually work here:
-                // the field owns no scroll viewport of its own (maxLines: null,
-                // this ScrollView does the scrolling), and BlockShowOnScreen
-                // stops EditableText's "reveal the caret" request from walking
-                // up into that ScrollView on every focus gain.
-                ? CaretStableField(
-                    maxHeight: _journalComposerMaxHeight,
-                    controller: _journalScroll,
-                    child: MentionAutocompleteField(
-                      key: _mentionFieldKey,
-                      focusNode: _focusNode,
-                      minLines: 1,
-                      maxLines: null,
-                      showCounter: false,
-                      // Docked at the bottom — open the popup upward so it
-                      // never renders off-screen below the viewport.
-                      openUpward: true,
-                      enabled: canType && !recording,
-                      onChanged: _onJournalTextChanged,
-                      decoration: InputDecoration(
-                        hintText: widget.hint,
-                        hintStyle:
-                            TextStyle(color: shell.mutedText, fontSize: 13.5),
-                        isDense: true,
-                        filled: false,
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: AppSpacing.sm, vertical: 8),
-                      ),
-                    ),
-                  )
-                // The plain chat composer needs this just as much as the journal
-                // one. Long text gets pasted here too — it is where "대화 → 일기
-                // 정리" starts — and while it kept maxLines: 6 every tap still
-                // yanked the view to the caret.
-                : CaretStableField(
-                    maxHeight: _chatComposerMaxHeight,
-                    controller: _chatScroll,
-                    child: Focus(
-                      onKeyEvent: _onKey,
-                      // Scale baked into the style + no scaling below: the
-                      // canvas and the hidden DOM input that resolves taps have
-                      // to work from one font size.
-                      child: NoTextScaling(
-                        child: TextField(
-                          controller: widget.controller,
+              Expanded(
+                child: journalMode
+                    // Grows to a cap, then scrolls — ordinary composer behavior.
+                    // Two things make tap-to-place-caret actually work here:
+                    // the field owns no scroll viewport of its own (maxLines: null,
+                    // this ScrollView does the scrolling), and BlockShowOnScreen
+                    // stops EditableText's "reveal the caret" request from walking
+                    // up into that ScrollView on every focus gain.
+                    ? CaretStableField(
+                        maxHeight: _journalComposerMaxHeight,
+                        controller: _journalScroll,
+                        child: MentionAutocompleteField(
+                          key: _mentionFieldKey,
                           focusNode: _focusNode,
-                          enabled: composerTappable,
-                          readOnly: !canType,
                           minLines: 1,
                           maxLines: null,
-                          keyboardType: TextInputType.multiline,
-                          style: textScaleBakedIn(
-                            context,
-                            TextStyle(color: shell.primaryText, fontSize: 14),
-                          ),
-                          textInputAction: TextInputAction.send,
-                          onSubmitted: canType ? widget.onSend : null,
+                          showCounter: false,
+                          // Docked at the bottom — open the popup upward so it
+                          // never renders off-screen below the viewport.
+                          openUpward: true,
+                          enabled: canType && !recording,
+                          onChanged: _onJournalTextChanged,
                           decoration: InputDecoration(
                             hintText: widget.hint,
                             hintStyle: TextStyle(
@@ -1117,13 +1152,53 @@ class _InputBarState extends State<_InputBar> {
                             filled: false,
                             border: InputBorder.none,
                             contentPadding: const EdgeInsets.symmetric(
-                                horizontal: AppSpacing.sm, vertical: 2),
+                                horizontal: AppSpacing.sm, vertical: 8),
+                          ),
+                        ),
+                      )
+                    // The plain chat composer needs this just as much as the journal
+                    // one. Long text gets pasted here too — it is where "대화 → 일기
+                    // 정리" starts — and while it kept maxLines: 6 every tap still
+                    // yanked the view to the caret.
+                    : CaretStableField(
+                        maxHeight: _chatComposerMaxHeight,
+                        controller: _chatScroll,
+                        child: Focus(
+                          onKeyEvent: _onKey,
+                          // Scale baked into the style + no scaling below: the
+                          // canvas and the hidden DOM input that resolves taps have
+                          // to work from one font size.
+                          child: NoTextScaling(
+                            child: TextField(
+                              controller: widget.controller,
+                              focusNode: _focusNode,
+                              enabled: composerTappable,
+                              readOnly: !canType,
+                              minLines: 1,
+                              maxLines: null,
+                              keyboardType: TextInputType.multiline,
+                              style: textScaleBakedIn(
+                                context,
+                                TextStyle(
+                                    color: shell.primaryText, fontSize: 14),
+                              ),
+                              textInputAction: TextInputAction.send,
+                              onSubmitted: canType ? widget.onSend : null,
+                              decoration: InputDecoration(
+                                hintText: widget.hint,
+                                hintStyle: TextStyle(
+                                    color: shell.mutedText, fontSize: 13.5),
+                                isDense: true,
+                                filled: false,
+                                border: InputBorder.none,
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: AppSpacing.sm, vertical: 2),
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
-          ),
+              ),
               const SizedBox(width: AppSpacing.xs),
               _SendButton(
                 enabled: journalMode ? (canType && !recording) : canType,
@@ -1389,7 +1464,12 @@ class _ModeMenuButtonState extends State<_ModeMenuButton> {
                   borderRadius: BorderRadius.circular(18),
                   clipBehavior: Clip.antiAlias,
                   child: SizedBox(
-                    width: 210,
+                    // English action labels are materially longer than Korean.
+                    // Give the popup nearly the available phone width and let
+                    // each label wrap rather than painting outside its card.
+                    width: (MediaQuery.sizeOf(context).width - 32)
+                        .clamp(240.0, 300.0)
+                        .toDouble(),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 6),
                       child: Column(
@@ -1437,7 +1517,14 @@ class _ModeMenuRow extends StatelessWidget {
       children: [
         Icon(icon, size: 18, color: color),
         const SizedBox(width: 10),
-        Text(label, style: TextStyle(color: color, fontSize: 13)),
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: color, fontSize: 13, height: 1.25),
+          ),
+        ),
       ],
     );
   }

@@ -20,9 +20,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:graphrag_mobile/chat/chat_suggestions.dart';
+import 'package:graphrag_mobile/l10n/app_strings.dart';
 import 'package:graphrag_mobile/theme/app_theme.dart';
 import 'package:graphrag_mobile/widgets/chat_suggestion_rail.dart';
 import 'package:graphrag_mobile/widgets/graph_chat_panel.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 final _fontDir = Platform.environment['QUIZ_SHOT_FONT_DIR'] ?? '';
 final _skipUnlessFont = _fontDir.isEmpty;
@@ -34,7 +36,8 @@ Future<void> _loadAppFont() async {
   for (final name in ['Pretendard-Regular.ttf', 'Pretendard-Bold.ttf']) {
     final file = File('$_fontDir${Platform.pathSeparator}$name');
     if (file.existsSync()) {
-      loader.addFont(Future.value(ByteData.view(file.readAsBytesSync().buffer)));
+      loader
+          .addFont(Future.value(ByteData.view(file.readAsBytesSync().buffer)));
       loaded++;
     }
   }
@@ -68,7 +71,11 @@ const _nodeIds = [
 
 final _nodeById = <String, Map<String, dynamic>>{
   _nodeIds[0]: {'id': _nodeIds[0], 'name': '아침 산책', 'type': 'Concept'},
-  _nodeIds[1]: {'id': _nodeIds[1], 'name': '저녁 산책 30분 하기로 함', 'type': 'Statement'},
+  _nodeIds[1]: {
+    'id': _nodeIds[1],
+    'name': '저녁 산책 30분 하기로 함',
+    'type': 'Statement'
+  },
   _nodeIds[2]: {'id': _nodeIds[2], 'name': '나', 'type': 'Identity'},
 };
 
@@ -96,14 +103,18 @@ Widget _harness({
         size: size,
         textScaler: TextScaler.linear(textScale),
       ),
-      child: Scaffold(resizeToAvoidBottomInset: false, body: SafeArea(child: child)),
+      child: Scaffold(
+          resizeToAvoidBottomInset: false, body: SafeArea(child: child)),
     ),
   );
 }
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  setUpAll(_loadAppFont);
+  setUpAll(() async {
+    SharedPreferences.setMockInitialValues({});
+    await _loadAppFont();
+  });
 
   const phone = Size(375, 812);
 
@@ -212,4 +223,38 @@ void main() {
       matchesGoldenFile('screenshots/suggestion_rail.png'),
     );
   }, skip: _skipUnlessFont);
+
+  testWidgets('English mode menu fits a narrow phone at larger text',
+      (tester) async {
+    appLocaleController.setLocaleForTesting('en');
+    addTearDown(() => appLocaleController.setLocaleForTesting('ko'));
+    await tester.binding.setSurfaceSize(const Size(320, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      _harness(
+        size: const Size(320, 640),
+        textScale: 1.2,
+        child: Align(
+          alignment: Alignment.bottomCenter,
+          child: ChatInputBar(
+            inputController: TextEditingController(),
+            busy: false,
+            onSend: (_) {},
+            onModeSelected: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.add_circle_outline_rounded));
+    await tester.pump();
+
+    final action = find.text('Turn this chat into a journal');
+    expect(action, findsOneWidget);
+    final rect = tester.getRect(action);
+    expect(rect.left, greaterThanOrEqualTo(0));
+    expect(rect.right, lessThanOrEqualTo(320));
+    expect(tester.takeException(), isNull);
+  });
 }

@@ -295,7 +295,7 @@ async def run_journal_fast_pipeline(
     # 번역 제거(2026-07-04): 쓰기 경로는 정제만 — 번역은 학습 파이프라인(표현 추출)
     # 쪽에서 문장 단위로 다루고, 일기 자체를 통번역하는 기능은 사용하지 않기로 결정.
     gpt_input = llm_transcript_ko or transcript_ko
-    _active_prompt = build_cleanup_only_system_prompt()
+    _active_prompt = build_cleanup_only_system_prompt(native_language)
     step = tracer.begin_step(
         "gpt_cleanup",
         "llm",
@@ -305,7 +305,7 @@ async def run_journal_fast_pipeline(
         input_data={"user_message": gpt_input, "translate": False},
     )
     try:
-        cleaned = await cleanup_only(gpt_input)
+        cleaned = await cleanup_only(gpt_input, native_language)
         tracer.finish_step(
             step,
             output=cleaned,
@@ -804,7 +804,11 @@ async def _clean_and_persist_text_entry(
     to run again on an entry whose earlier attempt failed — see
     reprocess_journal_text_entry for the guards that decide when that is true.
     """
+    from .models import User
     from .precision_text import segments_from_dialogue
+
+    user = await session.get(User, user_id)
+    native_language = getattr(user, "native_language", None) or "korean"
 
     tracer = PipelineTracer(entry.id)
 
@@ -823,7 +827,7 @@ async def _clean_and_persist_text_entry(
     # 쓰기 = 정제만(빠름). 번역은 학습 시 온디맨드(POST .../translate)로 분리 —
     # 긴 글을 다국어로 동기 번역하면 지연이 과도하고, 정작 먼저 보고 싶은 건 정제된
     # 일기이기 때문. 그래프 빌드는 한국어 정제 텍스트를 쓰므로 영향 없음.
-    _active_prompt2 = build_cleanup_only_system_prompt()
+    _active_prompt2 = build_cleanup_only_system_prompt(native_language)
 
     step = tracer.begin_step(
         "gpt_cleanup",
@@ -834,7 +838,7 @@ async def _clean_and_persist_text_entry(
         input_data={"transcript_ko": labeled, "translate": False},
     )
     try:
-        cleaned = await cleanup_only(labeled)
+        cleaned = await cleanup_only(labeled, native_language)
         tracer.finish_step(
             step,
             output=cleaned,

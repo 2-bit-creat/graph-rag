@@ -292,15 +292,21 @@ class ApiClient {
   }
 
   /// Privacy policy content — {version, language, content_markdown}. Public.
-  Future<Map<String, dynamic>> getPrivacyPolicy() async {
-    final resp = await _dio.get('/legal/privacy-policy');
+  Future<Map<String, dynamic>> getPrivacyPolicy({String? language}) async {
+    final resp = await _dio.get(
+      '/legal/privacy-policy',
+      queryParameters: language == null ? null : {'language': language},
+    );
     return resp.data as Map<String, dynamic>;
   }
 
   /// AI Basic Act generative-AI disclosure notice. Public.
-  Future<String> getAiDisclosure() async {
+  Future<String> getAiDisclosure({String? language}) async {
     try {
-      final resp = await _dio.get('/legal/ai-disclosure');
+      final resp = await _dio.get(
+        '/legal/ai-disclosure',
+        queryParameters: language == null ? null : {'language': language},
+      );
       return (resp.data as Map)['notice']?.toString() ?? '';
     } on DioException catch (_) {
       return '';

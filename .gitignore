@@ -72,3 +72,5 @@ mobile/test/screenshots/
 # Person→Identity report in particular is the only record of which identities
 # used to carry that type, so keep it locally, never here.
 backups/
+
+backend/.codex-test-deps/

@@ -395,6 +395,46 @@ def _build_extraction_system_prompt(
     from ..tutor import _lang_label
 
     native_label = _lang_label(native_language)
+    if (native_language or "").strip().lower() == "english":
+        speaker_rule = (
+            f'Every claim speaker MUST be exactly "{fixed_speaker}". Never invent '
+            "or switch speakers."
+            if fixed_speaker
+            else "Use the person or source that actually made each claim as its speaker."
+        )
+        return f"""You are a knowledge-graph assistant for an English-native learner.
+The source text is English. Every user-visible field you create MUST be English:
+claim titles, statements, concept names, and any proposed source labels.
+
+Return valid JSON only, with this shape:
+{{
+  "contextTypeOptions": ["internal category", "internal category"],
+  "claims": [
+    {{
+      "speaker": "speaker name",
+      "title": "a concise 5-7 word English title",
+      "statement": "a complete English statement preserving all source facts",
+      "event_time_text": "the source phrase for when it happened, or null",
+      "temporal_precision": "exact | day | range | month | relative | unknown",
+      "temporal_confidence": 0.0,
+      "event_status": "happened | planned | cancelled | hypothetical | unknown",
+      "concepts": [{{"name": "English concept", "importance": 4, "kind": "concept"}}]
+    }}
+  ]
+}}
+
+Split claims by speaker change or real topic change. Preserve every proposition,
+fact, number, time, and consequence from the source in exactly one statement;
+never summarise away information. Remove only fillers and stutters.
+
+{speaker_rule}
+
+Use one to five concrete concepts for every claim. Named people, organizations,
+places, products, and events use kind "person"; ordinary nouns use "concept".
+Never use pronouns or referring phrases as permanent concept names. Do not create
+Vocab or Subject nodes. The internal context category for this entry is
+"{content_type}"; it is metadata, not a reason to omit content."""
+
     if fixed_speaker:
         speaker_rule = (
             f'- speaker: every claim\'s "speaker" MUST be exactly "{fixed_speaker}" — the '

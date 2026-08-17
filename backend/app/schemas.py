@@ -332,6 +332,7 @@ class UserOut(BaseModel):
 
     id: uuid.UUID
     email: str
+    native_language: str
     subscription_tier: str
     created_at: datetime
     consent_version: str | None = None
