@@ -18,6 +18,7 @@ import 'theme/app_theme_controller.dart';
 import 'utils/device_timezone.dart';
 import 'utils/keyboard_inset.dart';
 import 'widgets/keyboard_inset_scope.dart';
+import 'widgets/journal_activity_host.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -60,6 +61,7 @@ class GraphRagApp extends StatelessWidget {
               children: [
                 if (child != null) child,
                 const ComposeWindowHost(),
+                const JournalActivityHost(),
               ],
             ),
           ),
