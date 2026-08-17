@@ -6,7 +6,7 @@ param(
     [string]$FunctionName,
     [string]$SecretName = "graph-rag/prod/app",
     [string]$Region = "ap-northeast-2",
-    [string]$Profile = "my-ai-app"
+    [string]$Profile = "graph-rag-dev"
 )
 
 $ErrorActionPreference = "Stop"

@@ -9,7 +9,7 @@ cached = true
 parallel = true
 
 [default.deploy.parameters]
-profile = "my-ai-app"
+profile = "graph-rag-dev"
 resolve_s3 = true
 resolve_image_repos = true
 capabilities = "CAPABILITY_IAM"

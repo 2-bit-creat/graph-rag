@@ -57,7 +57,7 @@ if the function resource is ever replaced — look it up rather than trust a har
 
 ```bash
 aws cloudformation describe-stack-resource --stack-name graph-rag-backend \
-  --logical-resource-id GraphRagFunction --region ap-northeast-2 --profile my-ai-app \
+  --logical-resource-id GraphRagFunction --region ap-northeast-2 --profile graph-rag-dev \
   --query "StackResourceDetail.PhysicalResourceId" --output text
 ```
 
@@ -68,7 +68,7 @@ real client). Look it up instead of trusting the table when it matters:
 
 ```bash
 aws cloudformation describe-stacks --stack-name graph-rag-backend \
-  --region ap-northeast-2 --profile my-ai-app \
+  --region ap-northeast-2 --profile graph-rag-dev \
   --query "Stacks[0].Outputs[?OutputKey=='FunctionUrl'].OutputValue" --output text
 ```
 
@@ -124,7 +124,7 @@ Minimal `--event` for a GET request (adjust `rawPath`):
 them fresh before relying on them (they can go stale across sessions):
 ```bash
 aws lambda get-function-configuration --function-name <physical-name> \
-  --region ap-northeast-2 --profile my-ai-app --query "Environment.Variables" --output json
+  --region ap-northeast-2 --profile graph-rag-dev --query "Environment.Variables" --output json
 ```
 
 ### 3. `bash deploy.sh` — only once step 2 looks right
@@ -210,7 +210,7 @@ edit the literal values inside `deploy.sh` directly.
   passed to Windows-native tools (`sam.cmd`), do the opposite — let the conversion
   happen, or use an explicit Windows-style path.
 - **Reading Lambda logs**: `aws logs tail "/aws/lambda/<function-name>" --since 10m
-  --region ap-northeast-2 --profile my-ai-app` (with `MSYS_NO_PATHCONV=1`).
+  --region ap-northeast-2 --profile graph-rag-dev` (with `MSYS_NO_PATHCONV=1`).
 - **Checking the IAM role actually attached**: the SAM-generated role name isn't the
   logical ID — resolve it first (`describe-stack-resource` on `GraphRagFunctionRole`),
   then `aws iam list-role-policies` / `get-role-policy`.
