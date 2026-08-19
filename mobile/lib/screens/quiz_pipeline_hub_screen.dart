@@ -42,7 +42,7 @@ class _QuizPipelineHubScreenState extends State<QuizPipelineHubScreen> {
       setState(() {
         _items = ((data['items'] as List<dynamic>?) ?? []).where((item) {
           final type = (item as Map)['quiz_type']?.toString();
-          return type == 'cloze' || type == 'composition';
+          return type == 'scramble' || type == 'composition';
         }).toList();
         _profile = profile;
         _loading = false;
@@ -64,7 +64,7 @@ class _QuizPipelineHubScreenState extends State<QuizPipelineHubScreen> {
       setState(() {
         _items = ((data['items'] as List<dynamic>?) ?? []).where((item) {
           final type = (item as Map)['quiz_type']?.toString();
-          return type == 'cloze' || type == 'composition';
+          return type == 'scramble' || type == 'composition';
         }).toList();
       });
       await _select(quizId);

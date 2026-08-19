@@ -130,7 +130,7 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
             content: Text(
               'Statement ${_selectedNodes.length}개 × Target 언어 '
               '${_selectedLanguages.length}개 = 총 $combinationCount개 조합을 '
-              '생성합니다.\n\n각 조합에서 단어 문제와 작문 문제를 함께 만들며, '
+              '생성합니다.\n\n각 조합에서 배열 문제와 작문 문제를 함께 만들며, '
               '기존 활성 문제는 생성 이력으로 보관됩니다.',
             ),
             actions: [
@@ -445,7 +445,7 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
       subtitle: status == 'failed'
           ? Text(item['error']?.toString() ?? '생성 실패')
           : Text(
-              '단어 문제 ${counts['cloze'] ?? 0}개 · 작문 문제 ${counts['composition'] ?? 0}개',
+              '배열 문제 ${counts['scramble'] ?? counts['cloze'] ?? 0}개 · 작문 문제 ${counts['composition'] ?? 0}개',
             ),
       trailing: quizIds.isEmpty
           ? null
@@ -471,7 +471,7 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
           builder: (ctx) => AlertDialog(
             title: const Text('노드 초기화'),
             content: Text(
-              "'$name'에서 만들어진 단어/작문 퀴즈와 표현을 전부 삭제합니다.\n"
+              "'$name'에서 만들어진 배열/작문 퀴즈와 표현을 전부 삭제합니다.\n"
               'Statement 자체는 그대로 남고, 다음 문제 생성부터 새로 시작합니다.',
             ),
             actions: [
@@ -556,11 +556,13 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
                             )
                           : <String, dynamic>{};
                       final language = stat['language']?.toString() ?? '';
+                      final expressionCount = stat['expression_count'] ?? 0;
                       return Chip(
                         visualDensity: VisualDensity.compact,
                         label: Text(
                           '${_languageLabels[language] ?? language} · '
-                          '단어 ${counts['cloze'] ?? 0}개 · 작문 ${counts['composition'] ?? 0}개',
+                          '표현 $expressionCount개 · '
+                          '배열 ${counts['scramble'] ?? 0}개 · 작문 ${counts['composition'] ?? 0}개',
                           style: const TextStyle(fontSize: 11),
                         ),
                       );

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-QUIZ_TYPES = frozenset({"cloze", "composition"})
+QUIZ_TYPES = frozenset({"cloze", "scramble", "composition"})
 QUEUE_KINDS = frozenset({"new", "review", "archived"})
 
-ENABLED_QUIZ_TYPES = frozenset({"cloze", "composition"})
+# ``cloze`` remains a readable legacy type so historical attempts and archived
+# cards are valid, but it is deliberately not a learner-facing capability.
+ENABLED_QUIZ_TYPES = frozenset({"scramble", "composition"})
 
 
 def validate_quiz_type(quiz_type: str) -> str:

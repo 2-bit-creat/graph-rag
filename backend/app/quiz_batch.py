@@ -20,7 +20,6 @@ from .quiz_bundle import CLOZE_GENERATOR_VERSION, BundleSeedError
 from .quiz_materials import (
     activate_node_compositions,
     ensure_learning_material,
-    materialize_node_expressions,
 )
 from .tutor import DrillSeedError
 
@@ -58,7 +57,8 @@ async def _get_or_create_batch(
         track=track,
         language=language,
         sequence=sequence,
-        cloze_target=user.daily_cloze_target if track == "daily" else 1,
+        cloze_target=0,
+        scramble_target=user.daily_scramble_target if track == "daily" else 1,
         composition_target=user.daily_composition_target if track == "daily" else 1,
         review_ratio=user.quiz_review_ratio,
     )
@@ -73,7 +73,7 @@ async def _counts(session: AsyncSession, batch_id: uuid.UUID) -> dict[str, int]:
         .where(
             Quiz.batch_id == batch_id,
             Quiz.queue_kind.in_(("new", "review")),
-            Quiz.quiz_type.in_(("cloze", "composition")),
+            Quiz.quiz_type.in_(("scramble", "composition")),
         )
         .group_by(Quiz.quiz_type)
     )
@@ -100,7 +100,7 @@ async def _failed_seed_ids(session: AsyncSession, user_id: uuid.UUID) -> list[uu
         select(Quiz.source_nodes)
         .where(
             Quiz.user_id == user_id,
-            Quiz.quiz_type.in_(("cloze", "composition")),
+            Quiz.quiz_type.in_(("scramble", "composition")),
             Quiz.times_wrong > 0,
             Quiz.next_review_at.is_not(None),
             Quiz.next_review_at <= datetime.now(UTC),
@@ -171,7 +171,7 @@ async def _source_state(
                 Quiz.language == language,
                 Quiz.track == "daily",
                 Quiz.queue_kind != "archived",
-                Quiz.quiz_type.in_(("cloze", "composition")),
+                Quiz.quiz_type.in_(("scramble", "composition")),
             )
         )
         if int(active.scalar_one()) == 0:
@@ -193,7 +193,7 @@ async def _covered_node_types(
             Quiz.language == language,
             Quiz.track == "daily",
             Quiz.queue_kind.in_(("new", "review")),
-            Quiz.quiz_type.in_(("cloze", "composition")),
+            Quiz.quiz_type.in_(("scramble", "composition")),
         )
     )
     covered: dict[str, set[str]] = {}
@@ -259,7 +259,7 @@ async def fill_daily_batch(
                 Quiz.language == language,
                 Quiz.queue_kind == "new",
                 Quiz.repetitions == 0,
-                Quiz.quiz_type.in_(("cloze", "composition")),
+                Quiz.quiz_type.in_(("scramble", "composition")),
             )
             .group_by(Quiz.quiz_type)
         )
@@ -270,66 +270,53 @@ async def fill_daily_batch(
         # cards.  Refill only the actual deficit and wait until a low-water mark
         # is crossed so small fluctuations do not start model work.
         composition_target = max(0, user.daily_composition_target)
-        cloze_target = max(0, user.daily_cloze_target)
+        scramble_target = max(0, user.daily_scramble_target)
         composition_low = min(composition_target, max(2, composition_target // 2))
-        cloze_low = min(cloze_target, max(5, cloze_target // 2))
+        scramble_low = min(scramble_target, max(5, scramble_target // 2))
         composition_current = current.get("composition", 0)
-        cloze_current = current.get("cloze", 0)
+        scramble_current = current.get("scramble", 0)
         composition_missing = (
             max(0, composition_target - composition_current)
             if composition_current <= composition_low
             else 0
         )
-        cloze_missing = (
-            max(0, cloze_target - cloze_current)
-            if cloze_current <= cloze_low
+        scramble_missing = (
+            max(0, scramble_target - scramble_current)
+            if scramble_current <= scramble_low
             else 0
         )
-        generated = {"cloze": 0, "composition": 0}
-        if composition_missing == 0 and cloze_missing == 0:
+        generated = {"scramble": 0, "composition": 0}
+        if composition_missing == 0 and scramble_missing == 0:
             await session.commit()
-            return {"status": "queue_ready", "cloze": 0, "composition": 0}
+            return {"status": "queue_ready", "scramble": 0, "composition": 0}
         # Older runs stored one global exhausted flag even when only one quiz
         # type had been exhausted.  That stale flag must not block refilling a
         # different type that is currently below its buffer.
         if (
             state.status == "exhausted"
             and (
-                (cloze_missing > 0 and current.get("composition", 0) > 0)
-                or (composition_missing > 0 and current.get("cloze", 0) > 0)
+                (scramble_missing > 0 and current.get("composition", 0) > 0)
+                or (composition_missing > 0 and current.get("scramble", 0) > 0)
             )
         ):
             state.status = "available"
         if state.status == "exhausted":
             await session.commit()
-            return {"status": "source_exhausted", "cloze": 0, "composition": 0}
+            return {"status": "source_exhausted", "scramble": 0, "composition": 0}
 
         covered = await _covered_node_types(session, user.id, language)
-        from .node_expression_store import list_available_node_expressions
-
         ranked_sources: list[tuple[int, str, dict]] = []
         for source in sources:
             source_id = str(source.get("node_id"))
-            available = (
-                await list_available_node_expressions(user.id, source_id, language)
-                if cloze_missing > 0
-                else []
-            )
-            can_analyse_for_cloze = "cloze" not in covered.get(source_id, set())
+            needs_scramble = scramble_missing > 0 and "scramble" not in covered.get(source_id, set())
             needs_composition = (
                 composition_missing > 0
                 and "composition" not in covered.get(source_id, set())
             )
-            if not needs_composition and not (
-                cloze_missing > 0 and (available or can_analyse_for_cloze)
-            ):
+            if not needs_composition and not needs_scramble:
                 continue
-            best_utility = max(
-                (int(item.get("utility_score") or 0) for item in available),
-                default=0,
-            )
             ranked_sources.append(
-                (best_utility, str(source.get("created_at") or ""), source)
+                (0, str(source.get("created_at") or ""), source)
             )
         # High-value expressions first, then recent memories.  This replaces
         # database return order, which was never a recommendation policy.
@@ -339,38 +326,34 @@ async def fill_daily_batch(
             state.status = "exhausted"
             state.source_count = len(sources)
             await session.commit()
-            return {"status": "source_exhausted", "cloze": 0, "composition": 0}
+            return {"status": "source_exhausted", "scramble": 0, "composition": 0}
 
         for source in candidates:
-            if generated["cloze"] >= cloze_missing and generated["composition"] >= composition_missing:
+            if generated["scramble"] >= scramble_missing and generated["composition"] >= composition_missing:
                 break
             source_id = str(source["node_id"])
             source_covered = covered.get(source_id, set())
             needs_composition = "composition" not in source_covered
-            available_expressions = await list_available_node_expressions(
-                user.id, source_id, language
-            )
-            # One existing cloze only proves that one expression was emitted.
-            # Keep the Statement eligible while unused analysed expressions remain.
-            needs_cloze = bool(available_expressions) or "cloze" not in source_covered
-            cloze_attempted = needs_cloze and generated["cloze"] < cloze_missing
             try:
-                material, _, trace = await ensure_learning_material(
+                material, created_cards, trace = await ensure_learning_material(
                     session, user, node_id=uuid.UUID(source_id), language=language
                 )
-                composition_cards = []
-                if needs_composition and generated["composition"] < composition_missing:
-                    # Spread writing prompts across memories instead of filling
-                    # the target from the first rich Statement.
-                    composition_cards = await activate_node_compositions(
-                        session,
-                        user,
-                        node_id=uuid.UUID(source_id),
-                        language=language,
-                        limit=1,
-                    )
+                activated_cards = await activate_node_compositions(
+                    session, user, node_id=uuid.UUID(source_id), language=language, limit=1
+                ) if (needs_composition or generated["scramble"] < scramble_missing) else []
+                scramble_count = 0
+                for quiz in activated_cards:
+                    if quiz.quiz_type != "scramble":
+                        continue
+                    if generated["scramble"] >= scramble_missing:
+                        quiz.queue_kind = "archived"
+                        continue
+                    generated["scramble"] += 1
+                    scramble_count += 1
+                    quiz.track = "daily"
+                    quiz.source_kind = "learning_material"
                 comp_count = 0
-                for quiz in composition_cards:
+                for quiz in (quiz for quiz in activated_cards if quiz.quiz_type == "composition"):
                     if needs_composition and generated["composition"] < composition_missing:
                         generated["composition"] += 1
                         comp_count += 1
@@ -378,28 +361,7 @@ async def fill_daily_batch(
                         quiz.source_kind = "learning_material"
                     else:
                         quiz.queue_kind = "archived"
-                word_count = 0
-                if cloze_attempted:
-                    # Two expressions from one Statement share context well
-                    # without letting a rich node monopolise the whole queue.
-                    clozes, _ = await materialize_node_expressions(
-                        session,
-                        user,
-                        node_id=uuid.UUID(source_id),
-                        language=language,
-                        limit=min(2, max(1, cloze_missing - generated["cloze"])),
-                        queue_missing=max(0, cloze_missing - generated["cloze"]),
-                    )
-                    for quiz in clozes:
-                        if generated["cloze"] >= cloze_missing:
-                            quiz.queue_kind = "archived"
-                            continue
-                        generated["cloze"] += 1
-                        word_count += 1
-                        quiz.track = "daily"
-                        quiz.source_kind = "expression_inventory"
                 expression_count = material.expression_count
-                valid_cloze_count = word_count
             except BundleSeedError:
                 continue
             await _record_exploration(
@@ -408,18 +370,18 @@ async def fill_daily_batch(
                 str(source["node_id"]),
                 language,
                 comp_count,
-                valid_cloze_count,
+                scramble_count,
                 expression_count,
-                cloze_attempted,
+                False,
             )
 
-        if generated["cloze"] == 0 and generated["composition"] == 0:
+        if generated["scramble"] == 0 and generated["composition"] == 0:
             state.status = "exhausted"
 
         await session.commit()
         return {
             "status": "ok" if any(generated.values()) else "source_exhausted",
-            "cloze": generated["cloze"],
+            "scramble": generated["scramble"],
             "composition": generated["composition"],
         }
 

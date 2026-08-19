@@ -102,12 +102,12 @@ class _LearningProgressScreenState extends State<LearningProgressScreen>
     await _load();
   }
 
-  /// Quizlet-style review over the same cloze queue, graded by the learner.
+  /// Quizlet-style review over sentence-order cards, graded by the learner.
   ///
   /// `cloze` rather than `composition`: a flip card shows a prompt and its
   /// answer, which a written composition has no single one of.
   Future<void> _openReviewDeck() async {
-    await Navigator.of(context).push(QuizDeckScreen.route(quizType: 'cloze'));
+    await Navigator.of(context).push(QuizDeckScreen.route(quizType: 'scramble'));
     await _load();
   }
 
@@ -116,7 +116,7 @@ class _LearningProgressScreenState extends State<LearningProgressScreen>
     // finishes — an unguarded `_profile!` would throw on an early tap.
     final profile = _profile;
     if (profile == null) return;
-    var cloze = (profile['daily_cloze_target'] as num?)?.toInt() ?? 20;
+    var cloze = (profile['daily_scramble_target'] as num?)?.toInt() ?? 20;
     var composition =
         (profile['daily_composition_target'] as num?)?.toInt() ?? 5;
     var saving = false;
@@ -188,6 +188,7 @@ class _LearningProgressScreenState extends State<LearningProgressScreen>
                           try {
                             await apiClient.updateQuizProfileSettings(
                               dailyClozeTarget: cloze,
+                              dailyScrambleTarget: cloze,
                               dailyCompositionTarget: composition,
                             );
                             if (context.mounted) Navigator.pop(context, true);
@@ -301,7 +302,7 @@ class _LearningProgressScreenState extends State<LearningProgressScreen>
           const SizedBox(height: 14),
           _TodayMissionCard(
             today: today,
-            onCloze: () => _start('cloze'),
+            onCloze: () => _start('scramble'),
             onComposition: () => _start('composition'),
             onEdit: _editGoals,
           ),
@@ -561,9 +562,9 @@ class _TodayMissionCard extends StatelessWidget {
             const SizedBox(height: 16),
             _MissionRow(
               icon: Icons.spellcheck_rounded,
-              label: tr('progress.words'),
-              current: (today['cloze'] as num?)?.toInt() ?? 0,
-              goal: (today['cloze_goal'] as num?)?.toInt() ?? 0,
+              label: tr('quizSession.typeScramble'),
+              current: (today['scramble'] as num?)?.toInt() ?? 0,
+              goal: (today['scramble_goal'] as num?)?.toInt() ?? 0,
               color: const Color(0xFF5B67F1),
               onStart: onCloze,
             ),
@@ -674,7 +675,7 @@ class _WeekCard extends StatelessWidget {
     final maxValue = week.fold<int>(
       1,
       (max, row) {
-        final value = ((row['cloze'] as num?)?.toInt() ?? 0) +
+        final value = ((row['scramble'] as num?)?.toInt() ?? 0) +
             ((row['composition'] as num?)?.toInt() ?? 0);
         return value > max ? value : max;
       },
@@ -693,7 +694,7 @@ class _WeekCard extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
                       Text(
-                        '${((row['cloze'] as num?)?.toInt() ?? 0) + ((row['composition'] as num?)?.toInt() ?? 0)}',
+                        '${((row['scramble'] as num?)?.toInt() ?? 0) + ((row['composition'] as num?)?.toInt() ?? 0)}',
                         style: const TextStyle(
                             fontSize: 11, fontWeight: FontWeight.w700),
                       ),
@@ -701,7 +702,7 @@ class _WeekCard extends StatelessWidget {
                       Flexible(
                         child: FractionallySizedBox(
                           heightFactor:
-                              ((((row['cloze'] as num?)?.toDouble() ?? 0) +
+                              ((((row['scramble'] as num?)?.toDouble() ?? 0) +
                                           ((row['composition'] as num?)
                                                   ?.toDouble() ??
                                               0)) /

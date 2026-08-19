@@ -158,14 +158,16 @@ class _MenuScreenState extends State<MenuScreen> {
             const SizedBox(height: AppSpacing.xl),
 
             // 설정 진입점은 상단 프로필 헤더가 겸한다(중복 타일 제거).
-            // ── 개발자 도구 (접힘, 운영 계정 전용) ────────────────────────
-            // 파이프라인/KG 원본 트레이스와 아티팩트를 노출하므로 아무 계정에나
-            // 보이면 안 된다. kDebugMode로 감싸면 release 빌드에서 사라져
-            // 배포 환경에선 운영진조차 학습 품질 진단·복구를 못 하므로, 대신
-            // 서버가 내려주는 판단(LearningProfileOut.is_operator)으로 게이팅한다.
-            // 앱이 핸들을 직접 비교하던 시절에는 'main'으로 로그인하기만 하면
-            // 누구나 이 도구에 닿을 수 있었다.
-            if (accountController.isOperator) ...[
+            // ── 개발자 도구 (접힘, 로그인 계정 전체) ────────────────────────
+            // 학습 큐 관리·파이프라인 trace·KG 디버그는 전부 quiz.user_id /
+            // journal_entries.user_id로 자기 계정 데이터만 보여준다(서버가
+            // 실제로 강제 — 아래 세 엔드포인트를 보라). 다른 사람 공간을
+            // 열거·삭제하는 계정 관리만 별도로 'main' 핸들에 한 번 더 잠근다.
+            // 예전엔 이 구간 전체가 서버의 operator 핸들 allow-list
+            // (LearningProfileOut.is_operator)에 묶여 있었는데, 그 목록에
+            // 없는 일반 계정은 정작 *자기* 학습 파이프라인도 못 들여다봤다 —
+            // 게이트가 남의 데이터가 아니라 자기 데이터를 막고 있었던 셈.
+            if (accountController.hasAccount) ...[
               Material(
                 color: Colors.transparent,
                 child: InkWell(

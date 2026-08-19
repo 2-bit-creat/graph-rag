@@ -947,6 +947,9 @@ class _GraphReviewPanelState extends State<GraphReviewPanel> {
               claim.approved = !claim.approved;
               if (!claim.approved) claim.expanded = false;
             }),
+            onToggleExpanded: () => setState(() {
+              claim.expanded = !claim.expanded;
+            }),
             onReopenSpeakers:
                 widget.onReopenSpeakers == null ? null : _handleReopenSpeakers,
           );
@@ -1130,6 +1133,7 @@ class _ClaimCard extends StatelessWidget {
     this.sharesCommonDate = true,
     this.approved = false,
     this.onToggleApproved,
+    this.onToggleExpanded,
     this.onReopenSpeakers,
   });
 
@@ -1147,6 +1151,7 @@ class _ClaimCard extends StatelessWidget {
   final bool sharesCommonDate;
   final bool approved;
   final VoidCallback? onToggleApproved;
+  final VoidCallback? onToggleExpanded;
   final VoidCallback? onReopenSpeakers;
 
   /// Per-claim date. Present on every editable card so an exception can actually
@@ -1487,6 +1492,7 @@ class _ClaimCard extends StatelessWidget {
   /// focus, and only linked/suggested chips take colour.
   Widget _buildChatCard(BuildContext context) {
     final approvedTone = approved ? _kApproved : context.shell.mutedText;
+    final expanded = claim.expanded;
     return Container(
       decoration: BoxDecoration(
         color: context.shell.panelBackground,
@@ -1524,6 +1530,24 @@ class _ClaimCard extends StatelessWidget {
                 ),
               ),
               _dateChip(context),
+              if (onToggleExpanded != null)
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(minWidth: 28, minHeight: 30),
+                  tooltip: expanded
+                      ? tr('common.collapse')
+                      : tr('common.expand'),
+                  onPressed: onToggleExpanded,
+                  icon: Icon(
+                    expanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                    size: 18,
+                    color: context.shell.mutedText,
+                  ),
+                ),
               if (onToggleApproved != null)
                 IconButton(
                   visualDensity: VisualDensity.compact,
@@ -1555,44 +1579,58 @@ class _ClaimCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 2),
-          // Statement bodies are edited here and can run long, so they need the
-          // same treatment as the composers. See [CaretStableField].
-          Padding(
-            padding: const EdgeInsets.only(right: 6),
-            // Outside CaretStableField on purpose — see [RevealOnFocus].
-            child: RevealOnFocus(
-              builder: (focusNode) => CaretStableField(
-                maxHeight: 96,
-                child: TextField(
-                  controller: claim.statement,
-                  focusNode: focusNode,
-                  minLines: 1,
-                  maxLines: null,
-                  magnifierConfiguration: kNoMagnifier,
+          if (expanded)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: RevealOnFocus(
+                builder: (focusNode) => CaretStableField(
+                  maxHeight: 96,
+                  child: TextField(
+                    controller: claim.statement,
+                    focusNode: focusNode,
+                    minLines: 1,
+                    maxLines: null,
+                    magnifierConfiguration: kNoMagnifier,
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.45,
+                      color: context.shell.primaryText,
+                    ),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      filled: true,
+                      fillColor: context.shell.subtleSurface,
+                      contentPadding:
+                          const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+                      border: _statementBorder(Colors.transparent),
+                      enabledBorder: _statementBorder(Colors.transparent),
+                      focusedBorder: _statementBorder(
+                        AppColors.hubGraph.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            )
+          else
+            InkWell(
+              onTap: onToggleExpanded,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(0, 3, 6, 3),
+                child: Text(
+                  claim.statement.text,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 13,
                     height: 1.45,
                     color: context.shell.primaryText,
                   ),
-                  decoration: InputDecoration(
-                    isDense: true,
-                    filled: true,
-                    fillColor: context.shell.subtleSurface,
-                    contentPadding:
-                        const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
-                    // Borderless at rest — the fill already bounds the field, and
-                    // eight outlined boxes in a column read as a table.
-                    border: _statementBorder(Colors.transparent),
-                    enabledBorder: _statementBorder(Colors.transparent),
-                    focusedBorder: _statementBorder(
-                      AppColors.hubGraph.withValues(alpha: 0.5),
-                    ),
-                  ),
                 ),
               ),
             ),
-          ),
-          if (claim.concepts.isEmpty) ...[
+          if (expanded && claim.concepts.isEmpty) ...[
             const SizedBox(height: 6),
             Row(
               children: [
@@ -1620,11 +1658,13 @@ class _ClaimCard extends StatelessWidget {
               runSpacing: 4,
               children: [
                 for (final c in claim.concepts)
-                  if (c.isPerson)
+                  if (!expanded)
+                    _readOnlyChatChip(context, c)
+                  else if (c.isPerson)
                     _chatPersonChip(context, c)
                   else
                     _chatConceptChip(context, c),
-                _chatAddChip(context),
+                if (expanded) _chatAddChip(context),
               ],
             ),
           ),
@@ -1744,6 +1784,33 @@ class _ClaimCard extends StatelessWidget {
                       'name': c.resName ?? ''
                     })}'
               : c.name,
+    );
+  }
+
+  Widget _readOnlyChatChip(BuildContext context, _ConceptDraft c) {
+    final tone = c.isPerson ? AppColors.accentWarm : AppColors.accent;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: context.shell.panelBorder),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(c.isPerson ? Icons.person_rounded : Icons.circle,
+              size: c.isPerson ? 11 : 7, color: tone),
+          const SizedBox(width: 4),
+          Text(
+            c.name,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: context.shell.primaryText,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

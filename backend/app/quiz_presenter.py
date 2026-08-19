@@ -58,7 +58,7 @@ def _context_sentence(quiz: Quiz) -> str:
     if quiz.quiz_type == "cloze":
         return str(data.get("prompt_en") or quiz.sentence_target or "")
     if quiz.quiz_type == "scramble":
-        return str(data.get("sentence_en") or quiz.sentence_target or "")
+        return ""
     if quiz.quiz_type == "mcq_nuance":
         return str(data.get("prompt_ko") or quiz.question_native or "")
     return quiz.sentence_target or quiz.question_native or ""
@@ -89,6 +89,12 @@ def quiz_queue_item_dict(
             priority = 200
             reason = "정답 이력 · 오래 푼 문제부터 복습"
 
+    public_data = dict(quiz.quiz_data or {}) if isinstance(quiz.quiz_data, dict) else None
+    if quiz.quiz_type == "scramble" and public_data is not None:
+        # Queue/session reads occur before an answer.  The persisted order and
+        # sentence are server-only grading data.
+        for key in ("correct_order", "sentence_target", "sentence_en", "audio_url", "answer_audio_url"):
+            public_data.pop(key, None)
     return {
         "id": quiz.id,
         "quiz_type": quiz.quiz_type,
@@ -104,12 +110,12 @@ def quiz_queue_item_dict(
         # Legacy keys kept for existing mobile builds; _native/_target are the
         # same values under the names that reflect what they actually hold.
         "question_ko": quiz.question_native,
-        "sentence_en": quiz.sentence_target,
+        "sentence_en": None if quiz.quiz_type == "scramble" else quiz.sentence_target,
         "question_native": quiz.question_native,
-        "sentence_target": quiz.sentence_target,
-        "quiz_data": quiz.quiz_data if isinstance(quiz.quiz_data, dict) else None,
-        "audio_url": (quiz.quiz_data or {}).get("audio_url"),
-        "answer_audio_url": (quiz.quiz_data or {}).get("answer_audio_url"),
+        "sentence_target": None if quiz.quiz_type == "scramble" else quiz.sentence_target,
+        "quiz_data": public_data,
+        "audio_url": None if quiz.quiz_type == "scramble" else (quiz.quiz_data or {}).get("audio_url"),
+        "answer_audio_url": None if quiz.quiz_type == "scramble" else (quiz.quiz_data or {}).get("answer_audio_url"),
         "next_review_at": quiz.next_review_at,
         "streak": quiz.repetitions,
         "times_correct": quiz.times_correct,

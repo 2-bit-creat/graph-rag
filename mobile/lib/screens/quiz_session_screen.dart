@@ -134,6 +134,12 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
     );
 
     setState(() {
+      final revealedQuiz = result['quiz'];
+      if (revealedQuiz is Map) {
+        // The scramble response is deliberately richer only after submission.
+        // Merge it before rebuilding so the revealed sentence/audio are usable.
+        item.addAll(Map<String, dynamic>.from(revealedQuiz));
+      }
       _answered = true;
       _lastCorrect = correct;
       _lastQuality = (result['quality'] as num?)?.toInt();
@@ -188,15 +194,34 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
     return result['correct'] == true;
   }
 
-  Future<void> _submitScramble(List<int> order) async {
+  Future<void> _submitScramble(List<String> order, int hintLevel) async {
     final item = _current!;
     final result = await apiClient.submitQuizAnswer(
       quizId: item['id'].toString(),
       order: order,
       entryId: widget.entryId,
       idempotencyKey: newIdempotencyKey('attempt'),
+      hintLevel: hintLevel,
     );
     await _handleResult(result);
+  }
+
+  /// Order hint for the current scramble — the answer key is server-side only.
+  Future<Map<String, dynamic>?> _scrambleHint(int hintLevel) async {
+    final item = _current;
+    if (item == null) return null;
+    try {
+      return await apiClient.fetchScrambleHint(
+        quizId: item['id'].toString(),
+        hintLevel: hintLevel,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
+      }
+      return null;
+    }
   }
 
   Future<void> _submitMcq(int index) async {
@@ -488,6 +513,7 @@ class _QuizSessionScreenState extends State<QuizSessionScreen> {
           audioButtonKey: _audioKey,
           enabled: enabled,
           questionKo: questionKo,
+          onHint: _scrambleHint,
           onSubmit: _submitScramble,
         );
       case 'mcq_nuance':

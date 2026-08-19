@@ -51,7 +51,12 @@ String normalizeMentionName(String value) =>
 
 String _mentionNameKey(String value) => normalizeMentionName(value).toLowerCase();
 
-/// '나' 배지 고정 색 — 화자 확인 칩의 확정(초록) 톤과 맞춘다.
+bool _isSelfMentionName(String name) {
+  final normalized = normalizeMentionName(name).toLowerCase();
+  return normalized == '나' || normalized == 'me';
+}
+
+/// Self badge fixed color — matches the confirmed speaker chip's green tone.
 const kSelfMentionColor = Color(0xFF2E7D32);
 
 /// 그 외 화자 배지 색 팔레트 — 등장 순서대로 배정.
@@ -198,7 +203,8 @@ ParsedDialogue? parseDialogueLines(String text) {
   return matched > 0 ? ParsedDialogue(lines) : null;
 }
 
-/// [badges] 등장 순서 기준 색 — '나'는 [kSelfMentionColor], 나머지는 [kSpeakerPalette].
+/// [badges] appearance order color — self is [kSelfMentionColor], others use
+/// [kSpeakerPalette].
 ///
 /// 팔레트 번호는 '나'를 **건너뛴 순번**이다. 예전 구현은 `indexOf`에서 1을 빼는
 /// 방식이라 목록에 '나'가 없으면(저장된 항목의 화자 목록, OCR 인식 결과처럼)
@@ -206,17 +212,17 @@ ParsedDialogue? parseDialogueLines(String text) {
 /// 색인 것은 그냥 틀린 것이므로, '나'의 존재 여부와 무관하게 세도록 바꿨다.
 /// '나'가 맨 앞에 있는 기존 호출은 결과가 이전과 완전히 동일하다.
 Color colorForSpeaker(String name, List<String> badges) {
-  if (name == '나') return kSelfMentionColor;
+  if (_isSelfMentionName(name)) return kSelfMentionColor;
   var idx = 0;
   for (final badge in badges) {
-    if (badge == '나') continue;
+    if (_isSelfMentionName(badge)) continue;
     if (badge == name) break;
     idx++;
   }
   return kSpeakerPalette[idx % kSpeakerPalette.length];
 }
 
-/// 화자 이름을 색 배정 순서로 정렬 — '나'가 있으면 항상 맨 앞, 나머지는 첫 등장 순.
+/// 화자 이름을 색 배정 순서로 정렬 — self가 있으면 항상 맨 앞, 나머지는 첫 등장 순.
 ///
 /// 작성창의 배지 목록과 저장된 항목의 세그먼트 목록을 같은 규칙으로 통과시켜야
 /// 한 화자가 저장 전후로 같은 색을 유지한다.
@@ -226,13 +232,13 @@ List<String> speakerColorOrder(Iterable<String> appearanceOrder) {
   for (final raw in appearanceOrder) {
     final name = normalizeMentionName(raw);
     if (name.isEmpty) continue;
-    if (name == '나') {
+    if (_isSelfMentionName(name)) {
       hasSelf = true;
       continue;
     }
     if (!others.contains(name)) others.add(name);
   }
-  return [if (hasSelf) '나', ...others];
+  return [if (hasSelf) selfSpeakerLabel, ...others];
 }
 
 /// 매칭 대상 이름 목록으로 본문의 @멘션을 찾는다 (긴 이름 우선 매칭은 호출측 정렬).
@@ -259,6 +265,7 @@ List<MentionHit> findMentions(String text, List<String> matchableNames) {
 List<MapEntry<String, String>> splitByMentions(
   String text,
   List<MentionHit> hits,
+  String selfLabel,
 ) {
   // 멘션 뒤 구분자(":"·",")만 떼고, 가로 공백은 접되 사용자가 넣은 줄바꿈은
   // 보존한다 — 목록·문단 구조가 그대로 화자별 스크립트에 남게 하기 위함.
@@ -270,7 +277,7 @@ List<MapEntry<String, String>> splitByMentions(
       .trim();
   final segs = <MapEntry<String, String>>[];
   final pre = clean(text.substring(0, hits.first.start));
-  if (pre.isNotEmpty) segs.add(MapEntry('나', pre));
+  if (pre.isNotEmpty) segs.add(MapEntry(selfLabel, pre));
   for (var i = 0; i < hits.length; i++) {
     final end = i + 1 < hits.length ? hits[i + 1].start : text.length;
     final body = clean(text.substring(hits[i].end, end));
@@ -295,10 +302,10 @@ List<MapEntry<String, String>> segmentsFromMentionField(
   final text = raw.trim();
   if (text.isEmpty) return const [];
   final hits = findMentions(raw, field.matchableNames());
-  if (hits.isNotEmpty) return splitByMentions(raw, hits);
+  if (hits.isNotEmpty) return splitByMentions(raw, hits, field.selfLabel);
   final legacy = parseDialogueLines(text);
   if (legacy != null) return legacy.lines;
-  return [MapEntry('나', text)];
+  return [MapEntry(field.selfLabel, text)];
 }
 
 /// Speaker-labeled lines ("[name]: text") built from a mention field's current
@@ -642,6 +649,7 @@ class MentionAutocompleteField extends StatefulWidget {
     this.enabled = true,
     this.showCounter = true,
     this.openUpward = false,
+    this.selfLabel,
   });
 
   final int minLines;
@@ -658,6 +666,7 @@ class MentionAutocompleteField extends StatefulWidget {
   final String initialText;
   final bool enabled;
   final bool showCounter;
+  final String? selfLabel;
 
   /// Open the @-mention popup ABOVE the caret instead of below. Needed when the
   /// field is docked at the bottom of the screen (e.g. the journal compose bar),
@@ -690,7 +699,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
   bool _lastDirty = false;
   String _lastText = '';
 
-  /// 이 글에서 실제 배지로 인정되는 이름들(등장 순서 = 색 순서). '나'는 항상 첫째.
+  /// 이 글에서 실제 배지로 인정되는 이름들(등장 순서 = 색 순서). self는 항상 첫째.
   ///
   /// DERIVED from the text, never accumulated. It used to be an append-only
   /// list fed by `_ensureBadge` on every keystroke, and nothing ever removed
@@ -699,7 +708,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
   /// `U이영호` as speakers, all of which then showed up in the picker forever.
   /// Every intermediate state of an edit is not a speaker; only what the text
   /// currently says is.
-  List<String> _badges = const ['나'];
+  List<String> _badges = const [];
 
   /// Names the user chose from the picker (or that a chip rename registered).
   ///
@@ -733,6 +742,10 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
   int _optionCursor = 0;
 
   String get text => _controller.text;
+  String get selfLabel {
+    final normalized = normalizeMentionName(widget.selfLabel ?? selfSpeakerLabel);
+    return normalized.isEmpty ? selfSpeakerLabel : normalized;
+  }
 
   List<String> get badges => List.unmodifiable(_badges);
 
@@ -793,7 +806,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     final candidates = <String>[];
     void offer(String raw) {
       final name = normalizeMentionName(raw);
-      if (name.isEmpty || name == '나') return;
+      if (name.isEmpty || _isSelfMentionName(name)) return;
       if (candidates.any((n) => _mentionNameKey(n) == _mentionNameKey(name))) {
         return;
       }
@@ -822,9 +835,9 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
       final byPos = firstAt(a).compareTo(firstAt(b));
       return byPos != 0 ? byPos : a.compareTo(b);
     });
-    // '나' is always first, with or without a mention of its own — the palette
+    // Self is always first, with or without a mention of its own — the palette
     // numbering in [colorForSpeaker] counts past it either way.
-    _badges = ['나', ...candidates];
+    _badges = [selfLabel, ...candidates];
   }
 
   void _onTextChanged() {
@@ -967,7 +980,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
         // typed as — so the picker showed almost nothing on a real graph.
         if (!isSpeakerAssignableType(type)) continue;
         final name = normalizeMentionName(raw['name']?.toString() ?? '');
-        if (name.isEmpty || name == '나' || !seen.add(name)) continue;
+        if (name.isEmpty || _isSelfMentionName(name) || !seen.add(name)) continue;
         out.add(SpeakerOption(
           name,
           isSource: !isNonSourceIdentityType(type),
@@ -994,6 +1007,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
     );
     _controller.text = widget.initialText;
     _controller.addListener(_onTextChanged);
+    _badges = [selfLabel];
     // Seed badges from any restored draft — the assignment above predates the
     // listener, so nothing would have registered its speakers. The popup is not
     // touched here: its OverlayPortal is not mounted yet.
@@ -1403,7 +1417,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
         final popupRows = <Widget>[
           for (var i = 0; i < _popupOptions.length; i++)
             _popupRow(
-              icon: _popupOptions[i].name == '나'
+              icon: _isSelfMentionName(_popupOptions[i].name)
                   ? Icons.person_rounded
                   : _popupOptions[i].isSource
                       ? Icons.menu_book_rounded
@@ -1411,7 +1425,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
               iconColor: _badges.contains(_popupOptions[i].name)
                   ? colorFor(_popupOptions[i].name)
                   : theme.colorScheme.primary,
-              label: _popupOptions[i].name == '나'
+              label: _isSelfMentionName(_popupOptions[i].name)
                   ? selfSpeakerLabel
                   : _popupOptions[i].name,
               // The connection count is why this row sits where it does —

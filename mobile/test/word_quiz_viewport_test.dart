@@ -42,7 +42,7 @@ void main() {
                             'target_expression': 'systematisiert',
                           },
                         },
-                        onSubmit: ({answer, order, selectedIndex}) async =>
+                        onSubmit: ({answer, order, selectedIndex, hintLevel = 0}) async =>
                             {'is_correct': false},
                         onNext: () {},
                         onExit: () {},
@@ -178,6 +178,51 @@ void main() {
     expect(focusNode.hasFocus, isTrue);
   });
 
+  testWidgets('tapping the visible cloze blank focuses the real composer',
+      (tester) async {
+    final focusNode = FocusNode();
+    addTearDown(focusNode.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              WordQuizCard(
+                quiz: const {
+                  'quiz_type': 'cloze',
+                  'quiz_data': {
+                    'prompt_en': 'I ____.',
+                    'target_expression': 'agree',
+                    'accepted_answers': ['agree'],
+                  },
+                },
+                onSubmit: _unusedSubmit,
+                onNext: _unusedCallback,
+                onExit: _unusedCallback,
+                onClozeInputTap: focusNode.requestFocus,
+              ),
+              ChatInputBar(
+                inputController: TextEditingController(),
+                busy: false,
+                onSend: (_) {},
+                inputEnabled: true,
+                inputHint: 'Type the missing expression',
+                inputFocusNode: focusNode,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(focusNode.hasFocus, isFalse);
+    await tester.tap(find.byKey(const ValueKey('cloze-active-slot')));
+    await tester.pump();
+    expect(focusNode.hasFocus, isTrue);
+  });
+
   testWidgets('quiz hint preserves focus while an unrelated tap releases it',
       (tester) async {
     final focusNode = FocusNode();
@@ -248,8 +293,9 @@ void main() {
 
 Future<Map<String, dynamic>> _unusedSubmit({
   String? answer,
-  List<int>? order,
+  List<String>? order,
   int? selectedIndex,
+  int hintLevel = 0,
 }) async =>
     {'is_correct': false};
 

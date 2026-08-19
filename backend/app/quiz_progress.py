@@ -184,7 +184,7 @@ async def dashboard(
             local_day.label("day"),
             func.count().label("total"),
             func.count().filter(QuizAttempt.quiz_type == "composition").label("composition"),
-            func.count().filter(QuizAttempt.quiz_type != "composition").label("cloze"),
+            func.count().filter(QuizAttempt.quiz_type == "scramble").label("scramble"),
             func.coalesce(func.sum(QuizAttempt.xp_awarded), 0).label("xp"),
             func.count().filter(QuizAttempt.correct.is_(True)).label("correct"),
         )
@@ -193,9 +193,9 @@ async def dashboard(
     )
     by_day: dict[date, dict] = {}
     total_xp = 0
-    for day, total, composition, cloze, xp, correct in day_rows.all():
+    for day, total, composition, scramble, xp, correct in day_rows.all():
         by_day[day] = {
-            "cloze": int(cloze),
+            "scramble": int(scramble),
             "composition": int(composition),
             "xp": int(xp),
             "correct": int(correct),
@@ -206,10 +206,10 @@ async def dashboard(
     active_days = set(by_day)
     current, longest, at_risk = _streaks(active_days, today)
     languages = max(1, len(getattr(user, "target_languages", None) or [user.target_language]))
-    cloze_goal = user.daily_cloze_target * languages
+    scramble_goal = user.daily_scramble_target * languages
     composition_goal = user.daily_composition_target * languages
     today_row = by_day.get(
-        today, {"cloze": 0, "composition": 0, "xp": 0, "correct": 0, "total": 0}
+        today, {"scramble": 0, "composition": 0, "xp": 0, "correct": 0, "total": 0}
     )
     week = []
     week_completed = 0
@@ -217,11 +217,11 @@ async def dashboard(
     for offset in range(6, -1, -1):
         day = today - timedelta(days=offset)
         row = by_day.get(
-            day, {"cloze": 0, "composition": 0, "xp": 0, "correct": 0, "total": 0}
+            day, {"scramble": 0, "composition": 0, "xp": 0, "correct": 0, "total": 0}
         )
         perfect = (
-            cloze_goal + composition_goal > 0
-            and row["cloze"] >= cloze_goal
+            scramble_goal + composition_goal > 0
+            and row["scramble"] >= scramble_goal
             and row["composition"] >= composition_goal
         )
         perfect_days += int(perfect)
@@ -230,7 +230,7 @@ async def dashboard(
 
     total_attempts = sum(row["total"] for row in by_day.values())
     total_correct = sum(row["correct"] for row in by_day.values())
-    cloze_count = sum(row["cloze"] for row in by_day.values())
+    scramble_count = sum(row["scramble"] for row in by_day.values())
     composition_count = sum(row["composition"] for row in by_day.values())
     growth_level, level_start, next_level = _level_for_xp(total_xp)
     # `title` stays for older clients, but it is a Korean literal — the app
@@ -243,7 +243,7 @@ async def dashboard(
         ("streak_3", "3일 연속", longest, 3),
         ("streak_7", "7일 연속", longest, 7),
         ("streak_30", "30일 연속", longest, 30),
-        ("cloze_100", "단어 100", cloze_count, 100),
+        ("scramble_100", "문장 배열 100", scramble_count, 100),
         ("composition_20", "작문 20", composition_count, 20),
         ("weekly_5", "주간 목표 5일", perfect_days, 5),
     ]
@@ -259,12 +259,12 @@ async def dashboard(
         "next_level_xp": next_level,
         "today": {
             **today_row,
-            "cloze_goal": cloze_goal,
+            "scramble_goal": scramble_goal,
             "composition_goal": composition_goal,
             "language_count": languages,
             "perfect": (
-                cloze_goal + composition_goal > 0
-                and today_row["cloze"] >= cloze_goal
+                scramble_goal + composition_goal > 0
+                and today_row["scramble"] >= scramble_goal
                 and today_row["composition"] >= composition_goal
             ),
         },

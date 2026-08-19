@@ -75,7 +75,7 @@ Widget _host({
                         'target_expression': 'systematisiert',
                       },
                     },
-                    onSubmit: ({answer, order, selectedIndex}) async =>
+                    onSubmit: ({answer, order, selectedIndex, hintLevel = 0}) async =>
                         {'is_correct': false},
                     onNext: () {},
                     onExit: () {},

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_strings.dart';
 import 'quiz_audio_button.dart';
+import 'quiz_result.dart';
 import 'quiz_viewport_scope.dart';
 
 class ClozeQuizCard extends StatefulWidget {
@@ -19,6 +20,7 @@ class ClozeQuizCard extends StatefulWidget {
     this.externalCompletedWords = const [],
     this.externalLiveDraft = '',
     this.onHintRequested,
+    this.onExternalInputTap,
   });
 
   final Map<String, dynamic> quizData;
@@ -44,6 +46,10 @@ class ClozeQuizCard extends StatefulWidget {
   /// [ClozeQuizCardState._hintGhost]), and clearing it discarded whatever the
   /// learner had already typed.
   final VoidCallback? onHintRequested;
+
+  /// The visible blank is a display slot in composer-driven mode. Forward its
+  /// tap to the real composer so the platform keyboard opens naturally.
+  final VoidCallback? onExternalInputTap;
 
   @override
   State<ClozeQuizCard> createState() => ClozeQuizCardState();
@@ -171,7 +177,11 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
   bool? get _effectiveGrade => widget.externalInput
       ? (widget.externalSolved
           ? true
-          : widget.externalResult?['is_correct'] as bool?)
+          // Null means "not graded yet" — a present result is a verdict
+          // either way, whichever key the grader used (see quizResultIsCorrect).
+          : widget.externalResult == null
+              ? null
+              : quizResultIsCorrect(widget.externalResult))
       : _graded;
 
   bool get _effectiveSolved =>
@@ -257,7 +267,10 @@ class ClozeQuizCardState extends State<ClozeQuizCard> {
     final ghost = _hintGhost(display, hintText);
     final showHint = active && ghost != null;
     return InkWell(
-      onTap: widget.externalInput ? null : () => _focusNode.requestFocus(),
+      key: active ? const ValueKey('cloze-active-slot') : null,
+      onTap: widget.externalInput
+          ? widget.onExternalInputTap
+          : () => _focusNode.requestFocus(),
       borderRadius: BorderRadius.circular(8),
       child: Container(
         width: width,

@@ -360,7 +360,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     }
   }
 
-  /// Word quizzes must enter with an unfocused composer on iOS Safari.
+  /// Scramble cards must enter with an unfocused composer on iOS Safari.
   /// Programmatic focus before/after the async quiz request can leave Flutter
   /// believing the field is focused while the browser has no editable DOM
   /// connection. A real tap on the TextField can only recreate that connection
@@ -1139,7 +1139,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         _startQuizWithLanguagePrompt('composition');
         break;
       case 'word':
-        _startQuizWithLanguagePrompt('word');
+        _startQuizWithLanguagePrompt('scramble');
         break;
     }
   }
@@ -1312,6 +1312,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       case ChatMode.quizComposition:
         return tr('chat.mode.composition');
       case ChatMode.quizWord:
+        if (chatSession.activeQuiz?['quiz_type']?.toString() == 'composition') {
+          return tr('chat.mode.composition');
+        }
         return tr('chat.mode.word');
       case ChatMode.journal:
         return tr('chat.mode.journal');
@@ -1332,6 +1335,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   // a tap from reopening the IME and shrinking the completed card.
   bool get _inputEnabled =>
       chatSession.mode != ChatMode.quizWord ||
+      chatSession.activeQuiz?['quiz_type']?.toString() == 'composition' ||
       (chatSession.wordQuizUsesComposer && !chatSession.wordQuizSolved);
 
   /// Placeholder for a quiz composer with no question behind it, or null when
@@ -1356,6 +1360,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         // are the same blank composer but opposite advice.
         return _quizlessInputHint() ?? tr('chat.hint.composition');
       case ChatMode.quizWord:
+        if (chatSession.activeQuiz?['quiz_type']?.toString() == 'composition') {
+          return tr('chat.hint.composition');
+        }
         return _quizlessInputHint() ?? tr('chat.hint.word');
       case ChatMode.journal:
         return tr('chat.hint.journal');
@@ -1466,6 +1473,12 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     }
   }
 
+  void _focusWordQuizInput() {
+    if (!chatSession.wordQuizUsesComposer || chatSession.wordQuizSolved) return;
+    _chatInputFocusNode.requestFocus();
+    _pinChatToBottom(window: const Duration(milliseconds: 260));
+  }
+
   /// "3 / 8" position within the loaded quiz queue, or null when there is
   /// nothing to count against (queue not loaded yet, or already exhausted).
   String? _quizProgressLabel() {
@@ -1505,9 +1518,13 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         return WordQuizCard(
           key: ValueKey('word-${quiz['id']}'),
           quiz: quiz,
-          onSubmit: ({answer, order, selectedIndex}) =>
+          onSubmit: ({answer, order, selectedIndex, hintLevel = 0}) =>
               chatSession.submitWordQuiz(
-                  answer: answer, order: order, selectedIndex: selectedIndex),
+                  answer: answer,
+                  order: order,
+                  selectedIndex: selectedIndex,
+                  hintLevel: hintLevel),
+          onHint: chatSession.requestScrambleHint,
           onNext: () {
             chatSession.nextQuiz();
             // Leave the composer unfocused. A real tap on it is required for
@@ -1520,6 +1537,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           clozeCompletedWords: chatSession.clozeCompletedWords,
           clozeLiveDraft: chatSession.clozeLiveDraft,
           clozeCardKey: _clozeCardKey,
+          onClozeInputTap: _focusWordQuizInput,
           onContentHeightChanged: (height) {
             if (!mounted || (height - _wordQuizContentHeight).abs() < 1) {
               return;
@@ -1540,67 +1558,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   }
 
   Widget? _quizStatusCard() {
-    // Checked before `busy`, which stays true for the whole refill wait: a bare
-    // 18px spinner for ~20s reads as a hang. Name the work and its cost instead.
-    if (chatSession.quizRefilling) {
-      return _QuizStatusPanel(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-                const SizedBox(width: AppSpacing.sm),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        tr('quiz.preparing'),
-                        style: TextStyle(
-                            color: context.shell.primaryText,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        tr('quiz.preparingHint'),
-                        style: TextStyle(
-                            color: context.shell.mutedText, fontSize: 12),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: _exitInputMode,
-                  child: Text(tr('quiz.close')),
-                ),
-                // Filled, matching the "nothing to ask" state below: through a
-                // ~20s wait this is the only thing the learner can actually do,
-                // and as a second flat text button it read as an afterthought
-                // next to 닫기 — the one action that loses them.
-                if (chatSession.quizType != 'composition')
-                  FilledButton(
-                    onPressed: () => chatSession.startQuiz('composition'),
-                    child: Text(tr('quiz.tryComposition')),
-                  ),
-              ],
-            ),
-          ],
-        ),
-      );
-    }
     if (chatSession.busy) {
       return _QuizStatusPanel(
         child: Column(
@@ -1653,13 +1610,12 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
       );
     }
     if (chatSession.quizUnavailable) {
-      final wordQuiz = chatSession.quizType != 'composition';
       return _QuizStatusPanel(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              tr(wordQuiz ? 'quiz.noWordCardsTitle' : 'quiz.noCardsTitle'),
+              tr('quiz.noCardsTitle'),
               style: TextStyle(
                 color: context.shell.primaryText,
                 fontSize: 13,
@@ -1668,7 +1624,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
             ),
             const SizedBox(height: 4),
             Text(
-              tr(wordQuiz ? 'quiz.noWordCardsBody' : 'quiz.noCardsBody'),
+              tr('quiz.noCardsBody'),
               style: TextStyle(color: context.shell.mutedText, fontSize: 12),
             ),
             const SizedBox(height: 8),
@@ -1679,11 +1635,6 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
                   onPressed: _exitInputMode,
                   child: Text(tr('quiz.close')),
                 ),
-                if (wordQuiz)
-                  FilledButton(
-                    onPressed: () => chatSession.startQuiz('composition'),
-                    child: Text(tr('quiz.tryComposition')),
-                  ),
               ],
             ),
           ],
@@ -1893,7 +1844,8 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     final language = await _pickGenerationLanguage(nodeId);
     if (language == null || !mounted) return;
     final before =
-        ((_selectedStudyQuizzes?['word'] as Map?)?['count'] as num?)?.toInt() ??
+        ((_selectedStudyQuizzes?['scramble'] as Map?)?['count'] as num?)
+                ?.toInt() ??
             0;
     setState(() {
       _generationNodeId = nodeId;
@@ -1945,7 +1897,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         final generation = (data['generation'] as Map?) ?? const {};
         final status = (generation['status'] ?? 'idle').toString();
         final count =
-            (((data['word'] as Map?)?['count']) as num?)?.toInt() ?? 0;
+            (((data['scramble'] as Map?)?['count']) as num?)?.toInt() ?? 0;
         // A run that ended badly is terminal news, not something to keep
         // waiting on. Surface the worker's own error instead of spinning for
         // three more minutes and then blaming a timeout.
@@ -3183,7 +3135,8 @@ class _SelectionInfoCard extends StatelessWidget {
       ]);
     }
     final shell = context.shell;
-    final word = (studyQuizzes?['word'] as Map?)?.cast<String, dynamic>() ??
+    final scramble =
+        (studyQuizzes?['scramble'] as Map?)?.cast<String, dynamic>() ??
         const <String, dynamic>{};
     final composition =
         (studyQuizzes?['composition'] as Map?)?.cast<String, dynamic>() ??
@@ -3205,24 +3158,19 @@ class _SelectionInfoCard extends StatelessWidget {
         statuses.any(const {'pending', 'analyzing', 'stale'}.contains);
     final failed = statuses.contains('failed');
     final storedExpressionCount = (expressions['count'] as num?)?.toInt() ?? 0;
-    final wordCount = (word['count'] as num?)?.toInt() ?? 0;
-    final compositionCount = (composition['count'] as num?)?.toInt() ?? 0;
+    final scrambleCount = (scramble['count'] as num?)?.toInt() ?? 0;
     final expressionCount =
-        storedExpressionCount > wordCount ? storedExpressionCount : wordCount;
-    final availableCount =
-        (expressions['available_count'] as num?)?.toInt() ?? 0;
-    final settledWithoutWordQuiz = statuses.isNotEmpty &&
-        statuses.every((status) => status == 'ready') &&
-        availableCount == 0 &&
-        wordCount == 0;
-
+        storedExpressionCount > scrambleCount
+            ? storedExpressionCount
+            : scrambleCount;
     Widget quizAction(String type, Map<String, dynamic> group, String label) {
       final count = (group['count'] as num?)?.toInt() ?? 0;
       final reviewCount = (group['review_count'] as num?)?.toInt() ?? 0;
       return _StudyActionRow(
         onPressed:
             count == 0 ? null : () => _startStudyQuiz(context, type, group),
-        icon: type == 'cloze' ? Icons.text_fields_rounded : Icons.notes_rounded,
+        icon:
+            type == 'scramble' ? Icons.low_priority_rounded : Icons.notes_rounded,
         label: label,
         trailing: reviewCount > 0
             ? tr('kg.quizCountWithReview', {
@@ -3275,34 +3223,13 @@ class _SelectionInfoCard extends StatelessWidget {
           ]),
         )
       else ...[
-        if (settledWithoutWordQuiz)
-          _StudyActionRow(
-            onPressed: null,
-            icon: Icons.text_fields_rounded,
-            label: tr('kg.noWordQuizForStatement'),
-            trailing: compositionCount > 0 ? tr('kg.compositionOnly') : null,
-          )
-        else
-          quizAction('cloze', word, tr('kg.wordQuiz')),
+        quizAction('scramble', scramble, tr('kg.wordQuiz')),
         quizAction('composition', composition, tr('kg.compositionQuiz')),
-        if (!settledWithoutWordQuiz || compositionCount == 0)
+        if (failed)
           _StudyActionRow(
-            onPressed: failed
-                ? onRegenerate
-                : availableCount > 0 || wordCount == 0
-                    ? onGenerate
-                    : onRegenerate,
-            icon: failed ? Icons.refresh_rounded : Icons.add_rounded,
-            label: failed
-                ? tr('kg.retryAnalysis')
-                : availableCount > 0
-                    ? tr('kg.createMoreShort')
-                    : wordCount == 0
-                        ? tr('kg.createFromStatement')
-                        : tr('kg.rebuildQuestions'),
-            trailing: availableCount > 0
-                ? tr('kg.remainingExpressions', {'count': availableCount})
-                : null,
+            onPressed: onRegenerate,
+            icon: Icons.refresh_rounded,
+            label: tr('kg.retryAnalysis'),
             showDivider: false,
           ),
       ],
@@ -3311,16 +3238,18 @@ class _SelectionInfoCard extends StatelessWidget {
 
   String _studySummary() {
     if (studyLoading) return tr('kg.analysisPreparing');
-    final word = (studyQuizzes?['word'] as Map?)?['count'] as num?;
+    final scramble = (studyQuizzes?['scramble'] as Map?)?['count'] as num?;
     final composition =
         (studyQuizzes?['composition'] as Map?)?['count'] as num?;
     final expressions =
         (studyQuizzes?['expressions'] as Map?)?['count'] as num?;
-    final quizCount = (word?.toInt() ?? 0) + (composition?.toInt() ?? 0);
+    final quizCount = (scramble?.toInt() ?? 0) + (composition?.toInt() ?? 0);
     final rawExpressionCount = expressions?.toInt() ?? 0;
-    final wordCount = word?.toInt() ?? 0;
+    final scrambleCount = scramble?.toInt() ?? 0;
     final expressionCount =
-        rawExpressionCount > wordCount ? rawExpressionCount : wordCount;
+        rawExpressionCount > scrambleCount
+            ? rawExpressionCount
+            : scrambleCount;
     return tr('kg.studySummary', {
       'quizzes': quizCount,
       'expressions': expressionCount,

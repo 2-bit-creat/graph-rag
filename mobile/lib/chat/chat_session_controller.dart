@@ -8,6 +8,7 @@ import '../app_navigator.dart';
 import '../compose/journal_phase.dart';
 import '../l10n/app_strings.dart';
 import '../widgets/graph_chat_panel.dart' show GraphChatMessage;
+import '../widgets/quiz/quiz_result.dart';
 import 'journal_task_controller.dart';
 
 /// Input mode of the chat composer — the "+" button switches between them.
@@ -54,17 +55,8 @@ class ChatSessionController extends ChangeNotifier {
   final List<Map<String, dynamic>> _distillSentences = [];
   bool _distillLoading = false;
 
-  /// True while an empty queue is being refilled and we are waiting for the
-  /// first cards to land. The feed shows a "만드는 중" card instead of bouncing
-  /// the learner out of quiz mode — see [startQuiz].
-  bool _quizRefilling = false;
   bool _quizUnavailable = false;
 
-  /// Bumped whenever a quiz mode is entered or left, so a refill wait that is
-  /// still polling can tell its session ended and stop touching state.
-  int _quizEpoch = 0;
-
-  bool get quizRefilling => _quizRefilling;
   bool get quizUnavailable => _quizUnavailable;
 
   /// Set by the graph screen so referenced nodes glow + the camera flies to them.
@@ -95,7 +87,7 @@ class ChatSessionController extends ChangeNotifier {
   String get clozeLiveDraft => _clozeLiveDraft;
   bool get wordQuizUsesComposer {
     if (_mode != ChatMode.quizWord) return false;
-    final type = activeQuiz?['quiz_type']?.toString() ?? 'cloze';
+    final type = activeQuiz?['quiz_type']?.toString() ?? '';
     return type == 'cloze';
   }
 
@@ -338,10 +330,6 @@ class ChatSessionController extends ChangeNotifier {
     if (_mode == m) return;
     _mode = m;
     if (m == ChatMode.normal) {
-      // Retires the epoch so a refill still polling for this session stops and
-      // does not resurrect quiz state after the learner has left it.
-      _quizEpoch++;
-      _quizRefilling = false;
       _quizUnavailable = false;
       _quizItems.clear();
       _quizIndex = 0;
@@ -448,7 +436,11 @@ class ChatSessionController extends ChangeNotifier {
         await sendMessage(text);
         break;
       case ChatMode.quizWord:
-        if (wordQuizUsesComposer) await answerWordQuiz(text);
+        if (activeQuiz?['quiz_type']?.toString() == 'composition') {
+          await answerComposition(text);
+        } else if (wordQuizUsesComposer) {
+          await answerWordQuiz(text);
+        }
         break;
     }
   }
@@ -639,7 +631,7 @@ class ChatSessionController extends ChangeNotifier {
   // ── Inline quiz ──────────────────────────────────────────────────────────
 
   /// Enter a quiz mode and pull a small session of items into the feed.
-  /// [quizType]: 'composition' (typed drill) | 'cloze' | 'scramble' | 'mcq_nuance'.
+  /// [quizType]: 'composition' (typed drill) | 'scramble'.
   /// [language]: which target language to draw from when the learner has more
   /// than one configured (null = backend default).
   Future<void> startQuiz(
@@ -661,7 +653,6 @@ class ChatSessionController extends ChangeNotifier {
     _clozeCompletedWords.clear();
     _clozeLiveDraft = '';
     _busy = true;
-    final epoch = ++_quizEpoch;
     notifyListeners();
     try {
       final data = await apiClient.startQuizSession(
@@ -674,12 +665,7 @@ class ChatSessionController extends ChangeNotifier {
           .toList();
       _quizItems.addAll(items);
       if (items.isEmpty) {
-        // Nothing queued yet. Refill generates straight from the learner's
-        // graph statements and takes ~20s of LLM + TTS work, so telling them to
-        // "press again in a moment" sent them back too early, onto the same
-        // empty queue. Hold them in quiz mode behind a preparing state and pull
-        // the cards in ourselves the moment they exist.
-        await _refillAndWaitForQuizzes(epoch);
+        _quizUnavailable = true;
       }
     } catch (e) {
       errors.value = _clean(e);
@@ -687,63 +673,6 @@ class ChatSessionController extends ChangeNotifier {
     } finally {
       _busy = false;
       notifyListeners();
-    }
-  }
-
-  /// How long to keep waiting on a refill before handing control back.
-  ///
-  /// A refill is several LLM calls plus TTS per card; measured end-to-end it
-  /// runs a little over 20s, so the budget has to clear that with room to spare
-  /// or the learner is dropped right before their cards land.
-  static const _refillTimeout = Duration(seconds: 75);
-  static const _refillPollInterval = Duration(seconds: 3);
-
-  /// Kick a queue refill and stay on it until the first cards arrive.
-  ///
-  /// The learner stays in quiz mode the whole time; [quizRefilling] drives a
-  /// "preparing" card in the feed. Returns with items loaded, or leaves quiz
-  /// mode if the refill produced nothing inside [_refillTimeout].
-  Future<void> _refillAndWaitForQuizzes(int epoch) async {
-    _quizRefilling = true;
-    notifyListeners();
-    try {
-      await apiClient.refillQuizzes();
-
-      final deadline = DateTime.now().add(_refillTimeout);
-      while (DateTime.now().isBefore(deadline)) {
-        await Future<void>.delayed(_refillPollInterval);
-        // The learner left this quiz session (closed it, switched mode, or
-        // started another) — abandon the wait rather than write into it.
-        if (epoch != _quizEpoch) return;
-
-        final data = await apiClient.startQuizSession(
-          quizType: _quizType,
-          size: 5,
-          language: _quizLanguage,
-        );
-        final items = ((data['items'] as List?) ?? [])
-            .map((e) => Map<String, dynamic>.from(e as Map))
-            .toList();
-        if (items.isNotEmpty) {
-          if (epoch != _quizEpoch) return;
-          _quizItems.addAll(items);
-          return;
-        }
-      }
-      if (epoch != _quizEpoch) return;
-      // Quality-first generation may legitimately yield composition only.
-      // Keep that outcome in context instead of presenting it as a timeout or
-      // immediately retrying the same expensive generation path.
-      _quizUnavailable = true;
-    } catch (e) {
-      if (epoch != _quizEpoch) return;
-      errors.value = _clean(e);
-      _mode = ChatMode.normal;
-    } finally {
-      if (epoch == _quizEpoch) {
-        _quizRefilling = false;
-        notifyListeners();
-      }
     }
   }
 
@@ -809,7 +738,7 @@ class ChatSessionController extends ChangeNotifier {
       final result = await submitWordQuiz(answer: answer.trim());
       if (result != null) {
         _quizFeedback = result;
-        _wordQuizSolved = result['is_correct'] == true;
+        _wordQuizSolved = quizResultIsCorrect(result);
       }
     } finally {
       _busy = false;
@@ -817,11 +746,28 @@ class ChatSessionController extends ChangeNotifier {
     }
   }
 
+  /// Order hint for the active scramble card. Returns the first
+  /// [hintLevel] chunk ids of the reference order plus the ceiling the
+  /// backend allows, or null when the request failed.
+  Future<Map<String, dynamic>?> requestScrambleHint(int hintLevel) async {
+    final quiz = activeQuiz;
+    if (quiz == null) return null;
+    try {
+      return await apiClient.fetchScrambleHint(
+        quizId: quiz['id'].toString(),
+        hintLevel: hintLevel,
+      );
+    } catch (e) {
+      errors.value = _clean(e);
+      return null;
+    }
+  }
+
   /// Submit choices made directly on non-cloze cards. Cloze text normally
   /// enters through [answerWordQuiz] and therefore through the shared composer.
   Future<Map<String, dynamic>?> submitWordQuiz({
     String? answer,
-    List<int>? order,
+    List<String>? order,
     int? selectedIndex,
     int hintLevel = 0,
     List<String> revealedTokens = const [],
@@ -840,8 +786,19 @@ class ChatSessionController extends ChangeNotifier {
         revealedTokens: revealedTokens,
         answerRevealed: answerRevealed,
       );
-      final summary =
-          answer ?? order?.join(' ') ?? selectedIndex?.toString() ?? '';
+      // Grading is what unlocks the scramble's answer key, complete sentence
+      // and audio clip (the session payload deliberately withholds all three
+      // — see _public_quiz_data). Fold the revealed item back into the queue
+      // so the card can show the reference sentence and play its clip.
+      final revealed = (resp['quiz'] as Map?)?.cast<String, dynamic>();
+      if (revealed != null && _quizIndex < _quizItems.length) {
+        _quizItems[_quizIndex] = {..._quizItems[_quizIndex], ...revealed};
+        notifyListeners();
+      }
+      final summary = answer ??
+          _describeScrambleOrder(quiz, order) ??
+          _describeMcqChoice(quiz, selectedIndex) ??
+          '';
       await _persistQuizEvent(quiz, summary, resp);
       return resp;
     } catch (e) {
@@ -944,6 +901,37 @@ class ChatSessionController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Renders a submitted scramble [order] (opaque chunk ids) as the words the
+  /// learner actually arranged, for the feed message — the ids themselves
+  /// ("t0_30cd21a8cb …") are an internal grading detail, not something a
+  /// learner should ever see echoed back at them.
+  String? _describeScrambleOrder(Map<String, dynamic> quiz, List<String>? order) {
+    if (order == null || order.isEmpty) return null;
+    final qd = (quiz['quiz_data'] as Map?)?.cast<String, dynamic>() ?? {};
+    final chunks = (qd['chunks'] as List?)
+            ?.whereType<Map>()
+            .map((e) => e.cast<String, dynamic>())
+            .toList() ??
+        const <Map<String, dynamic>>[];
+    final textById = {
+      for (final chunk in chunks) chunk['id']?.toString(): chunk['text']?.toString(),
+    };
+    final words = order.map((id) => textById[id] ?? id).toList();
+    return words.join(' ');
+  }
+
+  /// Renders a submitted mcq [selectedIndex] as the option text, when the
+  /// card's own option list is available — otherwise falls back to the index.
+  String? _describeMcqChoice(Map<String, dynamic> quiz, int? selectedIndex) {
+    if (selectedIndex == null) return null;
+    final qd = (quiz['quiz_data'] as Map?)?.cast<String, dynamic>() ?? {};
+    final options = (qd['options'] as List?)?.map((e) => e.toString()).toList();
+    if (options != null && selectedIndex >= 0 && selectedIndex < options.length) {
+      return options[selectedIndex];
+    }
+    return selectedIndex.toString();
+  }
+
   Future<void> _persistQuizEvent(
     Map<String, dynamic> quiz,
     String answer,
@@ -953,6 +941,16 @@ class ChatSessionController extends ChangeNotifier {
     // the backend, so every answer past the first (loaded on the next full
     // history fetch) was invisible until the room was reopened.
     final content = tr('chat.quizAnswerContent', {'answer': answer});
+    // Guards against the same result echoing twice in the feed (observed in
+    // practice for the same quiz_id back to back) regardless of what causes
+    // the extra call — a `quiz_result` bubble is a record of one grading
+    // event, so it must never render twice for the same quiz_id/content pair.
+    final lastMessage = _messages.isEmpty ? null : _messages.last;
+    final isDuplicate = lastMessage != null &&
+        lastMessage.kind == 'quiz_result' &&
+        lastMessage.content == content &&
+        lastMessage.meta?['quiz_id'] == quiz['id'];
+    if (isDuplicate) return;
     _messages.add(GraphChatMessage(
       role: 'assistant',
       kind: 'quiz_result',

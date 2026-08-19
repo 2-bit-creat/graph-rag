@@ -9,10 +9,9 @@ import '../compose/journal_activity.dart';
 import '../compose/journal_phase.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
-import 'journal_progress_card.dart';
 
-/// App-wide, non-blocking journal status. Processing never occupies the chat
-/// feed; the full review UI opens only when the learner asks for it.
+/// App-wide, non-blocking journal status. Review gates stay in the chat feed;
+/// this floating chip only reports background work.
 class JournalActivityHost extends StatefulWidget {
   const JournalActivityHost({super.key});
 
@@ -20,40 +19,22 @@ class JournalActivityHost extends StatefulWidget {
   State<JournalActivityHost> createState() => _JournalActivityHostState();
 }
 
-/// Opens the single detailed surface shared by the global activity tab and the
-/// small contextual status card left in the chat that started the journal.
+/// The old details sheet was retired; review happens inside the originating
+/// chat feed. Keep this as a lightweight status acknowledgement for legacy
+/// callers and the floating chip.
 Future<void> openJournalActivityDetails() async {
   final navContext = appNavigatorKey.currentContext;
   if (navContext == null || !navContext.mounted) return;
-  final id = journalTask.entryId;
-  await showModalBottomSheet<void>(
-    context: navContext,
-    useRootNavigator: true,
-    isScrollControlled: true,
-    showDragHandle: true,
-    backgroundColor: Theme.of(navContext).colorScheme.surface,
-    builder: (context) => SafeArea(
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * .82,
-        ),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-          child: id == null
-              ? _WaitingDetails(
-                  summary: journalTaskSummary(
-                    entryId: journalTask.entryId,
-                    entry: journalTask.entry,
-                    phase: journalTask.phase,
-                    stageLabel: journalTask.stageLabel,
-                    awaitingSpeakerAck: journalTask.awaitingSpeakerAck,
-                    speakerReviewOverride: journalTask.speakerReviewOverride,
-                  ),
-                )
-              : JournalProgressCard(entryId: id),
-        ),
-      ),
-    ),
+  final summary = journalTaskSummary(
+    entryId: journalTask.entryId,
+    entry: journalTask.entry,
+    phase: journalTask.phase,
+    stageLabel: journalTask.stageLabel,
+    awaitingSpeakerAck: journalTask.awaitingSpeakerAck,
+    speakerReviewOverride: journalTask.speakerReviewOverride,
+  );
+  ScaffoldMessenger.of(navContext).showSnackBar(
+    SnackBar(content: Text(summary.label)),
   );
 }
 
@@ -127,11 +108,12 @@ class _JournalActivityHostState extends State<JournalActivityHost> {
 
   @override
   Widget build(BuildContext context) {
-    final active = (journalTask.phase != ComposePhase.composing &&
-            journalTask.entryId != null) ||
-        journalTask.systemProcessing;
-    if (!active || _dismissedTerminal) return const SizedBox.shrink();
     final summary = _summary;
+    final active = ((journalTask.phase != ComposePhase.composing &&
+                journalTask.entryId != null) ||
+            journalTask.systemProcessing) &&
+        summary.attention != JournalAttention.reviewRequired;
+    if (!active || _dismissedTerminal) return const SizedBox.shrink();
     final keyboard = MediaQuery.viewInsetsOf(context).bottom;
     final bottom = keyboard > 0 ? keyboard + 70.0 : 74.0;
     final attention = summary.attention != JournalAttention.none;
@@ -205,7 +187,6 @@ class _JournalActivityHostState extends State<JournalActivityHost> {
     );
   }
 }
-
 class _ActivityIcon extends StatelessWidget {
   const _ActivityIcon({required this.summary});
   final JournalTaskSummary summary;
@@ -234,25 +215,4 @@ class _ActivityIcon extends StatelessWidget {
     return Icon(icon, size: 21, color: color);
   }
 }
-
-class _WaitingDetails extends StatelessWidget {
-  const _WaitingDetails({required this.summary});
-  final JournalTaskSummary summary;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 20),
-        child: Column(
-          children: [
-            const CircularProgressIndicator(strokeWidth: 2.4),
-            const SizedBox(height: 16),
-            Text(summary.label,
-                style: const TextStyle(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 6),
-            Text(tr('journalActivity.keepUsing'),
-                textAlign: TextAlign.center,
-                style: TextStyle(color: context.shell.mutedText)),
-          ],
-        ),
-      );
-}
+// Review details are rendered by JournalProgressCard in the originating feed.

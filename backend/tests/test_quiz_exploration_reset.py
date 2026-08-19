@@ -7,6 +7,7 @@ import pytest
 from app import crud, json_doc_store, node_expression_store
 from app.models import (
     Node,
+    Quiz,
     QuizGenerationState,
     QuizLearningMaterial,
     QuizSourceExploration,
@@ -176,3 +177,71 @@ async def test_full_queue_reset_clears_invisible_unavailable_sources(
     assert not await node_expression_store.is_extracted(
         iso_user.id, str(node.id), "german"
     )
+
+
+@pytest.mark.asyncio
+async def test_exploration_counts_reflect_archived_quizzes_not_a_stale_cache(
+    db_session, iso_user
+) -> None:
+    """Regression: a node whose quiz was archived by a path that didn't also
+    zero QuizLearningMaterial.composition_count / QuizSourceExploration.word_count
+    (any archiving that isn't reset_node_materials's own supersede step) kept
+    showing "배열 1개 · 작문 1개" on the node-exploration screen forever, even
+    though the queue-management list correctly showed 0 active quizzes. The
+    counters are caches that can desync from the one place that can't drift —
+    the quizzes table's own queue_kind — so the exploration list must read
+    that directly instead of trusting them.
+    """
+    node = Node(
+        user_id=iso_user.id,
+        name="스프레드시트 정리",
+        type="Statement",
+        description=json.dumps({"content": "스프레드시트를 정리했다."}),
+    )
+    db_session.add(node)
+    await db_session.flush()
+
+    # A cache that disagrees with reality: the columns say 1/1, but every
+    # actual quiz row for this node is archived.
+    db_session.add(
+        QuizLearningMaterial(
+            user_id=iso_user.id,
+            node_id=node.id,
+            language="korean",
+            source_hash="stale-hash",
+            status="ready",
+            composition_count=1,
+            expression_count=2,
+        )
+    )
+    db_session.add(
+        Quiz(
+            user_id=iso_user.id,
+            quiz_type="composition",
+            language="korean",
+            queue_kind="archived",
+            source_nodes=[node.id],
+            quiz_data={},
+        )
+    )
+    # A live, non-archived scramble for the SAME node must still be counted —
+    # this isn't "always report zero", it's "report what's actually active".
+    db_session.add(
+        Quiz(
+            user_id=iso_user.id,
+            quiz_type="scramble",
+            language="korean",
+            queue_kind="new",
+            source_nodes=[node.id],
+            quiz_data={"chunks": [{"id": "t0", "text": "정리"}], "correct_order": ["t0"]},
+        )
+    )
+    await db_session.flush()
+
+    rows = await crud.list_quiz_source_explorations(db_session, iso_user.id, language="korean")
+    row = next(r for r in rows if r["node_id"] == node.id)
+
+    assert row["composition_count"] == 0
+    assert row["word_count"] == 1
+    # Expression count is untouched by this fix — still the cached column.
+    assert row["expression_count"] == 2

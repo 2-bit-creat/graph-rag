@@ -161,7 +161,7 @@ async def _archive_previous_pair(
             select(Quiz).where(
                 Quiz.user_id == user_id,
                 Quiz.language == language,
-                Quiz.quiz_type.in_(("cloze", "composition")),
+                Quiz.quiz_type.in_(("scramble", "composition")),
                 Quiz.queue_kind.in_(("new", "review")),
                 Quiz.source_nodes.any(node_id),
             )
@@ -207,7 +207,7 @@ async def _persisted_pair_quiz_result(
             .where(
                 Quiz.user_id == user_id,
                 Quiz.language == language,
-                Quiz.quiz_type.in_(("cloze", "composition")),
+                Quiz.quiz_type.in_(("scramble", "composition")),
                 Quiz.queue_kind != "archived",
                 Quiz.source_nodes.any(node_id),
             )
@@ -216,7 +216,7 @@ async def _persisted_pair_quiz_result(
     ).all()
     return (
         {
-            "cloze": sum(quiz.quiz_type == "cloze" for quiz in quizzes),
+            "scramble": sum(quiz.quiz_type == "scramble" for quiz in quizzes),
             "composition": sum(quiz.quiz_type == "composition" for quiz in quizzes),
         },
         [str(quiz.id) for quiz in quizzes],
@@ -234,7 +234,7 @@ async def _backfill_empty_completed_run_items(
             continue
         counts = item.get("generated_counts")
         quiz_ids = item.get("quiz_ids")
-        if isinstance(counts, dict) and any(int(counts.get(k) or 0) for k in ("cloze", "composition")):
+        if isinstance(counts, dict) and any(int(counts.get(k) or 0) for k in ("scramble", "composition")):
             continue
         if quiz_ids:
             continue
@@ -305,7 +305,7 @@ async def process_generation_run(run_id: uuid.UUID) -> None:
                         "manual": "developer_generation",
                     }.get(run.source, "auto_generation")
                 created_counts = {
-                    "cloze": sum(quiz.quiz_type == "cloze" for quiz in created),
+                    "scramble": sum(quiz.quiz_type == "scramble" for quiz in created),
                     "composition": sum(
                         quiz.quiz_type == "composition" for quiz in created
                     ),
@@ -316,7 +316,7 @@ async def process_generation_run(run_id: uuid.UUID) -> None:
                     str(node_id),
                     language,
                     created_counts["composition"],
-                    created_counts["cloze"],
+                    created_counts["scramble"],
                     material.expression_count,
                     True,
                 )

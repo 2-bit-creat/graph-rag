@@ -5,6 +5,7 @@ import '../theme/app_theme.dart';
 import '../widgets/quiz/cloze_quiz_card.dart';
 import '../widgets/quiz/mcq_quiz_card.dart';
 import '../widgets/quiz/quiz_audio_button.dart';
+import '../widgets/quiz/quiz_result.dart';
 import '../widgets/quiz/quiz_viewport_scope.dart';
 import '../widgets/quiz/scramble_quiz_card.dart';
 import '../widgets/measure_size.dart';
@@ -43,8 +44,7 @@ class _CardShell extends StatelessWidget {
     // keep reporting zero), which briefly leaves the card at natural height
     // and produces tiny 1–2 px overflows. QuizViewportScope is derived from
     // the parent's real constraints, so it is the authoritative measurement.
-    final fillAvailableArea =
-        fillKeyboardViewport && availableHeight != null;
+    final fillAvailableArea = fillKeyboardViewport && availableHeight != null;
     final useKeyboardCompactStyle = keyboardOpen && !fillKeyboardViewport;
     final topMargin = compact ? 2.0 : 4.0;
     final bottomMargin = fillAvailableArea
@@ -425,13 +425,11 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
                             child: Text(
                               [
                                 h['note']?.toString() ?? '',
-                                if ((h['snippet']?.toString() ?? '')
-                                    .isNotEmpty)
+                                if ((h['snippet']?.toString() ?? '').isNotEmpty)
                                   '"${h['snippet']}"',
                               ].where((v) => v.isNotEmpty).join('  '),
                               style: TextStyle(
-                                  fontSize: 12.5,
-                                  color: AppColors.textMuted),
+                                  fontSize: 12.5, color: AppColors.textMuted),
                             ),
                           ),
                         ],
@@ -466,6 +464,15 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
             const SizedBox(height: 10),
             Row(
               children: [
+                // The scramble twin drills the same sentence, so its clip is
+                // handed down here (see _pair_scrambles_with_compositions)
+                // instead of synthesizing the identical audio twice. Only
+                // after grading — hearing it earlier is the answer.
+                if ((widget.quiz['audio_url']?.toString().isNotEmpty ?? false))
+                  QuizAudioButton(
+                    audioUrl: widget.quiz['audio_url'].toString(),
+                    iconSize: 20,
+                  ),
                 const Spacer(),
                 FilledButton.icon(
                   onPressed: widget.onNext,
@@ -490,6 +497,7 @@ class _FeedbackBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final verdictLabel = feedback['verdict_label']?.toString() ?? '';
     final naturalVersions = (feedback['natural_versions'] as List?) ?? [];
+    final translationNotes = (feedback['translation_notes'] as List?) ?? [];
     final saveSuggestions = (feedback['save_suggestions'] as List?) ?? [];
     final attemptNote = feedback['attempt_note']?.toString() ?? '';
 
@@ -530,6 +538,28 @@ class _FeedbackBody extends StatelessWidget {
             _NaturalRow(
               text: v is Map ? (v['text'] ?? '').toString() : v.toString(),
             ),
+        ],
+        if (translationNotes.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          for (final item in translationNotes)
+            if (item is Map &&
+                (item['note'] ?? '').toString().trim().isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.info_outline_rounded,
+                        size: 14, color: AppColors.textMuted),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(item['note'].toString(),
+                          style: TextStyle(
+                              fontSize: 12.5, color: AppColors.textMuted)),
+                    ),
+                  ],
+                ),
+              ),
         ],
       ],
     );
@@ -579,7 +609,7 @@ class _SaveSuggestionRow extends StatelessWidget {
   }
 }
 
-// ── 단어 퀴즈 (self-contained cloze / scramble / mcq cards) ───────────────────
+// ── Sentence quiz cards (scramble now, legacy cloze still readable) ──────────
 
 class WordQuizCard extends StatefulWidget {
   const WordQuizCard({
@@ -588,11 +618,13 @@ class WordQuizCard extends StatefulWidget {
     required this.onSubmit,
     required this.onNext,
     required this.onExit,
+    this.onHint,
     this.externalResult,
     this.clozeSolved = false,
     this.clozeCompletedWords = const [],
     this.clozeLiveDraft = '',
     this.onClozeHintRequested,
+    this.onClozeInputTap,
     this.clozeCardKey,
     this.onContentHeightChanged,
     this.progress,
@@ -606,9 +638,13 @@ class WordQuizCard extends StatefulWidget {
   /// Grades the answer and returns the raw result (or null on error).
   final Future<Map<String, dynamic>?> Function({
     String? answer,
-    List<int>? order,
+    List<String>? order,
     int? selectedIndex,
+    int hintLevel,
   }) onSubmit;
+
+  /// Scramble order hint — see ScrambleQuizCard.onHint.
+  final Future<Map<String, dynamic>?> Function(int hintLevel)? onHint;
   final VoidCallback onNext;
   final VoidCallback onExit;
   final Map<String, dynamic>? externalResult;
@@ -625,6 +661,7 @@ class WordQuizCard extends StatefulWidget {
   /// focus to it (those buttons otherwise steal focus with nowhere for it to
   /// go back to, breaking further typing).
   final VoidCallback? onClozeHintRequested;
+  final VoidCallback? onClozeInputTap;
   final GlobalKey<ClozeQuizCardState>? clozeCardKey;
   final ValueChanged<double>? onContentHeightChanged;
 
@@ -640,12 +677,22 @@ class _WordQuizCardState extends State<WordQuizCard> {
   /// mcq / scramble: single-shot grading — the correct choice/order isn't
   /// known client-side, so there's no way to let the learner retry locally.
   /// Right or wrong, the attempt is final and "다음 문제" unlocks immediately.
-  Future<void> _grade({List<int>? order, int? selectedIndex}) async {
-    final res =
-        await widget.onSubmit(order: order, selectedIndex: selectedIndex);
+  Future<void> _grade({
+    List<String>? order,
+    int? selectedIndex,
+    int hintLevel = 0,
+  }) async {
+    final res = await widget.onSubmit(
+        order: order, selectedIndex: selectedIndex, hintLevel: hintLevel);
     if (res == null || !mounted) return;
     setState(() => _result = res);
-    _audioKey.currentState?.play(showError: false);
+    // A scramble's clip only exists in the *graded* payload (the session
+    // withholds it so the audio cannot give the word order away), and that
+    // payload reaches the audio button one frame later. Playing right here
+    // would hit a button that still has a null url and silently do nothing.
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _audioKey.currentState?.play(showError: false),
+    );
   }
 
   /// cloze: first attempt goes to the backend; the card itself then allows
@@ -656,12 +703,12 @@ class _WordQuizCardState extends State<WordQuizCard> {
     final res = await widget.onSubmit(answer: answer);
     if (res == null) return false;
     if (mounted) setState(() => _result = res);
-    return res['is_correct'] == true;
+    return quizResultIsCorrect(res);
   }
 
   @override
   Widget build(BuildContext context) {
-    final type = widget.quiz['quiz_type']?.toString() ?? 'cloze';
+    final type = widget.quiz['quiz_type']?.toString() ?? 'scramble';
     final qd =
         (widget.quiz['quiz_data'] as Map?)?.cast<String, dynamic>() ?? {};
     final effectiveResult = widget.externalResult ?? _result;
@@ -670,6 +717,21 @@ class _WordQuizCardState extends State<WordQuizCard> {
         widget.quiz['audio_url']?.toString() ?? qd['audio_url']?.toString();
     final answerAudioUrl = widget.quiz['answer_audio_url']?.toString() ??
         qd['answer_audio_url']?.toString();
+    final question =
+        (widget.quiz['question_native'] ?? widget.quiz['question_ko'])
+                ?.toString() ??
+            '';
+
+    if (type == 'composition') {
+      return CompositionDrillCard(
+        quiz: widget.quiz,
+        feedback: widget.externalResult,
+        busy: false,
+        onNext: widget.onNext,
+        onExit: widget.onExit,
+        progress: widget.progress,
+      );
+    }
 
     Widget card;
     switch (type) {
@@ -679,7 +741,10 @@ class _WordQuizCardState extends State<WordQuizCard> {
           enabled: !answered,
           audioUrl: audioUrl,
           audioButtonKey: _audioKey,
-          onSubmit: (order) => _grade(order: order),
+          questionKo: question,
+          onHint: widget.onHint,
+          onSubmit: (order, hintLevel) =>
+              _grade(order: order, hintLevel: hintLevel),
         );
         break;
       case 'mcq_nuance':
@@ -708,15 +773,16 @@ class _WordQuizCardState extends State<WordQuizCard> {
           externalCompletedWords: widget.clozeCompletedWords,
           externalLiveDraft: widget.clozeLiveDraft,
           onHintRequested: widget.onClozeHintRequested,
+          onExternalInputTap: widget.onClozeInputTap,
         );
     }
 
     // cloze retries locally until correct; mcq/scramble grade once and move on
     // regardless of the outcome (see _grade above).
-    final isCloze = type != 'scramble' && type != 'mcq' && type != 'mcq_nuance';
+    final isCloze = type == 'cloze';
     final clozeComplete = widget.clozeSolved || _solved;
     final isCorrect =
-        isCloze ? clozeComplete : effectiveResult?['is_correct'] == true;
+        isCloze ? clozeComplete : quizResultIsCorrect(effectiveResult);
     final readyForNext = isCloze ? clozeComplete : answered;
 
     return _CardShell(

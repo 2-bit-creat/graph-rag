@@ -107,19 +107,22 @@ async def _process_one(job: ExtractionJob) -> None:
     """Run the unified material analysis instead of a vocabulary-only pass."""
     from .db import async_session_factory
     from .models import User
-    from .quiz_materials import ensure_learning_material
+    from .quiz_materials import generate_complete_learning_set
     try:
         async with async_session_factory() as session:
             user = await session.get(User, job.user_id)
             if user is None:
                 return
             for lang in job.languages:
-                material, _, _ = await ensure_learning_material(
+                material, _, _ = await generate_complete_learning_set(
                     session,
                     user,
                     node_id=uuid.UUID(job.node_id),
                     language=lang,
+                    direct_node=True,
+                    limit=8,
                 )
+                await session.commit()
                 logger.info(
                     "Learning material %s for node=%s language=%s user=%s",
                     material.status, job.node_id, lang, job.user_id,

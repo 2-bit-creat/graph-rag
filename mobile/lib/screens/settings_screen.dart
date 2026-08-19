@@ -57,7 +57,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _nativeLanguage = 'korean';
   // Per-language level: {english: 50, german: 10}
   Map<String, double> _langLevels = {'english': 10};
-  double _dailyClozeTarget = 20;
+  double _dailyScrambleTarget = 20;
   double _dailyCompositionTarget = 5;
   double _quizReviewRatio = 0.5;
   bool _loading = true;
@@ -202,8 +202,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             };
           }
           _nativeLanguage = profile['native_language']?.toString() ?? 'korean';
-          _dailyClozeTarget =
-              (profile['daily_cloze_target'] as num?)?.toDouble() ?? 20;
+          _dailyScrambleTarget =
+              (profile['daily_scramble_target'] as num?)?.toDouble() ?? 20;
           _dailyCompositionTarget =
               (profile['daily_composition_target'] as num?)?.toDouble() ?? 5;
           _quizReviewRatio =
@@ -250,7 +250,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await apiClient.updateProfileSettings(
         targetLanguages: langs,
         languageLevels: levelsInt,
-        dailyClozeTarget: _dailyClozeTarget.round(),
+        // Keep the legacy field populated for old backend clients, while the
+        // current API stores the distinct sentence-order target.
+        dailyClozeTarget: _dailyScrambleTarget.round(),
+        dailyScrambleTarget: _dailyScrambleTarget.round(),
         dailyCompositionTarget: _dailyCompositionTarget.round(),
         quizReviewRatio: _quizReviewRatio,
       );

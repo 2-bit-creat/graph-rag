@@ -30,6 +30,9 @@ class User(Base):
     language_levels: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # Daily personalized quiz targets and source mix (review share 0.0-1.0).
     daily_cloze_target: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+    # New cards use this target.  ``daily_cloze_target`` stays only to read
+    # existing profiles while the cloze feature is parked.
+    daily_scramble_target: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
     daily_composition_target: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     quiz_review_ratio: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
     auto_generate_quizzes: Mapped[bool] = mapped_column(
@@ -532,6 +535,7 @@ class QuizBatch(Base):
     track: Mapped[str] = mapped_column(String, nullable=False, default="daily")
     language: Mapped[str] = mapped_column(String, nullable=False, default="english")
     cloze_target: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    scramble_target: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     composition_target: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     review_ratio: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

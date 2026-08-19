@@ -150,6 +150,8 @@ _MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS current_level INTEGER NOT NULL DEFAULT 10",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_freedom_on BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_cloze_target INTEGER NOT NULL DEFAULT 20",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_scramble_target INTEGER NOT NULL DEFAULT 20",
+    "UPDATE users SET daily_scramble_target = daily_cloze_target WHERE daily_scramble_target = 20 AND daily_cloze_target <> 20",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_composition_target INTEGER NOT NULL DEFAULT 5",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS quiz_review_ratio DOUBLE PRECISION NOT NULL DEFAULT 0.5",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_generate_quizzes BOOLEAN NOT NULL DEFAULT TRUE",
@@ -279,6 +281,8 @@ _MIGRATIONS = [
     )
     """,
     "ALTER TABLE quiz_batches ADD COLUMN IF NOT EXISTS sequence INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE quiz_batches ADD COLUMN IF NOT EXISTS scramble_target INTEGER NOT NULL DEFAULT 0",
+    "UPDATE quiz_batches SET scramble_target = cloze_target WHERE scramble_target = 0 AND cloze_target <> 0",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS last_answered_at TIMESTAMPTZ",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS first_answered_at TIMESTAMPTZ",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS last_quality INTEGER",
@@ -289,6 +293,9 @@ _MIGRATIONS = [
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS pipeline_trace JSONB",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS debug_run_dir TEXT",
     "ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS language TEXT",
+    # Feature transition: keep the historical payload/attempts, but no active
+    # cloze may be picked by a queue after this deploy.
+    "UPDATE quizzes SET queue_kind = 'archived', generation_key = NULL, batch_id = NULL WHERE quiz_type = 'cloze' AND queue_kind <> 'archived'",
     """
     CREATE TABLE IF NOT EXISTS quiz_attempts (
         id UUID PRIMARY KEY,

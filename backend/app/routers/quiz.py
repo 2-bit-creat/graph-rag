@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+import re
 from typing import Literal
 
 from pathlib import Path
@@ -28,7 +29,7 @@ from ..level_guidelines import cefr_label, window_for_level
 from ..models import Quiz, QuizAttempt, QuizGenerationRun, QuizLearningMaterial, QuizPolicyDecision, User
 from ..pipeline_flow import build_quiz_only_flow_layout
 from ..quiz_bundle import BundleSeedError, generate_quiz_bundle
-from ..quiz_materials import ensure_learning_material, materialize_node_expressions, reset_node_materials
+from ..quiz_materials import activate_node_compositions, ensure_learning_material, materialize_node_expressions, reset_node_materials
 from ..quiz_pipeline import (
     trace_quiz_queue_pick,
     trace_quiz_sm2_update,
@@ -87,10 +88,48 @@ from ..schemas import (
     QuizSessionRequest,
     QuizSubmitRequest,
     QuizSubmitResponse,
+    ScrambleHintOut,
+    ScrambleHintRequest,
 )
 from ..workers.quiz_refill import refill_user_quizzes
 
 router = APIRouter(prefix="/quiz", tags=["quiz"])
+
+
+async def _pair_scrambles_with_compositions(
+    session: AsyncSession, user_id: uuid.UUID, quizzes: list[Quiz]
+) -> tuple[list[Quiz], dict[uuid.UUID, str]]:
+    """Expand a scramble session into ordered scramble → composition units.
+
+    The composition twin drills the *same* reviewed sentence, so it inherits
+    the scramble's synthesized clip instead of paying for a second identical
+    TTS render (compositions are never given their own audio).
+    """
+    ordered: list[Quiz] = []
+    inherited_audio: dict[uuid.UUID, str] = {}
+    for quiz in quizzes:
+        ordered.append(quiz)
+        if quiz.quiz_type != "scramble":
+            continue
+        unit_id = str((quiz.quiz_data or {}).get("learning_unit_id") or "")
+        if not unit_id:
+            continue
+        companion = await session.scalar(
+            select(Quiz).where(
+                Quiz.user_id == user_id,
+                Quiz.quiz_type == "composition",
+                Quiz.queue_kind.in_(("new", "review")),
+                Quiz.language == quiz.language,
+                Quiz.source_nodes == quiz.source_nodes,
+                Quiz.quiz_data["learning_unit_id"].astext == unit_id,
+            )
+        )
+        if companion is not None:
+            ordered.append(companion)
+            audio_url = _quiz_audio_url(quiz)
+            if audio_url and not _quiz_audio_url(companion):
+                inherited_audio[companion.id] = audio_url
+    return ordered, inherited_audio
 
 
 def _attempt_out(attempt: QuizAttempt) -> QuizAttemptOut:
@@ -123,19 +162,68 @@ def _quiz_answer_audio_url(quiz) -> str | None:
     return qd.get("answer_audio_url")
 
 
-def _quiz_out(quiz) -> QuizItemOut:
+_SENTENCE_TERMINATOR_RE = re.compile(r"[.!?。？！](?=\s|$)")
+
+
+def _scramble_presentable_reason(quiz: Quiz) -> str | None:
+    if quiz.quiz_type != "scramble":
+        return None
+    qd = quiz.quiz_data if isinstance(quiz.quiz_data, dict) else {}
+    chunks = qd.get("chunks")
+    if not isinstance(chunks, list) or not chunks:
+        return "missing chunks"
+    sentence = str(qd.get("sentence_target") or quiz.sentence_target or "").strip()
+    if len(_SENTENCE_TERMINATOR_RE.findall(sentence)) > 1:
+        return "multiple target sentences"
+    return None
+
+
+async def _archive_unpresentable_scrambles(
+    session: AsyncSession, quizzes: list[Quiz]
+) -> tuple[list[Quiz], bool]:
+    presentable: list[Quiz] = []
+    archived = False
+    for quiz in quizzes:
+        reason = _scramble_presentable_reason(quiz)
+        if reason:
+            quiz.queue_kind = "archived"
+            qd = dict(quiz.quiz_data or {})
+            qd["archived_reason"] = f"scramble_unpresentable:{reason}"
+            quiz.quiz_data = qd
+            archived = True
+            continue
+        presentable.append(quiz)
+    if archived:
+        await session.flush()
+    return presentable, archived
+
+
+def _public_quiz_data(quiz, *, reveal_answer: bool = False) -> dict | None:
+    """Never send a scramble's answer key or complete sentence before grading."""
+    data = dict(quiz.quiz_data or {})
+    if quiz.quiz_type == "scramble" and not reveal_answer:
+        data.pop("correct_order", None)
+        data.pop("sentence_target", None)
+        data.pop("sentence_en", None)
+        data.pop("audio_url", None)
+        data.pop("answer_audio_url", None)
+    return data or None
+
+
+def _quiz_out(quiz, *, reveal_answer: bool = False, audio_url: str | None = None) -> QuizItemOut:
+    is_hidden_scramble = quiz.quiz_type == "scramble" and not reveal_answer
     return QuizItemOut(
         id=quiz.id,
         quiz_type=quiz.quiz_type,
         difficulty_level=quiz.difficulty_level,
         queue_kind=quiz.queue_kind,
         question_ko=quiz.question_native,
-        sentence_en=quiz.sentence_target,
+        sentence_en=None if is_hidden_scramble else quiz.sentence_target,
         question_native=quiz.question_native,
-        sentence_target=quiz.sentence_target,
-        quiz_data=quiz.quiz_data,
-        audio_url=_quiz_audio_url(quiz),
-        answer_audio_url=_quiz_answer_audio_url(quiz),
+        sentence_target=None if is_hidden_scramble else quiz.sentence_target,
+        quiz_data=_public_quiz_data(quiz, reveal_answer=reveal_answer),
+        audio_url=None if is_hidden_scramble else (_quiz_audio_url(quiz) or audio_url),
+        answer_audio_url=None if is_hidden_scramble else _quiz_answer_audio_url(quiz),
         associated_entry_id=quiz.associated_entry_id,
         track=quiz.track,
         batch_id=quiz.batch_id,
@@ -166,6 +254,7 @@ async def get_profile(
         native_language=getattr(user, "native_language", "korean") or "korean",
         language_levels=dict(getattr(user, "language_levels", None) or {}),
         daily_cloze_target=user.daily_cloze_target,
+        daily_scramble_target=user.daily_scramble_target,
         daily_composition_target=user.daily_composition_target,
         quiz_review_ratio=user.quiz_review_ratio,
         # Compatibility field for older clients. Generation no longer branches
@@ -253,7 +342,7 @@ async def _backfill_cloze_audio_background(quiz_ids: list[uuid.UUID]) -> None:
 @router.get("/queue/items", response_model=QuizQueueListOut)
 async def list_queue_items(
     queue_kind: Literal["new", "review"] = Query(...),
-    quiz_type: Literal["cloze", "composition"] | None = None,
+    quiz_type: Literal["scramble", "composition"] | None = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user: User = Depends(request_user_dep),
@@ -287,7 +376,7 @@ async def list_queue_items(
 @router.get("/admin/items", response_model=QuizAdminListOut)
 async def list_admin_quiz_items(
     queue_kinds: list[Literal["new", "review"]] | None = Query(None),
-    quiz_types: list[Literal["cloze", "composition"]] | None = Query(None),
+    quiz_types: list[Literal["cloze", "scramble", "composition"]] | None = Query(None),
     languages: list[str] | None = Query(None),
     include_archived: bool = False,
     sort: Literal["created_desc", "created_asc", "studied_desc"] = "created_desc",
@@ -297,10 +386,13 @@ async def list_admin_quiz_items(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(require_operator_tools),
 ) -> QuizAdminListOut:
-    filters = [
-        Quiz.user_id == user.id,
-        Quiz.quiz_type.in_(("cloze", "composition")),
-    ]
+    filters = [Quiz.user_id == user.id]
+    # Operators can audit preserved cloze history only when they explicitly
+    # include archived rows; learner-facing listings never expose it.
+    filters.append(
+        Quiz.quiz_type.in_(("cloze", "scramble", "composition"))
+        if include_archived else Quiz.quiz_type.in_(("scramble", "composition"))
+    )
     if not include_archived:
         filters.append(Quiz.queue_kind != "archived")
     if queue_kinds:
@@ -415,10 +507,11 @@ async def list_queue_explorations(
                     "node_name": row["node_name"],
                     "content_ko": row["content_ko"],
                     "status": "unexplored",
-                    "cloze_status": "available",
-                    "word_count": 0,
-                    "expression_count": 0,
-                    "composition_count": 0,
+                "cloze_status": "available",
+                "word_count": 0,
+                "scramble_count": 0,
+                "expression_count": 0,
+                "composition_count": 0,
                     "updated_at": None,
                     "language_stats": [],
                 },
@@ -429,15 +522,17 @@ async def list_queue_explorations(
                 "material_status": row.get("material_status", "unprocessed"),
                 "cloze_status": row["cloze_status"],
                 "generated_counts": {
-                    "cloze": row["word_count"],
+                    "scramble": row["word_count"],
                     "composition": row["composition_count"],
                 },
                 "word_count": row["word_count"],
+                "scramble_count": row["word_count"],
                 "expression_count": row["expression_count"],
                 "composition_count": row["composition_count"],
                 "updated_at": row["updated_at"],
             })
             item["word_count"] += row["word_count"]
+            item["scramble_count"] += row["word_count"]
             item["expression_count"] += row["expression_count"]
             item["composition_count"] += row["composition_count"]
             if row["updated_at"] and (
@@ -559,7 +654,7 @@ async def analyse_learning_material(
     # Direct selection is intentionally synchronous here: it either returns a
     # ready inventory or a truthful failure instead of making the client poll a
     # hidden task. The graph-save path remains background-only.
-    row, composition, _ = await ensure_learning_material(
+    row, created, _ = await ensure_learning_material(
         session, user, node_id=node_id, language=language, priority=100
     )
     # A learner explicitly selected this node, so complete the whole visible
@@ -567,24 +662,18 @@ async def analyse_learning_material(
     # expression-based cloze (bounded to keep one request predictable).  The
     # former analysis-only path made this look like a random single word quiz
     # later when the refill worker happened to need one.
-    clozes, _ = await materialize_node_expressions(
-        session,
-        user,
-        node_id=node_id,
-        language=language,
-        limit=8,
-        direct_node=True,
-        queue_missing=8,
+    activated = await activate_node_compositions(
+        session, user, node_id=node_id, language=language, limit=8
     )
     return {
         "node_id": str(node_id),
         "language": language,
         "status": row.status,
-        "composition_quiz_ids": [str(quiz.id) for quiz in composition],
-        "cloze_quiz_ids": [str(quiz.id) for quiz in clozes],
+        "composition_quiz_ids": [str(quiz.id) for quiz in activated if quiz.quiz_type == "composition"],
+        "scramble_quiz_ids": [str(quiz.id) for quiz in activated if quiz.quiz_type == "scramble"],
         "composition_count": row.composition_count,
         "expression_count": row.expression_count,
-        "cloze_count": len(clozes),
+        "scramble_count": sum(1 for quiz in activated if quiz.quiz_type == "scramble"),
     }
 
 
@@ -838,7 +927,7 @@ async def list_generations(
 
 @router.get("/history", response_model=QuizQueueListOut)
 async def list_quiz_history(
-    quiz_type: Literal["cloze", "composition"] | None = None,
+    quiz_type: Literal["scramble", "composition"] | None = None,
     language: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -879,7 +968,7 @@ async def get_quiz_flow_blueprint() -> dict:
 
 @router.post("/generate", response_model=QuizGenerateOut)
 async def generate_quiz_graph(
-    quiz_type: Literal["cloze", "composition"] = Query(...),
+    quiz_type: Literal["scramble", "composition"] = Query(...),
     language: str | None = Query(None, description="Target language for this quiz (overrides profile default)"),
     body: QuizGenerateRequest | None = None,
     user: User = Depends(request_user_dep),
@@ -1091,6 +1180,7 @@ async def update_profile_settings(
         native_language=payload.native_language,
         language_levels=payload.language_levels,
         daily_cloze_target=payload.daily_cloze_target,
+        daily_scramble_target=payload.daily_scramble_target,
         daily_composition_target=payload.daily_composition_target,
         quiz_review_ratio=payload.quiz_review_ratio,
         auto_generate_quizzes=True,
@@ -1122,59 +1212,48 @@ async def start_session(
     user: User = Depends(request_user_dep),
     session: AsyncSession = Depends(get_session),
 ) -> QuizSessionOut:
-    # The chat's legacy "word" alias now means the single supported word quiz.
+    # Keep old clients working, but route their generic word entry to the new
+    # deterministic sentence-order exercise rather than the parked cloze.
     if payload.quiz_type == "word":
-        payload = payload.model_copy(update={"quiz_type": "cloze"})
+        payload = payload.model_copy(update={"quiz_type": "scramble"})
 
-    # "word" fans out into a single mixed session over the three word types so
-    # the chat "단어 퀴즈" serves cloze/scramble/mcq_nuance interleaved.
-    if payload.quiz_type == "word":
-        quiz_type = "word"
-        merged: list = []
-        for wt in ("cloze",):
-            merged.extend(
-                await build_session(
-                    session,
-                    user.id,
-                    wt,
-                    size=payload.size,
-                    vocab_source=payload.vocab_source,
-                    language=payload.language,
-                )
-            )
-        # Round-robin by type so the learner doesn't get all clozes first.
-        by_type: dict[str, list] = {}
-        for q in merged:
-            by_type.setdefault(q.quiz_type, []).append(q)
-        picked = []
-        while by_type and len(picked) < payload.size:
-            for wt in list(by_type.keys()):
-                if by_type[wt]:
-                    picked.append(by_type[wt].pop(0))
-                    if len(picked) >= payload.size:
-                        break
-                if not by_type[wt]:
-                    by_type.pop(wt, None)
+    inherited_audio: dict[uuid.UUID, str] = {}
+    quiz_type = validate_quiz_type(payload.quiz_type)
+    if quiz_type not in ENABLED_QUIZ_TYPES:
+        raise HTTPException(
+            status_code=410,
+            detail={"code": "disabled", "quiz_type": quiz_type},
+        )
+    if payload.quiz_ids:
+        picked = await pick_quizzes_by_ids(session, user.id, payload.quiz_ids)
+        if not picked:
+            raise HTTPException(status_code=404, detail="Quiz not found")
     else:
-        quiz_type = validate_quiz_type(payload.quiz_type)
-        if quiz_type not in ENABLED_QUIZ_TYPES:
-            raise HTTPException(
-                status_code=410,
-                detail={"code": "disabled", "quiz_type": quiz_type},
-            )
-        if payload.quiz_ids:
-            picked = await pick_quizzes_by_ids(session, user.id, payload.quiz_ids)
-            if not picked:
-                raise HTTPException(status_code=404, detail="Quiz not found")
-        else:
-            picked = await build_session(
-                session,
-                user.id,
-                quiz_type,
-                size=payload.size,
-                entry_id=payload.entry_id,
-                vocab_source=payload.vocab_source,
-                language=payload.language,
+        picked = await build_session(
+            session,
+            user.id,
+            quiz_type,
+            size=payload.size,
+            entry_id=payload.entry_id,
+            vocab_source=payload.vocab_source,
+            language=payload.language,
+        )
+    if quiz_type == "scramble":
+        picked, archived_scrambles = await _archive_unpresentable_scrambles(
+            session, list(picked)
+        )
+        if archived_scrambles and not picked:
+            await session.commit()
+        # Pairing only applies to the auto-built daily queue. An explicit
+        # quiz_ids selection (studying specific cards from a node) is a
+        # deliberate, scoped choice — silently appending each scramble's
+        # composition twin turned "study just this scramble" into "and then
+        # a composition card you never asked for" once the scramble was
+        # answered. Scramble and composition stay independent selections
+        # until pairing them is an explicit, opt-in feature.
+        if not payload.quiz_ids:
+            picked, inherited_audio = await _pair_scrambles_with_compositions(
+                session, user.id, list(picked)
             )
     if picked:
         # The learner sees this first card immediately, so ensure its answer
@@ -1203,10 +1282,43 @@ async def start_session(
         )
     new_n = sum(1 for q in picked if q.queue_kind == "new")
     return QuizSessionOut(
-        items=[_quiz_out(q) for q in picked],
+        items=[_quiz_out(q, audio_url=inherited_audio.get(q.id)) for q in picked],
         quiz_type=quiz_type,
         new_count=new_n,
         review_count=len(picked) - new_n,
+    )
+
+
+@router.post("/{quiz_id}/hint", response_model=ScrambleHintOut)
+async def scramble_hint(
+    quiz_id: uuid.UUID,
+    payload: ScrambleHintRequest,
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+) -> ScrambleHintOut:
+    """Reveal the first N chunks of the reference order.
+
+    The answer key never reaches the client before grading (see
+    ``_public_quiz_data``), so an order hint has to be served here. Hints are
+    a strict prefix: the learner still has to place everything after it, and
+    the level travels back with the attempt for XP/telemetry.
+    """
+    quiz = await crud.get_quiz(session, quiz_id, user.id)
+    if quiz is None:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    if quiz.quiz_type != "scramble":
+        raise HTTPException(status_code=400, detail="Hints are scramble-only")
+    order = [str(chunk_id) for chunk_id in ((quiz.quiz_data or {}).get("correct_order") or [])]
+    if not order:
+        raise HTTPException(status_code=409, detail="Quiz has no answer key")
+    # Placing every chunk but the last one leaves no choice at all, so that is
+    # the ceiling: a hint assists, it never answers the card outright.
+    max_hint_level = max(0, len(order) - 2)
+    level = min(max(int(payload.hint_level or 1), 1), max_hint_level) if max_hint_level else 0
+    return ScrambleHintOut(
+        hint_level=level,
+        ordered_prefix=order[:level],
+        max_hint_level=max_hint_level,
     )
 
 
@@ -1234,7 +1346,7 @@ async def submit_quiz(
         return QuizSubmitResponse(
             correct=existing.correct,
             quality=existing.quality,
-            quiz=_quiz_out(quiz),
+            quiz=_quiz_out(quiz, reveal_answer=quiz.quiz_type == "scramble"),
             explanation=(quiz.quiz_data or {}).get("explanation"),
             tutor_feedback=existing.tutor_feedback,
             attempt_id=existing.id,
@@ -1298,7 +1410,7 @@ async def submit_quiz(
         return QuizSubmitResponse(
             correct=correct,
             quality=quality,
-            quiz=_quiz_out(quiz),
+            quiz=_quiz_out(quiz, reveal_answer=quiz.quiz_type == "scramble"),
             explanation=None,
             tutor_feedback=feedback,
             attempt_id=attempt.id,
@@ -1343,7 +1455,7 @@ async def submit_quiz(
     return QuizSubmitResponse(
         correct=correct,
         quality=quality,
-        quiz=_quiz_out(quiz),
+        quiz=_quiz_out(quiz, reveal_answer=quiz.quiz_type == "scramble"),
         explanation=explanation,
         attempt_id=attempt.id,
         xp_awarded=attempt.xp_awarded,

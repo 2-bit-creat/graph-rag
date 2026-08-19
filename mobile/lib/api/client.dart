@@ -794,6 +794,7 @@ class ApiClient {
     int? level,
     bool? isFreedomOn,
     int? dailyClozeTarget,
+    int? dailyScrambleTarget,
     int? dailyCompositionTarget,
     double? quizReviewRatio,
     String? timezone,
@@ -804,6 +805,7 @@ class ApiClient {
         if (level != null) 'level': level,
         if (isFreedomOn != null) 'is_freedom_on': isFreedomOn,
         if (dailyClozeTarget != null) 'daily_cloze_target': dailyClozeTarget,
+        if (dailyScrambleTarget != null) 'daily_scramble_target': dailyScrambleTarget,
         if (dailyCompositionTarget != null)
           'daily_composition_target': dailyCompositionTarget,
         if (quizReviewRatio != null) 'quiz_review_ratio': quizReviewRatio,
@@ -962,10 +964,27 @@ class ApiClient {
     }
   }
 
+  /// Order hint for a sentence-scramble card: the backend returns the first
+  /// [hintLevel] chunk ids of the reference order (the answer key itself never
+  /// reaches the client before grading).
+  Future<Map<String, dynamic>> fetchScrambleHint({
+    required String quizId,
+    required int hintLevel,
+  }) async {
+    try {
+      final resp = await _dio.post('/quiz/$quizId/hint', data: {
+        'hint_level': hintLevel,
+      });
+      return Map<String, dynamic>.from(resp.data as Map);
+    } on DioException catch (e) {
+      throw _friendlyError(e, '힌트');
+    }
+  }
+
   Future<Map<String, dynamic>> submitQuizAnswer({
     required String quizId,
     String? answer,
-    List<int>? order,
+    List<String>? order,
     int? selectedIndex,
     // Flashcard deck: 'known' | 'again'. The learner grades themselves after
     // flipping the card, so the backend skips answer comparison entirely.
@@ -1761,6 +1780,7 @@ class ApiClient {
     required List<String> targetLanguages,
     required Map<String, int> languageLevels,
     required int dailyClozeTarget,
+    int? dailyScrambleTarget,
     required int dailyCompositionTarget,
     required double quizReviewRatio,
   }) async {
@@ -1769,6 +1789,8 @@ class ApiClient {
         'target_languages': targetLanguages,
         'language_levels': languageLevels,
         'daily_cloze_target': dailyClozeTarget,
+        if (dailyScrambleTarget != null)
+          'daily_scramble_target': dailyScrambleTarget,
         'daily_composition_target': dailyCompositionTarget,
         'quiz_review_ratio': quizReviewRatio,
       });

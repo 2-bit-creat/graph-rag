@@ -36,6 +36,7 @@ _IRREGULAR_PAST = frozenset({
     "took", "went", "made", "saw", "did", "had", "was", "were", "wrote",
     "spoke", "bought",
 })
+_GENERIC_WEATHER_VERBS = frozenset({"rain", "snow", "hail"})
 _LENGTH_GATED_KINDS = frozenset({"verb_phrase", "collocation"})
 _EN_SUBJECT_START_RE = re.compile(
     r"^(?:i|you|he|she|it|we|they|this|that|these|those|the\s+\w+)\b", re.IGNORECASE
@@ -91,8 +92,6 @@ class EnglishTargetPack(TargetLanguagePack):
         return None
 
     def base_form_reason(self, canonical: str, kind: str) -> str | None:
-        if kind not in _LENGTH_GATED_KINDS:
-            return None
         tokens = self.tokens(canonical)
         if not tokens:
             return None
@@ -101,6 +100,33 @@ class EnglishTargetPack(TargetLanguagePack):
             return R.reason(
                 R.EN_INFLECTED_FIRST_WORD,
                 f"{canonical!r} starts with inflected verb form {first!r}, use the base form",
+            )
+        # A planner can mislabel a finite predicate as ``grammar`` or
+        # ``discourse_frame``.  Canonical identity must not depend on that
+        # label: ``suddenly rained`` is still a past-tense event, not a
+        # wordbook form, even though its first word is an adverb.  Checking the
+        # phrase tail catches that shape without trying to lemmatize every
+        # English word in the pipeline.
+        if len(tokens) > 1:
+            last = tokens[-1]
+            if last.endswith("ing") or last.endswith("ed") or last.casefold() in _IRREGULAR_PAST:
+                return R.reason(
+                    R.EN_INFLECTED_FIRST_WORD,
+                    f"{canonical!r} ends with inflected verb form {last!r}, use a reusable base form or omit it",
+                )
+        # A high-value adverb can stand alone.  Pairing it with a generic
+        # weather event solely to satisfy a phrase-shaped extraction target
+        # produces a poor wordbook entry ("suddenly rain") instead of the
+        # usable word "suddenly".  Do not rewrite it here: reject it so the
+        # per-unit author must emit the intended canonical form directly.
+        if (
+            len(tokens) == 2
+            and tokens[0].casefold().endswith("ly")
+            and tokens[1].casefold() in _GENERIC_WEATHER_VERBS
+        ):
+            return R.reason(
+                R.NOT_TEACHABLE,
+                f"{canonical!r} pads a standalone adverb with a generic weather verb; use the word alone",
             )
         return None
 

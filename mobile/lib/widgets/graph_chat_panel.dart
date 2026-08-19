@@ -13,8 +13,8 @@ import '../utils/graph_layout.dart';
 import 'audio_record_core.dart';
 import 'chat_rich_text.dart';
 import 'chat_suggestion_rail.dart';
-import 'journal_activity_host.dart' show openJournalActivityDetails;
-import 'journal_progress_card.dart' show openJournalReviewFallback;
+import 'journal_progress_card.dart'
+    show JournalProgressCard, openJournalReviewFallback;
 import 'mention_editor_core.dart';
 import 'quiz/quiz_viewport_scope.dart';
 import 'thinking_orbs.dart';
@@ -283,9 +283,8 @@ class GraphChatPanel extends StatelessWidget {
   }
 }
 
-/// A contextual pointer left in the chat that started a journal. It mirrors the
-/// app-wide activity tab's live status, but deliberately never expands into the
-/// speaker/graph review UI inside the feed.
+/// The journal's live progress/review surface, kept in the chat feed that
+/// created it so graph review never jumps into a separate tab or sheet.
 class _JournalActivityFeedCard extends StatelessWidget {
   const _JournalActivityFeedCard({required this.entryId});
 
@@ -297,10 +296,12 @@ class _JournalActivityFeedCard extends StatelessWidget {
       listenable: journalTask,
       builder: (context, _) {
         final current = journalTask.entryId == entryId;
-        final working = current && journalTask.systemProcessing;
-        final label = current && journalTask.stageLabel.isNotEmpty
-            ? journalTask.stageLabel
-            : tr('journalActivity.contentReview');
+        if (current) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: JournalProgressCard(entryId: entryId),
+          );
+        }
         return Padding(
           padding: const EdgeInsets.only(bottom: 8),
           child: Material(
@@ -308,25 +309,17 @@ class _JournalActivityFeedCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
             child: InkWell(
               borderRadius: BorderRadius.circular(12),
-              onTap: () => current
-                  ? openJournalActivityDetails()
-                  : openJournalReviewFallback(context, entryId),
+              onTap: () => openJournalReviewFallback(context, entryId),
               child: Padding(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
                 child: Row(
                   children: [
-                    working
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.auto_stories_rounded, size: 17),
+                    const Icon(Icons.auto_stories_rounded, size: 17),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        label,
+                        tr('journalActivity.contentReview'),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(

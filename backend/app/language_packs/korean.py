@@ -81,6 +81,7 @@ _KO_SENTENCE_FINAL_RE = re.compile(
 # single, common final syllable like 사 is deliberately excluded — it is
 # too generic to signal a name on its own).
 _KO_ORG_SUFFIXES = ("그룹", "은행", "회사", "증권")
+_KO_CONTEXTUAL_POSSESSIVES = frozenset({"내", "제", "우리", "저희", "네", "너의", "그의", "그녀의"})
 
 _CHOSEONG = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
 
@@ -173,7 +174,11 @@ class KoreanTargetPack(TargetLanguagePack):
             return None
         text = (canonical or "").strip()
         if not _KO_DICTIONARY_FORM_RE.search(text):
-            return None  # not verb-shaped at all (e.g. a bare noun) — no opinion
+            return R.reason(
+                R.KO_NOT_DICTIONARY_FORM,
+                f"{canonical!r} is not a Korean dictionary form; use a -다 lemma "
+                "and keep the sentence ending in surface_form",
+            )
         if _KO_INFLECTED_PAST_RE.search(text):
             return R.reason(
                 R.KO_NOT_DICTIONARY_FORM,
@@ -205,6 +210,17 @@ class KoreanTargetPack(TargetLanguagePack):
         if not cleaned or "_" in cleaned:
             return False
         return any("가" <= ch <= "힣" for ch in cleaned)
+
+    def surface_boundary_reason(
+        self, *, answer: str, sentence_target: str, canonical_form: str
+    ) -> str | None:
+        words = self.tokens(answer)
+        if words and words[0] in _KO_CONTEXTUAL_POSSESSIVES:
+            return R.reason(
+                R.INTERNAL_POSSESSIVE,
+                f"Korean answer {answer!r} starts with contextual possessive {words[0]!r}; keep it outside the blank",
+            )
+        return None
 
     def sentence_language_reason(self, sentence: str) -> str | None:
         hangul = re.findall(r"[가-힣]+", sentence or "")
