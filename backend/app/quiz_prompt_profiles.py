@@ -21,7 +21,6 @@ class QuizPromptProfile:
     native_gloss_field: str
     plan_rules: str
     plan_review_rules: str
-    inventory_rules: str
     author_rules: str
     review_rules: str
 
@@ -42,6 +41,9 @@ _PROFILES = {
             "objects inside the expression. Never introduce an English possessive merely because Korean omitted its subject or possessor: write "
             "'the wet shoes', not invented 'my wet shoes'. Before freezing the sentence, ensure each chosen expression is one contiguous span "
             "that excludes any possessor. The Korean meaning must cover the whole English expression, including its action and required object."
+            " A single high-value English content word is a first-class learning expression: when 갑자기 maps to 'suddenly', return canonical_form="
+            "'suddenly', kind='word', and surface_form='suddenly'. Never pad such a word with a generic event verb merely to create a phrase "
+            "(never 'suddenly rain'). Keep a multi-word expression only when the combination itself carries the reusable meaning."
             " Preserve established technical terms: Korean '갱신 손실' is English 'lost update', never a generic paraphrase such as "
             "'updates can be lost'. Say that a lost update occurs when/while updating the balance or is caused by concurrent requests; "
             "never write the unidiomatic 'a lost update occurs to the balance'."
@@ -51,11 +53,9 @@ _PROFILES = {
             "predicates, added comparison, invented possessors, and English expression boundaries containing my/your/his/her/our/their. Rewrite the "
             "English reference itself when an invented possessor blocks the useful expression; do not wait for cloze repair. surface_form must occur exactly in "
             "the reviewed English sentence and the Korean meaning must include the full predicate when the expression is a verb phrase. Enforce "
-            "established domain terminology such as 'lost update' for 갱신 손실."
-        ),
-        inventory_rules=(
-            "[PAIR ko-en INVENTORY] Select only reusable English spans already present in the reviewed English sentences. Prefer one compact verb or "
-            "collocation per action. Keep the Korean gloss semantically complete; never reduce an action to only its object noun."
+            "established domain terminology such as 'lost update' for 갱신 손실. Preserve a standalone high-value word as kind='word' when it is the "
+            "actual learning target; reject a padded adverb-plus-generic-event phrase such as 'suddenly rain' and replace it with 'suddenly' if that "
+            "exact word is in the reviewed sentence."
         ),
         author_rules=(
             "[PAIR ko-en ALIGNMENT] The Korean and English sentences are frozen and must not be rewritten. Copy answer_en as exactly one contiguous "
@@ -93,13 +93,6 @@ _PROFILES = {
             "a German verb phrase or a surface answer containing a contextual possessor. Reject generic wording where the source has an established "
             "domain term, and reject 'eine Zahlung versuchen' as unidiomatic."
         ),
-        inventory_rules=(
-            "[PAIR ko-de INVENTORY] Select compact reusable German spans already present in the reviewed German sentences. Preserve required case-marked "
-            "articles and prepositions only when they belong to the reusable expression. Prefer a contiguous realization for separable verbs and give a "
-            "complete Korean predicate gloss. The sentence is frozen: if a separable main-clause verb makes the whole action discontinuous, do not invent "
-            "a contiguous conjugation. Select another useful contiguous span already present, such as its domain noun phrase ('einen konservativen "
-            "Diskontsatz'), with a noun-phrase Korean gloss ('보수적인 할인율'). Never select a span containing a possessive."
-        ),
         author_rules=(
             "[PAIR ko-de ALIGNMENT] The Korean and German sentences are frozen and must not be rewritten. Copy answer_de as exactly one contiguous span "
             "from sentence_de. Write meaning_ko as a natural Korean gloss covering the entire German answer; it need not be a literal substring of "
@@ -126,6 +119,8 @@ _PROFILES = {
             "action and not merely one noun. Merge an English After/Before/While gerund fragment into the following main clause. A composition prompt "
             "must never begin with dangling and/but/so; remove that connector while preserving its proposition. Design the Korean sentence so a useful "
             "1-3 eojeol answer leaves at least two meaningful context eojeols outside the blank."
+            " Preserve relationship terms naturally in Korean, and use translation_notes when the Korean choice depends on context the English source "
+            "does not distinguish. Do not turn one source event into a different event merely to make a familiar Korean expression."
             " Preserve established Korean terminology: English 'lost update' is '갱신 손실', not the vague '업데이트 누락'. Every expression's "
             "meaning_en field must contain English only; never copy or paraphrase the Korean answer into meaning_en."
         ),
@@ -134,11 +129,8 @@ _PROFILES = {
             "or aspect, wrong particles, source prompts beginning with and/but/so, sentence-sized Korean answers, and English glosses that cover only part "
             "of the Korean expression. Merge dependent English fragments before approving the plan. surface_form must "
             "occur exactly in the reviewed Korean sentence. Delete any expression whose meaning_en is not complete English. Translate 'lost update' "
-            "as '갱신 손실'."
-        ),
-        inventory_rules=(
-            "[PAIR en-ko INVENTORY] Select compact reusable Korean spans already present in the reviewed Korean sentences. Prefer a predicate and its "
-            "semantically required argument, not a whole subject-predicate clause. Give a complete natural English gloss."
+            "as '갱신 손실'. Reject a Korean possession, event type, purpose, or participant role that source English did not establish. When a natural "
+            "Korean relationship or honorific choice adds contextual detail, keep it only with an accurate translation_notes explanation."
         ),
         author_rules=(
             "[PAIR en-ko ALIGNMENT] The English and Korean sentences are frozen and must not be rewritten. Copy answer_ko as exactly one contiguous "

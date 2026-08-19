@@ -177,6 +177,9 @@ def merge_composition_feedback(
         "verdict_label": eval_result.get("verdict_label", ""),
         "encouragement": eval_result.get("encouragement", ""),
         "natural_versions": quiz_data.get("model_answers") or [],
+        # These are deliberately post-submission explanations.  Unlike hints,
+        # they may name the target realization chosen by the reference answer.
+        "translation_notes": quiz_data.get("translation_notes") or [],
         "key_expressions": quiz_data.get("key_expressions") or [],
         "thinking_tip": quiz_data.get("thinking_tip") or "",
         "save_suggestions": eval_result.get("save_suggestions") or [],

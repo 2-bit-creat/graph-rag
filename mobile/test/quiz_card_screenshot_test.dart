@@ -194,7 +194,7 @@ void main() {
         brightness: theme,
         child: WordQuizCard(
           quiz: _realClozeCard,
-          onSubmit: ({answer, order, selectedIndex}) async =>
+          onSubmit: ({answer, order, selectedIndex, hintLevel = 0}) async =>
               {'is_correct': false},
           onNext: () {},
           onExit: () {},
@@ -222,7 +222,7 @@ void main() {
       textScale: 1.3,
       child: WordQuizCard(
         quiz: _realClozeCard,
-        onSubmit: ({answer, order, selectedIndex}) async =>
+        onSubmit: ({answer, order, selectedIndex, hintLevel = 0}) async =>
             {'is_correct': false},
         onNext: () {},
         onExit: () {},
@@ -252,7 +252,7 @@ void main() {
       brightness: Brightness.dark,
       child: WordQuizCard(
         quiz: _realClozeCard,
-        onSubmit: ({answer, order, selectedIndex}) async =>
+        onSubmit: ({answer, order, selectedIndex, hintLevel = 0}) async =>
             {'is_correct': false},
         onNext: () {},
         onExit: () {},
@@ -279,7 +279,7 @@ void main() {
       brightness: Brightness.dark,
       child: WordQuizCard(
         quiz: _realClozeCard,
-        onSubmit: ({answer, order, selectedIndex}) async =>
+        onSubmit: ({answer, order, selectedIndex, hintLevel = 0}) async =>
             {'is_correct': true},
         onNext: () {},
         onExit: () {},

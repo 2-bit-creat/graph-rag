@@ -38,7 +38,7 @@ from .quiz_prompt_profiles import QuizPromptProfile, get_quiz_prompt_profile
 from .level_guidelines import cefr_label, get_level_band
 from .models import Quiz, User
 from .pipeline_trace import PipelineTracer
-from .text_coverage import native_ngram_coverage, split_statement_units
+from .text_coverage import native_ngram_coverage
 from .quiz_audio_engine import synthesize_quiz_audio_assets
 from .quiz_generator import (
     _LANG_DISPLAY_NAMES,
@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 # Bump this whenever the cloze contract changes.  The batch service uses it to
 # retry sources that were exhausted by an older, broken prompt/normalizer.
-CLOZE_GENERATOR_VERSION = "cloze-contract-v17-single-semantic-review"
+CLOZE_GENERATOR_VERSION = "study-contract-v20-complete-target-sentence"
 
 _REVIEW_CONTRACT_VERSION = "pair-release-v1"
 
@@ -62,6 +62,127 @@ _BLANK_RUN_RE = re.compile(r"_{2,}")
 # specific gates go through ``language_packs`` instead — see that package's
 # docstring for why the split exists.
 _ENGLISH_WORD_RE = re.compile(r"[A-Za-z]+(?:['-][A-Za-z]+)*")
+_SENTENCE_TERMINATOR_RE = re.compile(r"[.!?。？！](?=\s|$)")
+
+
+def _scramble_word_content_reason(sentence: str, units: list[str]) -> str | None:
+    """Whether ``units`` cover the same words as ``sentence``, punctuation aside.
+
+    This is the deterministic half of the ``scramble_units`` contract: the
+    author (initial plan call or its review pass) proposes a phrase grouping,
+    and this is what stops a bad grouping from ever reaching a learner. It
+    compares *word content*, not exact characters — trying an exact-string
+    reconstruction check first found the model reliably drops or shifts a
+    comma/period between units (e.g. splitting "보고," into a bare "보고" unit)
+    even when every word survived intact. That is cosmetic: the graded answer
+    key is chunk *identity* order, and the revealed sentence is always
+    ``sentence_target`` verbatim, never a rejoin of the pieces — so punctuation
+    placement across pieces has no effect on correctness or on what the
+    learner is shown. A genuine defect (a dropped, added or reordered word)
+    still changes the word content and is still caught here.
+    """
+    if not units or not all(isinstance(unit, str) and unit.strip() for unit in units):
+        return "empty_or_missing"
+    if len(units) < _SCRAMBLE_MIN_CHUNKS:
+        return f"chunk_count:{len(units)}"
+
+    def word_chars(value: str) -> str:
+        return "".join(re.findall(r"[^\W_]", value, re.UNICODE))
+
+    if word_chars(" ".join(units)) != word_chars(sentence):
+        return "word_content_mismatch"
+    return None
+
+
+def _merge_scramble_units_to_cap(units: list[str], cap: int) -> list[str]:
+    """Merge adjacent pieces down to at most ``cap``, preserving order and exact reconstruction.
+
+    Repeatedly merges the adjacent pair with the smallest combined length —
+    the short pieces (a bare particle, a single syllable) are exactly what an
+    author under-merged, so this recovers close to what more aggressive
+    merging would have produced, rather than merging arbitrary large chunks
+    together.
+    """
+    merged = list(units)
+    while len(merged) > cap:
+        pair_index = min(
+            range(len(merged) - 1),
+            key=lambda i: len(merged[i]) + len(merged[i + 1]),
+        )
+        merged[pair_index:pair_index + 2] = [f"{merged[pair_index]} {merged[pair_index + 1]}"]
+    return merged
+
+
+def _scramble_payload(
+    sentence_target: str,
+    *,
+    seed: str,
+    language: str = "english",
+    scramble_units: list[str] | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Build a server-graded, language-neutral word-order payload.
+
+    ``scramble_units`` is the author's own semantic phrase grouping (see the
+    ``scramble_units`` field in the plan schema): the reference sentence is
+    never shortened to fit a word budget, so instead the *pieces the learner
+    drags* are grouped down to a playable count. A piece may be more than one
+    whitespace token (an inflected verb with its ending, a particle-marked
+    noun phrase) when splitting it further would be ungrammatical or would
+    make the wrong thing the learnable unit.
+
+    Falls back to one piece per whitespace token — the original behaviour,
+    still rejecting sentences that don't fit unchunked — when the author
+    didn't supply a valid grouping, so a plan-schema gap degrades a card
+    rather than silently producing an unplayable one.
+    """
+    sentence = (sentence_target or "").strip()
+    reference_reason = _target_reference_reason(sentence, language)
+    if reference_reason:
+        return None, reference_reason
+    if len(_SENTENCE_TERMINATOR_RE.findall(sentence)) > 1:
+        return None, "multiple_target_sentences"
+
+    tokens = [unit.strip() for unit in (scramble_units or []) if isinstance(unit, str) and unit.strip()]
+    reconstruction_reason = _scramble_word_content_reason(sentence, tokens) if tokens else "empty_or_missing"
+    if reconstruction_reason:
+        # No usable author-supplied grouping: fall back to the original
+        # word-per-piece behaviour, which still caps sentences by raw length.
+        # Logged (not raised) because a fallback that still produces a card
+        # must not look identical to one that used the author's own
+        # semantic grouping — this is the signal that scramble_units is
+        # under-delivering and worth checking in the pipeline trace.
+        logger.info(
+            "scramble_units_fallback seed=%s reason=%s", seed, reconstruction_reason
+        )
+        tokens = [token for token in re.split(r"\s+", sentence) if token]
+        if not _SCRAMBLE_MIN_CHUNKS <= len(tokens) <= _SCRAMBLE_MAX_CHUNKS:
+            return None, f"token_count:{len(tokens)}"
+    elif len(tokens) > _SCRAMBLE_MAX_CHUNKS:
+        # A valid grouping that just under-merged — recover it instead of
+        # throwing away real semantic chunking for a raw-length rejection.
+        logger.info(
+            "scramble_units_merged_down seed=%s from=%d to=%d", seed, len(tokens), _SCRAMBLE_MAX_CHUNKS
+        )
+        tokens = _merge_scramble_units_to_cap(tokens, _SCRAMBLE_MAX_CHUNKS)
+
+    # Stable opaque IDs make repeated surface tokens distinguishable and keep
+    # the expected order out of the learner-facing representation.
+    ordered = [{"id": f"t{index}_{hashlib.sha256(f'{seed}:{index}'.encode()).hexdigest()[:10]}", "text": token}
+               for index, token in enumerate(tokens)]
+    shuffled = list(ordered)
+    rng = random.Random(hashlib.sha256(f"scramble:{seed}".encode()).digest())
+    rng.shuffle(shuffled)
+    if [piece["id"] for piece in shuffled] == [piece["id"] for piece in ordered]:
+        shuffled = shuffled[1:] + shuffled[:1]
+    return {
+        "chunks": shuffled,
+        "correct_order": [piece["id"] for piece in ordered],
+        "sentence_target": sentence_target,
+    }, None
+
+
+def _target_token_count(sentence_target: str) -> int:
+    return len([token for token in re.split(r"\s+", (sentence_target or "").strip()) if token])
 
 
 def _native_script_re(native_language: str) -> re.Pattern[str]:
@@ -135,14 +256,26 @@ async def _pick_seed(
     return random.choice(usable)
 
 
+_LEARNING_TARGET_MIN_TOKENS = 3
+_SHORT_STATEMENT_COMPACT_CHARS = 32
+# Scramble is a drag-and-drop game, not a reading exercise: what bounds it is
+# how many pieces a learner can usefully reorder, not how many words the
+# sentence has. So the count that matters is chunks, not whitespace tokens —
+# see ``scramble_units`` below, which lets the author group an inflected
+# phrase ("책상에 물을 쏟는 것을") into one piece instead of five.
+_SCRAMBLE_MIN_CHUNKS = 3
+_SCRAMBLE_MAX_CHUNKS = 12
+
+
 _BUNDLE_SCHEMA_HINT = """{
   "segments": [{
     "segment_index": 0,
     "source_text": "<exact contiguous native source span>",
-    "prompt_native": "<short self-contained native composition prompt preserving the source meaning>",
+    "prompt_native": "<short self-contained native learning prompt for this unit, usually one sentence>",
     "grammar_focus": ["<one useful target-language grammar focus>"],
+    "translation_notes": [{"source": "<native term or construction with multiple natural target realizations>", "target": "<exact realization chosen in the reference>", "note": "<short native-language explanation of this contextual translation choice>"}],
     "context_entities": [{"native": "<proper name in source>", "target_forms": ["<target-language spellings used in references>"]}],
-    "reference_answers": [{"text": "<natural TARGET-language realization>", "register": "casual|neutral|formal", "note": "<native-language note>"}],
+    "reference_answers": [{"text": "<complete natural TARGET-language sentence for the unit, any length — never shortened to fit a word count>", "register": "casual|neutral|formal", "note": "<native-language note>", "scramble_units": ["<contiguous word-order piece 1>", "<piece 2, merged phrase where splitting would be ungrammatical>", "..."]}],
     "expressions": [{
       "canonical_form": "<dictionary/wordbook form, including important modifiers>",
       "surface_form": "<how it is realized in the reference answer; may be inflected>",
@@ -151,10 +284,37 @@ _BUNDLE_SCHEMA_HINT = """{
       "meaning_parts": [{"target": "<meaning-bearing part>", "native": "<its native-language contribution>"}],
       "quality_score": 0,
       "quality_reason": "<why this expression is natural, reusable and worth producing>",
-      "kind": "collocation|verb_phrase|grammar|domain_term|discourse_frame"
+      "kind": "word|collocation|verb_phrase|grammar|domain_term|discourse_frame"
     }]
   }]
 }"""
+
+# Segmentation deliberately has a smaller contract than planning.  Keeping it
+# free of translation and vocabulary decisions makes it safe to run before the
+# per-unit author calls, and gives us an independently traceable failure point.
+_SEGMENT_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "statement_study_segmentation",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["segments"],
+            "properties": {
+                "segments": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["source_text"],
+                        "properties": {"source_text": {"type": "string"}},
+                    },
+                },
+            },
+        },
+    },
+}
 
 _CLOZE_SCHEMA_HINT = """{
   "cloze": [{
@@ -184,7 +344,7 @@ _PLAN_RESPONSE_FORMAT = {
                         "type": "object",
                         "additionalProperties": False,
                         "required": [
-                            "segment_index", "source_text", "prompt_native", "grammar_focus", "context_entities",
+                            "segment_index", "source_text", "prompt_native", "grammar_focus", "translation_notes", "context_entities",
                             "reference_answers", "expressions",
                         ],
                         "properties": {
@@ -194,6 +354,19 @@ _PLAN_RESPONSE_FORMAT = {
                             "grammar_focus": {
                                 "type": "array",
                                 "items": {"type": "string"},
+                            },
+                            "translation_notes": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "required": ["source", "target", "note"],
+                                    "properties": {
+                                        "source": {"type": "string"},
+                                        "target": {"type": "string"},
+                                        "note": {"type": "string"},
+                                    },
+                                },
                             },
                             "context_entities": {
                                 "type": "array",
@@ -215,7 +388,7 @@ _PLAN_RESPONSE_FORMAT = {
                                 "items": {
                                     "type": "object",
                                     "additionalProperties": False,
-                                    "required": ["text", "register", "note"],
+                                    "required": ["text", "register", "note", "scramble_units"],
                                     "properties": {
                                         "text": {"type": "string"},
                                         "register": {
@@ -223,6 +396,10 @@ _PLAN_RESPONSE_FORMAT = {
                                             "enum": ["casual", "neutral", "formal"],
                                         },
                                         "note": {"type": "string"},
+                                        "scramble_units": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                        },
                                     },
                                 },
                             },
@@ -260,7 +437,7 @@ _PLAN_RESPONSE_FORMAT = {
                                         "kind": {
                                             "type": "string",
                                             "enum": [
-                                                "collocation", "verb_phrase", "grammar",
+                                                "word", "collocation", "verb_phrase", "grammar",
                                                 "domain_term", "discourse_frame",
                                             ],
                                         },
@@ -543,10 +720,8 @@ def _source_alignment_span(source: str, chunk: dict[str, Any]) -> str:
     return text[start:end].strip()
 
 
-# Both now live in ``precision_text`` so the knowledge-graph extractor can reuse
-# them without importing this module's language packs, TTS and OpenAI client.
-# Kept under their original private names: every call site below is unchanged.
-_split_statement_units = split_statement_units
+# Kept under its original private name for the composition prompt coverage
+# check.  Study-unit segmentation itself is LLM-only; see generate_quiz_bundle.
 _native_ngram_coverage = native_ngram_coverage
 
 
@@ -619,6 +794,97 @@ def _trim_overlapping_segment_sources(segments: list[dict[str, Any]]) -> None:
         index += 1
 
 
+# A note whose chosen realization shares less than this much of its character
+# bigrams with every reference is absent from the sentence, not merely
+# inflected differently ("닦도록" still scores 0.5 against "닦을 수 있도록").
+_TRANSLATION_NOTE_MIN_COVERAGE = 0.5
+
+
+def _translation_note_contract_reason(segment: dict[str, Any]) -> str | None:
+    """Catch a unit that documents a translation its own reference never made.
+
+    ``translation_notes`` are written about the finished reference: each item
+    is "this source span → the exact realization I chose". When that
+    realization appears in no reference, the unit contradicts itself, and what
+    went missing is almost always a whole subordinate clause the model
+    compressed away — the token budget makes purpose/result clauses ("so that
+    he could wipe it") the first casualty of "simplify wording".
+
+    This is the one fidelity check that needs no second opinion: the model
+    already stated what the sentence was supposed to contain, so a deterministic
+    comparison is enough. Everything else about meaning preservation rests on
+    the LLM release review, which is exactly why silent clause loss survives it.
+
+    A short (<=2 whitespace-token) missing target is exempt. In practice this is
+    reliably an apposed role/title/descriptor the author correctly chose to drop
+    from the reference (the prompt tells it to — "Kim, a researcher," keeps only
+    the name) and then, despite being told not to, wrote a translation_notes
+    entry about anyway. A genuine dropped clause always has its own verb and
+    arguments and is never this short ("so that he could wipe it" / "닦을 수
+    있도록" is 3 tokens; "a researcher" / "연구원" is 1-2) — so this is a real
+    structural distinction, not a pattern match on this one case.
+    """
+    references = [
+        str(answer.get("text") or "").strip()
+        for answer in segment.get("reference_answers") or []
+        if isinstance(answer, dict)
+    ]
+    if not any(references):
+        return None
+    for note in segment.get("translation_notes") or []:
+        if not isinstance(note, dict):
+            continue
+        chosen = str(note.get("target") or "").strip()
+        source_span = str(note.get("source") or "").strip()
+        if not chosen or len(chosen.split()) <= 2:
+            continue
+        best = max(
+            (native_ngram_coverage(chosen, reference) for reference in references),
+            default=0.0,
+        )
+        if best < _TRANSLATION_NOTE_MIN_COVERAGE:
+            return R.reason(
+                R.PLAN_CLAUSE_DROPPED,
+                f"the plan says {source_span!r} was rendered as {chosen!r}, but no reference "
+                "contains it — the reference dropped a documented part of the unit",
+            )
+    return None
+
+
+def _scramble_units_contract_reason(segment: dict[str, Any]) -> str | None:
+    """Catch scramble_units that drop or change a word relative to their own reference text.
+
+    Punctuation differences are tolerated here too (same rule as
+    ``_scramble_word_content_reason``, which this delegates to) — an
+    over-cap or comma-dropping grouping is recoverable at build time
+    (``_merge_scramble_units_to_cap`` / the word-content comparison), so it
+    is not worth a retry. A genuine dropped or altered *word* is a release
+    defect the same way a mistranslated ``translation_notes`` entry is, and
+    unlike the build-time fallback, catching it here gives the reviewer a
+    chance to fix just the grouping instead of the whole unit quietly
+    shipping without a scramble card.
+    """
+    references = segment.get("reference_answers") or []
+    if not references or not isinstance(references[0], dict):
+        return None
+    primary = references[0]
+    text = str(primary.get("text") or "").strip()
+    if not text:
+        return None
+    units = [str(unit) for unit in (primary.get("scramble_units") or [])]
+    if not units:
+        # No grouping at all is a schema gap the build-time fallback already
+        # handles gracefully (one piece per word) — not worth a retry.
+        return None
+    reason = _scramble_word_content_reason(text, units)
+    if reason == "word_content_mismatch":
+        return R.reason(
+            R.PLAN_SCRAMBLE_UNITS_INVALID,
+            f"scramble_units for {text!r} do not cover the same words as the reference",
+        )
+    return None
+
+
 def _plan_domain_contract_reason(
     source_statement: str,
     segments: list[dict[str, Any]],
@@ -686,6 +952,33 @@ def _plan_domain_contract_reason(
                 "domain_expression_mismatch: retain the explicit German lost-update term "
                 "in at least one expression candidate"
             )
+    # Korean diary predicates commonly omit the first-person subject.  In an
+    # English learner reference that subject is the learner, not an impersonal
+    # passive event.  Losing it changes who performed the action and makes the
+    # writing target semantically wrong even when the sentence is grammatical.
+    if native_language == "korean" and target_language == "english":
+        first_person_action = re.search(
+            r"(?:옮겼|샀다|샀어요|다듬었|만났|먹었|전화했|물어봤|정리했|발견했|도착했)",
+            source_statement,
+        )
+        passive_target = re.search(
+            r"\b(?:was|were|been|be)\s+(?:moved|bought|refined|met|asked|organized|found|called|arrived)\b",
+            references,
+            re.IGNORECASE,
+        )
+        if first_person_action and passive_target and not re.search(r"\bI\b", references):
+            return "participant_loss: omitted Korean first-person agent became an English passive"
+    if native_language == "korean" and target_language == "german":
+        # 만나서/못 만나다 is reciprocal in this diary context. German needs
+        # the reflexive object (uns getroffen); ``wir haben ... getroffen``
+        # means we met someone unspecified and is not an idiomatic translation.
+        if "못 만나" in source_statement:
+            if not re.search(r"\bgetroffen\b", references, re.IGNORECASE):
+                return "german_event_loss: retain getroffen for Korean 못 만나다"
+            if not re.search(r"\b(?:gesprochen|geredet|unterhalten)\b", references, re.IGNORECASE):
+                return "german_event_loss: retain the conversation event"
+            if re.search(r"\b(?:haben|hat|habe)\b[^.!?]{0,40}\bgetroffen\b", references, re.IGNORECASE) and not re.search(r"\buns\b", references, re.IGNORECASE):
+                return "german_reciprocal_missing: use uns getroffen for Korean 못 만나다"
     if native_language == "english" and "lost update" in source:
         if target_language == "korean" and "갱신 손실" not in references:
             return "domain_term_mismatch: 'lost update' must be translated as 갱신 손실"
@@ -722,34 +1015,6 @@ def _quiz_role_models(settings: Any, native_language: str, target_language: str)
     return author_model, quality_model
 
 
-def _inventory_expressions_by_index(
-    segments: list[Any],
-) -> dict[int, list[dict[str, Any]]]:
-    """Merge duplicate segment rows instead of silently overwriting candidates."""
-    merged: dict[int, list[dict[str, Any]]] = {}
-    for segment in segments:
-        if not isinstance(segment, dict):
-            continue
-        segment_index = int(segment.get("segment_index") or 0)
-        merged.setdefault(segment_index, []).extend(
-            item
-            for item in segment.get("expressions") or []
-            if isinstance(item, dict)
-        )
-    return merged
-
-
-def _review_collapses_long_plan(
-    source_statement: str, proposed_count: int, reviewed_count: int
-) -> bool:
-    """Prevent a reviewer from re-merging already useful long composition units."""
-    return (
-        len(re.sub(r"\s+", "", source_statement or "")) >= 45
-        and proposed_count >= 2
-        and reviewed_count < proposed_count
-    )
-
-
 def _plan_has_incomplete_units(
     segments: list[Any],
     *,
@@ -758,7 +1023,7 @@ def _plan_has_incomplete_units(
     check_expressions: bool = True,
 ) -> bool:
     """Detect subordinate/dangling fragments that cannot be composition tasks."""
-    native_dangling = re.compile(r"(?:바람에|때문에|지만|는데|면서|하며|하고|했고|고)[.!?]?$" )
+    native_dangling = re.compile(r"(?:바람에|때문에|지만|는데|면서|하며|하고|했고|고|아서|어서|와서|해서)[.!?]?$" )
     english_leading_fragment = re.compile(
         r"^(?:and|but|so)\b|^(?:after|before|while)\s+[^,.!?]+(?:ing|ed)\b[^,.!?]*[.!?]?$",
         re.IGNORECASE,
@@ -781,6 +1046,8 @@ def _plan_has_incomplete_units(
         ]
         if not references or any(not value or target_dangling.search(value) for value in references):
             return True
+        if any(_target_reference_reason(value, target_language) for value in references):
+            return True
         if native_language == "korean" and target_language != "korean" and any(
             re.search(r"[가-힣]", value) for value in references
         ):
@@ -801,31 +1068,91 @@ def _plan_has_incomplete_units(
     return False
 
 
-def _merge_english_leading_fragments(units: list[str]) -> list[str]:
-    """Attach an English adverbial fragment to the following complete clause."""
-    merged: list[str] = []
-    index = 0
-    fragment = re.compile(
-        r"^(?:after|before|while)\s+[^,.!?]+(?:ing|ed)\b[^,.!?]*[.!?]?$",
-        re.IGNORECASE,
-    )
-    while index < len(units):
-        current = units[index].strip()
-        # Contrast tails such as "not just glanced at them" cannot stand as
-        # composition prompts. They modify the preceding assertion, unlike an
-        # After/Before/While fragment which modifies the following clause.
-        if re.match(r"^(?:not\s+(?:just|merely|only)|rather\s+than)\b", current, re.IGNORECASE):
-            if merged:
-                merged[-1] = f"{merged[-1].rstrip(' .')} — {current.rstrip(' .')}."
-            index += 1
+_ENGLISH_SUBJECTLESS_PREDICATE_RE = re.compile(
+    r"^(?:[A-Za-z]+(?:ed|ing)|bought|went|made|saw|did|had|wrote|spoke|took|found|felt|came|got)\b",
+    re.IGNORECASE,
+)
+from .quiz_types import ENABLED_QUIZ_TYPES
+_KOREAN_DANGLING_SOURCE_RE = re.compile(r"(?:지만|는데|면서|하며|고서|때문에|바람에|아서|어서|와서|해서|했고|고)[.!?]?$" )
+
+
+def _study_source_unit_reason(source_text: str, native_language: str) -> str | None:
+    """Reject a split source fragment before it reaches its own LLM call.
+
+    This is deliberately a small structural check, not semantic translation
+    judgement.  In English diary prose a unit such as ``Bought a loaf.`` has
+    lost its subject and cannot be a standalone composition prompt; a leading
+    ``while`` fragment has lost its governing predicate.  Rejecting either
+    makes the caller fall back to the stable sentence splitter instead of
+    paying for four low-quality per-unit calls.
+    """
+    text = (source_text or "").strip()
+    if not text:
+        return "empty source unit"
+    if len(_SENTENCE_TERMINATOR_RE.findall(text)) > 1:
+        return "source unit contains multiple sentences"
+    if native_language == "korean":
+        if _KOREAN_DANGLING_SOURCE_RE.search(text):
+            return "korean source unit ends with a dangling connective"
+        return None
+    leading_coord = re.match(r"^(and|but|so)\s+(.+)$", text, re.IGNORECASE)
+    if leading_coord:
+        remainder = leading_coord.group(2).strip()
+        if re.match(r"^(?:I|we|you|he|she|they|it|[A-Z][A-Za-z'-]+)\b", remainder):
+            return None
+        return "english source unit starts with a dangling connective"
+    if re.match(r"^(?:while|after|before|because)\b", text, re.IGNORECASE):
+        return "english source unit starts with a dangling connective"
+    if _ENGLISH_SUBJECTLESS_PREDICATE_RE.match(text):
+        return "english source unit starts with a subjectless predicate"
+    return None
+
+
+def _deterministic_sentence_units(statement: str) -> list[str]:
+    """Split only at explicit sentence terminators as a safe LLM fallback."""
+    value = (statement or "").strip()
+    if not value:
+        return []
+    units: list[str] = []
+    cursor = 0
+    for match in re.finditer(r"[.!?。？！](?=\s|$)", value):
+        end = match.end()
+        unit = value[cursor:end].strip()
+        if unit:
+            units.append(unit)
+        cursor = end
+        while cursor < len(value) and value[cursor].isspace():
+            cursor += 1
+    tail = value[cursor:].strip()
+    if tail:
+        units.append(tail)
+    return units if len(units) > 1 else [value]
+
+
+def _validate_study_source_units(
+    original_statement: str, proposed_units: list[str], native_language: str
+) -> list[str]:
+    """Return deterministic contract failures for one LLM segmentation attempt."""
+    if not proposed_units:
+        return ["no source units returned"]
+    cursor = 0
+    failures: list[str] = []
+    accepted: list[str] = []
+    for index, unit in enumerate(proposed_units):
+        start = original_statement.find(unit, cursor)
+        if start < 0:
+            failures.append(f"unit {index} is not an exact source substring in order")
             continue
-        if fragment.search(current) and index + 1 < len(units):
-            merged.append(f"{current} {units[index + 1].strip()}")
-            index += 2
-            continue
-        merged.append(current)
-        index += 1
-    return merged
+        reason = _study_source_unit_reason(unit, native_language)
+        if reason:
+            failures.append(f"unit {index}: {reason}")
+        accepted.append(unit)
+        cursor = start + len(unit)
+    covered = "".join(re.findall(r"[A-Za-z0-9가-힣]", " ".join(accepted).casefold()))
+    original_compact = "".join(re.findall(r"[A-Za-z0-9가-힣]", original_statement.casefold()))
+    if covered != original_compact:
+        failures.append("units omit, duplicate, or alter source characters")
+    return failures
 
 
 def _normalize_german_frozen_expression(
@@ -902,7 +1229,9 @@ def _source_semantic_guardrails(
     text: str, language: str, *, native_language: str = "korean"
 ) -> list[str]:
     guards = [
-        "Do not add comparison, intensity, negation, modality, repetition, or certainty that is absent from source_text."
+        "Do not add comparison, intensity, negation, modality, repetition, or certainty that is absent from source_text.",
+        "Preserve each source event type and participant role. Do not turn discovering into searching, remembering into a different action, "
+        "or a relation/object into a more specific gender, age, ownership, identity, or purpose that source_text does not state.",
     ]
     for guardrail in pair_rules(native_language, language).guardrails:
         if not guardrail.source_re.search(text):
@@ -999,21 +1328,76 @@ def _build_plan_system_prompt(
     return (
         f"{profile.plan_rules} "
         f"You are the dedicated {profile.key} curriculum planner. This prompt handles only {native_label} to {target_label}; never apply "
-        "rules or field roles from another direction. Turn the Statement into 1-4 complete, self-contained study units. Merge dependent "
-        "fragments; split only at proposition boundaries. source_text is an exact contiguous source span. prompt_native may make only a "
-        "minimal grammatical repair and must preserve every proposition. Write one complete, publishable target reference, then extract "
-        "expressions only from that finished sentence. "
+        "rules or field roles from another direction. The supplied Statement is exactly one already-segmented study unit for a learner-facing "
+        "quiz card: return exactly one segment, never split, merge, omit, or add a proposition. source_text is an exact contiguous source span "
+        "for traceability; prompt_native is the short standalone learning prompt used by composition, and may make a minimal repair such as "
+        "resolving a relative-clause antecedent or pronoun from source_text context. Keep prompt_native one compact sentence whenever possible. "
+        "Write one complete, publishable target reference for the same learning unit. It must be an independent sentence with a subject and a finite predicate; never return a noun phrase, gerund/infinitive fragment, headline, or translation label. A learner must be able to produce it from the native prompt. "
+        "Render every event, participant, purpose, result and reason clause the unit contains (so that ..., in order to ..., because ...) — "
+        "length is never a reason to compress, generalize or drop one; the earlier segmentation step is what keeps a unit to one teachable "
+        "proposition, not word-count pressure on this sentence. Never write a translation note for a realization the finished reference does "
+        "not contain. Extract expressions only from that finished sentence. "
+        "Also return scramble_units for the same reference_answers entry: an ordered list of contiguous word-order pieces for a sentence-"
+        f"scramble game. Target {_SCRAMBLE_MAX_CHUNKS} pieces or fewer — count your words first, and if there are more than "
+        f"{_SCRAMBLE_MAX_CHUNKS}, you must group some into phrases; do not return one piece per word for a long sentence. Joining "
+        "scramble_units with single spaces must reproduce text exactly — same words, same order, nothing added, dropped or reworded. "
+        "Group aggressively into natural phrase units: a subject or object with its particle, an adverbial phrase, a verb with its ending "
+        "and any auxiliary, a modifier with the noun it describes, a short clause with its connective. Split only where a learner should "
+        "genuinely be able to place that piece independently — never merge across a clause boundary they should reorder on their own. "
+        f"A sentence with far more than {_SCRAMBLE_MAX_CHUNKS} words may still land a little over the target after natural grouping — that "
+        "is fine, return your best grouping regardless; never shorten the sentence to make it fit. "
         f"Native language: {native_label}. Learner level: {level}/100 (CEFR {band.cefr}). "
         f"Vocabulary scope: {band.vocabulary}. Grammar scope: {band.grammar}. Teaching focus: {guide} "
         f"Target-language quality rubric: {localized_quality_rules(language)} "
-        "Return units in source order. Across the Statement select 2-6 genuinely useful candidates when supported. Prefer a predicate, "
-        "collocation, grammar pattern, or domain term over generic words. canonical_form is the reusable dictionary identity; surface_form "
+        "Return the one unit in source order. Select 0-2 genuinely useful candidates; zero is better than a filler. Prefer a predicate, "
+        "collocation, grammar pattern, domain term, or a single high-value content word. A single adverb, adjective, verb, or noun is valid "
+        "when it is the most useful reusable target; never pad it into an unnatural multi-word phrase just to make it longer. canonical_form is the reusable dictionary identity; surface_form "
         "is one exact contiguous inflected substring of its reference. Never propose a discontinuous surface. meaning and meaning_parts.native "
         "must be complete natural native-language equivalents with the same constituent and scope. Preserve negation, aspect, modality, "
         "comparison, particles, objects, articles and prepositions. One candidate teaches one expression; exclude proper names, dates, IDs, "
         "brands, forbidden_entities, and contextual possessors. List names only in context_entities. Score 70+ only when the expression is "
-        "idiomatic, source-faithful, reusable, exactly aligned and leaves useful sentence context. Do not emit quiz questions at this stage. "
+        "idiomatic, source-faithful, reusable, exactly aligned and leaves useful sentence context. When a natural target-language reference must "
+        "choose among several context-dependent realizations that the native source does not distinguish, keep the natural realization but add a "
+        "translation_notes item. Its source and target must be exact forms from the unit; its short native-language note must say this is one "
+        "contextual translation choice, not the only meaning. Never make such a choice into a vocabulary expression. Return [] when no note is needed. "
+        "translation_notes documents only a realization that IS present in the finished reference — never write one for content you left out of "
+        "it. An apposed role, title, or other incidental descriptor of a named person (e.g. 'Kim, a researcher,' → keep only the name in the "
+        "reference and list the person in context_entities) needs no note at all when it is dropped; that is a normal, silent omission, not a "
+        "translation choice. "
+        "Do not emit quiz questions at this stage. "
         f"Respond only with JSON of this exact shape: {_bundle_schema_hint(profile)}"
+    )
+
+
+def _build_segment_system_prompt(
+    native_label: str,
+    target_label: str,
+    *,
+    native_language: str,
+    target_language: str,
+) -> str:
+    """Shared, language-pair-aware contract for the pre-authoring split."""
+    profile = get_quiz_prompt_profile(native_language, target_language)
+    return (
+        f"[PAIR {profile.key} SEGMENT] You split one graph-level {native_label} Statement into short learner-facing "
+        f"study units before any {target_label} translation or vocabulary work. The original Statement stays intact in the graph; "
+        "these units are only for sentence scramble and writing cards. Return only exact, "
+        "contiguous substrings of source_statement in source order: never summarize, rewrite, "
+        "translate, duplicate, overlap, or omit text. Prefer one event or teachable proposition per unit, usually one short clause. "
+        f"Design boundaries around teachable propositions, not word count: a unit should usually run at least {_LEARNING_TARGET_MIN_TOKENS} words "
+        "so there is something to learn, but there is no upper length target — a long unit that stays one proposition is fine, since the later "
+        "reference is never shortened and the scramble game groups its own words into playable pieces regardless of sentence length. "
+        "A unit must retain its complete main predicate "
+        "and the arguments needed to resolve pronouns, negation, cause, contrast, and time. Merge a "
+        "dangling connector or pronoun-only continuation with its governing clause. A relative/detail clause may be its own unit only when "
+        "the later prompt_native can repair it into a standalone learning sentence without adding a new event. Split coordinated clauses, "
+        "chronological details, and appended meeting/reporting details when each side has its own clear subject and main verb, but keep "
+        "purpose clauses such as 'so that ...' with the action they explain. Never split off a clause whose only role is backstory or a "
+        "premise for another clause — 'We hadn't met for a long time' right before 'I met a friend and he bought me dinner' is not an "
+        "independent event, it explains why the meeting was notable; standing alone it gets rewritten as a flat, tense-losing negation that "
+        "directly contradicts the meeting the rest of the statement describes. Keep this kind of clause merged with the event it explains. "
+        "For Korean, never end a unit at a connective such as 아서/어서/와서/해서/고/지만; keep it with the governing predicate. Split only when independently teachable propositions remain. Do not "
+        "extract expressions or write target-language text in this call."
     )
 
 
@@ -1038,53 +1422,34 @@ def _build_plan_qa_system_prompt(
     profile = get_quiz_prompt_profile(native_language, language)
     return (
         f"{profile.plan_review_rules} "
-        f"You are the independent senior release editor for only {profile.key}. This is the sole semantic release review shared by "
-        "the composition card and every deterministic cloze made from its expressions. Return a corrected final plan, never comments. "
+        f"You are the independent senior release editor for only {profile.key}. This is the sole semantic release review for one "
+        "composition card and every deterministic scramble/cloze made from its expressions. Return a corrected final plan, never comments. "
         f"Native language: {native_label}. Target language: {target_label}. Learner level: {level}/100. "
         "Internally make a proposition ledger: every predicate, argument, modifier, time, negation, contrast, cause, sequence and simultaneous "
-        "action must map one-to-one between prompt_native and the target reference. Every unit has a complete main predicate; merge dependent "
-        "fragments and remove dangling connectives. source_text remains an exact source span. Rewrite unnatural or wrong-language target text. "
+        "action must map one-to-one between prompt_native and the target reference. The unit has a complete main predicate; source_text remains "
+        "an exact source span used for audit, while prompt_native/reference_answers are the short learner-facing quiz sentences. Rewrite unnatural "
+        "or wrong-language target text. Length is never a reason to shorten it: a reference stays exactly as long as the proposition ledger "
+        "requires, so do not drop or generalize away a purpose, result, reason, time or contrast clause to make it more concise. "
+        "Natural wording may change syntax but not the event itself: preserve the action type, agent, participant, purpose, ownership, relationship, "
+        "time and causal role. A target language may require a natural lexical choice that the source leaves open (for example a relationship or "
+        "honorific distinction); keep it only when it does not change the event, put it in translation_notes, and explain it as one contextual choice, "
+        "and only when the reference you are returning actually contains that realization. Do not turn an optional lexical choice into a vocabulary expression. "
+        "translation_notes documents only a realization that IS present in the corrected reference — never write one for content you dropped from "
+        "it. An apposed role, title, or other incidental descriptor of a named person needs no note when it is silently omitted (a normal, expected "
+        "omission, not a translation choice); remove any translation_notes entry you find that documents one. "
+        f"Also correct scramble_units for the same reference_answers entry if you rewrote its text, or if it still has more than "
+        f"{_SCRAMBLE_MAX_CHUNKS} pieces: an ordered list of contiguous word-order pieces, target {_SCRAMBLE_MAX_CHUNKS} or fewer, that "
+        "reproduces text exactly when joined with single spaces. Group aggressively into natural phrase units (a particle-marked noun "
+        "phrase, a verb with its ending, a modifier with its noun) rather than one piece per word; never merge across a clause boundary a "
+        "learner should reorder independently. "
         "For every expression independently verify and correct all of these release invariants: useful dictionary canonical form; exact contiguous "
         "surface_form in the corrected reference; no possessive/name/context leakage; complete native meaning with identical scope, aspect, argument "
         "coverage and part of speech; sufficient recoverable context outside the future blank; and native-level idiom on both sides. Remove an expression "
         "entirely when it cannot satisfy every invariant without changing the source meaning. Set quality_score below 92 for nothing you retain: retained "
-        "expressions are release decisions, not suggestions. "
+        "expressions are release decisions, not suggestions. A single high-value content word is valid; replace a padded or unnatural phrase with the "
+        "clean single word when that is the reusable learning target. "
         "If an action is discontinuous in the finished sentence, choose another useful contiguous expression rather than fabricating a span. "
         f"Apply this target-language rubric: {localized_quality_rules(language)} "
-        f"Respond only with JSON of this exact shape: {_bundle_schema_hint(profile)}"
-    )
-
-
-def _build_expression_inventory_system_prompt(
-    native_label: str,
-    target_label: str,
-    level: int,
-    language: str,
-    native_language: str = "korean",
-) -> str:
-    profile = get_quiz_prompt_profile(native_language, language)
-    return (
-        f"{profile.inventory_rules} "
-        "You are the expression-inventory editor for a language-learning product. "
-        f"Native language: {native_label}. Target language: {target_label}. Learner level: {level}/100. "
-        "The supplied segments and reference answers are final: preserve their source_text, prompt_native, grammar_focus, "
-        "context_entities, and reference_answers exactly, and replace only expressions. Across the full plan return 2-6 "
-        "high-value expressions when supported, normally 1-2 per segment. Extract each distinct useful action separately: "
-        "if a reference says 'dried my wet shoes while checking the travel schedule', return one card candidate for drying "
-        "shoes and another for checking the schedule; NEVER combine sibling actions with and/while. canonical_form must be "
-        "a reusable dictionary/base form, normally 1-5 words, beginning with a base verb for verb phrases/collocations. A single "
-        "semantically necessary verb phrase may use 6-7 words, but never pad it with optional context; never return "
-        "a subject+predicate clause such as 'concurrent requests modify balance'. Preserve every grammatically required article and "
-        "preposition: use 'reproduce a lost update', never the telegraphic 'reproduce lost update'. surface_form and every "
-        "surface_segment must be an exact span "
-        "of its segment's reference answer. meaning and every meaning_parts.native value MUST be complete natural native-language "
-        "text, never target-language definitions. Exclude proper names, dates, and sentence-specific decoration from the answer. "
-        "Use quality_score 70+ only for source-faithful, idiomatic, reusable production knowledge. Prefer a useful predicate or "
-        "collocation over generic words, but do not invent a quota filler. "
-        "Use established target-language terminology for domain concepts rather than literal calques; for example, the database anomaly "
-        "Korean '갱신 손실' is 'lost update', never 'update loss'; a production-worthy verb phrase is 'reproduce a lost update'. "
-        f"Apply this target-language rubric: {localized_quality_rules(language)} "
-        f"{_plan_prompt_extra_notes(language)}"
         f"Respond only with JSON of this exact shape: {_bundle_schema_hint(profile)}"
     )
 
@@ -1153,7 +1518,6 @@ def _compose_quiz_data(comp: dict, language: str, level: int) -> dict:
                 "note": str(h.get("note")).strip(),
                 "snippet": str(h.get("snippet") or "").strip(),
             })
-
     return {
         "language": language,
         "source_mode": "journal",
@@ -1163,6 +1527,9 @@ def _compose_quiz_data(comp: dict, language: str, level: int) -> dict:
         ][:5],
         "glossary": _clean(comp.get("glossary"), ("term", "target"))[:6],
         "hints": hints[:3],
+        "translation_notes": _clean(
+            comp.get("translation_notes"), ("source", "target", "note")
+        )[:3],
         "model_answers": model_answers[:2],
         "key_expressions": _clean(
             comp.get("key_expressions"), ("expression", "meaning", "example")
@@ -1284,6 +1651,82 @@ def _expression_utility_score(chunk: dict[str, Any], pack: Any = None) -> int:
 # Gates below only make sense for a self-contained action/collocation, not for
 # a grammar pattern or discourse frame that legitimately spans a whole clause.
 _LENGTH_GATED_KINDS = frozenset({"verb_phrase", "collocation"})
+_TRAILING_CONNECTOR_RE = re.compile(
+    r"(?:\b(?:and|or|but|so|because|while|although|though|where|when)|(?:그리고|하지만|그래서|거나|면서))\s*$",
+    re.IGNORECASE,
+)
+
+# A reference answer is the actual learner target for both composition and
+# scramble. Token count alone is not enough: the model can return a fluent
+# noun/gerund fragment such as receiving delay information.
+_ENGLISH_FRAGMENT_START_RE = re.compile(
+    r"^(?:to\s+|(?:being|having|receiving|getting|taking|making|using|going|coming|calling|finding|moving|asking|explaining|waiting|working|refining)\b)",
+    re.IGNORECASE,
+)
+_ENGLISH_FINITE_RE = re.compile(
+    r"\b(?:am|is|are|was|were|be|been|being|has|have|had|do|does|did|will|would|can|could|should|may|might|must|shall|like|likes|liked|love|loves|loved|meet|meets|met|buy|buys|bought|move|moves|moved|ask|asks|asked|make|makes|made|go|goes|went|get|gets|got|find|finds|found|call|calls|called|use|uses|used|refine|refines|refined|spill|spills|spilled|drink|drinks|drank|eat|eats|ate|work|works|worked|finish|finishes|finished|rain|rains|rained|fell|slept|woke|kept|left|came|took|gave|saw|said|felt|thought|wrote|read|ran|[A-Za-z]+ed)\b",
+    re.IGNORECASE,
+)
+_GERMAN_FRAGMENT_START_RE = re.compile(
+    r"^(?:zu\s+|(?:beim|während|nach|vor|ohne)\b)", re.IGNORECASE
+)
+_KOREAN_SENTENCE_END_RE = re.compile(
+    r"(?:다|요|죠|네|니다|습니다|어요|아요|었어|았어|했어|해요|합니다|됩니다)[.!?]?$"
+)
+_CONTEXT_POSSESSIVE_RE = re.compile(
+    r"\b(?:my|your|his|her|its|our|their)\b|(?:\b(?:meine|meinen|meinem|meiner|meines|deine|seine|seinen|seinem|seiner|ihre|ihren|ihrem|unser|unsere|unseren)\b)|(?:내|네|그의|그녀의|우리의)"
+    , re.IGNORECASE,
+)
+
+
+def _target_reference_reason(text: str, language: str) -> str | None:
+    """Return a release-gate reason when a target reference is not a sentence."""
+    value = re.sub(r"\s+", " ", str(text or "").strip())
+    if not value:
+        return "empty_target_reference"
+    if len(_SENTENCE_TERMINATOR_RE.findall(value)) > 1:
+        return "target_reference_has_multiple_sentences"
+    lang = (language or "english").lower()
+    # Keep the private helper backward-compatible for callers that predate the
+    # language argument; Hangul is unambiguous here.
+    if lang == "english" and re.search(r"[가-힣]", value):
+        lang = "korean"
+    if lang == "english":
+        if _ENGLISH_FRAGMENT_START_RE.search(value):
+            return "target_reference_is_gerund_or_infinitive_fragment"
+        if not _ENGLISH_FINITE_RE.search(value):
+            return "target_reference_has_no_finite_verb"
+    elif lang == "german":
+        if _GERMAN_FRAGMENT_START_RE.search(value):
+            return "target_reference_is_prepositional_fragment"
+    elif lang == "korean":
+        if not _KOREAN_SENTENCE_END_RE.search(value):
+            return "target_reference_has_no_predicate_ending"
+    return None
+
+
+def _expression_shape_reason(
+    chunk: dict[str, Any], *, canonical: str, key: str, language: str
+) -> str | None:
+    surface = str(chunk.get("surface_form") or canonical or "").strip()
+    canonical_has_possessive = bool(_CONTEXT_POSSESSIVE_RE.search(canonical))
+    surface_has_possessive = bool(_CONTEXT_POSSESSIVE_RE.search(surface))
+    if surface_has_possessive and not canonical_has_possessive:
+        return "surface adds a contextual possessive"
+    if _TRAILING_CONNECTOR_RE.search(canonical) or _TRAILING_CONNECTOR_RE.search(surface):
+        return "expression ends with a dangling connector"
+    sentence = ""
+    references = chunk.get("reference_answers") or []
+    if references and isinstance(references[0], dict):
+        sentence = str(references[0].get("text") or "").strip()
+    expression_tokens = key.split()
+    sentence_tokens = [token.casefold() for token in re.findall(r"[\w'-]+", sentence)]
+    if (
+        sentence_tokens
+        and len(expression_tokens) >= max(5, int(len(sentence_tokens) * 0.72))
+    ):
+        return "expression swallows most of the learning sentence"
+    return None
 
 
 def _select_quality_expression_chunks(
@@ -1327,12 +1770,19 @@ def _select_quality_expression_chunks(
         if not tokens:
             continue
         kind = str(chunk.get("kind") or "").lower()
+        if _expression_shape_reason(
+            chunk, canonical=canonical, key=key, language=language
+        ):
+            continue
+        # ``kind`` is model-authored metadata, so it must not be able to
+        # bypass the language pack's canonical-form contract.
+        if pack.base_form_reason(canonical, kind):
+            continue
         if kind in _LENGTH_GATED_KINDS:
             if (
                 pack.length_reason(canonical, kind)
                 or pack.sibling_join_reason(canonical)
                 or pack.clause_answer_reason(chunk, key, native)
-                or pack.base_form_reason(canonical, kind)
             ):
                 continue
         # Nested targets such as "acquire control" / "acquire management
@@ -1827,9 +2277,9 @@ def _cloze_from_reviewed_expression(
 ) -> dict[str, Any] | None:
     """Build the primary cloze candidate from a reviewed, frozen sentence pair.
 
-    This is not recovery behavior: the reviewed sentence and its exact expression
-    span are the source of truth.  An LLM author is used only to repair an invalid
-    alignment, never to regenerate either sentence.
+    The reviewed sentence and its exact expression span are the source of truth.
+    Invalid alignment is rejected; this stage never rewrites or substitutes an
+    answer.
     """
     answer = str(chunk.get("surface_form") or chunk.get("canonical_form") or "").strip()
     references = chunk.get("reference_answers") or []
@@ -1841,6 +2291,14 @@ def _cloze_from_reviewed_expression(
     native_gloss = _native_expression_meaning(chunk, native_language)
     pack = target_pack(target_language)
     if not answer or not sentence or not pack.contains_span(sentence, answer):
+        return None
+    if _surface_answer_contract_reason(
+        answer=answer,
+        sentence_target=sentence,
+        canonical_form=str(chunk.get("canonical_form") or answer),
+        excluded_target_terms=list(chunk.get("excluded_target_terms") or []),
+        language=target_language,
+    ):
         return None
     if not native_sentence or not native_gloss:
         return None
@@ -1864,7 +2322,7 @@ async def generate_quiz_bundle(
     seed_node_ids: set[str] | None = None,
     generation_version: str | None = None,
     allow_existing_expressions: bool = False,
-    materialize_cloze: bool = True,
+    materialize_cloze: bool = False,
     synthesize_audio: bool = True,
 ) -> tuple[list[Quiz], dict]:
     """Generate composition units and expression clozes from one Statement.
@@ -1888,6 +2346,13 @@ async def generate_quiz_bundle(
     plan_response_format = _plan_response_format(profile)
     level = crud.get_language_level(user, language)
 
+    # Declared here, not at first use inside the plan-review try/except below,
+    # so a rejection survives even if that block raises before reaching its own
+    # bookkeeping, and so the later structural-repair stage can fold it into
+    # one combined ``repair_path_rejections`` list (see there for why that
+    # matters for quiz_eval.py's gate histogram).
+    plan_review_rejections: list[str] = []
+
     seed = await _pick_seed(session, user, exclude_node_ids, seed_node_ids)
     if seed is None:
         raise BundleSeedError("퀴즈를 만들 문장이 없어요. 먼저 일기를 작성해 주세요.")
@@ -1909,11 +2374,106 @@ async def generate_quiz_bundle(
     )
     tracer.finish_step(step, output={"seed_node_id": seed_node_id, "content": seed.get("content_ko")})
 
-    source_units = _split_statement_units(str(seed.get("content_ko") or ""))
-    if native_language == "english":
-        source_units = _merge_english_leading_fragments(source_units)
-    if not source_units:
+    original_statement = str(seed.get("content_ko") or "").strip()
+    if not original_statement:
         raise BundleSeedError("퀴즈를 만들 수 있는 문장이 없어요.")
+    source_units = [original_statement]
+
+    # A Statement is already a graph-level learning node.  This additional LLM
+    # step may only make smaller *study* units inside it; it cannot invent a
+    # replacement Statement or cross a node boundary.
+    segment_system = _build_segment_system_prompt(
+        native_label,
+        target_label,
+        native_language=native_language,
+        target_language=language,
+    )
+    segment_step = tracer.begin_step(
+        "bundle_study_segment", "llm", phase="quiz_path",
+        input_data={"language": language, "whole_statement_fallback": True},
+    )
+    segment_step.model = author_model
+    segment_step.system_prompt = segment_system
+    try:
+        source_compact_length = len(re.findall(r"[A-Za-z0-9가-힣]", original_statement))
+        attempts: list[dict[str, Any]] = []
+        if source_compact_length < _SHORT_STATEMENT_COMPACT_CHARS:
+            # An already short, complete Statement has no meaningful split
+            # decision. Avoid a paid no-op while preserving the same contract.
+            attempts.append({
+                "kind": "short_statement",
+                "proposed_segments": [{"source_text": original_statement}],
+                "validation_failures": [],
+            })
+        else:
+            retry_feedback: list[str] | None = None
+            for attempt_index in range(2):
+                request = {"source_statement": original_statement}
+                if retry_feedback:
+                    request.update({
+                        "previous_attempt_invalid": True,
+                        "validation_failures": retry_feedback,
+                        "repair_instruction": (
+                            "Return a new complete segmentation of the same source. Do not preserve an invalid boundary; "
+                            "each unit must stand alone with its governing predicate and required arguments."
+                        ),
+                    })
+                segment_response = await _client().chat.completions.create(
+                    model=author_model,
+                    messages=[
+                        {"role": "system", "content": segment_system},
+                        {"role": "user", "content": json.dumps(request, ensure_ascii=False)},
+                    ],
+                    **_temperature_args(author_model, 0),
+                    response_format=_SEGMENT_RESPONSE_FORMAT,
+                    timeout=settings.openai_timeout_sec,
+                )
+                segment_data = json.loads(segment_response.choices[0].message.content or "{}")
+                proposed_units = [
+                    str(item.get("source_text") or "").strip()
+                    for item in (segment_data.get("segments") or [])
+                    if isinstance(item, dict) and str(item.get("source_text") or "").strip()
+                ]
+                failures = _validate_study_source_units(
+                    original_statement, proposed_units, native_language
+                )
+                attempts.append({
+                    "kind": "initial" if attempt_index == 0 else "retry",
+                    "proposed_segments": [{"source_text": unit} for unit in proposed_units],
+                    "validation_failures": failures,
+                    "usage": _usage_payload(segment_response),
+                })
+                if not failures:
+                    source_units = proposed_units
+                    break
+                retry_feedback = failures
+        accepted = bool(attempts and not attempts[-1].get("validation_failures"))
+        tracer.finish_step(
+            segment_step,
+            output={
+                "segment_count": len(source_units),
+                "strategy": "llm" if accepted else "whole_statement",
+                "retry_count": max(0, len(attempts) - 1),
+                "usage": [attempt.get("usage", {}) for attempt in attempts],
+            },
+            artifacts=[("bundle_study_segments.json", {
+                "attempts": attempts,
+                "accepted_segments": [{"source_text": unit} for unit in source_units],
+            }, "application/json")],
+        )
+    except Exception as exc:
+        logger.warning("Study segmentation unavailable: %s", exc)
+        tracer.finish_step(segment_step, error=f"{type(exc).__name__}: {exc}")
+    # If the model failed to provide a valid segmentation, explicit sentence
+    # boundaries are still safe and materially better than translating an
+    # entire multi-sentence Statement as one learner task.
+    if source_units == [original_statement] and len(_SENTENCE_TERMINATOR_RE.findall(original_statement)) > 1:
+        source_units = _deterministic_sentence_units(original_statement)
+        segment_step.output = {
+            **(segment_step.output or {}),
+            "segment_count": len(source_units),
+            "strategy": "deterministic_sentence_fallback",
+        }
     system = _build_plan_system_prompt(
         native_label, target_label, level, lang_guide(language), language, native_language
     )
@@ -1925,58 +2485,72 @@ async def generate_quiz_bundle(
         if seed_nodes
         else EntityNameGuard([])
     )
-    user_content = json.dumps(
-        {
-            "source_statement": str(seed.get("content_ko") or ""),
-            "forbidden_entities": sorted(entity_guard.native),
-            "composition_units": [
-                {
-                    "segment_index": index,
-                    "source_text": text,
-                    "semantic_guardrails": _source_semantic_guardrails(
-                        text, language, native_language=native_language
-                    ),
-                }
-                for index, text in enumerate(source_units)
-            ],
-        },
-        ensure_ascii=False,
-    )
     step = tracer.begin_step(
         "bundle_plan_generate", "llm", phase="quiz_path",
         input_data={"language": language, "level": level, "segment_count": len(source_units)},
     )
-    step.model = settings.openai_model
+    step.model = author_model
     step.system_prompt = system
-    resp = await _client().chat.completions.create(
-        model=settings.openai_model,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_content},
-        ],
-        **_temperature_args(settings.openai_model, 0.35),
-        response_format=plan_response_format,
-        timeout=settings.openai_timeout_sec,
+    async def author_unit(index: int, text: str) -> tuple[int, dict[str, Any] | None, dict[str, Any]]:
+        response = await _client().chat.completions.create(
+            model=author_model,
+            messages=[
+                {"role": "system", "content": system + (
+                    " This call owns exactly one supplied study unit. Return exactly one segment and do not split, merge, or omit it. "
+                    "full_statement_context is the complete original Statement this unit was split from — read it to recognize when the "
+                    "unit is backstory, a premise, or otherwise depends on another part of the statement for its sense (e.g. 'we hadn't met "
+                    "for a long time' right before 'I met a friend...' explains why the meeting was notable; translated alone as a flat "
+                    "present-tense negation it would contradict the meeting the rest of the statement describes). Use that understanding to "
+                    "choose a natural target rendering, but write and return content for only the ONE supplied unit — never merge in or "
+                    "invent content from elsewhere in the statement."
+                )},
+                {"role": "user", "content": json.dumps({
+                    "source_statement": text,
+                    "full_statement_context": original_statement,
+                    "forbidden_entities": sorted(entity_guard.native),
+                    "composition_units": [{
+                        "segment_index": 0,
+                        "source_text": text,
+                        "semantic_guardrails": _source_semantic_guardrails(text, language, native_language=native_language),
+                    }],
+                }, ensure_ascii=False)},
+            ],
+            **_temperature_args(author_model, 0.2),
+            response_format=plan_response_format,
+            timeout=settings.openai_timeout_sec,
+        )
+        payload = _normalize_plan_language_fields(json.loads(response.choices[0].message.content or "{}"), profile)
+        rows = [row for row in (payload.get("segments") or []) if isinstance(row, dict)]
+        # Strict prompts return one row.  Matching an exact legacy row keeps
+        # in-flight responses recoverable without allowing a rewritten span.
+        row = next((item for item in rows if str(item.get("source_text") or "").strip() == text), None)
+        if row is None and len(rows) == 1:
+            row = rows[0]
+        return index, row, _usage_payload(response)
+
+    authored = await asyncio.gather(
+        *(author_unit(index, text) for index, text in enumerate(source_units)),
+        return_exceptions=True,
     )
-    raw = _normalize_plan_language_fields(
-        json.loads(resp.choices[0].message.content or "{}"), profile
-    )
-    raw_segments = raw.get("segments") or []
-    # Backward-compatible parsing keeps in-flight older model responses visible.
-    if not raw_segments and isinstance(raw.get("composition"), dict):
-        old_comp = raw["composition"]
-        raw_segments = [{
-            "segment_index": 0,
-            "reference_answers": old_comp.get("model_answers") or [],
-            "expressions": raw.get("expression_chunks") or [],
-        }]
+    raw_segments: list[dict[str, Any]] = []
+    author_usages: list[dict[str, Any]] = []
+    author_errors: list[str] = []
+    for result in authored:
+        if isinstance(result, Exception):
+            author_errors.append(f"{type(result).__name__}: {result}")
+            continue
+        index, row, usage = result
+        author_usages.append(usage)
+        if row is None:
+            author_errors.append(f"segment {index}: author did not return exactly one segment")
+            continue
+        raw_segments.append({**row, "segment_index": index, "source_text": source_units[index]})
     # Normalise legacy/in-flight plans and fail closed on invented source spans.
     # The planner may split one punctuation span into several semantic units,
     # so its final ordered units, rather than the preliminary splitter, drive
     # composition creation from this point onward.
-    original_statement = str(seed.get("content_ko") or "").strip()
     planned_segments: list[dict[str, Any]] = []
-    for order, raw_segment in enumerate(raw_segments[:4]):
+    for order, raw_segment in enumerate(raw_segments):
         if not isinstance(raw_segment, dict):
             continue
         old_index = raw_segment.get("segment_index")
@@ -1999,9 +2573,6 @@ async def generate_quiz_bundle(
         })
         planned_segments.append(segment)
     raw_segments = planned_segments
-    semantic_normalizations = _normalize_unlicensed_detail_comparatives(
-        raw_segments, source_units, language, native_language=native_language
-    )
     raw_expression_count = sum(
         len(segment.get("expressions") or [])
         for segment in raw_segments if isinstance(segment, dict)
@@ -2011,11 +2582,10 @@ async def generate_quiz_bundle(
         output={
             "segment_count": len(raw_segments),
             "raw_expression_count": raw_expression_count,
-            "semantic_normalizations": semantic_normalizations,
-            "response_keys": list(raw.keys()),
-            "usage": _usage_payload(resp),
+            "author_errors": author_errors,
+            "usage": author_usages,
         },
-        artifacts=[("bundle_plan.json", raw, "application/json")],
+        artifacts=[("bundle_plan.json", {"segments": raw_segments}, "application/json")],
     )
 
     plan_release_reviewed = False
@@ -2029,142 +2599,156 @@ async def generate_quiz_bundle(
         native_label, target_label, level, language, native_language
     )
     plan_qa_step.system_prompt = plan_qa_system
-    planner_segment_count = len(raw_segments)
     try:
-        plan_qa_response = await _client().chat.completions.create(
-            model=quality_model,
-            messages=[
-                {"role": "system", "content": plan_qa_system},
-                {"role": "user", "content": json.dumps({
-                    "source_statement": str(seed.get("content_ko") or ""),
-                    "proposed_plan": {"segments": raw_segments},
-                }, ensure_ascii=False)},
-            ],
-            **_temperature_args(quality_model, 0),
-            response_format=plan_response_format,
-            timeout=settings.openai_timeout_sec,
+        async def review_unit(index: int, segment: dict[str, Any], feedback: str = "") -> tuple[int, dict[str, Any] | None, dict[str, Any]]:
+            source_text = str(segment.get("source_text") or "").strip()
+            response = await _client().chat.completions.create(
+                model=quality_model,
+                messages=[
+                    {"role": "system", "content": plan_qa_system + (
+                        " This call reviews exactly one supplied study unit. Return exactly one segment; never split, merge, or omit it. "
+                        "full_statement_context is the complete original Statement this unit was split from — read it to recognize when the "
+                        "unit is backstory, a premise, or otherwise depends on another part of the statement for its sense, and correct a "
+                        "translation that lost that dependency (e.g. a backstory clause rewritten as a flat negation that now contradicts "
+                        "another part of the statement). Still return content for only the ONE supplied unit. "
+                    ) + feedback},
+                    {"role": "user", "content": json.dumps({
+                        "source_statement": source_text,
+                        "full_statement_context": original_statement,
+                        "proposed_plan": {"segments": [segment]},
+                    }, ensure_ascii=False)},
+                ],
+                **_temperature_args(quality_model, 0),
+                response_format=plan_response_format,
+                timeout=settings.openai_timeout_sec,
+            )
+            payload = _normalize_plan_language_fields(json.loads(response.choices[0].message.content or "{}"), profile)
+            rows = [row for row in (payload.get("segments") or []) if isinstance(row, dict)]
+            row = next(
+                (item for item in rows if str(item.get("source_text") or "").strip() == source_text),
+                None,
+            )
+            if row is None and len(rows) == 1:
+                row = rows[0]
+            return index, row, _usage_payload(response)
+
+        reviewed_results = await asyncio.gather(
+            *(review_unit(index, segment) for index, segment in enumerate(raw_segments)),
+            return_exceptions=True,
         )
-        reviewed_plan = _normalize_plan_language_fields(
-            json.loads(plan_qa_response.choices[0].message.content or "{}"), profile
-        )
-        reviewed_segments = list(reviewed_plan.get("segments") or [])
-        collapsed_long_plan = _review_collapses_long_plan(
-            original_statement, planner_segment_count, len(reviewed_segments)
-        )
-        incomplete_reviewed_plan = _plan_has_incomplete_units(
-            reviewed_segments,
-            native_language=native_language,
-            target_language=language,
-        )
-        domain_contract_reason = _plan_domain_contract_reason(
-            original_statement,
-            reviewed_segments,
-            native_language=native_language,
-            target_language=language,
-        )
-        needs_segmentation_repair = (
-            collapsed_long_plan or incomplete_reviewed_plan or bool(domain_contract_reason)
-        )
-        collapse_repaired = False
-        plan_repair_usage: dict[str, Any] = {}
-        if needs_segmentation_repair:
-            try:
-                repair_response = await _client().chat.completions.create(
-                    model=quality_model,
-                    messages=[
-                        {"role": "system", "content": plan_qa_system},
-                        {"role": "user", "content": json.dumps({
-                            "source_statement": original_statement,
-                            "proposed_plan": {"segments": reviewed_segments},
-                            "required_units": [
-                                {"segment_index": index, "source_text": unit}
-                                for index, unit in enumerate(source_units)
-                            ],
-                            "mandatory_repair": (
-                                "The prior review collapsed or fragmented a long multi-predicate source. Return exactly one "
-                                "segment for each required_units item, in that order, without overlap. Each prompt must "
-                                "have its own complete main predicate; no cause-only fragment and no dangling connective. "
-                                "For English native prompts, remove a leading so/but/and and attach an After/Before/While gerund "
-                                "fragment to its following main clause. Every target reference must contain only the target language. "
-                                f"Mandatory semantic contract: {domain_contract_reason or 'none beyond the supplied pair rules'}."
-                            ),
-                        }, ensure_ascii=False)},
-                    ],
-                    **_temperature_args(quality_model, 0),
-                    response_format=plan_response_format,
-                    timeout=settings.openai_timeout_sec,
-                )
-                plan_repair_usage = _usage_payload(repair_response)
-                repaired_plan = _normalize_plan_language_fields(
-                    json.loads(repair_response.choices[0].message.content or "{}"), profile
-                )
-                repaired_segments = list(repaired_plan.get("segments") or [])
-                if (
-                    len(repaired_segments) == len(source_units)
-                    and not _plan_has_incomplete_units(
-                        repaired_segments,
-                        native_language=native_language,
-                        target_language=language,
-                    )
-                    and not _plan_domain_contract_reason(
-                        original_statement,
-                        repaired_segments,
-                        native_language=native_language,
-                        target_language=language,
-                    )
-                ):
-                    reviewed_plan = repaired_plan
-                    reviewed_segments = repaired_segments
-                    collapse_repaired = True
-            except Exception as repair_exc:
-                logger.warning("Long plan collapse repair unavailable: %s", repair_exc)
-        if reviewed_segments:
-            # If the focused split still fails, keep the semantically complete
-            # reviewed unit rather than reviving the planner's broken fragments.
-            raw_segments = reviewed_segments
-            final_plan_incomplete = _plan_has_incomplete_units(
-                raw_segments,
+        reviewed_rows: list[dict[str, Any]] = []
+        plan_review_usage: list[dict[str, Any]] = []
+        # Shared with the later cloze/scramble repair-path sink (see
+        # ``repair_path_rejections`` below) so a rejection at this earlier,
+        # per-unit release-review stage is not invisible to anything that
+        # reads the bundle trace for gate coverage — the offline eval harness
+        # (scripts/quiz_eval.py) in particular only ever looked at that one list.
+        review_errors = plan_review_rejections
+        for result in reviewed_results:
+            if isinstance(result, Exception):
+                review_errors.append(f"{type(result).__name__}: {result}")
+                continue
+            index, row, usage = result
+            plan_review_usage.append(usage)
+            if row is None:
+                review_errors.append(f"segment {index}: reviewer did not return exactly one segment")
+                continue
+            reviewed = {
+                **row,
+                "segment_index": index,
+                "source_text": raw_segments[index]["source_text"],
+            }
+            # A review failure belongs to this unit only.  Do not send every
+            # unit back to a legacy whole-Statement repair call merely to
+            # refill an expression quota: retaining a smaller, independently
+            # reviewed bundle is the intended quality-first behaviour.
+            if _plan_has_incomplete_units(
+                [reviewed],
                 native_language=native_language,
                 target_language=language,
-                # A bad sibling expression must not invalidate the editor's
-                # release decision for every other exact expression in the
-                # same composition unit. Individual expression boundaries are
-                # filtered below before provenance is attached.
                 check_expressions=False,
+            ):
+                retry_feedback = (
+                    "The previous candidate failed a deterministic release check. Rewrite only the target reference and prompt as needed, "
+                    "but preserve every event, participant, negation, time, cause, contrast, and reciprocal action from source_text. "
+                    "Return a complete independent learner sentence; do not replace a meeting event with merely talking."
+                )
+                retry_index, retry_row, retry_usage = await review_unit(index, raw_segments[index], retry_feedback)
+                plan_review_usage.append(retry_usage)
+                if retry_row is not None:
+                    retry_row = {
+                        **retry_row,
+                        "segment_index": index,
+                        "source_text": raw_segments[index]["source_text"],
+                    }
+                    if not _plan_has_incomplete_units(
+                        [retry_row],
+                        native_language=native_language,
+                        target_language=language,
+                        check_expressions=False,
+                    ):
+                        reviewed = retry_row
+                    else:
+                        review_errors.append(f"segment {index}: reviewer returned an incomplete study unit after targeted repair")
+                        continue
+                else:
+                    review_errors.append(f"segment {index}: reviewer returned an incomplete study unit")
+                    continue
+            unit_domain_reason = (
+                _plan_domain_contract_reason(
+                    reviewed["source_text"],
+                    [reviewed],
+                    native_language=native_language,
+                    target_language=language,
+                )
+                or _translation_note_contract_reason(reviewed)
+                or _scramble_units_contract_reason(reviewed)
             )
-            final_domain_contract_reason = _plan_domain_contract_reason(
-                original_statement,
-                raw_segments,
-                native_language=native_language,
-                target_language=language,
-            )
-            plan_release_reviewed = not final_plan_incomplete and not (
-                collapsed_long_plan and not collapse_repaired
-            ) and not final_domain_contract_reason
-            if plan_release_reviewed:
-                plan_review_model = quality_model
-            elif final_domain_contract_reason:
-                # A known term rendered with the wrong concept poisons both
-                # composition and cloze. Fail closed instead of publishing a
-                # fluent but instructionally incorrect bundle.
-                raw_segments = []
+            if unit_domain_reason:
+                retry_feedback = (
+                    "The previous candidate failed this semantic contract: " + unit_domain_reason + ". "
+                    "Return a corrected target reference that preserves every source event and participant. Subordinate purpose, "
+                    "result and reason clauses are part of the event: render them in the reference instead of dropping them to stay short, "
+                    "and only keep a translation note for a realization the reference actually contains. "
+                    "For Korean 못 만나서 이야기를 많이 나눴다, explicitly use idiomatic German such as 'uns getroffen' plus 'gesprochen/geredet'; do not replace the meeting event with only talking."
+                )
+                _retry_index, retry_row, retry_usage = await review_unit(index, raw_segments[index], retry_feedback)
+                plan_review_usage.append(retry_usage)
+                if retry_row is not None:
+                    retry_row = {**retry_row, "segment_index": index, "source_text": raw_segments[index]["source_text"]}
+                    if not _plan_has_incomplete_units(
+                        [retry_row], native_language=native_language, target_language=language, check_expressions=False
+                    ) and not _plan_domain_contract_reason(
+                        retry_row["source_text"], [retry_row], native_language=native_language, target_language=language
+                    ) and not _translation_note_contract_reason(retry_row) and not _scramble_units_contract_reason(retry_row):
+                        reviewed = retry_row
+                    else:
+                        review_errors.append(f"segment {index}: {unit_domain_reason} after targeted repair")
+                        continue
+                else:
+                    review_errors.append(f"segment {index}: {unit_domain_reason}")
+                    continue
+            reviewed_rows.append(reviewed)
+        reviewed_rows.sort(key=lambda item: int(item.get("segment_index") or 0))
+        reviewed_plan = {"segments": reviewed_rows}
+        # Only independently reviewed units survive.  There is deliberately no
+        # aggregate repair/rewrite step after this point.
+        raw_segments = reviewed_rows
+        plan_release_reviewed = bool(raw_segments)
+        if plan_release_reviewed:
+            plan_review_model = quality_model
         tracer.finish_step(plan_qa_step, output={
             "segment_count": len(raw_segments),
-            "long_plan_collapse_detected": collapsed_long_plan,
-            "incomplete_plan_detected": incomplete_reviewed_plan,
-            "domain_contract_reason": domain_contract_reason,
-            "long_plan_collapse_repaired": collapse_repaired,
-            "usage": {
-                "review": _usage_payload(plan_qa_response),
-                "repair": plan_repair_usage,
-            },
+            "review_errors": review_errors,
+            "aggregate_repair": "disabled",
+            "usage": {"review": plan_review_usage},
         }, artifacts=[("bundle_plan_reviewed.json", reviewed_plan, "application/json")])
     except Exception as exc:
         logger.warning("Plan quality review unavailable: %s", exc)
         tracer.finish_step(plan_qa_step, error=f"{type(exc).__name__}: {exc}")
 
     reviewed_normalized: list[dict[str, Any]] = []
-    for order, reviewed_segment in enumerate(raw_segments[:4]):
+    for order, reviewed_segment in enumerate(raw_segments):
         if not isinstance(reviewed_segment, dict):
             continue
         source_text = str(reviewed_segment.get("source_text") or "").strip()
@@ -2194,127 +2778,21 @@ async def generate_quiz_bundle(
         reviewed_normalized.append(segment)
     raw_segments = reviewed_normalized
 
-    # Planning and translation are a different cognitive task from selecting
-    # compact reusable expressions. If the reviewed plan lost a unit's useful
-    # predicate or merged sibling actions into one invalid target, run one
-    # focused inventory pass. This is adaptive: simple plans pay no extra call.
-    proposed_expression_chunks = [
-        {
-            **item,
-            "canonical_form": str(item.get("canonical_form") or item.get("text") or "").strip(),
-            "quality_score": int(item.get("quality_score") or 80),
-            "segment_index": segment_index,
-            "expression_id": f"{segment_index}:{item_index}",
-        }
-        for segment_index, segment in enumerate(raw_segments)
-        for item_index, item in enumerate(segment.get("expressions") or [])
-        if isinstance(item, dict)
-    ]
-    usable_expression_count = len(_select_quality_expression_chunks(
-        proposed_expression_chunks, language=language, limit=6, native_language=native_language
-    ))
-    target_language_pack = target_pack(language)
-    segment_references = {
-        index: [
-            str(answer.get("text") or "").strip()
-            for answer in segment.get("reference_answers") or []
-            if isinstance(answer, dict)
+    # The author and reviewer are instructed to return 0–2 expressions per
+    # study unit, but an LLM response is never the enforcement mechanism.  Cap
+    # each unit independently here; do not pool candidates across a Statement
+    # or refill a sparse unit from its neighbours.
+    for segment in raw_segments:
+        expressions = [
+            item for item in (segment.get("expressions") or [])
+            if isinstance(item, dict)
         ]
-        for index, segment in enumerate(raw_segments)
-        if isinstance(segment, dict)
-    }
-    has_invalid_expression_alignment = any(
-        bool(str(item.get("surface_form") or "").strip())
-        and (
-            not any(
-                target_language_pack.contains_span(
-                    reference, str(item.get("surface_form") or "").strip()
-                )
-                for reference in segment_references.get(int(item.get("segment_index") or 0), [])
-            )
-            or bool(target_language_pack.teachability_reason(str(item.get("surface_form") or "")))
+        segment["expressions"] = _select_quality_expression_chunks(
+            expressions,
+            language=language,
+            limit=2,
+            native_language=native_language,
         )
-        for item in proposed_expression_chunks
-    )
-    native_script = _native_script_re(native_language)
-    has_non_native_meaning = any(
-        not native_script.search(str(item.get("meaning") or ""))
-        or any(
-            not native_script.search(str(part.get("native") or ""))
-            for part in item.get("meaning_parts") or []
-            if isinstance(part, dict)
-        )
-        for item in proposed_expression_chunks
-    )
-    expression_count_by_segment: dict[int, int] = {}
-    for item in proposed_expression_chunks:
-        segment_index = int(item.get("segment_index") or 0)
-        expression_count_by_segment[segment_index] = expression_count_by_segment.get(segment_index, 0) + 1
-    has_undercovered_parallel_actions = any(
-        (
-            re.search(r"(?:면서|하며|뿐만 아니라|그리고)", str(segment.get("prompt_native") or segment.get("source_text") or ""))
-            or re.search(
-                r"\b(?:while|and also|as well as)\b",
-                " ".join(
-                    str(answer.get("text") or "")
-                    for answer in segment.get("reference_answers") or []
-                    if isinstance(answer, dict)
-                ),
-                re.IGNORECASE,
-            )
-        )
-        and expression_count_by_segment.get(segment_index, 0) < 2
-        for segment_index, segment in enumerate(raw_segments)
-    )
-    minimum_inventory = min(2, len(raw_segments))
-    if len(raw_segments) and (
-        usable_expression_count < minimum_inventory
-        or has_non_native_meaning
-        or has_undercovered_parallel_actions
-        or has_invalid_expression_alignment
-    ):
-        inventory_step = tracer.begin_step(
-            "bundle_expression_inventory_repair", "llm", phase="quiz_path",
-            input_data={
-                "segment_count": len(raw_segments),
-                "usable_expression_count": usable_expression_count,
-                "has_non_native_meaning": has_non_native_meaning,
-                "has_undercovered_parallel_actions": has_undercovered_parallel_actions,
-                "has_invalid_expression_alignment": has_invalid_expression_alignment,
-            },
-        )
-        inventory_step.model = quality_model
-        inventory_system = _build_expression_inventory_system_prompt(
-            native_label, target_label, level, language, native_language
-        )
-        inventory_step.system_prompt = inventory_system
-        try:
-            inventory_response = await _client().chat.completions.create(
-                model=quality_model,
-                messages=[
-                    {"role": "system", "content": inventory_system},
-                    {"role": "user", "content": json.dumps({"segments": raw_segments}, ensure_ascii=False)},
-                ],
-                **_temperature_args(quality_model, 0),
-                response_format=plan_response_format,
-                timeout=settings.openai_timeout_sec,
-            )
-            inventory_plan = _normalize_plan_language_fields(
-                json.loads(inventory_response.choices[0].message.content or "{}"), profile
-            )
-            inventory_by_index = _inventory_expressions_by_index(
-                list(inventory_plan.get("segments") or [])
-            )
-            for segment_index, segment in enumerate(raw_segments):
-                if inventory_by_index.get(segment_index):
-                    segment["expressions"] = inventory_by_index[segment_index]
-            tracer.finish_step(inventory_step, output={
-                "expression_count": sum(len(segment.get("expressions") or []) for segment in raw_segments),
-                "usage": _usage_payload(inventory_response),
-            }, artifacts=[("bundle_expression_inventory.json", inventory_plan, "application/json")])
-        except Exception as exc:
-            logger.warning("Expression inventory repair unavailable: %s", exc)
-            tracer.finish_step(inventory_step, error=f"{type(exc).__name__}: {exc}")
 
     _trim_overlapping_segment_sources(raw_segments)
 
@@ -2323,6 +2801,7 @@ async def generate_quiz_bundle(
         "bundle_id": str(bundle_id),
         "mode": "statement",
         "language": language,
+        "statement_text": original_statement,
     }
     to_create: list[dict] = []
 
@@ -2340,6 +2819,7 @@ async def generate_quiz_bundle(
         comp = {
             "source_label": "진술 노드",
             "model_answers": references,
+            "translation_notes": list(segment.get("translation_notes") or []),
             "target_expressions": [
                 str(item.get("canonical_form") or item.get("text") or "").strip()
                 for item in (segment.get("expressions") or []) if isinstance(item, dict)
@@ -2362,6 +2842,42 @@ async def generate_quiz_bundle(
         }
         qd = _compose_quiz_data(comp, language, level)
         qd["_source"] = dict(source_meta)
+        qd["learning_unit_source"] = source_text
+        qd["statement_text"] = original_statement
+        primary_reference_row = references[0] if references and isinstance(references[0], dict) else {}
+        primary_reference = str(primary_reference_row.get("text") or "").strip()
+        primary_reference_tokens = _target_token_count(primary_reference)
+        primary_scramble_units = [
+            str(unit) for unit in (primary_reference_row.get("scramble_units") or [])
+        ]
+        scramble_data, scramble_ineligible = _scramble_payload(
+            primary_reference,
+            seed=f"{seed_node_id}:{segment_index}:{language}",
+            language=language,
+            scramble_units=primary_scramble_units,
+        )
+        if scramble_data is not None:
+            scramble_data.update({
+                "language": language,
+                "_source": dict(source_meta),
+                "learning_unit_source": source_text,
+                "statement_text": original_statement,
+                "target_token_count": primary_reference_tokens,
+                # This couples the two learning modes without requiring a
+                # migration: both cards are immutable products of this unit.
+                "learning_unit_id": source_meta["segment_id"],
+            })
+            to_create.append({
+                "quiz_type": "scramble",
+                "question_ko": prompt,
+                "sentence_en": primary_reference,
+                "quiz_data": scramble_data,
+                "segment_key": str(segment_index),
+            })
+        else:
+            logger.info("scramble_ineligible segment=%s reason=%s", source_meta["segment_id"], scramble_ineligible)
+        qd["learning_unit_id"] = source_meta["segment_id"]
+        qd["target_token_count"] = primary_reference_tokens
         to_create.append({
             "quiz_type": "composition",
             "question_ko": prompt,
@@ -2381,22 +2897,10 @@ async def generate_quiz_bundle(
             canonical = str(chunk.get("canonical_form") or chunk.get("text") or "").strip()
             key_set = _usable_expression_chunks([chunk], language=language)
             key = _expression_key(canonical)
-            # Small planners occasionally leave canonical_form in the source
-            # language even though surface_form is a valid target-language
-            # realization copied from the reviewed reference. Recover that
-            # trusted target span deterministically instead of paying another
-            # model call or silently dropping the best expression.
-            if key not in key_set or not target_pack(language).is_valid_blank(canonical):
-                surface_candidate = str(chunk.get("surface_form") or "").strip()
-                candidate_chunk = {**chunk, "canonical_form": surface_candidate}
-                candidate_key = _expression_key(surface_candidate)
-                if surface_candidate and candidate_key in _usable_expression_chunks(
-                    [candidate_chunk], language=language
-                ):
-                    chunk = candidate_chunk
-                    canonical = surface_candidate
-                    key_set = {candidate_key}
-                    key = candidate_key
+            # A canonical identity is the wordbook and duplicate key for every
+            # language.  Never promote an inflected surface into that role:
+            # reject the candidate and let a later source sentence contribute a
+            # valid lemma instead.
             if key not in key_set or key in seen_expression_keys:
                 continue
             # Names are not vocabulary. The graph knows who this Statement is
@@ -2410,10 +2914,10 @@ async def generate_quiz_bundle(
             if entity_leak:
                 logger.info("expression rejected (%s): %s", entity_leak, canonical)
                 continue
-            # A valid reusable canonical expression can arrive with a polluted
-            # reference surface (for example ``auf der Webseite von Entok``).
-            # Keep the expression, but remove that contextual surface before the
-            # cloze stage so the model is never encouraged to blank the name.
+            # The canonical expression may still be stored and used as an
+            # expression card, but a malformed or context-polluted surface is
+            # never substituted with the canonical form.  A cloze answer must
+            # be the exact surface used in its frozen reference sentence.
             surface_form = str(chunk.get("surface_form") or canonical).strip()
             reference_text = str(
                 (references[0] if references and isinstance(references[0], dict) else {}).get("text")
@@ -2427,7 +2931,7 @@ async def generate_quiz_bundle(
                 language=language,
             )
             if surface_pollution:
-                surface_form = canonical
+                surface_form = ""
             surface_segments = [
                 str(value).strip()
                 for value in (chunk.get("surface_segments") or [])
@@ -2485,9 +2989,10 @@ async def generate_quiz_bundle(
             language,
             [
                 {
-                    # The expression shown on the composition node is the same
-                    # exact span the learner will type in the frozen sentence.
-                    "expression": chunk.get("surface_form") or chunk["canonical_form"],
+                    # The wordbook's identity is always the dictionary lemma.
+                    # surface_form is retained solely for the example and the
+                    # cloze answer in that example.
+                    "expression": chunk["canonical_form"],
                     "canonical_form": chunk["canonical_form"],
                     "meaning": str(chunk.get("meaning") or "").strip(),
                     "example": str(
@@ -2517,8 +3022,11 @@ async def generate_quiz_bundle(
     quality_rejections: list[str] = []
     # Gate reasons raised while authoring/repairing, as opposed to the final
     # structural pass. Traced separately so a gate that fires and is then
-    # repaired is still counted.
-    repair_path_rejections: list[str] = []
+    # repaired is still counted. Seeded with plan-review-stage rejections
+    # (domain contracts, the translation-note fidelity check) so every gate
+    # that can silently drop a unit reports through this one list.
+    repair_path_rejections: list[str] = list(plan_review_rejections)
+    materialize_cloze = materialize_cloze and "cloze" in ENABLED_QUIZ_TYPES
     if accepted_chunks and materialize_cloze:
         cloze_step = tracer.begin_step(
             "bundle_cloze_from_reviewed_expressions", "policy", phase="quiz_path",
@@ -2549,16 +3057,7 @@ async def generate_quiz_bundle(
             cloze_step,
             output={"returned_count": len(cloze_items), "errors": author_errors, "usage": {}},
         )
-        initial_cloze_items = list(cloze_items)
-
-        qa_step = tracer.begin_step(
-            "bundle_cloze_batch_quality_review", "llm", phase="quiz_path",
-            input_data={"candidate_count": len(cloze_items)},
-        )
-        qa_step.model = quality_model
-        reviews: dict[str, dict[str, Any]] = {}
-        qa_usage: dict[str, Any] = {}
-        repair_feedback = _structural_feedback_by_expression(
+        structural_feedback = _structural_feedback_by_expression(
             cloze_items,
             chunks=accepted_chunks,
             language=language,
@@ -2566,154 +3065,15 @@ async def generate_quiz_bundle(
             native_language=native_language,
             sink=repair_path_rejections,
         )
-        returned_ids = {str(item.get("expression_id") or "") for item in cloze_items}
-        for chunk in accepted_chunks:
-            expression_id = str(chunk.get("expression_id") or "")
-            if expression_id not in returned_ids:
-                repair_feedback.setdefault(expression_id, []).append(
-                    "answer_not_contiguous: choose an exact useful span from the frozen target sentence"
-                )
-        reviewable_items = [
-            item for item in cloze_items
-            if str(item.get("expression_id")) not in repair_feedback
-        ]
-        chunks_by_review_id = {
-            str(chunk.get("expression_id") or ""): chunk for chunk in accepted_chunks
-        }
-        needs_llm_review = [
-            item for item in reviewable_items
-            if not _has_reusable_release_review(
-                chunks_by_review_id.get(str(item.get("expression_id") or ""), {})
-            )
-        ]
-        reused_review_count = len(reviewable_items) - len(needs_llm_review)
-        if needs_llm_review:
-            try:
-                reviews, qa_usage = await _review_cloze_quality(
-                    needs_llm_review,
-                    chunks=accepted_chunks,
-                    native_language=native_language,
-                    target_language=language,
-                    model=quality_model,
-                    timeout=settings.openai_timeout_sec,
-                )
-            except Exception as exc:
-                quality_rejections.append(f"quality reviewer unavailable: {type(exc).__name__}")
-        # Missing reviews (including a reviewer outage) are failures. Shipping
-        # an unchecked card is worse than returning a smaller bundle.
-        qa_feedback = _quality_feedback_for_items(needs_llm_review, reviews)
-        for expression_id, issues in qa_feedback.items():
-            repair_feedback.setdefault(expression_id, []).extend(issues)
-        # Provenance, carried through to the saved card. Without it a bundle
-        # that authored nothing and fell back for everything is indistinguishable
-        # from one that authored cleanly — both just report "N cards". The
-        # step-level counters cannot substitute: they count candidates ENTERING
-        # a stage, while the saved cards are what survived several more gates,
-        # so the two populations do not subtract.
-        pass_items = [
-            {**item, "_origin": "reviewed_plan"}
-            for item in cloze_items
-            if str(item.get("expression_id")) not in repair_feedback
-        ]
-        repaired: list[dict[str, Any]] = []
-        repaired_reviews: dict[str, dict[str, Any]] = {}
-        if repair_feedback:
-            repair_chunks = [
-                chunk for chunk in accepted_chunks
-                if str(chunk.get("expression_id")) in repair_feedback
-            ]
-            repaired, repair_errors, repair_usage = await _author_individual_cloze_items(
-                repair_chunks,
-                source_statement=str(seed.get("content_ko") or ""),
-                native_language=native_language,
-                target_language=language,
-                level=level,
-                model=author_model,
-                timeout=settings.openai_timeout_sec,
-                feedback=repair_feedback,
-            )
-            quality_rejections.extend(repair_errors)
-            repaired_feedback = _structural_feedback_by_expression(
-                repaired,
-                chunks=repair_chunks,
-                language=language,
-                level=level,
-                native_language=native_language,
-                sink=repair_path_rejections,
-            )
-            reviewable_repaired = [
-                item for item in repaired
-                if str(item.get("expression_id")) not in repaired_feedback
-            ]
-            repaired_review_usage: dict[str, Any] = {}
-            try:
-                repaired_reviews, repaired_review_usage = await _review_cloze_quality(
-                    reviewable_repaired,
-                    chunks=repair_chunks,
-                    native_language=native_language,
-                    target_language=language,
-                    model=quality_model,
-                    timeout=settings.openai_timeout_sec,
-                )
-            except Exception as exc:
-                quality_rejections.append(
-                    f"repair quality reviewer unavailable: {type(exc).__name__}"
-                )
-            for expression_id, issues in _quality_feedback_for_items(
-                reviewable_repaired, repaired_reviews
-            ).items():
-                repaired_feedback.setdefault(expression_id, []).extend(issues)
-            pass_items.extend(
-                {**item, "_origin": "repair"}
-                for item in repaired
-                if str(item.get("expression_id")) not in repaired_feedback
-            )
-            quality_rejections.extend(
-                f"{expression_id}: {'; '.join(issues)}"
-                for expression_id, issues in repaired_feedback.items()
-            )
-            qa_usage = {
-                "review": qa_usage,
-                "repair": repair_usage,
-                "repair_review": repaired_review_usage,
-            }
-        cloze_items = pass_items
-
-        # A rewrite is still untrusted output. Re-run the deterministic contract
-        # before counting its expression as emitted, otherwise one malformed
-        # repair can occupy the slot and silently reduce the final card count.
-        post_repair_feedback = _structural_feedback_by_expression(
-            cloze_items,
-            chunks=accepted_chunks,
-            language=language,
-            level=level,
-            native_language=native_language,
-            sink=repair_path_rejections,
-        )
-        if post_repair_feedback:
+        if structural_feedback:
             cloze_items = [
                 item for item in cloze_items
-                if str(item.get("expression_id")) not in post_repair_feedback
+                if str(item.get("expression_id")) not in structural_feedback
             ]
             quality_rejections.extend(
                 f"{expression_id}: {'; '.join(issues)}"
-                for expression_id, issues in post_repair_feedback.items()
+                for expression_id, issues in structural_feedback.items()
             )
-
-        tracer.finish_step(qa_step, output={
-            "review_count": len(reviews),
-            "reused_plan_review_count": reused_review_count,
-            "release_score": _CLOZE_RELEASE_SCORE,
-            "fail_closed": True,
-            "initial_candidates": initial_cloze_items,
-            "initial_reviews": list(reviews.values()),
-            "repair_candidates": repaired,
-            "repair_reviews": list(repaired_reviews.values()),
-            "repair_count": len(repair_feedback),
-            "final_candidate_count": len(cloze_items),
-            "issues": quality_rejections,
-            "usage": qa_usage,
-        })
 
     cloze_candidates, structural_reasons = _prepare_cloze_candidates(
         cloze_items,
@@ -2762,7 +3122,7 @@ async def generate_quiz_bundle(
         "structural_rejections": structural_reasons,
         "repair_path_rejections": repair_path_rejections,
         "quality_rejections": quality_rejections,
-        "llm_quality_gate": "individual_author_batch_review_repair",
+        "llm_quality_gate": "reviewed_study_unit_only",
     })
     if materialize_cloze and not any(q["quiz_type"] == "cloze" for q in to_create):
         logger.warning("Bundle produced no structurally renderable cloze: user=%s node=%s", user.id, seed_node_id)
@@ -2831,7 +3191,7 @@ async def generate_quiz_bundle(
             debug_run_dir=tracer.debug_dir_relative,
             generation_key=generation_key,
         )
-        if spec["quiz_type"] == "cloze" and synthesize_audio:
+        if spec["quiz_type"] in {"cloze", "scramble"} and synthesize_audio:
             audio_url, answer_audio_url, tts_error = await synthesize_quiz_audio_assets(
                 quiz.id,
                 spec["quiz_type"],
@@ -2872,6 +3232,8 @@ async def materialize_expression_clozes(
     planning pass again.  It is the deferred second stage used by the automatic
     queue and by an explicit wordbook selection.
     """
+    if "cloze" not in ENABLED_QUIZ_TYPES:
+        return [], {"status": "disabled", "quiz_type": "cloze"}
     from .node_expression_store import (
         list_available_node_expressions,
         set_expression_quiz_status,
@@ -2939,8 +3301,6 @@ async def materialize_expression_clozes(
         "deferred_cloze_from_reviewed_expressions", "policy", phase="quiz_materialize",
         input_data={"node_id": str(node_id), "expression_count": len(chunks), "expressions": names},
     )
-    settings = get_settings()
-    author_model, quality_model = _quiz_role_models(settings, native_language, language)
     items = [
         item
         for chunk in chunks
@@ -2959,14 +3319,7 @@ async def materialize_expression_clozes(
     ]
     tracer.finish_step(step, output={"returned_count": len(items), "errors": author_errors, "usage": {}})
 
-    quality_step = tracer.begin_step(
-        "deferred_cloze_batch_quality_review", "llm", phase="quiz_materialize",
-        input_data={"candidate_count": len(items)},
-    )
-    quality_step.model = quality_model
     quality_rejections: list[str] = []
-    reviews: dict[str, dict[str, Any]] = {}
-    qa_usage: dict[str, Any] = {}
     feedback = _structural_feedback_by_expression(
         items,
         chunks=chunks,
@@ -2980,122 +3333,15 @@ async def materialize_expression_clozes(
             feedback.setdefault(expression_id, []).append(
                 "answer_not_contiguous: choose an exact useful span from the frozen target sentence"
             )
-    reviewable_items = [
-        item for item in items if str(item.get("expression_id")) not in feedback
-    ]
-    chunks_by_review_id = {
-        str(chunk.get("expression_id") or ""): chunk for chunk in chunks
-    }
-    needs_llm_review = [
-        item for item in reviewable_items
-        if not _has_reusable_release_review(
-            chunks_by_review_id.get(str(item.get("expression_id") or ""), {})
-        )
-    ]
-    reused_review_count = len(reviewable_items) - len(needs_llm_review)
-    if needs_llm_review:
-        try:
-            reviews, qa_usage = await _review_cloze_quality(
-                needs_llm_review,
-                chunks=chunks,
-                native_language=native_language,
-                target_language=language,
-                model=quality_model,
-                timeout=settings.openai_timeout_sec,
-            )
-        except Exception as exc:
-            quality_rejections.append(f"quality reviewer unavailable: {type(exc).__name__}")
-    qa_feedback = _quality_feedback_for_items(needs_llm_review, reviews)
-    for expression_id, issues in qa_feedback.items():
-        feedback.setdefault(expression_id, []).extend(issues)
-    kept = [
-        {**item, "_origin": "reviewed_plan"}
-        for item in items
-        if str(item.get("expression_id")) not in feedback
-    ]
     if feedback:
-        repair_chunks = [chunk for chunk in chunks if str(chunk.get("expression_id")) in feedback]
-        repaired, repair_errors, repair_usage = await _author_individual_cloze_items(
-            repair_chunks,
-            source_statement=str(source.get("content_ko") or ""),
-            native_language=native_language,
-            target_language=language,
-            level=level,
-            model=author_model,
-            timeout=settings.openai_timeout_sec,
-            feedback=feedback,
-        )
-        quality_rejections.extend(repair_errors)
-        repaired_feedback = _structural_feedback_by_expression(
-            repaired,
-            chunks=repair_chunks,
-            language=language,
-            level=level,
-            native_language=native_language,
-        )
-        reviewable_repaired = [
-            item for item in repaired
-            if str(item.get("expression_id")) not in repaired_feedback
-        ]
-        repaired_reviews: dict[str, dict[str, Any]] = {}
-        repaired_review_usage: dict[str, Any] = {}
-        try:
-            repaired_reviews, repaired_review_usage = await _review_cloze_quality(
-                reviewable_repaired,
-                chunks=repair_chunks,
-                native_language=native_language,
-                target_language=language,
-                model=quality_model,
-                timeout=settings.openai_timeout_sec,
-            )
-        except Exception as exc:
-            quality_rejections.append(
-                f"repair quality reviewer unavailable: {type(exc).__name__}"
-            )
-        for expression_id, issues in _quality_feedback_for_items(
-            reviewable_repaired, repaired_reviews
-        ).items():
-            repaired_feedback.setdefault(expression_id, []).extend(issues)
-        kept.extend(
-            {**item, "_origin": "repair"} for item in repaired
-            if str(item.get("expression_id")) not in repaired_feedback
-        )
-        quality_rejections.extend(
-            f"{expression_id}: {'; '.join(issues)}"
-            for expression_id, issues in repaired_feedback.items()
-        )
-        qa_usage = {
-            "review": qa_usage,
-            "repair": repair_usage,
-            "repair_review": repaired_review_usage,
-        }
-    items = kept
-    post_repair_feedback = _structural_feedback_by_expression(
-        items,
-        chunks=chunks,
-        language=language,
-        level=level,
-        native_language=native_language,
-    )
-    if post_repair_feedback:
         items = [
             item for item in items
-            if str(item.get("expression_id")) not in post_repair_feedback
+            if str(item.get("expression_id")) not in feedback
         ]
         quality_rejections.extend(
             f"{expression_id}: {'; '.join(issues)}"
-            for expression_id, issues in post_repair_feedback.items()
+            for expression_id, issues in feedback.items()
         )
-    tracer.finish_step(quality_step, output={
-        "review_count": len(reviews),
-        "reused_plan_review_count": reused_review_count,
-        "release_score": _CLOZE_RELEASE_SCORE,
-        "fail_closed": True,
-        "repair_count": len(feedback),
-        "final_candidate_count": len(items),
-        "issues": quality_rejections,
-        "usage": qa_usage,
-    })
 
     source_meta = {"node_id": str(node_id), "bundle_id": str(bundle_id), "mode": "statement", "language": language, "materialized": True}
     candidates, reasons = _prepare_cloze_candidates(
@@ -3112,7 +3358,7 @@ async def materialize_expression_clozes(
         "accepted_count": len(candidates),
         "structural_rejections": reasons,
         "quality_rejections": quality_rejections,
-        "llm_quality_gate": "individual_author_batch_review_repair",
+        "llm_quality_gate": "reviewed_study_unit_only",
     }
     tracer.finish_step(trace_step, output=trace_step_output)
     trace = tracer.finish(status="completed")

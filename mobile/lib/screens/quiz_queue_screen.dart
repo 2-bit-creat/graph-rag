@@ -363,7 +363,7 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
   @override
   Widget build(BuildContext context) {
     const queueOptions = {'new': '새로 배울 문제', 'review': '복습 대상 문제'};
-    const typeOptions = {'cloze': '단어', 'composition': '작문'};
+    const typeOptions = {'scramble': '문장 배열', 'composition': '작문'};
     final languageOptions = {
       for (final language in _targetLanguages)
         language: _languageLabels[language] ?? language,
@@ -564,9 +564,14 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
                                 final kind =
                                     item['queue_kind']?.toString() ?? 'new';
                                 final color = _queueColor(kind);
-                                final type = item['quiz_type'] == 'composition'
-                                    ? '작문'
-                                    : '단어';
+                                final type = switch (item['quiz_type']) {
+                                  'composition' => '작문',
+                                  'scramble' => '배열',
+                                  // Legacy label, kept only for old cloze rows
+                                  // that predate the scramble migration.
+                                  'cloze' => '단어',
+                                  final other => other?.toString() ?? '문제',
+                                };
                                 final queueLabel = kind == 'review'
                                     ? '복습 대상 문제'
                                     : kind == 'archived'

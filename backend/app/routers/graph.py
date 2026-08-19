@@ -433,15 +433,14 @@ async def read_node_study_quizzes(
         .where(
             Quiz.user_id == user.id,
             Quiz.source_nodes.contains([node_id]),
-            Quiz.quiz_type.in_(("cloze", "composition")),
+            Quiz.quiz_type.in_(("scramble", "composition")),
             Quiz.queue_kind.in_(("new", "review")),
         )
         .order_by(Quiz.created_at.desc())
     )
-    grouped = {"cloze": [], "composition": []}
-    reviews = {"cloze": 0, "composition": 0}
-    by_language = {"cloze": {}, "composition": {}}
-    quiz_expression_keys: set[str] = set()
+    grouped = {"scramble": [], "composition": []}
+    reviews = {"scramble": 0, "composition": 0}
+    by_language = {"scramble": {}, "composition": {}}
     for quiz_id, quiz_type, language, queue_kind, quiz_data in rows.all():
         kind = str(quiz_type)
         quiz_id_str = str(quiz_id)
@@ -450,16 +449,6 @@ async def read_node_study_quizzes(
         by_language[kind].setdefault(lang, []).append(quiz_id_str)
         if queue_kind == "review":
             reviews[kind] += 1
-        if kind == "cloze":
-            data = quiz_data or {}
-            expression = str(
-                data.get("canonical_form")
-                or data.get("expression")
-                or data.get("blank")
-                or ""
-            ).strip().casefold()
-            if expression:
-                quiz_expression_keys.add(expression)
     from ..models import QuizLearningMaterial
 
     languages = crud.get_effective_target_languages(user)
@@ -495,6 +484,26 @@ async def read_node_study_quizzes(
     material_status = {
         language: row.status for language, row in material_by_language.items()
     }
+    if grouped["composition"] and not grouped["scramble"]:
+        from ..quiz_materials import ensure_scramble_inventory_for_node
+
+        for language in languages:
+            if material_status.get(language) != "ready":
+                continue
+            created_scrambles = await ensure_scramble_inventory_for_node(
+                session, user, node_id=node_id, language=language
+            )
+            for quiz in created_scrambles:
+                if quiz.queue_kind not in {"new", "review"}:
+                    continue
+                quiz_id_str = str(quiz.id)
+                grouped["scramble"].append(quiz_id_str)
+                lang = (quiz.language or "english").lower()
+                by_language["scramble"].setdefault(lang, []).append(quiz_id_str)
+                if quiz.queue_kind == "review":
+                    reviews["scramble"] += 1
+        if grouped["scramble"]:
+            await session.commit()
     from ..node_expression_store import get_node_expressions
 
     expression_by_language: dict[str, dict[str, int]] = {}
@@ -555,7 +564,7 @@ async def read_node_study_quizzes(
     # A Statement edited after generation is left archived-and-empty on purpose;
     # only the learner's 재생성 press rebuilds it, so auto-analysis stays off here.
     needs_regeneration = any(row.status == "stale" for row in material_rows)
-    if not grouped["cloze"] and not grouped["composition"]:
+    if not grouped["scramble"] and not grouped["composition"]:
         if any(
             material_status.get(language) in {"pending", "stale"}
             or language not in material_status
@@ -571,10 +580,7 @@ async def read_node_study_quizzes(
         "node_id": str(node_id),
         "material_status": material_status,
         "expressions": {
-            # Old cards can outlive a legacy inventory file. Never tell the
-            # learner that a Statement with expression-based clozes has zero
-            # expressions; recover the minimum visible count from those cards.
-            "count": max(stored_expression_count, len(quiz_expression_keys)),
+            "count": stored_expression_count,
             "available_count": sum(value["available"] for value in expression_by_language.values()),
             "generated_count": sum(value["generated"] for value in expression_by_language.values()),
             "by_language": expression_by_language,
@@ -591,11 +597,11 @@ async def read_node_study_quizzes(
             else {"run_id": None, "status": "idle", "error": None}
         ),
         "needs_regeneration": needs_regeneration,
-        "word": {
-            "count": len(grouped["cloze"]),
-            "review_count": reviews["cloze"],
-            "quiz_ids": grouped["cloze"],
-            "by_language": by_language["cloze"],
+        "scramble": {
+            "count": len(grouped["scramble"]),
+            "review_count": reviews["scramble"],
+            "quiz_ids": grouped["scramble"],
+            "by_language": by_language["scramble"],
         },
         "composition": {
             "count": len(grouped["composition"]),
@@ -696,9 +702,9 @@ async def generate_node_study_quizzes(
 ) -> dict:
     """Generate the next small, high-quality set for a selected Statement.
 
-    This is a learner action, not the operator generation hub.  It reuses a
-    ready expression inventory, emits at most three new cloze cards, and is
-    durable so the graph card can show progress without holding the request.
+    This is a learner action, not the operator generation hub. It activates
+    ready scramble -> composition pairs and is durable so the graph card can
+    show progress without holding the request.
     """
     node = await session.get(Node, node_id)
     if node is None or node.user_id != user.id or node.type.lower() != "statement":
@@ -776,8 +782,8 @@ async def regenerate_node_quizzes(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # An explicit rebuild always goes through a generation run so the learner
-    # gets the complete set (composition + expression clozes), not just the
-    # analysis half that the auto-generation-off path would produce.
+    # gets the complete visible set (scramble + composition), not just the
+    # analysis half.
     from ..quiz_generation_runs import create_generation_run, process_generation_run
 
     languages = crud.get_effective_target_languages(user)

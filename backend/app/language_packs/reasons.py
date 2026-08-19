@@ -49,6 +49,15 @@ DE_SEPARABLE_SPLIT = "de_separable_split"
 DE_CASE_DRIFT = "de_case_drift"
 DE_ALL_CAPS_NAME = "de_all_caps_name"
 
+# Plan-level / whole-unit checks — run once per study unit before any
+# cloze/scramble candidate exists, so a hit here means the unit's reference
+# sentence itself is unusable, not one candidate within it.
+PLAN_CLAUSE_DROPPED = "plan_clause_dropped"
+# The reference's own scramble_units grouping drops or changes a word relative
+# to the reference text (punctuation-only differences are tolerated, so this
+# means real content, not formatting).
+PLAN_SCRAMBLE_UNITS_INVALID = "plan_scramble_units_invalid"
+
 # Korean-specific.
 KO_PARTICLE_BOUNDARY = "ko_particle_boundary"
 KO_NOT_DICTIONARY_FORM = "ko_not_dictionary_form"
@@ -64,7 +73,7 @@ ALL_CODES = frozenset({
     TOO_LONG, PROPER_NAME, WRONG_LANGUAGE, EN_INFLECTED_FIRST_WORD,
     DE_NOT_INFINITIVE, DE_SEPARABLE_SPLIT, DE_CASE_DRIFT, DE_ALL_CAPS_NAME,
     KO_PARTICLE_BOUNDARY, KO_NOT_DICTIONARY_FORM, KO_FUNCTION_WORD_ONLY,
-    KO_CLAUSE_ANSWER, KO_SPACING,
+    KO_CLAUSE_ANSWER, KO_SPACING, PLAN_CLAUSE_DROPPED, PLAN_SCRAMBLE_UNITS_INVALID,
 })
 
 

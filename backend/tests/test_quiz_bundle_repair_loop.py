@@ -194,7 +194,7 @@ async def test_card_is_saved_after_independent_full_translation(
 
     assert [quiz.quiz_type for quiz in created] == ["composition", "cloze"]
     assert next(quiz for quiz in created if quiz.quiz_type == "cloze").quiz_data["_origin"] == "reviewed_plan"
-    assert [item["expression"] for item in saved] == ["carefully compared"]
+    assert [item["expression"] for item in saved] == ["carefully compare"]
     assert saved[0]["release_reviewed"] is True
     assert saved[0]["review_contract_version"] == "pair-release-v1"
     assert len(completions.calls) == 2  # draft + one shared composition/cloze release review
@@ -203,6 +203,74 @@ async def test_card_is_saved_after_independent_full_translation(
     assert completions.calls[1]["response_format"]["type"] == "json_schema"
     assert source in completions.calls[0]["messages"][1]["content"]
     assert "Return only the composition and cloze arrays" not in completions.calls[0]["messages"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_draft_and_review_calls_both_receive_the_full_statement_as_context(
+    db_session, iso_user, monkeypatch
+) -> None:
+    """Both the first-draft (author) and review calls only ever saw the one
+    unit they were writing/checking — never the Statement it came from. That's
+    exactly why a backstory clause split away from the event it explained
+    (see test_scramble_contract.py's translation-note tests and the segment
+    prompt's own backstory-clause rule) could be mistranslated into something
+    that contradicts the rest of the statement: neither call had the
+    information needed to notice. Passing the original statement alongside the
+    unit lets both calls actually judge that, instead of only the review call
+    getting a chance to catch what the draft call had no way to avoid."""
+    source = "친구를 만났고, 그가 저녁을 사주었다."
+    node = Node(
+        user_id=iso_user.id,
+        name="dinner",
+        type="Statement",
+        description=json.dumps({"content": source}),
+    )
+    db_session.add(node)
+    await db_session.commit()
+    plan = {"segments": [{
+        "segment_index": 0,
+        "source_text": source,
+        "prompt_native": source,
+        "grammar_focus": ["past tense"],
+        "translation_notes": [],
+        "context_entities": [],
+        "reference_answers": [{
+            "text": "I met a friend, and he bought me dinner.",
+            "register": "neutral",
+            "note": "",
+            "scramble_units": ["I met a friend,", "and he bought me dinner."],
+        }],
+        "expressions": [],
+    }]}
+    completions = _Completions([plan, plan])
+    monkeypatch.setattr(
+        quiz_bundle,
+        "_client",
+        lambda: SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+    )
+    monkeypatch.setattr(
+        node_expression_store, "save_node_expressions", lambda *a, **k: None
+    )
+
+    async def no_audio(*args, **kwargs):
+        return None, None, None
+
+    monkeypatch.setattr(quiz_bundle, "synthesize_quiz_audio_assets", no_audio)
+
+    await quiz_bundle.generate_quiz_bundle(
+        db_session,
+        iso_user,
+        language="english",
+        seed_node_ids={str(node.id)},
+    )
+
+    assert len(completions.calls) == 2  # draft, then review
+    for call in completions.calls:
+        payload = json.loads(call["messages"][1]["content"])
+        assert payload["full_statement_context"] == source
+        system_prompt = call["messages"][0]["content"]
+        assert "full_statement_context" in system_prompt
+        assert "backstory" in system_prompt
 
 
 @pytest.mark.asyncio
@@ -383,6 +451,52 @@ def test_expression_selection_rejects_inflected_or_multi_action_canonical_forms(
     assert [item["canonical_form"] for item in selected] == ["take a walk"]
 
 
+def test_single_high_value_word_is_a_valid_expression_candidate() -> None:
+    selected = quiz_bundle._select_quality_expression_chunks([{
+        "canonical_form": "suddenly",
+        "surface_form": "suddenly",
+        "quality_score": 93,
+        "kind": "word",
+    }], language="english")
+
+    assert [item["canonical_form"] for item in selected] == ["suddenly"]
+
+
+def test_padded_weather_phrase_is_rejected_in_favor_of_a_standalone_adverb() -> None:
+    selected = quiz_bundle._select_quality_expression_chunks([
+        {"canonical_form": "suddenly rain", "quality_score": 98, "kind": "verb_phrase"},
+        {"canonical_form": "suddenly", "quality_score": 93, "kind": "word"},
+    ], language="english")
+
+    assert [item["canonical_form"] for item in selected] == ["suddenly"]
+
+
+def test_ko_en_prompt_prefers_a_word_over_a_padded_phrase() -> None:
+    profile = quiz_bundle.get_quiz_prompt_profile("korean", "english")
+
+    assert "never 'suddenly rain'" in profile.plan_rules
+    assert "replace it with 'suddenly'" in profile.plan_review_rules
+
+
+def test_korean_expression_selection_requires_a_dictionary_lemma() -> None:
+    selected = quiz_bundle._select_quality_expression_chunks([
+        {
+            "canonical_form": "머리를 잘랐어요",
+            "surface_form": "머리를 잘랐어요",
+            "quality_score": 95,
+            "kind": "verb_phrase",
+        },
+        {
+            "canonical_form": "머리를 자르다",
+            "surface_form": "머리를 잘랐어요",
+            "quality_score": 94,
+            "kind": "verb_phrase",
+        },
+    ], language="korean", native_language="english")
+
+    assert [item["canonical_form"] for item in selected] == ["머리를 자르다"]
+
+
 def test_reviewed_expression_becomes_primary_cloze_without_fallback() -> None:
     card = quiz_bundle._cloze_from_reviewed_expression({
         "expression_id": "0:0",
@@ -396,6 +510,36 @@ def test_reviewed_expression_becomes_primary_cloze_without_fallback() -> None:
     assert card is not None
     assert card["surface_answer"] == "went for a walk"
     assert card["target_ko"] == "산책을 갔다"
+
+
+def test_translation_choice_is_saved_for_post_answer_explanation() -> None:
+    quiz_data = quiz_bundle._compose_quiz_data({
+        "translation_notes": [{
+            "source": "sister",
+            "target": "언니",
+            "note": "여기서는 언니로 옮겼지만, 문맥에 따라 누나나 여동생이 될 수도 있어요.",
+        }],
+    }, "korean", 10)
+
+    assert quiz_data["hints"] == []
+    assert quiz_data["translation_notes"] == [{
+        "source": "sister",
+        "target": "언니",
+        "note": "여기서는 언니로 옮겼지만, 문맥에 따라 누나나 여동생이 될 수도 있어요.",
+    }]
+
+
+def test_contextual_surface_is_dropped_instead_of_replaced_by_canonical() -> None:
+    card = quiz_bundle._cloze_from_reviewed_expression({
+        "expression_id": "0:0",
+        "canonical_form": "휴대폰 속",
+        "surface_form": "내 휴대폰 속",
+        "source_segment": "I organized the photos on my phone.",
+        "reference_answers": [{"text": "오늘 저녁에 내 휴대폰 속 사진을 정리했다."}],
+        "meaning_parts": [{"target": "내 휴대폰 속", "native": "on my phone"}],
+    }, native_language="english", target_language="korean")
+
+    assert card is None
 
 
 def test_source_alignment_span_covers_inflected_english_verb_and_object() -> None:
@@ -504,12 +648,6 @@ def test_target_language_prompt_uses_localized_quality_rubric() -> None:
     assert "never apply rules or field roles from another direction" in prompt
 
 
-def test_statement_is_split_into_stable_composition_units() -> None:
-    assert quiz_bundle._split_statement_units(
-        "보고서를 확인했습니다. 결과를 엑셀로 정리했습니다."
-    ) == ["보고서를 확인했습니다.", "결과를 엑셀로 정리했습니다."]
-
-
 def test_incomplete_composition_rewrite_falls_back_to_exact_source_span() -> None:
     source = "집에 돌아온 뒤 젖은 신발을 말리면서 다음 주 여행 일정을 다시 확인했다."
     segment = {
@@ -565,7 +703,11 @@ async def test_long_statement_uses_semantic_composition_units(
             "expressions": [],
         },
     ]}
-    completions = _Completions([plan, plan, plan])
+    segmentation = {"segments": [
+        {"source_text": plan["segments"][0]["source_text"]},
+        {"source_text": plan["segments"][1]["source_text"]},
+    ]}
+    completions = _Completions([segmentation, plan, plan, plan, plan])
     monkeypatch.setattr(
         quiz_bundle,
         "_client",
@@ -662,20 +804,6 @@ def test_native_expression_meaning_rebuilds_target_language_definition() -> None
     assert quiz_bundle._native_expression_meaning(chunk, "korean") == "신발을 말리다"
 
 
-def test_duplicate_inventory_segment_rows_merge_without_candidate_loss() -> None:
-    rows = [
-        {"segment_index": 1, "expressions": [{"canonical_form": "reproduce a lost update"}]},
-        {"segment_index": 1, "expressions": [{"canonical_form": "modify the same balance"}]},
-    ]
-
-    merged = quiz_bundle._inventory_expressions_by_index(rows)
-
-    assert [item["canonical_form"] for item in merged[1]] == [
-        "reproduce a lost update",
-        "modify the same balance",
-    ]
-
-
 def test_subject_predicate_clause_is_not_selected_as_an_expression() -> None:
     chunks = [{
         "canonical_form": "concurrent requests modify balance",
@@ -702,26 +830,28 @@ def test_semantically_required_six_word_verb_phrase_is_kept() -> None:
     ) == chunks
 
 
-def test_reviewer_cannot_merge_a_long_two_unit_plan_back_into_one() -> None:
-    long_source = (
-        "기차가 한 시간 지연되어 예약을 오후로 옮겼지만, 남는 시간에는 "
-        "카페에서 발표 자료의 결론 부분을 꼼꼼하게 다듬었다."
-    )
+def test_english_canonical_rejects_an_inflected_verb_after_an_adverb() -> None:
+    chunks = [{
+        "canonical_form": "suddenly rained",
+        "kind": "discourse_frame",
+        "quality_score": 95,
+    }]
 
-    assert quiz_bundle._review_collapses_long_plan(long_source, 2, 1) is True
-    assert quiz_bundle._review_collapses_long_plan("예약을 옮겼다.", 2, 1) is False
+    assert quiz_bundle._select_quality_expression_chunks(chunks, language="english") == []
 
 
-def test_long_comma_sentence_supplies_two_stable_preliminary_units() -> None:
-    source = (
-        "기차가 한 시간 지연되어 박물관 예약을 오후로 옮겼지만, "
-        "남는 시간에는 카페에서 발표 자료의 결론 부분을 다듬었다."
-    )
-
-    assert quiz_bundle._split_statement_units(source) == [
-        "기차가 한 시간 지연되어 박물관 예약을 오후로 옮겼지만",
-        "남는 시간에는 카페에서 발표 자료의 결론 부분을 다듬었다.",
+def test_expression_selection_is_capped_per_study_unit() -> None:
+    chunks = [
+        {"canonical_form": "buy an umbrella", "kind": "verb_phrase", "quality_score": 95},
+        {"canonical_form": "be a little wet", "kind": "verb_phrase", "quality_score": 94},
+        {"canonical_form": "feel much better", "kind": "verb_phrase", "quality_score": 93},
     ]
+
+    selected = quiz_bundle._select_quality_expression_chunks(
+        chunks, language="english", limit=2
+    )
+
+    assert len(selected) == 2
 
 
 def test_subordinate_and_dangling_composition_fragments_are_rejected() -> None:
@@ -738,24 +868,185 @@ def test_subordinate_and_dangling_composition_fragments_are_rejected() -> None:
     assert quiz_bundle._plan_has_incomplete_units(complete) is False
 
 
-def test_enko_merges_leading_adverbial_fragment_with_next_clause() -> None:
+def test_enko_rejects_subjectless_or_dangling_llm_source_units() -> None:
+    assert quiz_bundle._study_source_unit_reason("Bought a loaf of sourdough.", "english")
+    assert quiz_bundle._study_source_unit_reason("while I made soup for dinner.", "english")
+    assert quiz_bundle._study_source_unit_reason(
+        "I stopped by a small bakery on my way home.", "english"
+    ) is None
+
+
+def test_invalid_llm_segmentation_requires_retry_or_whole_statement() -> None:
+    source = (
+        "I stopped by a small bakery on my way home and bought a loaf of sourdough. "
+        "The smell filled the kitchen while I made soup for dinner."
+    )
+    failures = quiz_bundle._validate_study_source_units(
+        source,
+        [
+            "I stopped by a small bakery on my way home.",
+            "bought a loaf of sourdough.",
+            "The smell filled the kitchen.",
+            "while I made soup for dinner.",
+        ],
+        "english",
+    )
+
+    assert any("subjectless predicate" in failure for failure in failures)
+    assert any("dangling connective" in failure for failure in failures)
+
+
+def test_coordinated_main_clauses_can_split_but_purpose_clause_stays_attached() -> None:
+    source = (
+        "Ha Seung-mok, a researcher, just spilled water on his table, "
+        "and I gave him some tissues so that he can wipe it."
+    )
     units = [
-        "After coming home.",
-        "I dried my wet shoes while checking next week's travel schedule.",
+        "Ha Seung-mok, a researcher, just spilled water on his table,",
+        "and I gave him some tissues so that he can wipe it.",
     ]
 
-    assert quiz_bundle._merge_english_leading_fragments(units) == [
-        "After coming home. I dried my wet shoes while checking next week's travel schedule."
-    ]
+    assert quiz_bundle._validate_study_source_units(source, units, "english") == []
+    prompt = quiz_bundle._build_segment_system_prompt(
+        "English",
+        "Korean",
+        native_language="english",
+        target_language="korean",
+    )
+    assert "so that" in prompt
+    assert "keep purpose clauses" in prompt
 
 
-def test_enko_merges_not_just_tail_with_previous_clause() -> None:
-    assert quiz_bundle._merge_english_leading_fragments([
-        "I closely reviewed the presentation materials.",
-        "not just glanced at them.",
-    ]) == [
-        "I closely reviewed the presentation materials — not just glanced at them."
+def test_learning_unit_prompts_never_ask_to_shorten_the_reference() -> None:
+    """A card that documents a clause it then drops (see test_scramble_contract.py's
+    ``test_a_documented_clause_missing_from_the_reference_is_a_release_failure``)
+    traced back to this prompt telling the model to "simplify wording" past a word
+    budget. The fix removes the budget entirely: length is handled by how the
+    scramble game groups words into pieces (``scramble_units``), never by
+    shortening the sentence itself."""
+    segment_prompt = quiz_bundle._build_segment_system_prompt(
+        "English",
+        "Korean",
+        native_language="english",
+        target_language="korean",
+    )
+    plan_prompt = quiz_bundle._build_plan_system_prompt(
+        "English",
+        "Korean",
+        35,
+        "plain learner sentence",
+        "korean",
+        "english",
+    )
+    review_prompt = quiz_bundle._build_plan_qa_system_prompt(
+        "English",
+        "Korean",
+        35,
+        "korean",
+        "english",
+    )
+
+    assert "original Statement stays intact in the graph" in segment_prompt
+    assert "sentence scramble and writing cards" in segment_prompt
+    assert "short standalone learning prompt" in plan_prompt
+    assert "short learner-facing quiz sentences" in review_prompt
+
+    for prompt in (segment_prompt, plan_prompt, review_prompt):
+        assert "simplify" not in prompt.lower()
+        assert "shorten" not in prompt.lower() or "never" in prompt.lower()
+
+    assert "scramble_units" in plan_prompt
+    assert "scramble_units" in review_prompt
+    assert "length is never a reason" in plan_prompt.lower()
+    assert "never a reason to shorten" in review_prompt.lower()
+    assert str(quiz_bundle._SCRAMBLE_MAX_CHUNKS) in plan_prompt
+
+
+def test_scramble_rejects_multi_sentence_target() -> None:
+    payload, reason = quiz_bundle._scramble_payload(
+        "종로에서 친구를 만나고 저녁을 얻어먹었어요. 오랫동안 못 만났어요.",
+        seed="multi-sentence",
+    )
+
+    assert payload is None
+    assert reason == "multiple_target_sentences"
+
+
+def test_sentence_fallback_never_keeps_two_explicit_sentences_together() -> None:
+    units = quiz_bundle._deterministic_sentence_units(
+        "I bought tea. I drank it at home."
+    )
+    assert units == ["I bought tea.", "I drank it at home."]
+    assert quiz_bundle._study_source_unit_reason(
+        "I bought tea. I drank it at home.", "english"
+    ) == "source unit contains multiple sentences"
+
+
+def test_expression_candidates_reject_dangling_connectors_and_whole_sentence_spans() -> None:
+    chunks = [
+        {
+            "canonical_form": "met a friend in Jongro and",
+            "surface_form": "met a friend in Jongro and",
+            "kind": "verb_phrase",
+            "quality_score": 99,
+            "reference_answers": [{"text": "I met a friend in Jongro and had dinner."}],
+        },
+        {
+            "canonical_form": "haven't met for a long time",
+            "surface_form": "haven't met for a long time",
+            "kind": "verb_phrase",
+            "quality_score": 95,
+            "reference_answers": [{"text": "We haven't met for a long time."}],
+        },
+        {
+            "canonical_form": "long time",
+            "surface_form": "long time",
+            "kind": "collocation",
+            "quality_score": 90,
+            "reference_answers": [{"text": "We haven't met for a long time."}],
+        },
     ]
+
+    selected = quiz_bundle._select_quality_expression_chunks(
+        chunks, language="english", limit=3, native_language="english"
+    )
+
+    assert [chunk["canonical_form"] for chunk in selected] == ["long time"]
+
+
+def test_korean_surface_rejects_contextual_possessive() -> None:
+    pack = quiz_bundle.target_pack("korean")
+
+    assert pack.surface_boundary_reason(
+        answer="\ub0b4 \ud578\ub4dc\ud3f0 \uc18d",
+        sentence_target="\uc624\ub298 \uc800\ub141\uc5d0 \ub0b4 \ud578\ub4dc\ud3f0 \uc18d \uc0ac\uc9c4\uc744 \uc815\ub9ac\ud588\ub2e4.",
+        canonical_form="\ud734\ub300\ud3f0 \uc18d",
+    )
+
+
+def test_expression_candidates_reject_context_possessive_added_to_surface() -> None:
+    selected = quiz_bundle._select_quality_expression_chunks(
+        [{
+            "canonical_form": "improve mood",
+            "surface_form": "improved my mood",
+            "kind": "collocation",
+            "quality_score": 99,
+            "reference_answers": [{"text": "Drinking tea improved my mood."}],
+        }],
+        language="english",
+        native_language="korean",
+    )
+    assert selected == []
+
+
+def test_german_contract_rejects_missing_reciprocal_reflexive() -> None:
+    reason = quiz_bundle._plan_domain_contract_reason(
+        "오래 못 만나서 이야기를 많이 나눴다.",
+        [{"reference_answers": [{"text": "Wir haben lange nicht getroffen und viel geredet."}]}],
+        native_language="korean",
+        target_language="german",
+    )
+    assert reason and reason.startswith("german_reciprocal_missing")
 
 
 def test_domain_contract_requires_established_lost_update_terms() -> None:

@@ -214,7 +214,7 @@ def grade_answer(quiz: Quiz, payload: dict) -> tuple[bool, int]:
         accepted = [_normalize_answer(a, language) for a in (data.get("accepted_answers") or [])]
         correct = answer in accepted
     elif quiz_type == "scramble":
-        order = payload.get("order") or payload.get("correct_order") or []
+        order = payload.get("order") or []
         expected = data.get("correct_order") or []
         correct = list(order) == list(expected)
     elif quiz_type == "mcq_nuance":
@@ -302,7 +302,7 @@ async def count_queues(
     now = datetime.now(UTC)
     result: dict[str, dict[str, int]] = {
         t: {"new": 0, "review": 0}
-        for t in ("cloze", "composition")
+        for t in ("scramble", "composition")
     }
     rows = await session.execute(
         select(

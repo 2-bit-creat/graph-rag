@@ -4423,6 +4423,7 @@ async def update_user_profile_settings(
     native_language: str | None = None,
     language_levels: dict[str, int] | None = None,
     daily_cloze_target: int | None = None,
+    daily_scramble_target: int | None = None,
     daily_composition_target: int | None = None,
     quiz_review_ratio: float | None = None,
     auto_generate_quizzes: bool | None = None,
@@ -4465,6 +4466,8 @@ async def update_user_profile_settings(
             user.current_level = merged["english"]
     if daily_cloze_target is not None:
         user.daily_cloze_target = max(0, min(100, int(daily_cloze_target)))
+    if daily_scramble_target is not None:
+        user.daily_scramble_target = max(0, min(100, int(daily_scramble_target)))
     if daily_composition_target is not None:
         user.daily_composition_target = max(0, min(100, int(daily_composition_target)))
     if quiz_review_ratio is not None:
@@ -4600,7 +4603,7 @@ async def list_quiz_queue_items(
     filters = [
         Quiz.user_id == user_id,
         Quiz.queue_kind != "archived",
-        Quiz.quiz_type.in_(("cloze", "composition")),
+        Quiz.quiz_type.in_(("scramble", "composition")),
     ]
     if queue_kind == "new":
         filters.extend([Quiz.queue_kind == "new", Quiz.repetitions == 0])
@@ -4683,14 +4686,43 @@ async def list_quiz_source_explorations(
         )
         .order_by(Node.created_at.desc())
     )
+    node_rows = rows.all()
+
+    # scramble/composition counts come from a live count of non-archived quiz
+    # rows, not from QuizLearningMaterial.composition_count /
+    # QuizSourceExploration.word_count. Those two columns are caches written
+    # only at generation/reset time — anything that archives a quiz through a
+    # different path (an old superseded card, a one-off admin action) leaves
+    # them pointing at a count that no longer exists, and a Statement that was
+    # just reset to zero cards keeps showing its pre-reset numbers here. The
+    # `quizzes` table's own `queue_kind` is the one place this can't drift,
+    # so counting it directly is what the reset ("이 노드 초기화") button and
+    # this screen need to agree.
+    active_quizzes = (
+        await session.execute(
+            select(Quiz.source_nodes, Quiz.quiz_type).where(
+                Quiz.user_id == user_id,
+                Quiz.language == lang,
+                Quiz.quiz_type.in_(("scramble", "composition")),
+                Quiz.queue_kind != "archived",
+            )
+        )
+    ).all()
+    live_counts: dict[uuid.UUID, dict[str, int]] = {}
+    for source_nodes, quiz_type in active_quizzes:
+        for node_id in source_nodes or []:
+            counts = live_counts.setdefault(node_id, {"scramble": 0, "composition": 0})
+            counts[quiz_type] = counts.get(quiz_type, 0) + 1
+
     result: list[dict] = []
-    for node, exploration, material in rows.all():
+    for node, exploration, material in node_rows:
         content = ""
         if node.description:
             try:
                 content = (json.loads(node.description).get("content") or "").strip()
             except (ValueError, AttributeError):
                 content = node.description.split("\n", 1)[-1].strip()
+        node_live_counts = live_counts.get(node.id, {"scramble": 0, "composition": 0})
         result.append(
             {
                 "node_id": node.id,
@@ -4710,9 +4742,9 @@ async def list_quiz_source_explorations(
                 ),
                 "material_status": material.status if material else "unprocessed",
                 "cloze_status": exploration.cloze_status if exploration else "available",
-                "word_count": exploration.word_count if exploration else 0,
+                "word_count": node_live_counts["scramble"],
                 "expression_count": material.expression_count if material else (exploration.expression_count if exploration else 0),
-                "composition_count": material.composition_count if material else (exploration.composition_count if exploration else 0),
+                "composition_count": node_live_counts["composition"],
                 "updated_at": material.updated_at if material else (exploration.updated_at if exploration else None),
             }
         )
@@ -4732,7 +4764,7 @@ async def count_new_quiz_types(
             Quiz.language == language,
             Quiz.queue_kind == "new",
             Quiz.repetitions == 0,
-            Quiz.quiz_type.in_(("cloze", "composition")),
+            Quiz.quiz_type.in_(("scramble", "composition")),
         )
         .group_by(Quiz.quiz_type)
     )
@@ -4756,7 +4788,7 @@ async def count_today_completed_quiz_types(
     today_start = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
     start_utc = today_start.astimezone(UTC)
     progress = {
-        language.lower(): {"cloze_completed": 0, "composition_completed": 0}
+        language.lower(): {"cloze_completed": 0, "scramble_completed": 0, "composition_completed": 0}
         for language in languages
     }
     result = await session.execute(
@@ -4766,14 +4798,14 @@ async def count_today_completed_quiz_types(
             Quiz.track == "daily",
             Quiz.first_answered_at.is_not(None),
             Quiz.first_answered_at >= start_utc,
-            Quiz.quiz_type.in_(("cloze", "composition")),
+            Quiz.quiz_type.in_(("scramble", "composition")),
         )
         .group_by(Quiz.language, Quiz.quiz_type)
     )
     for language, quiz_type, count in result.all():
         lang = str(language or "english").lower()
-        row = progress.setdefault(lang, {"cloze_completed": 0, "composition_completed": 0})
-        key = "cloze_completed" if quiz_type == "cloze" else "composition_completed"
+        row = progress.setdefault(lang, {"cloze_completed": 0, "scramble_completed": 0, "composition_completed": 0})
+        key = "scramble_completed" if quiz_type == "scramble" else "composition_completed"
         row[key] = int(count)
     return progress
 
@@ -4793,7 +4825,7 @@ async def list_quiz_history(
     filters = [
         Quiz.user_id == user_id,
         Quiz.is_solved.is_(True),
-        Quiz.quiz_type.in_(("cloze", "composition")),
+        Quiz.quiz_type.in_(("scramble", "composition")),
     ]
     if quiz_type is not None:
         filters.append(Quiz.quiz_type == quiz_type)
@@ -5109,7 +5141,7 @@ async def reset_quiz_queue(session: AsyncSession, user_id: uuid.UUID) -> int:
         select(Quiz.id).where(
             Quiz.user_id == user_id,
             Quiz.queue_kind != "archived",
-            Quiz.quiz_type.in_(("cloze", "composition")),
+            Quiz.quiz_type.in_(("scramble", "composition")),
         )
     )
     ids = list(result.scalars().all())

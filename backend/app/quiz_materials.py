@@ -19,7 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from . import crud
 from .db import async_session_factory
 from .models import Node, Quiz, QuizLearningMaterial, QuizSourceExploration, User
-from .quiz_bundle import BundleSeedError, generate_quiz_bundle, materialize_expression_clozes
+from .quiz_bundle import (
+    BundleSeedError,
+    CLOZE_GENERATOR_VERSION,
+    _scramble_payload,
+    generate_quiz_bundle,
+    materialize_expression_clozes,
+)
 from .quiz_policies import (
     GENERATION_POLICY_VERSION,
     generation_reason,
@@ -27,6 +33,8 @@ from .quiz_policies import (
 )
 
 logger = logging.getLogger(__name__)
+
+MATERIAL_CONTRACT_VERSION = CLOZE_GENERATOR_VERSION
 
 # Graph refreshes can overlap while the first background response is running.
 # Keep legacy adoption single-flight per process to avoid duplicate model work.
@@ -86,7 +94,7 @@ async def _supersede_material(
             select(Quiz).where(
                 Quiz.user_id == user.id,
                 Quiz.language == language,
-                Quiz.quiz_type.in_(("cloze", "composition")),
+                Quiz.quiz_type.in_(("scramble", "composition")),
                 Quiz.queue_kind != "archived",
                 Quiz.source_nodes.any(node_id),
             )
@@ -282,7 +290,7 @@ async def reset_node_materials(
                 select(Quiz).where(
                     Quiz.user_id == user.id,
                     Quiz.language == language,
-                    Quiz.quiz_type.in_(("cloze", "composition")),
+                    Quiz.quiz_type.in_(("scramble", "composition")),
                     Quiz.queue_kind != "archived",
                     Quiz.source_nodes.any(node_id),
                 )
@@ -328,7 +336,7 @@ async def get_or_mark_material(
         )
         session.add(row)
         await session.flush()
-    elif row.source_hash != fingerprint:
+    elif row.source_hash != fingerprint or (row.result or {}).get("material_contract_version") != MATERIAL_CONTRACT_VERSION:
         await _supersede_material(
             session,
             user,
@@ -357,7 +365,12 @@ async def ensure_learning_material(
         session, user, node_id=node_id, language=language, priority=priority
     )
     if row.status == "ready" and not force:
-        return row, [], row.result or {}
+        backfilled = await ensure_scramble_inventory_for_node(
+            session, user, node_id=node_id, language=language
+        )
+        if backfilled:
+            await session.commit()
+        return row, backfilled, row.result or {}
     row.status = "analyzing"
     row.error = None
     await session.commit()
@@ -371,11 +384,12 @@ async def ensure_learning_material(
             materialize_cloze=False,
         )
         composition = [quiz for quiz in created if quiz.quiz_type == "composition"]
+        scrambles = [quiz for quiz in created if quiz.quiz_type == "scramble"]
         # The analysis pass needs composition references to judge expressions,
         # but those cards are not automatically part of the learner's active
         # queue.  Keep them as cheap text inventory until refill or an explicit
         # node study action promotes them.  No TTS is generated on this path.
-        for quiz in composition:
+        for quiz in composition + scrambles:
             quiz.queue_kind = "inventory"
         expression_count = next(
             (
@@ -405,7 +419,11 @@ async def ensure_learning_material(
         row.status = "ready"
         row.composition_count = len(composition)
         row.expression_count = expression_count
-        row.result = {"trace": trace, "ready_at": datetime.now(UTC).isoformat()}
+        row.result = {
+            "trace": trace,
+            "ready_at": datetime.now(UTC).isoformat(),
+            "material_contract_version": MATERIAL_CONTRACT_VERSION,
+        }
         row.error = None
         await record_policy_decision(
             session,
@@ -418,7 +436,7 @@ async def ensure_learning_material(
             details={"node_id": str(node_id), "language": language, "composition_count": len(composition), "expression_count": expression_count},
         )
         await session.commit()
-        return row, composition, trace
+        return row, created, trace
     except Exception as exc:
         await session.rollback()
         row = await session.get(QuizLearningMaterial, row.id)
@@ -429,6 +447,112 @@ async def ensure_learning_material(
         raise
 
 
+async def ensure_scramble_inventory_for_node(
+    session: AsyncSession,
+    user: User,
+    *,
+    node_id: uuid.UUID,
+    language: str,
+) -> list[Quiz]:
+    """Backfill deterministic scramble cards for existing composition units.
+
+    Older material rows may already be ready with composition inventory only.
+    Scramble is derived from the frozen first model answer, so this repair does
+    not need another LLM call and keeps the same learning_unit_id pair contract.
+    """
+    language = (language or "english").lower()
+    compositions = (
+        await session.scalars(
+            select(Quiz)
+            .where(
+                Quiz.user_id == user.id,
+                Quiz.language == language,
+                Quiz.quiz_type == "composition",
+                Quiz.queue_kind != "archived",
+                Quiz.source_nodes.any(node_id),
+            )
+            .order_by(Quiz.created_at, Quiz.id)
+        )
+    ).all()
+    created: list[Quiz] = []
+    for composition in compositions:
+        data = composition.quiz_data or {}
+        unit_id = str(
+            data.get("learning_unit_id")
+            or (data.get("_source") or {}).get("segment_id")
+            or ""
+        ).strip()
+        if not unit_id:
+            continue
+        existing = await session.scalar(
+            select(Quiz).where(
+                Quiz.user_id == user.id,
+                Quiz.language == language,
+                Quiz.quiz_type == "scramble",
+                Quiz.queue_kind != "archived",
+                Quiz.source_nodes.any(node_id),
+                Quiz.quiz_data["learning_unit_id"].astext == unit_id,
+            )
+        )
+        if existing is not None:
+            continue
+        model_answers = data.get("model_answers") or []
+        reference = ""
+        if model_answers and isinstance(model_answers[0], dict):
+            reference = str(model_answers[0].get("text") or "").strip()
+        if not reference:
+            reference = str(composition.sentence_target or "").strip()
+        scramble_data, reason = _scramble_payload(
+            reference, seed=f"{unit_id}:{language}", language=language
+        )
+        if scramble_data is None:
+            logger.info("scramble_ineligible segment=%s reason=%s", unit_id, reason)
+            continue
+        scramble_data.update(
+            {
+                "language": language,
+                "_source": dict(data.get("_source") or {}),
+                "learning_unit_id": unit_id,
+            }
+        )
+        generation_identity = (
+            f"{user.id}|{language}|{node_id}|scramble|composition:{unit_id.rsplit(':', 1)[-1]}"
+        )
+        generation_key = hashlib.sha256(generation_identity.encode()).hexdigest()
+        if await session.scalar(
+            select(Quiz.id).where(
+                Quiz.user_id == user.id,
+                Quiz.generation_key == generation_key,
+            )
+        ):
+            generation_key = hashlib.sha256(
+                f"{generation_identity}|backfill|{composition.id}".encode()
+            ).hexdigest()
+        quiz = Quiz(
+            user_id=user.id,
+            associated_entry_id=composition.associated_entry_id,
+            quiz_type="scramble",
+            language=language,
+            source_nodes=composition.source_nodes,
+            generation_key=generation_key,
+            question_native=composition.question_native,
+            sentence_target=reference,
+            quiz_data=scramble_data,
+            difficulty_level=composition.difficulty_level,
+            queue_kind=composition.queue_kind,
+            pipeline_trace=composition.pipeline_trace,
+            debug_run_dir=composition.debug_run_dir,
+            track=composition.track,
+            batch_id=composition.batch_id,
+            source_kind=composition.source_kind,
+        )
+        session.add(quiz)
+        created.append(quiz)
+    if created:
+        await session.flush()
+    return created
+
+
 async def activate_node_compositions(
     session: AsyncSession,
     user: User,
@@ -437,9 +561,12 @@ async def activate_node_compositions(
     language: str,
     limit: int = 1,
 ) -> list[Quiz]:
-    """Promote analysed composition inventory into the learner's new queue."""
+    """Promote fixed scramble → composition pairs for a statement."""
     if limit <= 0:
         return []
+    await ensure_scramble_inventory_for_node(
+        session, user, node_id=node_id, language=language
+    )
     quizzes = (
         await session.scalars(
             select(Quiz)
@@ -454,11 +581,28 @@ async def activate_node_compositions(
             .limit(limit)
         )
     ).all()
+    activated: list[Quiz] = []
     for quiz in quizzes:
+        unit_id = str((quiz.quiz_data or {}).get("learning_unit_id") or "")
+        if unit_id:
+            scramble = await session.scalar(
+                select(Quiz).where(
+                    Quiz.user_id == user.id,
+                    Quiz.language == language.lower(),
+                    Quiz.quiz_type == "scramble",
+                    Quiz.queue_kind == "inventory",
+                    Quiz.source_nodes.any(node_id),
+                    Quiz.quiz_data["learning_unit_id"].astext == unit_id,
+                )
+            )
+            if scramble is not None:
+                scramble.queue_kind = "new"
+                activated.append(scramble)
         quiz.queue_kind = "new"
+        activated.append(quiz)
     if quizzes:
         await session.flush()
-    return quizzes
+    return activated
 
 
 async def materialize_node_expressions(
@@ -517,7 +661,7 @@ async def generate_complete_learning_set(
     operation that finishes composition creation, expression extraction and
     expression-based cloze creation.
     """
-    row, _, trace = await ensure_learning_material(
+    row, created, trace = await ensure_learning_material(
         session,
         user,
         node_id=node_id,
@@ -525,25 +669,19 @@ async def generate_complete_learning_set(
         priority=priority,
         force=force_analysis,
     )
-    composition = await activate_node_compositions(
+    activated = await activate_node_compositions(
         session,
         user,
         node_id=node_id,
         language=language,
-        limit=1,
+        # A Statement's reviewed study units are independent writing tasks.
+        # Materialise all of them with the node instead of letting a later
+        # random queue refill decide which unit becomes visible.
+        limit=8,
     )
-    clozes, cloze_trace = await materialize_node_expressions(
-        session,
-        user,
-        node_id=node_id,
-        language=language,
-        limit=limit,
-        direct_node=direct_node,
-        queue_missing=limit,
-    )
-    return row, composition + clozes, {
+    return row, activated, {
         "analysis": trace,
-        "materialization": cloze_trace,
+        "created_count": len(created),
     }
 
 
@@ -575,13 +713,11 @@ async def analyse_nodes_and_refill_background(
     *,
     priority: int = 0,
 ) -> None:
-    """Analyse confirmed Statements once, then top up the shared quiz queue.
+    """Generate each newly confirmed Statement's own learning set immediately.
 
-    Analysis and card inventory are deliberately separate.  A journal may add
-    many Statements at once; extracting every useful expression is cheap future
-    curriculum work, while materialising every expression immediately would
-    create a large queue the learner may never open.  One refill after the whole
-    group also avoids each Statement starting a competing background refill.
+    The Statement is the source-of-truth unit.  Its composition cards and its
+    validated expression clozes are prepared together, so a later random queue
+    refill never decides which source sentence receives analysis.
     """
     unique_nodes = list(dict.fromkeys(node_ids))
     unique_languages = list(
@@ -594,13 +730,16 @@ async def analyse_nodes_and_refill_background(
         for node_id in unique_nodes:
             for language in unique_languages:
                 try:
-                    await ensure_learning_material(
+                    await generate_complete_learning_set(
                         session,
                         user,
                         node_id=node_id,
                         language=language,
                         priority=priority,
+                        direct_node=True,
+                        limit=8,
                     )
+                    await session.commit()
                 except Exception:
                     logger.exception(
                         "learning material analysis failed user=%s node=%s lang=%s",
@@ -608,14 +747,6 @@ async def analyse_nodes_and_refill_background(
                         node_id,
                         language,
                     )
-
-    # The refill worker owns its own session and an in-flight guard. Running it
-    # after analysis means it can choose across all newly discovered expressions
-    # instead of over-producing from whichever Statement happened to finish first.
-    from .workers.quiz_refill import refill_user_quizzes
-
-    await refill_user_quizzes(user_id)
-
 
 async def backfill_missing_learning_materials_background(
     user_id: uuid.UUID,

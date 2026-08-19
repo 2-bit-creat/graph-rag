@@ -678,7 +678,7 @@ class QuizGenerateOut(BaseModel):
 
 
 class QuizSessionRequest(BaseModel):
-    quiz_type: Literal["cloze", "composition", "word"]
+    quiz_type: Literal["scramble", "composition", "word", "cloze"]
     size: int = 10
     entry_id: uuid.UUID | None = None
     quiz_ids: list[uuid.UUID] | None = None
@@ -695,7 +695,7 @@ class QuizSessionOut(BaseModel):
 
 class QuizSubmitRequest(BaseModel):
     answer: str | None = None
-    order: list[int] | None = None
+    order: list[str] | None = None
     selected_index: int | None = None
     # Flashcard deck: the learner grades themselves after flipping the card, so
     # there is no typed answer to compare. Set, this short-circuits both
@@ -718,13 +718,26 @@ class QuizSubmitResponse(BaseModel):
     xp_awarded: int = 0
 
 
+class ScrambleHintRequest(BaseModel):
+    """Ask for the first ``hint_level`` chunks of the reference order."""
+
+    hint_level: int = 1
+
+
+class ScrambleHintOut(BaseModel):
+    hint_level: int
+    ordered_prefix: list[str]
+    max_hint_level: int
+
+
 class QueueCounts(BaseModel):
     new: int = 0
     review: int = 0
 
 
 class DailyLanguageProgressOut(BaseModel):
-    cloze_completed: int = 0
+    cloze_completed: int = 0  # legacy archived-history compatibility
+    scramble_completed: int = 0
     composition_completed: int = 0
 
 
@@ -740,6 +753,7 @@ class LearningProfileOut(BaseModel):
     native_language: str = "korean"
     language_levels: dict[str, int] = {}
     daily_cloze_target: int = 20
+    daily_scramble_target: int = 20
     daily_composition_target: int = 5
     quiz_review_ratio: float = 0.5
     auto_generate_quizzes: bool = True
@@ -971,6 +985,7 @@ class ProfileSettingsUpdateRequest(BaseModel):
     native_language: str | None = None
     language_levels: dict[str, int] | None = None
     daily_cloze_target: int | None = Field(default=None, ge=0, le=100)
+    daily_scramble_target: int | None = Field(default=None, ge=0, le=100)
     daily_composition_target: int | None = Field(default=None, ge=0, le=100)
     quiz_review_ratio: float | None = Field(default=None, ge=0, le=1)
     auto_generate_quizzes: bool | None = None
@@ -986,6 +1001,7 @@ class ProfileSettingsUpdateRequest(BaseModel):
             for v in [self.level, self.is_freedom_on, self.target_language,
                        self.target_languages, self.native_language,
                        self.language_levels, self.daily_cloze_target,
+                       self.daily_scramble_target,
                        self.daily_composition_target, self.quiz_review_ratio,
                        self.auto_generate_quizzes, self.timezone]
         ):
