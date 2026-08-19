@@ -933,6 +933,49 @@ class QuizGenerationTraceOut(BaseModel):
     debug_dir: str | None = None
 
 
+class QuizMaterialAttemptOut(BaseModel):
+    """One node×language analysis attempt — including ones that produced zero
+    cards. Complements QuizGenerationListOut, which only lists cards that
+    actually got created and so has nothing to show for a rejected attempt."""
+
+    id: uuid.UUID
+    node_id: uuid.UUID
+    node_name: str
+    language: str
+    status: str
+    composition_count: int
+    expression_count: int
+    error: str | None = None
+    updated_at: datetime
+
+
+class QuizMaterialAttemptListOut(BaseModel):
+    items: list[QuizMaterialAttemptOut]
+    total: int
+
+
+class QuizHistoryEventOut(BaseModel):
+    """One row in the unified, chronological quiz generation history: a card
+    that was created, and a node analysis that rejected every candidate, are
+    the same kind of event to a developer scanning "what happened" — so they
+    render as one interleaved, time-ordered list instead of two separate ones
+    (mirrors how the KG debug tab's run list mixes every run kind together)."""
+
+    kind: Literal["quiz", "material"]
+    id: uuid.UUID
+    timestamp: datetime
+    ok: bool
+    title: str
+    subtitle: str
+    quiz_type: str | None = None
+    language: str | None = None
+
+
+class QuizHistoryListOut(BaseModel):
+    items: list[QuizHistoryEventOut]
+    total: int
+
+
 class QuizGenerationRunCreateRequest(BaseModel):
     node_ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
     languages: list[str] = Field(min_length=1, max_length=20)

@@ -6,9 +6,8 @@ import '../theme/app_theme.dart';
 import '../theme/app_theme_controller.dart';
 import '../widgets/app_ui.dart';
 import 'accounts_overview_screen.dart';
-import 'pipeline_debug_hub_screen.dart';
+import 'debug_hub_screen.dart';
 import 'quiz_queue_screen.dart';
-import 'kg_debug_screen.dart';
 import 'learning_progress_screen.dart';
 import 'settings_screen.dart';
 import 'tutor_vocab_screen.dart';
@@ -207,24 +206,11 @@ class _MenuScreenState extends State<MenuScreen> {
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 AppHubTile(
-                  icon: Icons.account_tree_outlined,
-                  title: tr('menu.pipeline'),
-                  subtitle: tr('menu.pipelineSubtitle'),
-                  color: AppColors.hubVoice,
-                  onTap: () => _open(const PipelineDebugHubScreen()),
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                AppHubTile(
                   icon: Icons.bug_report_outlined,
-                  title: tr('menu.kgDebug'),
-                  subtitle: tr('menu.kgDebugSubtitle'),
+                  title: tr('menu.debugHub'),
+                  subtitle: tr('menu.debugHubSubtitle'),
                   color: AppColors.hubVoice,
-                  onTap: () => _open(
-                    Scaffold(
-                      appBar: AppBar(title: Text(tr('menu.kgDebugScreenTitle'))),
-                      body: const KgDebugScreen(),
-                    ),
-                  ),
+                  onTap: () => _open(const DebugHubScreen()),
                 ),
                 // 계정 관리는 다른 사람의 공간까지 열거·삭제하므로 운영 계정
                 // 중에서도 예약 핸들 'main'에만 보인다. 서버도 같은 규칙을

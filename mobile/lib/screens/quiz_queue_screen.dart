@@ -5,9 +5,9 @@ import '../api/client.dart';
 import '../l10n/languages.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
+import 'debug_hub_screen.dart';
 import 'quiz_admin_detail_screen.dart';
 import 'quiz_exploration_screen.dart';
-import 'quiz_pipeline_hub_screen.dart';
 
 class QuizQueueScreen extends StatefulWidget {
   const QuizQueueScreen({super.key});
@@ -379,7 +379,9 @@ class _QuizQueueScreenState extends State<QuizQueueScreen> {
             tooltip: '생성 이력과 trace',
             onPressed: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const QuizPipelineHubScreen()),
+              MaterialPageRoute(
+                builder: (_) => const DebugHubScreen(initialTab: DebugHubTab.quiz),
+              ),
             ),
             icon: const Icon(Icons.history_rounded),
           ),

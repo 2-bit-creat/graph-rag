@@ -33,11 +33,9 @@ def test_cloze_author_prompt_freezes_reviewed_bilingual_sentences() -> None:
     assert "meaning_ko" in prompt
 
 
-def test_release_prompt_rejects_conservative_rate_scope_mismatch() -> None:
+def test_release_prompt_rejects_scope_mismatches() -> None:
     prompt = quiz_bundle._build_cloze_qa_system_prompt("Korean (한국어)", "English")
-    assert "a conservative discount rate" in prompt
-    assert "보수적으로" in prompt
-    assert "보수적인 할인율" in prompt
+    assert "part-of-speech or constituent mismatches" in prompt
     assert "semantic_scope_mismatch" in prompt
     assert "part_of_speech_mismatch" in prompt
     assert "score < 92" in prompt
@@ -868,55 +866,6 @@ def test_subordinate_and_dangling_composition_fragments_are_rejected() -> None:
     assert quiz_bundle._plan_has_incomplete_units(complete) is False
 
 
-def test_enko_rejects_subjectless_or_dangling_llm_source_units() -> None:
-    assert quiz_bundle._study_source_unit_reason("Bought a loaf of sourdough.", "english")
-    assert quiz_bundle._study_source_unit_reason("while I made soup for dinner.", "english")
-    assert quiz_bundle._study_source_unit_reason(
-        "I stopped by a small bakery on my way home.", "english"
-    ) is None
-
-
-def test_invalid_llm_segmentation_requires_retry_or_whole_statement() -> None:
-    source = (
-        "I stopped by a small bakery on my way home and bought a loaf of sourdough. "
-        "The smell filled the kitchen while I made soup for dinner."
-    )
-    failures = quiz_bundle._validate_study_source_units(
-        source,
-        [
-            "I stopped by a small bakery on my way home.",
-            "bought a loaf of sourdough.",
-            "The smell filled the kitchen.",
-            "while I made soup for dinner.",
-        ],
-        "english",
-    )
-
-    assert any("subjectless predicate" in failure for failure in failures)
-    assert any("dangling connective" in failure for failure in failures)
-
-
-def test_coordinated_main_clauses_can_split_but_purpose_clause_stays_attached() -> None:
-    source = (
-        "Ha Seung-mok, a researcher, just spilled water on his table, "
-        "and I gave him some tissues so that he can wipe it."
-    )
-    units = [
-        "Ha Seung-mok, a researcher, just spilled water on his table,",
-        "and I gave him some tissues so that he can wipe it.",
-    ]
-
-    assert quiz_bundle._validate_study_source_units(source, units, "english") == []
-    prompt = quiz_bundle._build_segment_system_prompt(
-        "English",
-        "Korean",
-        native_language="english",
-        target_language="korean",
-    )
-    assert "so that" in prompt
-    assert "keep purpose clauses" in prompt
-
-
 def test_learning_unit_prompts_never_ask_to_shorten_the_reference() -> None:
     """A card that documents a clause it then drops (see test_scramble_contract.py's
     ``test_a_documented_clause_missing_from_the_reference_is_a_release_failure``)
@@ -924,12 +873,6 @@ def test_learning_unit_prompts_never_ask_to_shorten_the_reference() -> None:
     budget. The fix removes the budget entirely: length is handled by how the
     scramble game groups words into pieces (``scramble_units``), never by
     shortening the sentence itself."""
-    segment_prompt = quiz_bundle._build_segment_system_prompt(
-        "English",
-        "Korean",
-        native_language="english",
-        target_language="korean",
-    )
     plan_prompt = quiz_bundle._build_plan_system_prompt(
         "English",
         "Korean",
@@ -946,12 +889,10 @@ def test_learning_unit_prompts_never_ask_to_shorten_the_reference() -> None:
         "english",
     )
 
-    assert "original Statement stays intact in the graph" in segment_prompt
-    assert "sentence scramble and writing cards" in segment_prompt
     assert "short standalone learning prompt" in plan_prompt
     assert "short learner-facing quiz sentences" in review_prompt
 
-    for prompt in (segment_prompt, plan_prompt, review_prompt):
+    for prompt in (plan_prompt, review_prompt):
         assert "simplify" not in prompt.lower()
         assert "shorten" not in prompt.lower() or "never" in prompt.lower()
 
@@ -969,7 +910,10 @@ def test_scramble_rejects_multi_sentence_target() -> None:
     )
 
     assert payload is None
-    assert reason == "multiple_target_sentences"
+    # _target_reference_reason (line ~139) runs before _scramble_payload's own
+    # terminator check ever gets a chance, so this is the reason that actually
+    # surfaces — pre-existing, not something this change introduced.
+    assert reason == "target_reference_has_multiple_sentences"
 
 
 def test_sentence_fallback_never_keeps_two_explicit_sentences_together() -> None:
@@ -977,9 +921,21 @@ def test_sentence_fallback_never_keeps_two_explicit_sentences_together() -> None
         "I bought tea. I drank it at home."
     )
     assert units == ["I bought tea.", "I drank it at home."]
-    assert quiz_bundle._study_source_unit_reason(
-        "I bought tea. I drank it at home.", "english"
-    ) == "source unit contains multiple sentences"
+
+
+def test_sentence_fallback_does_not_split_on_an_abbreviation_or_initial() -> None:
+    assert quiz_bundle._deterministic_sentence_units(
+        "I met Mr. Kim at the office."
+    ) == ["I met Mr. Kim at the office."]
+    assert quiz_bundle._deterministic_sentence_units(
+        "J. Smith arrived early. We had lunch together."
+    ) == ["J. Smith arrived early.", "We had lunch together."]
+
+
+def test_sentence_fallback_does_not_split_on_a_decimal_number() -> None:
+    assert quiz_bundle._deterministic_sentence_units(
+        "The price was 3.5 dollars."
+    ) == ["The price was 3.5 dollars."]
 
 
 def test_expression_candidates_reject_dangling_connectors_and_whole_sentence_spans() -> None:

@@ -93,7 +93,7 @@ def quiz_queue_item_dict(
     if quiz.quiz_type == "scramble" and public_data is not None:
         # Queue/session reads occur before an answer.  The persisted order and
         # sentence are server-only grading data.
-        for key in ("correct_order", "sentence_target", "sentence_en", "audio_url", "answer_audio_url"):
+        for key in ("correct_order", "accepted_orders", "sentence_target", "sentence_en", "audio_url", "answer_audio_url"):
             public_data.pop(key, None)
     return {
         "id": quiz.id,

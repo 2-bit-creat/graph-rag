@@ -37,7 +37,7 @@ import 'package:graphrag_mobile/chat/chat_sidebar.dart';
 import 'package:graphrag_mobile/l10n/app_strings.dart';
 import 'package:graphrag_mobile/screens/account_entry_screen.dart';
 import 'package:graphrag_mobile/screens/consent_screen.dart';
-import 'package:graphrag_mobile/screens/pipeline_debug_hub_screen.dart';
+import 'package:graphrag_mobile/screens/debug_hub_screen.dart';
 import 'package:graphrag_mobile/screens/graph_review_screen.dart';
 import 'package:graphrag_mobile/screens/quiz_deck_screen.dart';
 import 'package:graphrag_mobile/screens/quiz_exploration_screen.dart';
@@ -299,8 +299,8 @@ void main() {
       await shot(t, 'quiz_pipeline_hub', const QuizPipelineHubScreen());
     }, skip: _skipUnlessFont);
 
-    testWidgets('pipeline debug hub', (t) async {
-      await shot(t, 'pipeline_debug_hub', const PipelineDebugHubScreen());
+    testWidgets('debug hub', (t) async {
+      await shot(t, 'debug_hub', const DebugHubScreen());
     }, skip: _skipUnlessFont);
 
     testWidgets('chat sidebar', (t) async {

@@ -119,6 +119,7 @@ def _scramble_payload(
     seed: str,
     language: str = "english",
     scramble_units: list[str] | None = None,
+    alternate_orders: list[list[int]] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Build a server-graded, language-neutral word-order payload.
 
@@ -143,6 +144,12 @@ def _scramble_payload(
         return None, "multiple_target_sentences"
 
     tokens = [unit.strip() for unit in (scramble_units or []) if isinstance(unit, str) and unit.strip()]
+    # alternate_orders is an index permutation of the author's own
+    # scramble_units — only meaningful while tokens is exactly that list.
+    # Once it falls back to word-splitting or gets merged down to the chunk
+    # cap, positions no longer line up with what the author indexed, so
+    # alternates are only ever honored on this clean, untouched path.
+    clean_units = bool(tokens)
     reconstruction_reason = _scramble_word_content_reason(sentence, tokens) if tokens else "empty_or_missing"
     if reconstruction_reason:
         # No usable author-supplied grouping: fall back to the original
@@ -155,6 +162,7 @@ def _scramble_payload(
             "scramble_units_fallback seed=%s reason=%s", seed, reconstruction_reason
         )
         tokens = [token for token in re.split(r"\s+", sentence) if token]
+        clean_units = False
         if not _SCRAMBLE_MIN_CHUNKS <= len(tokens) <= _SCRAMBLE_MAX_CHUNKS:
             return None, f"token_count:{len(tokens)}"
     elif len(tokens) > _SCRAMBLE_MAX_CHUNKS:
@@ -164,6 +172,7 @@ def _scramble_payload(
             "scramble_units_merged_down seed=%s from=%d to=%d", seed, len(tokens), _SCRAMBLE_MAX_CHUNKS
         )
         tokens = _merge_scramble_units_to_cap(tokens, _SCRAMBLE_MAX_CHUNKS)
+        clean_units = False
 
     # Stable opaque IDs make repeated surface tokens distinguishable and keep
     # the expected order out of the learner-facing representation.
@@ -174,9 +183,30 @@ def _scramble_payload(
     rng.shuffle(shuffled)
     if [piece["id"] for piece in shuffled] == [piece["id"] for piece in ordered]:
         shuffled = shuffled[1:] + shuffled[:1]
+    correct_order = [piece["id"] for piece in ordered]
+
+    accepted_orders = [correct_order]
+    if clean_units and alternate_orders:
+        valid_index_set = set(range(len(ordered)))
+        seen = {tuple(correct_order)}
+        for candidate in alternate_orders[:2]:
+            if (
+                not isinstance(candidate, list)
+                or len(candidate) != len(ordered)
+                or set(candidate) != valid_index_set
+            ):
+                logger.info("scramble_alternate_order_rejected seed=%s candidate=%s", seed, candidate)
+                continue
+            mapped = tuple(ordered[i]["id"] for i in candidate)
+            if mapped in seen:
+                continue
+            seen.add(mapped)
+            accepted_orders.append(list(mapped))
+
     return {
         "chunks": shuffled,
-        "correct_order": [piece["id"] for piece in ordered],
+        "correct_order": correct_order,
+        "accepted_orders": accepted_orders,
         "sentence_target": sentence_target,
     }, None
 
@@ -256,8 +286,6 @@ async def _pick_seed(
     return random.choice(usable)
 
 
-_LEARNING_TARGET_MIN_TOKENS = 3
-_SHORT_STATEMENT_COMPACT_CHARS = 32
 # Scramble is a drag-and-drop game, not a reading exercise: what bounds it is
 # how many pieces a learner can usefully reorder, not how many words the
 # sentence has. So the count that matters is chunks, not whitespace tokens —
@@ -275,7 +303,7 @@ _BUNDLE_SCHEMA_HINT = """{
     "grammar_focus": ["<one useful target-language grammar focus>"],
     "translation_notes": [{"source": "<native term or construction with multiple natural target realizations>", "target": "<exact realization chosen in the reference>", "note": "<short native-language explanation of this contextual translation choice>"}],
     "context_entities": [{"native": "<proper name in source>", "target_forms": ["<target-language spellings used in references>"]}],
-    "reference_answers": [{"text": "<complete natural TARGET-language sentence for the unit, any length — never shortened to fit a word count>", "register": "casual|neutral|formal", "note": "<native-language note>", "scramble_units": ["<contiguous word-order piece 1>", "<piece 2, merged phrase where splitting would be ungrammatical>", "..."]}],
+    "reference_answers": [{"text": "<complete natural TARGET-language sentence for the unit, any length — never shortened to fit a word count>", "register": "casual|neutral|formal", "note": "<native-language note>", "scramble_units": ["<contiguous word-order piece 1>", "<piece 2, merged phrase where splitting would be ungrammatical>", "..."], "alternate_orders": ["<0-based index ordering also natural, e.g. [0,2,1,3]>", "..."]}],
     "expressions": [{
       "canonical_form": "<dictionary/wordbook form, including important modifiers>",
       "surface_form": "<how it is realized in the reference answer; may be inflected>",
@@ -288,33 +316,6 @@ _BUNDLE_SCHEMA_HINT = """{
     }]
   }]
 }"""
-
-# Segmentation deliberately has a smaller contract than planning.  Keeping it
-# free of translation and vocabulary decisions makes it safe to run before the
-# per-unit author calls, and gives us an independently traceable failure point.
-_SEGMENT_RESPONSE_FORMAT = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "statement_study_segmentation",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["segments"],
-            "properties": {
-                "segments": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["source_text"],
-                        "properties": {"source_text": {"type": "string"}},
-                    },
-                },
-            },
-        },
-    },
-}
 
 _CLOZE_SCHEMA_HINT = """{
   "cloze": [{
@@ -388,7 +389,7 @@ _PLAN_RESPONSE_FORMAT = {
                                 "items": {
                                     "type": "object",
                                     "additionalProperties": False,
-                                    "required": ["text", "register", "note", "scramble_units"],
+                                    "required": ["text", "register", "note", "scramble_units", "alternate_orders"],
                                     "properties": {
                                         "text": {"type": "string"},
                                         "register": {
@@ -399,6 +400,13 @@ _PLAN_RESPONSE_FORMAT = {
                                         "scramble_units": {
                                             "type": "array",
                                             "items": {"type": "string"},
+                                        },
+                                        "alternate_orders": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "array",
+                                                "items": {"type": "integer"},
+                                            },
                                         },
                                     },
                                 },
@@ -583,10 +591,9 @@ def _build_cloze_qa_system_prompt(
         "A sibling expression may remain outside the blank when it is part of the faithful short source sentence; that is context, not "
         "sibling_expression_leak. "
         "The native answer gloss must translate the WHOLE surface_answer with the same semantic scope and grammatical role, not merely "
-        "one convenient word. Explicitly reject part-of-speech or constituent mismatches (for example, English noun phrase "
-        "'a conservative discount rate' cannot be glossed only as Korean adverb '보수적으로'; the span must express the rate itself, such "
-        "as '보수적인 할인율'). Distinguish lexical senses and domain collocations: in finance, 'use/apply a conservative discount rate' "
-        "means using/applying a prudently chosen rate; do not approve a mechanically rearranged translation that changes what is modified. "
+        "one convenient word. Explicitly reject part-of-speech or constituent mismatches, such as a target-language noun phrase glossed "
+        "only as an adverb. Distinguish lexical senses and domain collocations; do not approve a mechanically rearranged translation that "
+        "changes what is modified. "
         "Both target and native sentences must sound publishable to an educated native speaker, not merely grammatical or understandable. "
         "Do not rewrite cards. Return terse machine-readable issue codes such as unnatural_collocation, sibling_expression_leak, "
         "translation_omission, translation_addition, semantic_scope_mismatch, part_of_speech_mismatch, wrong_sense, ambiguous_answer, "
@@ -1068,48 +1075,26 @@ def _plan_has_incomplete_units(
     return False
 
 
-_ENGLISH_SUBJECTLESS_PREDICATE_RE = re.compile(
-    r"^(?:[A-Za-z]+(?:ed|ing)|bought|went|made|saw|did|had|wrote|spoke|took|found|felt|came|got)\b",
-    re.IGNORECASE,
-)
 from .quiz_types import ENABLED_QUIZ_TYPES
-_KOREAN_DANGLING_SOURCE_RE = re.compile(r"(?:지만|는데|면서|하며|고서|때문에|바람에|아서|어서|와서|해서|했고|고)[.!?]?$" )
 
 
-def _study_source_unit_reason(source_text: str, native_language: str) -> str | None:
-    """Reject a split source fragment before it reaches its own LLM call.
-
-    This is deliberately a small structural check, not semantic translation
-    judgement.  In English diary prose a unit such as ``Bought a loaf.`` has
-    lost its subject and cannot be a standalone composition prompt; a leading
-    ``while`` fragment has lost its governing predicate.  Rejecting either
-    makes the caller fall back to the stable sentence splitter instead of
-    paying for four low-quality per-unit calls.
-    """
-    text = (source_text or "").strip()
-    if not text:
-        return "empty source unit"
-    if len(_SENTENCE_TERMINATOR_RE.findall(text)) > 1:
-        return "source unit contains multiple sentences"
-    if native_language == "korean":
-        if _KOREAN_DANGLING_SOURCE_RE.search(text):
-            return "korean source unit ends with a dangling connective"
-        return None
-    leading_coord = re.match(r"^(and|but|so)\s+(.+)$", text, re.IGNORECASE)
-    if leading_coord:
-        remainder = leading_coord.group(2).strip()
-        if re.match(r"^(?:I|we|you|he|she|they|it|[A-Z][A-Za-z'-]+)\b", remainder):
-            return None
-        return "english source unit starts with a dangling connective"
-    if re.match(r"^(?:while|after|before|because)\b", text, re.IGNORECASE):
-        return "english source unit starts with a dangling connective"
-    if _ENGLISH_SUBJECTLESS_PREDICATE_RE.match(text):
-        return "english source unit starts with a subjectless predicate"
-    return None
+_ABBREVIATIONS = {
+    "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "approx", "no", "a.m", "p.m",
+}
 
 
 def _deterministic_sentence_units(statement: str) -> list[str]:
-    """Split only at explicit sentence terminators as a safe LLM fallback."""
+    """Split only at explicit sentence terminators — the sole source of
+    multiple study units now that nothing judges clause completeness anymore
+    (see generate_quiz_bundle). A period is trustworthy where a comma or
+    "and" boundary isn't: it can't leave a subjectless fragment on either
+    side, because a real sentence-ending period only ever follows a complete
+    sentence. The one thing that still needs a guard is a period that isn't
+    actually sentence-final — "Mr. Kim", a single initial ("J. Smith") — so
+    those are skipped rather than trusted blindly. A decimal like "3.5" never
+    matches at all: nothing follows its period but a digit, and a terminator
+    only counts when followed by whitespace or the end of the string.
+    """
     value = (statement or "").strip()
     if not value:
         return []
@@ -1117,6 +1102,11 @@ def _deterministic_sentence_units(statement: str) -> list[str]:
     cursor = 0
     for match in re.finditer(r"[.!?。？！](?=\s|$)", value):
         end = match.end()
+        if match.group() == ".":
+            preceding = re.search(r"([A-Za-z]+)\.$", value[:end])
+            word = preceding.group(1).lower() if preceding else ""
+            if len(word) == 1 or word in _ABBREVIATIONS:
+                continue
         unit = value[cursor:end].strip()
         if unit:
             units.append(unit)
@@ -1127,32 +1117,6 @@ def _deterministic_sentence_units(statement: str) -> list[str]:
     if tail:
         units.append(tail)
     return units if len(units) > 1 else [value]
-
-
-def _validate_study_source_units(
-    original_statement: str, proposed_units: list[str], native_language: str
-) -> list[str]:
-    """Return deterministic contract failures for one LLM segmentation attempt."""
-    if not proposed_units:
-        return ["no source units returned"]
-    cursor = 0
-    failures: list[str] = []
-    accepted: list[str] = []
-    for index, unit in enumerate(proposed_units):
-        start = original_statement.find(unit, cursor)
-        if start < 0:
-            failures.append(f"unit {index} is not an exact source substring in order")
-            continue
-        reason = _study_source_unit_reason(unit, native_language)
-        if reason:
-            failures.append(f"unit {index}: {reason}")
-        accepted.append(unit)
-        cursor = start + len(unit)
-    covered = "".join(re.findall(r"[A-Za-z0-9가-힣]", " ".join(accepted).casefold()))
-    original_compact = "".join(re.findall(r"[A-Za-z0-9가-힣]", original_statement.casefold()))
-    if covered != original_compact:
-        failures.append("units omit, duplicate, or alter source characters")
-    return failures
 
 
 def _normalize_german_frozen_expression(
@@ -1346,6 +1310,9 @@ def _build_plan_system_prompt(
         "genuinely be able to place that piece independently — never merge across a clause boundary they should reorder on their own. "
         f"A sentence with far more than {_SCRAMBLE_MAX_CHUNKS} words may still land a little over the target after natural grouping — that "
         "is fine, return your best grouping regardless; never shorten the sentence to make it fit. "
+        "Also return alternate_orders: 0-2 other 0-based index orderings of the same scramble_units that would also read as a natural, "
+        "correct sentence — for example when a time/place adverbial phrase and the topic-marked subject phrase can trade positions without "
+        "changing the meaning. Return [] when the order in reference_answers.text is the only natural one. "
         f"Native language: {native_label}. Learner level: {level}/100 (CEFR {band.cefr}). "
         f"Vocabulary scope: {band.vocabulary}. Grammar scope: {band.grammar}. Teaching focus: {guide} "
         f"Target-language quality rubric: {localized_quality_rules(language)} "
@@ -1366,38 +1333,6 @@ def _build_plan_system_prompt(
         "translation choice. "
         "Do not emit quiz questions at this stage. "
         f"Respond only with JSON of this exact shape: {_bundle_schema_hint(profile)}"
-    )
-
-
-def _build_segment_system_prompt(
-    native_label: str,
-    target_label: str,
-    *,
-    native_language: str,
-    target_language: str,
-) -> str:
-    """Shared, language-pair-aware contract for the pre-authoring split."""
-    profile = get_quiz_prompt_profile(native_language, target_language)
-    return (
-        f"[PAIR {profile.key} SEGMENT] You split one graph-level {native_label} Statement into short learner-facing "
-        f"study units before any {target_label} translation or vocabulary work. The original Statement stays intact in the graph; "
-        "these units are only for sentence scramble and writing cards. Return only exact, "
-        "contiguous substrings of source_statement in source order: never summarize, rewrite, "
-        "translate, duplicate, overlap, or omit text. Prefer one event or teachable proposition per unit, usually one short clause. "
-        f"Design boundaries around teachable propositions, not word count: a unit should usually run at least {_LEARNING_TARGET_MIN_TOKENS} words "
-        "so there is something to learn, but there is no upper length target — a long unit that stays one proposition is fine, since the later "
-        "reference is never shortened and the scramble game groups its own words into playable pieces regardless of sentence length. "
-        "A unit must retain its complete main predicate "
-        "and the arguments needed to resolve pronouns, negation, cause, contrast, and time. Merge a "
-        "dangling connector or pronoun-only continuation with its governing clause. A relative/detail clause may be its own unit only when "
-        "the later prompt_native can repair it into a standalone learning sentence without adding a new event. Split coordinated clauses, "
-        "chronological details, and appended meeting/reporting details when each side has its own clear subject and main verb, but keep "
-        "purpose clauses such as 'so that ...' with the action they explain. Never split off a clause whose only role is backstory or a "
-        "premise for another clause — 'We hadn't met for a long time' right before 'I met a friend and he bought me dinner' is not an "
-        "independent event, it explains why the meeting was notable; standing alone it gets rewritten as a flat, tense-losing negation that "
-        "directly contradicts the meeting the rest of the statement describes. Keep this kind of clause merged with the event it explains. "
-        "For Korean, never end a unit at a connective such as 아서/어서/와서/해서/고/지만; keep it with the governing predicate. Split only when independently teachable propositions remain. Do not "
-        "extract expressions or write target-language text in this call."
     )
 
 
@@ -1441,7 +1376,8 @@ def _build_plan_qa_system_prompt(
         f"{_SCRAMBLE_MAX_CHUNKS} pieces: an ordered list of contiguous word-order pieces, target {_SCRAMBLE_MAX_CHUNKS} or fewer, that "
         "reproduces text exactly when joined with single spaces. Group aggressively into natural phrase units (a particle-marked noun "
         "phrase, a verb with its ending, a modifier with its noun) rather than one piece per word; never merge across a clause boundary a "
-        "learner should reorder independently. "
+        "learner should reorder independently. Also correct alternate_orders for the same entry: 0-2 other 0-based index orderings of the "
+        "(possibly corrected) scramble_units that would also read as a natural, correct sentence. Return [] when only one order is natural. "
         "For every expression independently verify and correct all of these release invariants: useful dictionary canonical form; exact contiguous "
         "surface_form in the corrected reference; no possessive/name/context leakage; complete native meaning with identical scope, aspect, argument "
         "coverage and part of speech; sufficient recoverable context outside the future blank; and native-level idiom on both sides. Remove an expression "
@@ -1472,7 +1408,7 @@ def _build_cloze_system_prompt(
         "Never generate, shorten, translate, or rewrite either sentence. Copy the target answer from the frozen target sentence and write one complete "
         "natural native-language gloss for that whole answer. A sibling expression may remain as context outside the answer. Do not weaken or omit "
         "meaning-bearing modifiers such as closer/more, again, still, barely, might, must or not, and never add one absent from the source. "
-        "Korean '자세히' does not license English 'closer/more closely'; those require explicit '더 자세히'. canonical_form is a wordbook identity, "
+        "canonical_form is a wordbook identity, "
         "NOT a literal substring requirement. Choose surface_answer as a natural inflected form for this sentence, but inflection may "
         "change grammar only: it must NEVER add a name, organization, event, place, date, product, or contextual noun that is not part of "
         "the reusable expression. Every supplied excluded entity is forbidden in the answer. Keep it outside the blank. The native gloss must cover "
@@ -2377,103 +2313,38 @@ async def generate_quiz_bundle(
     original_statement = str(seed.get("content_ko") or "").strip()
     if not original_statement:
         raise BundleSeedError("퀴즈를 만들 수 있는 문장이 없어요.")
-    source_units = [original_statement]
 
-    # A Statement is already a graph-level learning node.  This additional LLM
-    # step may only make smaller *study* units inside it; it cannot invent a
-    # replacement Statement or cross a node boundary.
-    segment_system = _build_segment_system_prompt(
-        native_label,
-        target_label,
-        native_language=native_language,
-        target_language=language,
+    # A Statement is a graph-level node the author already wrote as one
+    # proposition, so it is the study unit as-is — no LLM call splits it
+    # into smaller "complete" pieces anymore. Splitting used to require every
+    # piece to stand alone with its own subject, which is impossible for a
+    # clause that shares its subject with its neighbor by ellipsis (X did A
+    # and did B); that dead end produced either an ungrammatical fragment or
+    # a rewritten (non-exact-substring) unit, and falling back to the whole
+    # statement after two failed attempts left the author translating under
+    # leftover "keep it short" pressure, which is what dropped clauses.
+    # Sentence-terminator boundaries (periods) are unambiguous and still
+    # split a genuinely multi-sentence Statement — the only case where one
+    # written unit truly holds more than one learnable proposition.
+    source_units = (
+        _deterministic_sentence_units(original_statement)
+        if len(_SENTENCE_TERMINATOR_RE.findall(original_statement)) > 1
+        else [original_statement]
     )
     segment_step = tracer.begin_step(
-        "bundle_study_segment", "llm", phase="quiz_path",
-        input_data={"language": language, "whole_statement_fallback": True},
+        "bundle_study_segment", "policy", phase="quiz_path",
+        input_data={"language": language},
     )
-    segment_step.model = author_model
-    segment_step.system_prompt = segment_system
-    try:
-        source_compact_length = len(re.findall(r"[A-Za-z0-9가-힣]", original_statement))
-        attempts: list[dict[str, Any]] = []
-        if source_compact_length < _SHORT_STATEMENT_COMPACT_CHARS:
-            # An already short, complete Statement has no meaningful split
-            # decision. Avoid a paid no-op while preserving the same contract.
-            attempts.append({
-                "kind": "short_statement",
-                "proposed_segments": [{"source_text": original_statement}],
-                "validation_failures": [],
-            })
-        else:
-            retry_feedback: list[str] | None = None
-            for attempt_index in range(2):
-                request = {"source_statement": original_statement}
-                if retry_feedback:
-                    request.update({
-                        "previous_attempt_invalid": True,
-                        "validation_failures": retry_feedback,
-                        "repair_instruction": (
-                            "Return a new complete segmentation of the same source. Do not preserve an invalid boundary; "
-                            "each unit must stand alone with its governing predicate and required arguments."
-                        ),
-                    })
-                segment_response = await _client().chat.completions.create(
-                    model=author_model,
-                    messages=[
-                        {"role": "system", "content": segment_system},
-                        {"role": "user", "content": json.dumps(request, ensure_ascii=False)},
-                    ],
-                    **_temperature_args(author_model, 0),
-                    response_format=_SEGMENT_RESPONSE_FORMAT,
-                    timeout=settings.openai_timeout_sec,
-                )
-                segment_data = json.loads(segment_response.choices[0].message.content or "{}")
-                proposed_units = [
-                    str(item.get("source_text") or "").strip()
-                    for item in (segment_data.get("segments") or [])
-                    if isinstance(item, dict) and str(item.get("source_text") or "").strip()
-                ]
-                failures = _validate_study_source_units(
-                    original_statement, proposed_units, native_language
-                )
-                attempts.append({
-                    "kind": "initial" if attempt_index == 0 else "retry",
-                    "proposed_segments": [{"source_text": unit} for unit in proposed_units],
-                    "validation_failures": failures,
-                    "usage": _usage_payload(segment_response),
-                })
-                if not failures:
-                    source_units = proposed_units
-                    break
-                retry_feedback = failures
-        accepted = bool(attempts and not attempts[-1].get("validation_failures"))
-        tracer.finish_step(
-            segment_step,
-            output={
-                "segment_count": len(source_units),
-                "strategy": "llm" if accepted else "whole_statement",
-                "retry_count": max(0, len(attempts) - 1),
-                "usage": [attempt.get("usage", {}) for attempt in attempts],
-            },
-            artifacts=[("bundle_study_segments.json", {
-                "attempts": attempts,
-                "accepted_segments": [{"source_text": unit} for unit in source_units],
-            }, "application/json")],
-        )
-    except Exception as exc:
-        logger.warning("Study segmentation unavailable: %s", exc)
-        tracer.finish_step(segment_step, error=f"{type(exc).__name__}: {exc}")
-    # If the model failed to provide a valid segmentation, explicit sentence
-    # boundaries are still safe and materially better than translating an
-    # entire multi-sentence Statement as one learner task.
-    if source_units == [original_statement] and len(_SENTENCE_TERMINATOR_RE.findall(original_statement)) > 1:
-        source_units = _deterministic_sentence_units(original_statement)
-        segment_step.output = {
-            **(segment_step.output or {}),
+    tracer.finish_step(
+        segment_step,
+        output={
             "segment_count": len(source_units),
-            "strategy": "deterministic_sentence_fallback",
-        }
+            "strategy": "sentence_terminator" if len(source_units) > 1 else "whole_statement",
+        },
+        artifacts=[("bundle_study_segments.json", {
+            "accepted_segments": [{"source_text": unit} for unit in source_units],
+        }, "application/json")],
+    )
     system = _build_plan_system_prompt(
         native_label, target_label, level, lang_guide(language), language, native_language
     )
@@ -2497,12 +2368,9 @@ async def generate_quiz_bundle(
             messages=[
                 {"role": "system", "content": system + (
                     " This call owns exactly one supplied study unit. Return exactly one segment and do not split, merge, or omit it. "
-                    "full_statement_context is the complete original Statement this unit was split from — read it to recognize when the "
-                    "unit is backstory, a premise, or otherwise depends on another part of the statement for its sense (e.g. 'we hadn't met "
-                    "for a long time' right before 'I met a friend...' explains why the meeting was notable; translated alone as a flat "
-                    "present-tense negation it would contradict the meeting the rest of the statement describes). Use that understanding to "
-                    "choose a natural target rendering, but write and return content for only the ONE supplied unit — never merge in or "
-                    "invent content from elsewhere in the statement."
+                    "full_statement_context is the complete original Statement this unit was split from — read it to understand what the "
+                    "unit depends on for its sense, and use that understanding to choose a natural target rendering, but write and return "
+                    "content for only the ONE supplied unit — never merge in or invent content from elsewhere in the statement."
                 )},
                 {"role": "user", "content": json.dumps({
                     "source_statement": text,
@@ -2607,10 +2475,9 @@ async def generate_quiz_bundle(
                 messages=[
                     {"role": "system", "content": plan_qa_system + (
                         " This call reviews exactly one supplied study unit. Return exactly one segment; never split, merge, or omit it. "
-                        "full_statement_context is the complete original Statement this unit was split from — read it to recognize when the "
-                        "unit is backstory, a premise, or otherwise depends on another part of the statement for its sense, and correct a "
-                        "translation that lost that dependency (e.g. a backstory clause rewritten as a flat negation that now contradicts "
-                        "another part of the statement). Still return content for only the ONE supplied unit. "
+                        "full_statement_context is the complete original Statement this unit was split from — read it to recognize what the "
+                        "unit depends on for its sense, and correct a translation that lost that dependency. Still return content for only "
+                        "the ONE supplied unit. "
                     ) + feedback},
                     {"role": "user", "content": json.dumps({
                         "source_statement": source_text,
@@ -2709,8 +2576,7 @@ async def generate_quiz_bundle(
                     "The previous candidate failed this semantic contract: " + unit_domain_reason + ". "
                     "Return a corrected target reference that preserves every source event and participant. Subordinate purpose, "
                     "result and reason clauses are part of the event: render them in the reference instead of dropping them to stay short, "
-                    "and only keep a translation note for a realization the reference actually contains. "
-                    "For Korean 못 만나서 이야기를 많이 나눴다, explicitly use idiomatic German such as 'uns getroffen' plus 'gesprochen/geredet'; do not replace the meeting event with only talking."
+                    "and only keep a translation note for a realization the reference actually contains."
                 )
                 _retry_index, retry_row, retry_usage = await review_unit(index, raw_segments[index], retry_feedback)
                 plan_review_usage.append(retry_usage)
@@ -2850,11 +2716,17 @@ async def generate_quiz_bundle(
         primary_scramble_units = [
             str(unit) for unit in (primary_reference_row.get("scramble_units") or [])
         ]
+        primary_alternate_orders = [
+            [int(i) for i in candidate]
+            for candidate in (primary_reference_row.get("alternate_orders") or [])
+            if isinstance(candidate, list)
+        ]
         scramble_data, scramble_ineligible = _scramble_payload(
             primary_reference,
             seed=f"{seed_node_id}:{segment_index}:{language}",
             language=language,
             scramble_units=primary_scramble_units,
+            alternate_orders=primary_alternate_orders,
         )
         if scramble_data is not None:
             scramble_data.update({

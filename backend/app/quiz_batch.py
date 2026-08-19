@@ -341,12 +341,17 @@ async def fill_daily_batch(
                 activated_cards = await activate_node_compositions(
                     session, user, node_id=uuid.UUID(source_id), language=language, limit=1
                 ) if (needs_composition or generated["scramble"] < scramble_missing) else []
+                # activate_node_compositions always promotes a scramble/composition
+                # pair together, but the two have independent daily deficits. A
+                # member this pass doesn't need is put back to "inventory" (not
+                # "archived") so a later pass — or a different day — can still
+                # activate it instead of losing that unit's only paired scramble.
                 scramble_count = 0
                 for quiz in activated_cards:
                     if quiz.quiz_type != "scramble":
                         continue
                     if generated["scramble"] >= scramble_missing:
-                        quiz.queue_kind = "archived"
+                        quiz.queue_kind = "inventory"
                         continue
                     generated["scramble"] += 1
                     scramble_count += 1
@@ -360,7 +365,7 @@ async def fill_daily_batch(
                         quiz.track = "daily"
                         quiz.source_kind = "learning_material"
                     else:
-                        quiz.queue_kind = "archived"
+                        quiz.queue_kind = "inventory"
                 expression_count = material.expression_count
             except BundleSeedError:
                 continue

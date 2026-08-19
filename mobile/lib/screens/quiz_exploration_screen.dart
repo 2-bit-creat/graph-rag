@@ -6,7 +6,7 @@ import '../l10n/languages.dart';
 import '../theme/app_theme.dart';
 import '../utils/idempotency_key.dart';
 import '../widgets/app_ui.dart';
-import 'quiz_pipeline_hub_screen.dart';
+import 'debug_hub_screen.dart';
 
 class QuizExplorationScreen extends StatefulWidget {
   const QuizExplorationScreen({super.key});
@@ -455,8 +455,10 @@ class _QuizExplorationScreenState extends State<QuizExplorationScreen> {
           : () => Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) =>
-                      QuizPipelineHubScreen(initialQuizId: quizIds.first),
+                  builder: (_) => DebugHubScreen(
+                    initialTab: DebugHubTab.quiz,
+                    initialQuizId: quizIds.first,
+                  ),
                 ),
               ),
     );

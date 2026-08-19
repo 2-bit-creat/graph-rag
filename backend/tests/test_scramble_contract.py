@@ -50,6 +50,51 @@ def test_scramble_boundaries_and_id_grading():
     assert grade_answer(quiz, {"order": list(reversed(payload["correct_order"]))})[0] is False
 
 
+def test_valid_alternate_order_is_accepted_at_grading():
+    units = ["나는", "어제", "머리를", "잘랐어요."]
+    sentence = " ".join(units)
+    # swap the two middle adverbial/object units — both orders are natural Korean.
+    payload, reason = _scramble_payload(
+        sentence, seed="alt-ko", language="korean", scramble_units=units,
+        alternate_orders=[[0, 2, 1, 3]],
+    )
+    assert reason is None
+    assert len(payload["accepted_orders"]) == 2
+    assert payload["accepted_orders"][0] == payload["correct_order"]
+    quiz = _Quiz(payload)
+    assert grade_answer(quiz, {"order": payload["correct_order"]})[0] is True
+    assert grade_answer(quiz, {"order": payload["accepted_orders"][1]})[0] is True
+    assert grade_answer(quiz, {"order": list(reversed(payload["correct_order"]))})[0] is False
+
+
+def test_malformed_or_duplicate_alternate_orders_are_dropped():
+    units = ["나는", "어제", "머리를", "잘랐어요."]
+    sentence = " ".join(units)
+    # not a permutation of the same 4 indices, and a duplicate of correct_order.
+    payload, _ = _scramble_payload(
+        sentence, seed="alt-ko-bad", language="korean", scramble_units=units,
+        alternate_orders=[[0, 1, 2], [0, 1, 2, 3]],
+    )
+    assert payload["accepted_orders"] == [payload["correct_order"]]
+
+
+def test_alternate_orders_are_ignored_when_scramble_units_fall_back():
+    # No valid scramble_units supplied, so tokens no longer line up with the
+    # indices alternate_orders was written against — must not be applied.
+    payload, _ = _scramble_payload(
+        "I really really like this and that a lot today.",
+        seed="alt-fallback",
+        alternate_orders=[[1, 0, 2, 3, 4, 5, 6, 7, 8]],
+    )
+    assert payload["accepted_orders"] == [payload["correct_order"]]
+
+
+def test_old_scramble_cards_without_accepted_orders_still_grade():
+    quiz = _Quiz({"correct_order": ["a", "b", "c"]})
+    assert grade_answer(quiz, {"order": ["a", "b", "c"]})[0] is True
+    assert grade_answer(quiz, {"order": ["c", "b", "a"]})[0] is False
+
+
 def test_scramble_rejects_target_fragments_even_when_token_count_is_valid():
     payload, reason = _scramble_payload(
         "receiving delay information", seed="fragment", language="english"

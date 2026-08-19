@@ -28,6 +28,7 @@ from ..level_adjuster import reclassify_queue_by_level
 from ..level_guidelines import cefr_label, window_for_level
 from ..models import Quiz, QuizAttempt, QuizGenerationRun, QuizLearningMaterial, QuizPolicyDecision, User
 from ..pipeline_flow import build_quiz_only_flow_layout
+from ..pipeline_trace import inline_step_artifacts
 from ..quiz_bundle import BundleSeedError, generate_quiz_bundle
 from ..quiz_materials import activate_node_compositions, ensure_learning_material, materialize_node_expressions, reset_node_materials
 from ..quiz_pipeline import (
@@ -77,7 +78,11 @@ from ..schemas import (
     QuizGenerationRunRetryRequest,
     QuizGenerationTraceOut,
     QuizExplorationListOut,
+    QuizHistoryEventOut,
+    QuizHistoryListOut,
     QuizItemOut,
+    QuizMaterialAttemptListOut,
+    QuizMaterialAttemptOut,
     QuizQueueItemOut,
     QuizQueueListOut,
     QuizAdminDetailOut,
@@ -203,6 +208,7 @@ def _public_quiz_data(quiz, *, reveal_answer: bool = False) -> dict | None:
     data = dict(quiz.quiz_data or {})
     if quiz.quiz_type == "scramble" and not reveal_answer:
         data.pop("correct_order", None)
+        data.pop("accepted_orders", None)
         data.pop("sentence_target", None)
         data.pop("sentence_en", None)
         data.pop("audio_url", None)
@@ -925,6 +931,116 @@ async def list_generations(
     )
 
 
+@router.get("/generation-history", response_model=QuizHistoryListOut)
+async def list_generation_history(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_operator_tools),
+) -> QuizHistoryListOut:
+    """Cards that got created and node analyses that rejected every candidate,
+    interleaved by time — the single feed the debug hub's quiz tab renders,
+    mirroring the KG tab's one chronological run list."""
+    pairs, total = await crud.list_quiz_generation_history(
+        session, user.id, limit=limit, offset=offset
+    )
+    node_ids: set[uuid.UUID] = set()
+    for kind, obj in pairs:
+        if kind == "quiz" and obj.source_nodes:
+            node_ids.update(obj.source_nodes)
+        elif kind == "material":
+            node_ids.add(obj.node_id)
+    node_names = await crud.get_node_names(session, node_ids)
+
+    events: list[QuizHistoryEventOut] = []
+    for kind, obj in pairs:
+        if kind == "quiz":
+            names = [node_names[nid] for nid in (obj.source_nodes or []) if nid in node_names]
+            title = obj.sentence_target or obj.question_native or ", ".join(names) or "(문제)"
+            events.append(QuizHistoryEventOut(
+                kind="quiz",
+                id=obj.id,
+                timestamp=obj.created_at,
+                ok=True,
+                title=title,
+                subtitle=f"{obj.language or ''} · {obj.queue_kind}".strip(" ·"),
+                quiz_type=obj.quiz_type,
+                language=obj.language,
+            ))
+        else:
+            events.append(QuizHistoryEventOut(
+                kind="material",
+                id=obj.id,
+                timestamp=obj.updated_at,
+                ok=obj.status != "failed" and obj.composition_count > 0,
+                title=node_names.get(obj.node_id, "(제목 없음)"),
+                subtitle=(
+                    obj.error
+                    or f"작문 {obj.composition_count}개 · 표현 {obj.expression_count}개"
+                ),
+                quiz_type=None,
+                language=obj.language,
+            ))
+    return QuizHistoryListOut(items=events, total=total)
+
+
+@router.get("/material-attempts", response_model=QuizMaterialAttemptListOut)
+async def list_material_attempts(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_operator_tools),
+) -> QuizMaterialAttemptListOut:
+    """Every node analysis attempt, including ones that rejected every candidate
+    and produced zero quizzes — invisible in /generations, which only lists
+    cards that survived."""
+    items, total = await crud.list_quiz_material_attempts(
+        session, user.id, limit=limit, offset=offset
+    )
+    node_names = await crud.get_node_names(session, {item.node_id for item in items})
+    return QuizMaterialAttemptListOut(
+        items=[
+            QuizMaterialAttemptOut(
+                id=item.id,
+                node_id=item.node_id,
+                node_name=node_names.get(item.node_id, ""),
+                language=item.language,
+                status=item.status,
+                composition_count=item.composition_count,
+                expression_count=item.expression_count,
+                error=item.error,
+                updated_at=item.updated_at,
+            )
+            for item in items
+        ],
+        total=total,
+    )
+
+
+@router.get("/material-attempts/{material_id}/trace", response_model=QuizGenerationTraceOut)
+async def get_material_attempt_trace(
+    material_id: uuid.UUID,
+    user: User = Depends(request_user_dep),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_debug_enabled),
+) -> QuizGenerationTraceOut:
+    material = await session.get(QuizLearningMaterial, material_id)
+    if material is None or material.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Material analysis not found")
+    result = material.result if isinstance(material.result, dict) else {}
+    trace = result.get("trace") if isinstance(result.get("trace"), dict) else {}
+    trace = inline_step_artifacts(dict(trace))
+    return QuizGenerationTraceOut(
+        run_id=trace.get("run_id") or str(material_id),
+        status=trace.get("status") or material.status,
+        steps=trace.get("steps") or [],
+        flow_layout=None,
+        debug_dir=None,
+    )
+
+
 @router.get("/history", response_model=QuizQueueListOut)
 async def list_quiz_history(
     quiz_type: Literal["scramble", "composition"] | None = None,
@@ -1070,6 +1186,7 @@ async def get_generation_trace(
             "debug_dir": quiz.debug_run_dir,
         }
     trace["flow_layout"] = build_quiz_only_flow_layout(trace)
+    trace = inline_step_artifacts(trace)
     return QuizGenerationTraceOut(
         run_id=trace.get("run_id"),
         status=trace.get("status", "pending"),

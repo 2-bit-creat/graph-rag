@@ -267,6 +267,45 @@ def _redact_trace(data: dict) -> dict:
     return data
 
 
+def inline_step_artifacts(trace: dict) -> dict:
+    """Read each step's artifact files from disk and embed their content.
+
+    ``finish_step(artifacts=...)`` writes full LLM attempt/rejection detail
+    (proposed segments, validation failures, reviewed output) to
+    ``debug_runs/<id>/steps/*.json`` and leaves only a name/path reference in
+    the trace — exactly the content a developer needs to see *why* a step
+    rejected something, and until now nothing ever read it back. Mutates and
+    returns ``trace`` with ``step["artifacts_content"] = {name: parsed}``.
+    """
+    debug_dir = trace.get("debug_dir")
+    if not debug_dir:
+        return trace
+    root = Path(debug_dir)
+    for step in trace.get("steps", []):
+        content: dict[str, Any] = {}
+        for artifact in step.get("artifacts") or []:
+            rel = artifact.get("relative_path") if isinstance(artifact, dict) else None
+            name = artifact.get("name") if isinstance(artifact, dict) else None
+            if not rel or not name:
+                continue
+            path = root / rel
+            try:
+                raw = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            media = artifact.get("media_type") or ""
+            if media.startswith("application/json"):
+                try:
+                    content[name] = json.loads(raw)
+                    continue
+                except ValueError:
+                    pass
+            content[name] = raw
+        if content:
+            step["artifacts_content"] = content
+    return trace
+
+
 def cleanup_old_debug_runs(retention_days: int) -> int:
     """Delete debug_runs/ subdirectories older than retention_days. Best-effort;
     returns the count removed. A retention_days <= 0 disables the sweep."""

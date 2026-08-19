@@ -444,16 +444,6 @@ class ApiClient {
     }
   }
 
-  Future<Map<String, dynamic>> getFlowBlueprint() async {
-    final resp = await _dio.get('/journal/pipeline/flow-blueprint');
-    return resp.data as Map<String, dynamic>;
-  }
-
-  Future<Map<String, dynamic>> getQuizFlowBlueprint() async {
-    final resp = await _dio.get('/quiz/pipeline/flow-blueprint');
-    return resp.data as Map<String, dynamic>;
-  }
-
   String artifactUrl(String entryId, String relativePath) {
     return '$resolvedApiBaseUrl/journal/entries/$entryId/artifacts/$relativePath';
   }
@@ -640,14 +630,34 @@ class ApiClient {
     return resp.data as Map<String, dynamic>;
   }
 
-  Future<String> fetchQuizArtifactText(
-      String quizId, String relativePath) async {
-    final resp = await _dio.get<String>(
-      '/quiz/generations/$quizId/artifacts/$relativePath',
-      options: Options(responseType: ResponseType.plain),
-    );
-    return resp.data ?? '';
+  /// Cards created and rejected node analyses, interleaved by time — the one
+  /// feed the debug hub's quiz tab lists (mirrors the KG tab's run list).
+  Future<Map<String, dynamic>> listQuizGenerationHistory(
+      {int limit = 50, int offset = 0}) async {
+    final resp = await _dio.get('/quiz/generation-history', queryParameters: {
+      'limit': limit,
+      'offset': offset,
+    });
+    return resp.data as Map<String, dynamic>;
   }
+
+  /// Node analysis attempts — including ones that rejected every candidate
+  /// and produced zero cards, so they never appear in [listQuizGenerations].
+  Future<Map<String, dynamic>> listQuizMaterialAttempts(
+      {int limit = 50, int offset = 0}) async {
+    final resp = await _dio.get('/quiz/material-attempts', queryParameters: {
+      'limit': limit,
+      'offset': offset,
+    });
+    return resp.data as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> getQuizMaterialAttemptTrace(
+      String materialId) async {
+    final resp = await _dio.get('/quiz/material-attempts/$materialId/trace');
+    return resp.data as Map<String, dynamic>;
+  }
+
 
   Future<Map<String, dynamic>> getQuizProfile() async {
     try {

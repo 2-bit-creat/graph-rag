@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../api/client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
+import '../widgets/pipeline_step_list.dart';
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -266,7 +267,9 @@ class _KgDebugScreenState extends State<KgDebugScreen> {
     if (iso == null) return '?';
     try {
       final dt = DateTime.parse(iso).toLocal();
-      return DateFormat('HH:mm:ss').format(dt);
+      // Includes the date: HH:mm:ss-only made a correctly time-sorted list
+      // look shuffled once it crossed midnight.
+      return DateFormat('M/d HH:mm:ss').format(dt);
     } catch (_) {
       return iso.substring(0, 19);
     }
@@ -321,7 +324,7 @@ class _RunDetail extends StatelessWidget {
   Widget build(BuildContext context) {
     final trace = run['trace'];
     if (trace is Map) {
-      return _PipelineRunDetail(trace: Map<String, dynamic>.from(trace));
+      return PipelineStepList(trace: Map<String, dynamic>.from(trace));
     }
     final ok = run['status'] == 'ok';
     final tokenIn = run['token_in'];
@@ -345,24 +348,24 @@ class _RunDetail extends StatelessWidget {
             spacing: AppSpacing.md,
             runSpacing: AppSpacing.sm,
             children: [
-              _MetaChip(
+              PipelineMetaChip(
                 icon: ok ? Icons.check_circle_outline : Icons.error_outline,
                 label: ok ? '성공' : run['status']?.toString() ?? 'error',
                 color: ok ? AppColors.accent : Colors.redAccent,
               ),
-              _MetaChip(
+              PipelineMetaChip(
                 icon: Icons.access_time,
                 label: '${latency ?? '?'}ms',
                 color: AppColors.textMuted,
               ),
               if (tokenIn != null)
-                _MetaChip(
+                PipelineMetaChip(
                   icon: Icons.input_rounded,
                   label: 'in $tokenIn tok',
                   color: AppColors.textMuted,
                 ),
               if (tokenOut != null)
-                _MetaChip(
+                PipelineMetaChip(
                   icon: Icons.output_rounded,
                   label: 'out $tokenOut tok',
                   color: AppColors.textMuted,
@@ -420,7 +423,7 @@ class _RunDetail extends StatelessWidget {
           AppSurfaceCard(
             padding: const EdgeInsets.all(AppSpacing.md),
             child: parsedResponse != null
-                ? _JsonTree(data: parsedResponse)
+                ? JsonTree(data: parsedResponse)
                 : SelectableText(
                     rawResponse,
                     style:
@@ -433,148 +436,6 @@ class _RunDetail extends StatelessWidget {
   }
 }
 
-/// Persisted journal/KG trace.  Unlike the legacy extract log, this survives
-/// app/server restarts and shows the actual pipeline the learner used.
-class _PipelineRunDetail extends StatelessWidget {
-  const _PipelineRunDetail({required this.trace});
-  final Map<String, dynamic> trace;
-
-  @override
-  Widget build(BuildContext context) {
-    final steps = (trace['steps'] as List<dynamic>? ?? [])
-        .whereType<Map>()
-        .map((step) => Map<String, dynamic>.from(step))
-        .toList();
-    final completed = trace['status'] == 'completed';
-    return ListView(
-      padding: const EdgeInsets.all(AppSpacing.lg),
-      children: [
-        _MetaChip(
-          icon: completed ? Icons.check_circle_outline : Icons.pending_outlined,
-          label: completed ? '완료' : trace['status']?.toString() ?? '진행 중',
-          color: completed ? AppColors.accent : AppColors.textMuted,
-        ),
-        const SizedBox(height: AppSpacing.lg),
-        Text('실행 단계 (${steps.length})',
-            style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: AppSpacing.sm),
-        for (final step in steps)
-          Card(
-            child: ExpansionTile(
-              leading: Icon(
-                step['status'] == 'completed'
-                    ? Icons.check_circle_outline
-                    : step['status'] == 'error'
-                        ? Icons.error_outline
-                        : Icons.pending_outlined,
-                color: step['status'] == 'error' ? Colors.redAccent : null,
-              ),
-              title: Text(step['name']?.toString() ?? '단계'),
-              subtitle: Text(
-                '${step['phase'] ?? ''} · ${step['latency_ms'] ?? '?'}ms',
-              ),
-              childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              children: [
-                if ((step['error']?.toString() ?? '').isNotEmpty)
-                  SelectableText('오류: ${step['error']}'),
-                if (step['input'] is Map) _JsonTree(data: step['input']),
-                if (step['output'] is Map) _JsonTree(data: step['output']),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-// ─── JSON tree viewer ─────────────────────────────────────────────────────────
-
-class _JsonTree extends StatelessWidget {
-  const _JsonTree({required this.data, this.indent = 0});
-  final dynamic data;
-  final int indent;
-
-  @override
-  Widget build(BuildContext context) {
-    if (data is Map<String, dynamic>) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: (data as Map<String, dynamic>).entries.map((e) {
-          return Padding(
-            padding: EdgeInsets.only(left: indent * 12.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '▸ ${e.key}:',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.primary,
-                  ),
-                ),
-                _JsonTree(data: e.value, indent: indent + 1),
-              ],
-            ),
-          );
-        }).toList(),
-      );
-    } else if (data is List) {
-      final list = data as List;
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: list.asMap().entries.map((e) {
-          return Padding(
-            padding: EdgeInsets.only(left: indent * 12.0),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('[${e.key}] ',
-                    style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
-                Expanded(child: _JsonTree(data: e.value, indent: 0)),
-              ],
-            ),
-          );
-        }).toList(),
-      );
-    } else {
-      return Padding(
-        padding: EdgeInsets.only(left: indent * 12.0, bottom: 2),
-        child: SelectableText(
-          data?.toString() ?? 'null',
-          style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
-        ),
-      );
-    }
-  }
-}
-
-class _MetaChip extends StatelessWidget {
-  const _MetaChip(
-      {required this.icon, required this.label, required this.color});
-  final IconData icon;
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: color.withValues(alpha: 0.25)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 13, color: color),
-          const SizedBox(width: 4),
-          Text(label,
-              style: TextStyle(
-                  fontSize: 12, color: color, fontWeight: FontWeight.w500)),
-        ],
-      ),
-    );
-  }
-}
+// PipelineStepList (widgets/pipeline_step_list.dart) renders the persisted
+// journal/KG trace — shared with the quiz generation history tab, since both
+// are the same PipelineTracer step shape.

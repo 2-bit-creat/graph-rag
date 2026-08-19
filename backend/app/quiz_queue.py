@@ -214,9 +214,15 @@ def grade_answer(quiz: Quiz, payload: dict) -> tuple[bool, int]:
         accepted = [_normalize_answer(a, language) for a in (data.get("accepted_answers") or [])]
         correct = answer in accepted
     elif quiz_type == "scramble":
-        order = payload.get("order") or []
-        expected = data.get("correct_order") or []
-        correct = list(order) == list(expected)
+        order = list(payload.get("order") or [])
+        # Korean word order is flexible (case/topic particles carry the
+        # grammar), so a topic-marked subject and a time/place adverbial can
+        # often trade positions without becoming wrong — accepted_orders
+        # holds every order the author confirmed reads naturally, not just
+        # the one it happened to write first. Falls back to the single
+        # correct_order for cards generated before this field existed.
+        accepted = data.get("accepted_orders") or [data.get("correct_order") or []]
+        correct = order in [list(candidate) for candidate in accepted]
     elif quiz_type == "mcq_nuance":
         idx = payload.get("selected_index")
         correct = idx is not None and int(idx) == int(data.get("correct_index", -1))

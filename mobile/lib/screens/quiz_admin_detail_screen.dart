@@ -6,7 +6,7 @@ import 'package:intl/intl.dart';
 import '../api/client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
-import 'quiz_pipeline_hub_screen.dart';
+import 'debug_hub_screen.dart';
 
 class QuizAdminDetailScreen extends StatefulWidget {
   const QuizAdminDetailScreen({super.key, required this.quizId});
@@ -111,7 +111,10 @@ class _QuizAdminDetailScreenState extends State<QuizAdminDetailScreen> {
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) => QuizPipelineHubScreen(initialQuizId: widget.quizId),
+                builder: (_) => DebugHubScreen(
+                  initialTab: DebugHubTab.quiz,
+                  initialQuizId: widget.quizId,
+                ),
               ),
             ),
             icon: const Icon(Icons.route_outlined),

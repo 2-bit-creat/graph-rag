@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, case, delete, func, inspect as sa_inspect, or_, select, update
@@ -5257,6 +5258,87 @@ async def list_quiz_generations(
         .limit(limit)
     )
     return list(result.scalars().all()), total
+
+
+async def list_quiz_material_attempts(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[QuizLearningMaterial], int]:
+    """Every node×language analysis attempt, newest first — including ones that
+
+    rejected every candidate and produced zero cards. list_quiz_generations
+    only ever sees the cards that survived, so a fully-rejected attempt is
+    otherwise invisible in generation history.
+    """
+    filters = [QuizLearningMaterial.user_id == user_id]
+    count_q = select(func.count()).select_from(QuizLearningMaterial).where(*filters)
+    total = int((await session.execute(count_q)).scalar_one())
+    result = await session.execute(
+        select(QuizLearningMaterial)
+        .where(*filters)
+        .order_by(QuizLearningMaterial.updated_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(result.scalars().all()), total
+
+
+async def list_quiz_generation_history(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[tuple[str, Any]], int]:
+    """Quiz rows and rejected material analyses, interleaved by time.
+
+    A card that got created and an analysis that rejected every candidate are
+    the same kind of event to someone scanning "what happened" — separating
+    them into two lists hides the rejected ones behind whatever page of the
+    successful list you happen to be on. Merged here instead, newest first.
+    """
+    quiz_filters = [
+        Quiz.user_id == user_id,
+        Quiz.quiz_type.in_(("scramble", "composition")),
+    ]
+    material_filters = [QuizLearningMaterial.user_id == user_id]
+    quiz_total = int((
+        await session.execute(select(func.count()).select_from(Quiz).where(*quiz_filters))
+    ).scalar_one())
+    material_total = int((
+        await session.execute(
+            select(func.count()).select_from(QuizLearningMaterial).where(*material_filters)
+        )
+    ).scalar_one())
+
+    # Worst case every row on this page comes from one source, so each source
+    # needs its own top (offset + limit) window to merge correctly.
+    window = min(offset + limit, 1000)
+    quizzes = (
+        await session.scalars(
+            select(Quiz).where(*quiz_filters).order_by(Quiz.created_at.desc()).limit(window)
+        )
+    ).all()
+    materials = (
+        await session.scalars(
+            select(QuizLearningMaterial)
+            .where(*material_filters)
+            .order_by(QuizLearningMaterial.updated_at.desc())
+            .limit(window)
+        )
+    ).all()
+    merged: list[tuple[str, Any]] = [
+        *(("quiz", quiz) for quiz in quizzes),
+        *(("material", material) for material in materials),
+    ]
+    merged.sort(
+        key=lambda pair: pair[1].created_at if pair[0] == "quiz" else pair[1].updated_at,
+        reverse=True,
+    )
+    return merged[offset : offset + limit], quiz_total + material_total
 
 
 async def get_node_names(
