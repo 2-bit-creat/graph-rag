@@ -451,6 +451,8 @@ class ChatInputBar extends StatelessWidget {
     this.inputFocusNode,
     this.suggestions = const [],
     this.onSuggestionPrompt,
+    this.autoStartRecording = false,
+    this.onAutoStartRecordingHandled,
   });
 
   final TextEditingController inputController;
@@ -470,7 +472,7 @@ class ChatInputBar extends StatelessWidget {
   /// Quiz controls rendered beside the mode chip, above the input pill.
   final Widget? modeActions;
 
-  /// "+" menu action: 'journal' | 'ocr' | 'composition' | 'word' | 'distill'.
+  /// "+" menu action: 'journal' | 'voice' | 'ocr' | 'composition' | 'word' | 'distill'.
   final ValueChanged<String>? onModeSelected;
 
   final bool inputEnabled;
@@ -490,6 +492,14 @@ class ChatInputBar extends StatelessWidget {
   /// Owned by the screen so it can re-request focus after a tap elsewhere
   /// in the tree (e.g. a quiz card's "다음 문제" button) steals it away.
   final FocusNode? inputFocusNode;
+
+  /// Set for one build by the "음성으로 쓰기" menu action — journal mode has
+  /// just been entered and the composer should start recording immediately
+  /// instead of waiting for the mic button to be tapped. [onAutoStartRecordingHandled]
+  /// fires once the field has acted on it, so the caller can clear the flag
+  /// and this does not re-trigger on every later rebuild.
+  final bool autoStartRecording;
+  final VoidCallback? onAutoStartRecordingHandled;
 
   @override
   Widget build(BuildContext context) {
@@ -565,6 +575,8 @@ class ChatInputBar extends StatelessWidget {
                   onSend: onSend,
                   onModeSelected: onModeSelected,
                   focusNode: inputFocusNode,
+                  autoStartRecording: autoStartRecording,
+                  onAutoStartRecordingHandled: onAutoStartRecordingHandled,
                 ),
               ),
             ),
@@ -588,6 +600,8 @@ class _InputBar extends StatefulWidget {
     this.journalMode = false,
     this.journalFieldKey,
     this.focusNode,
+    this.autoStartRecording = false,
+    this.onAutoStartRecordingHandled,
   });
 
   final TextEditingController controller;
@@ -610,6 +624,10 @@ class _InputBar extends StatefulWidget {
   /// an action elsewhere in the tree — e.g. tapping a quiz card's "다음
   /// 문제" button — steals focus away from the composer.
   final FocusNode? focusNode;
+
+  /// See [ChatInputBar.autoStartRecording].
+  final bool autoStartRecording;
+  final VoidCallback? onAutoStartRecordingHandled;
 
   @override
   State<_InputBar> createState() => _InputBarState();
@@ -652,6 +670,7 @@ class _InputBarState extends State<_InputBar> {
     super.initState();
     chatSession.composerRestore.addListener(_onComposerRestore);
     widget.controller.addListener(_onChatTextChanged);
+    if (widget.autoStartRecording) _handleAutoStartRecording();
   }
 
   @override
@@ -661,6 +680,21 @@ class _InputBarState extends State<_InputBar> {
       oldWidget.controller.removeListener(_onChatTextChanged);
       widget.controller.addListener(_onChatTextChanged);
     }
+    if (widget.autoStartRecording && !oldWidget.autoStartRecording) {
+      _handleAutoStartRecording();
+    }
+  }
+
+  /// Fired once by the "음성으로 쓰기" menu action, after journal mode is
+  /// already showing. Starts recording the same way the mic button does, then
+  /// tells the screen to drop the flag so this does not fire again on the
+  /// next rebuild.
+  void _handleAutoStartRecording() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.onAutoStartRecordingHandled?.call();
+      if (!_recorderController.recording) _toggleMic();
+    });
   }
 
   /// The plain composer no longer scrolls itself, so follow the caret while the
@@ -1390,14 +1424,21 @@ class _ModeMenuButton extends StatefulWidget {
   State<_ModeMenuButton> createState() => _ModeMenuButtonState();
 }
 
+/// Root groups the "+" button opens on. Picking a group swaps the same
+/// popup's contents to that group's actions instead of stacking a second
+/// popup — one floating card, two steps deep.
+enum _ModeMenuLevel { root, diary, quiz }
+
 class _ModeMenuButtonState extends State<_ModeMenuButton> {
   final _link = LayerLink();
   final _popupController = OverlayPortalController();
+  _ModeMenuLevel _level = _ModeMenuLevel.root;
 
   void _toggle() {
     if (_popupController.isShowing) {
       _popupController.hide();
     } else {
+      setState(() => _level = _ModeMenuLevel.root);
       _popupController.show();
     }
   }
@@ -1407,6 +1448,8 @@ class _ModeMenuButtonState extends State<_ModeMenuButton> {
     widget.onSelected(value);
   }
 
+  void _openGroup(_ModeMenuLevel level) => setState(() => _level = level);
+
   Widget _item(String value, IconData icon, String label) {
     return InkWell(
       onTap: () => _select(value),
@@ -1415,6 +1458,65 @@ class _ModeMenuButtonState extends State<_ModeMenuButton> {
         child: _ModeMenuRow(icon: icon, label: label),
       ),
     );
+  }
+
+  Widget _group(_ModeMenuLevel level, IconData icon, String label) {
+    return InkWell(
+      onTap: () => _openGroup(level),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        child: Row(
+          children: [
+            Expanded(child: _ModeMenuRow(icon: icon, label: label)),
+            Icon(Icons.chevron_right_rounded,
+                size: 18, color: context.shell.mutedText),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _backItem() {
+    return InkWell(
+      onTap: () => _openGroup(_ModeMenuLevel.root),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        child: _ModeMenuRow(
+          icon: Icons.chevron_left_rounded,
+          label: tr('chat.menu.back'),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _levelItems() {
+    switch (_level) {
+      case _ModeMenuLevel.root:
+        return [
+          _group(_ModeMenuLevel.diary, Icons.auto_stories_rounded,
+              tr('chat.menu.diaryGroup')),
+          _group(_ModeMenuLevel.quiz, Icons.edit_note_rounded,
+              tr('chat.menu.quizGroup')),
+        ];
+      case _ModeMenuLevel.diary:
+        return [
+          _backItem(),
+          const Divider(height: 1),
+          _item('journal', Icons.edit_rounded, tr('chat.menu.journal')),
+          _item('voice', Icons.mic_none_rounded, tr('chat.menu.voice')),
+          _item('ocr', Icons.photo_camera_outlined, tr('chat.menu.ocr')),
+          _item('distill', Icons.playlist_add_check_rounded,
+              tr('chat.menu.distill')),
+        ];
+      case _ModeMenuLevel.quiz:
+        return [
+          _backItem(),
+          const Divider(height: 1),
+          _item('composition', Icons.edit_note_rounded,
+              tr('chat.menu.composition')),
+          _item('word', Icons.style_rounded, tr('chat.menu.word')),
+        ];
+    }
   }
 
   @override
@@ -1456,29 +1558,24 @@ class _ModeMenuButtonState extends State<_ModeMenuButton> {
                   shadowColor: Colors.black.withValues(alpha: 0.3),
                   borderRadius: BorderRadius.circular(18),
                   clipBehavior: Clip.antiAlias,
-                  child: SizedBox(
-                    // English action labels are materially longer than Korean.
-                    // Give the popup nearly the available phone width and let
-                    // each label wrap rather than painting outside its card.
-                    width: (MediaQuery.sizeOf(context).width - 32)
-                        .clamp(240.0, 300.0)
-                        .toDouble(),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _item('journal', Icons.auto_stories_rounded,
-                              tr('chat.menu.journal')),
-                          _item('ocr', Icons.photo_camera_outlined,
-                              tr('chat.menu.ocr')),
-                          _item('distill', Icons.playlist_add_check_rounded,
-                              tr('chat.menu.distill')),
-                          _item('composition', Icons.edit_note_rounded,
-                              tr('chat.menu.composition')),
-                          _item('word', Icons.style_rounded,
-                              tr('chat.menu.word')),
-                        ],
+                  child: AnimatedSize(
+                    duration: const Duration(milliseconds: 160),
+                    curve: Curves.easeOut,
+                    alignment: Alignment.bottomLeft,
+                    child: SizedBox(
+                      // English action labels are materially longer than
+                      // Korean. Give the popup nearly the available phone
+                      // width and let each label wrap rather than painting
+                      // outside its card.
+                      width: (MediaQuery.sizeOf(context).width - 32)
+                          .clamp(240.0, 300.0)
+                          .toDouble(),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: _levelItems(),
+                        ),
                       ),
                     ),
                   ),

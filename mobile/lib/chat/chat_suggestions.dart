@@ -64,7 +64,7 @@ List<ChatSuggestion> chatSuggestionsFor({
   return [
     if (!journalBusy)
       ChatSuggestion.action(
-        tr('chat.menu.journal'),
+        tr('chat.menu.diaryGroup'),
         'journal',
         icon: Icons.auto_stories_rounded,
         tint: AppColors.hubVoice,

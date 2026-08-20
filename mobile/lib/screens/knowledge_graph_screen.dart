@@ -165,6 +165,11 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   // upload alone is long enough that a silent UI reads as a dead tap.
   bool _ocrBusy = false;
 
+  /// One-shot: set when "음성으로 쓰기" enters journal mode, so the composer
+  /// starts recording immediately instead of waiting for the mic tap. The
+  /// composer clears this itself once it has acted on it.
+  bool _autoStartRecording = false;
+
   /// A drag-to-merge is in flight (edge surgery + optional rename + reload).
   bool _merging = false;
   int _lastMsgCount = 0;
@@ -544,6 +549,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           journalMode: _isJournalMode,
           journalFieldKey: _journalFieldKey,
           inputFocusNode: _chatInputFocusNode,
+          autoStartRecording: _autoStartRecording,
+          onAutoStartRecordingHandled: () =>
+              setState(() => _autoStartRecording = false),
           suggestions: _quizStarting
               ? const []
               : chatSuggestionsFor(
@@ -1127,6 +1135,19 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         }
         _activateInputMode();
         chatSession.enterJournalMode();
+        break;
+      case 'voice':
+        if (journalTask.systemProcessing) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(tr('kg.journalBusySnackbar')),
+            ),
+          );
+          return;
+        }
+        _activateInputMode();
+        chatSession.enterJournalMode();
+        setState(() => _autoStartRecording = true);
         break;
       case 'ocr':
         await _importFromPhoto();
