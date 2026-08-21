@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../api/client.dart';
 import '../chat/chat_session_controller.dart';
 import '../l10n/app_strings.dart';
+import '../utils/browser_context.dart';
 
 /// ID-entry accounts: no signup form, just a handle. Each handle maps to its own
 /// backend space (JWT); bearer tokens are cached in platform secure storage
@@ -254,14 +255,7 @@ class AccountController extends ChangeNotifier {
 class _TokenStore {
   const _TokenStore();
 
-  static bool get _fallback => kIsWeb && !_isSecureContext;
-
-  static bool get _isSecureContext {
-    final u = Uri.base;
-    return u.scheme == 'https' ||
-        u.host == 'localhost' ||
-        u.host == '127.0.0.1';
-  }
+  static bool get _fallback => kIsWeb && !isSecureBrowserContext;
 
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
 

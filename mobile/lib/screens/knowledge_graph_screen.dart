@@ -17,6 +17,7 @@ import '../utils/graph_layout.dart';
 import '../utils/image_file_import.dart';
 import '../utils/keep_keyboard_on_tap.dart';
 import '../utils/statement_display.dart';
+import '../widgets/audio_record_core.dart' show AudioRecordController;
 import '../widgets/graph_chat_panel.dart';
 import '../widgets/graph_inspector_panel.dart';
 import '../widgets/knowledge_graph_canvas.dart';
@@ -169,6 +170,12 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
   /// starts recording immediately instead of waiting for the mic tap. The
   /// composer clears this itself once it has acted on it.
   bool _autoStartRecording = false;
+
+  /// Whether the open diary entry came in through "음성으로 쓰기". Unlike
+  /// [_autoStartRecording] this is not one-shot: it decides whether the mic and
+  /// audio-file controls belong in the composer at all, for the whole entry.
+  /// "글로 쓰기" leaves it false and gets a plain typing surface.
+  bool _journalAudioEntry = false;
 
   /// A drag-to-merge is in flight (edge surgery + optional rename + reload).
   bool _merging = false;
@@ -394,6 +401,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     setState(() {
       _chatExpandedForInput = false;
       _chatManuallySized = false;
+      _journalAudioEntry = false;
       _chatSheetSize = _chatRestoredSize > _sheetDefaultSize
           ? _chatRestoredSize
           : _sheetDefaultSize;
@@ -547,6 +555,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           inputEnabled: _inputEnabled,
           inputHint: _inputHint,
           journalMode: _isJournalMode,
+          journalAudioTools: _journalAudioEntry,
           journalFieldKey: _journalFieldKey,
           inputFocusNode: _chatInputFocusNode,
           autoStartRecording: _autoStartRecording,
@@ -1140,6 +1149,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
         }
         _activateInputMode();
         chatSession.enterJournalMode();
+        setState(() => _journalAudioEntry = false);
         break;
       case 'voice':
         if (journalTask.systemProcessing) {
@@ -1150,9 +1160,25 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           );
           return;
         }
+        // The browser hides the mic outright on a plain-http origin, so
+        // entering a recording surface there would just dead-end. Say why
+        // instead of opening it. (Voice is the only menu item this affects —
+        // typing and photo import work fine over http.)
+        if (!AudioRecordController.available) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(tr('chat.micInsecureOrigin')),
+              duration: const Duration(seconds: 6),
+            ),
+          );
+          return;
+        }
         _activateInputMode();
         chatSession.enterJournalMode();
-        setState(() => _autoStartRecording = true);
+        setState(() {
+          _autoStartRecording = true;
+          _journalAudioEntry = true;
+        });
         break;
       case 'ocr':
         await _importFromPhoto();

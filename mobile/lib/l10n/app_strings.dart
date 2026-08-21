@@ -232,6 +232,8 @@ const Map<String, String> _ko = {
       '현재 {current}자 / 최대 {max}자입니다.\n내용을 나눠서 여러 번 입력해 주세요.',
   'chat.noRecordingSnackbar': '녹음된 내용이 없어요',
   'chat.micPermissionSnackbar': '마이크 권한이 필요합니다. 브라우저 주소창 옆 자물쇠 아이콘에서 허용해 주세요.',
+  'chat.micInsecureOrigin':
+      'http로 접속 중이라 브라우저가 마이크를 아예 막습니다. https나 localhost로 열면 녹음할 수 있어요.',
   'chat.recordingStartFailed': '녹음 시작 실패: {error}',
   'chat.stopRecordingFirstSnackbar': '녹음을 먼저 중지한 뒤 파일을 선택해 주세요.',
   'chat.fileReadError': '파일 데이터를 읽을 수 없습니다.',
@@ -1608,6 +1610,8 @@ const Map<String, String> _en = {
   'chat.noRecordingSnackbar': 'No recording was captured',
   'chat.micPermissionSnackbar':
       "Microphone access is required. Allow it from the lock icon next to your browser's address bar.",
+  'chat.micInsecureOrigin':
+      'The browser blocks the microphone entirely over plain http. Open the app over https or on localhost to record.',
   'chat.recordingStartFailed': 'Failed to start recording: {error}',
   'chat.stopRecordingFirstSnackbar': 'Stop recording before selecting a file.',
   'chat.fileReadError': "Couldn't read the file data.",

@@ -104,6 +104,15 @@ class _JournalAudioComposePanelState extends State<JournalAudioComposePanel> {
       });
       composeSession.setRecording(true);
       _notifyDirty();
+    } on RecordingUnsupportedException catch (e) {
+      // Already plain language — do not bury it under "Failed to start ...".
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(e.message),
+              duration: const Duration(seconds: 6)),
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

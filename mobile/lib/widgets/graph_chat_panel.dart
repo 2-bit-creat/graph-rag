@@ -447,6 +447,7 @@ class ChatInputBar extends StatelessWidget {
     this.inputEnabled = true,
     this.inputHint = 'Say anything…', // always overridden by callers via tr()
     this.journalMode = false,
+    this.journalAudioTools = false,
     this.journalFieldKey,
     this.inputFocusNode,
     this.suggestions = const [],
@@ -483,6 +484,11 @@ class ChatInputBar extends StatelessWidget {
   /// mic/attach pair appears next to send. Only the surface swaps; there is
   /// never a second input competing with this one.
   final bool journalMode;
+
+  /// This diary entry came in through the audio path ("음성으로 쓰기"), so the
+  /// mic and audio-file controls are the point of it. False for "글로 쓰기",
+  /// which is a typing surface and shows neither.
+  final bool journalAudioTools;
 
   /// Lets the screen reach the journal field itself — [inputController] does
   /// not reach it, because the mention field owns a [MentionStyledController]
@@ -571,6 +577,7 @@ class ChatInputBar extends StatelessWidget {
                   enabled: inputEnabled,
                   hint: inputHint,
                   journalMode: journalMode,
+                  journalAudioTools: journalAudioTools,
                   journalFieldKey: journalFieldKey,
                   onSend: onSend,
                   onModeSelected: onModeSelected,
@@ -598,6 +605,7 @@ class _InputBar extends StatefulWidget {
     required this.onSend,
     required this.onModeSelected,
     this.journalMode = false,
+    this.journalAudioTools = false,
     this.journalFieldKey,
     this.focusNode,
     this.autoStartRecording = false,
@@ -615,6 +623,9 @@ class _InputBar extends StatefulWidget {
   /// speaker tagging) and adds mic/attach actions; send saves the journal
   /// entry instead of calling [onSend].
   final bool journalMode;
+
+  /// See [ChatInputBar.journalAudioTools].
+  final bool journalAudioTools;
 
   /// Supplied by the screen when it needs to write into the journal field
   /// (OCR import). Null everywhere else, and then the private key below is used.
@@ -1029,6 +1040,14 @@ class _InputBarState extends State<_InputBar> {
         );
       }
       if (mounted) setState(() {});
+    } on RecordingUnsupportedException catch (e) {
+      // Already a plain-language explanation — wrapping it in "Failed to start
+      // recording: ..." would only bury the one sentence that helps.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message), duration: const Duration(seconds: 6)),
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1129,19 +1148,30 @@ class _InputBarState extends State<_InputBar> {
               if (widget.onModeSelected != null)
                 _ModeMenuButton(onSelected: widget.onModeSelected!),
               if (journalMode) ...[
-                _CompactIconButton(
-                  tooltip: recording
-                      ? tr('chat.micTooltipStop')
-                      : tr('chat.micTooltipStart'),
-                  icon: recording ? Icons.stop_rounded : Icons.mic_none_rounded,
-                  active: recording,
-                  onTap: _journalSaving ? null : _toggleMic,
-                ),
-                _CompactIconButton(
-                  tooltip: tr('chat.attachAudioTooltip'),
-                  icon: Icons.attach_file_rounded,
-                  onTap: _journalSaving || recording ? null : _pickFile,
-                ),
+                // Audio belongs to the audio entry, not to every diary entry.
+                //
+                // "글로 쓰기" is a typing surface; a mic and a paperclip parked
+                // in front of the caret are two controls the writer will never
+                // use, and they read as "this box wants a file" rather than
+                // "just write". The voice path has its own menu item that
+                // enters here with recording already running, and while it is
+                // running the mic has to stay — it is the stop button.
+                if (widget.journalAudioTools || recording) ...[
+                  _CompactIconButton(
+                    tooltip: recording
+                        ? tr('chat.micTooltipStop')
+                        : tr('chat.micTooltipStart'),
+                    icon:
+                        recording ? Icons.stop_rounded : Icons.mic_none_rounded,
+                    active: recording,
+                    onTap: _journalSaving ? null : _toggleMic,
+                  ),
+                  _CompactIconButton(
+                    tooltip: tr('chat.attachAudioTooltip'),
+                    icon: Icons.attach_file_rounded,
+                    onTap: _journalSaving || recording ? null : _pickFile,
+                  ),
+                ],
                 if (_longDraft)
                   _CompactIconButton(
                     tooltip: tr('chat.expandEditorTooltip'),

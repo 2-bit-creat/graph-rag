@@ -9,7 +9,18 @@ import 'package:record/record.dart';
 import '../l10n/app_strings.dart';
 import '../screens/record_file_io.dart'
     if (dart.library.html) '../screens/record_file_stub.dart';
+import '../utils/browser_context.dart';
 import '../utils/wav_builder.dart';
+
+/// The microphone cannot work on this origin at all — see
+/// [isMicrophoneBlockedByOrigin]. Distinct from a denied permission, because
+/// there is no prompt to accept and no setting the user can change.
+class RecordingUnsupportedException implements Exception {
+  const RecordingUnsupportedException(this.message);
+  final String message;
+  @override
+  String toString() => message;
+}
 
 /// Max 10 minutes — client-side cap (compressed formats lack reliable length
 /// on the server, so the recording timer is the primary gate).
@@ -145,9 +156,21 @@ class AudioRecordController extends ChangeNotifier {
     }
   }
 
+  /// Whether the mic is usable here at all. False on a plain-http origin,
+  /// where the browser does not expose it in the first place.
+  static bool get available => !isMicrophoneBlockedByOrigin;
+
   /// Start mic capture. Throws on failure; returns false if permission denied.
   Future<bool> start() async {
     if (_recording) return true;
+
+    // Ask before touching the plugin. On an insecure origin
+    // `navigator.mediaDevices` is undefined, and record's interop turns that
+    // into "type 'Null' is not a subtype of type 'JSObject'" — an error that
+    // sends you looking for a bug in the app instead of at the URL bar.
+    if (!available) {
+      throw RecordingUnsupportedException(tr('chat.micInsecureOrigin'));
+    }
 
     final permitted = await _recorder.hasPermission();
     if (!permitted) return false;
