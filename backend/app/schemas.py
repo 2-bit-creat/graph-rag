@@ -703,7 +703,7 @@ class QuizSubmitRequest(BaseModel):
     self_grade: Literal["known", "again"] | None = None
     entry_id: uuid.UUID | None = None
     idempotency_key: str | None = Field(default=None, min_length=8, max_length=200)
-    hint_level: int = Field(default=0, ge=0, le=2)
+    hint_level: int = Field(default=0, ge=0)
     revealed_tokens: list[str] = Field(default_factory=list)
     answer_revealed: bool = False
 
