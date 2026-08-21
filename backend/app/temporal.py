@@ -60,6 +60,19 @@ _EN_MONTH_DAY = re.compile(
 # "7/9" (month/day), guarded against years
 _EN_SLASH_DATE = re.compile(r"(?<!\d)(\d{1,2})/(\d{1,2})(?!\d)")
 
+# Words that mark a time reference as a goal/plan/forecast rather than a
+# record of something that already happened — "9월 초 목표로" ("aiming for
+# early September") names a target date, not the date the statement's event
+# occurred. Used only to guard the whole-statement fallback scan in
+# resolve_event_temporal: a bare month/day mention picked up from raw prose
+# must not be promoted to occurred_at when the surrounding text is explicitly
+# talking about a plan.
+_PLANNING_CUE_RE = re.compile(
+    r"목표|예정|계획|예상|전망|하려고|할\s*것(?:이다|입니다|이야|이에요)|앞두고|준비\s*중|"
+    r"\bplan(?:ned|ning|s)?\b|\bgoing\s+to\b|\bwill\b|\bintend(?:s|ed)?\s+to\b",
+    re.IGNORECASE,
+)
+
 
 def _local_date(dt: datetime, tz: ZoneInfo) -> date:
     if dt.tzinfo is None:
@@ -300,7 +313,16 @@ def resolve_event_temporal(
     anchor = entry_at if entry_at.tzinfo is not None else entry_at.replace(tzinfo=UTC)
     anchor = anchor.astimezone(tz)
     source = (event_time_text or "").strip() or None
-    window = parse_time_window(source or statement, tz, anchor)
+    if source is None and _PLANNING_CUE_RE.search(statement):
+        # No explicit event-time phrase was extracted, and the statement
+        # reads as a goal/plan rather than a record of something that
+        # already happened. Scanning the raw statement for a bare month/day
+        # mention here would misattribute a target date (e.g. "9월 초
+        # 목표로") as when the event occurred, so skip it and fall through to
+        # the recorded-day fallback below instead of guessing.
+        window = None
+    else:
+        window = parse_time_window(source or statement, tz, anchor)
     status = (event_status or "happened").strip().lower()
     if status not in EVENT_STATUSES:
         status = "unknown"

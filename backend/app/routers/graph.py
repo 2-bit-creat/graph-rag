@@ -1008,12 +1008,26 @@ async def edit_node(
         if fixup.get("heads_demoted"):
             response.headers["X-Heads-Demoted"] = str(fixup["heads_demoted"])
 
-    changed = before != (node.name, node.type, node.description)
     # Source text is the contract for every derived expression and quiz.  A text
     # edit therefore has one simple lifecycle: retire the old derivatives,
     # clear their expression inventory, and analyse the new source automatically.
     was_statement = str(before[1] or "").lower() == "statement"
     is_statement = str(node.type or "").lower() == "statement"
+    if was_statement and is_statement:
+        # Quiz/expression generation only ever reads the statement's content
+        # text (see quiz_bundle.py — context_type and name never appear
+        # there). description is a {"context_type", "content"} JSON blob, so
+        # comparing it whole would treat a context_type-only edit as a
+        # content edit and wipe derivatives that are still exactly right for
+        # the (unchanged) content — the same class of bug the date field
+        # already avoids by living outside this comparison entirely.
+        from ..graph_retrieval import statement_content, statement_content_from
+
+        changed = statement_content_from(before[0], before[2]) != statement_content(node)
+    else:
+        # A type flip into/out of Statement has no "same content" comparison
+        # that makes sense across incompatible shapes — always invalidate.
+        changed = before != (node.name, node.type, node.description)
     if changed and (was_statement or is_statement):
         from ..quiz_bundle import BundleSeedError
         from ..quiz_materials import retire_statement_derivatives

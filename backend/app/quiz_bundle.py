@@ -53,6 +53,15 @@ logger = logging.getLogger(__name__)
 CLOZE_GENERATOR_VERSION = "study-contract-v20-complete-target-sentence"
 
 _REVIEW_CONTRACT_VERSION = "pair-release-v1"
+# How many targeted-repair attempts a single failing segment gets per failure
+# reason before it is dropped from the bundle entirely. A statement that
+# splits into N sentences is meant to produce N study units — one segment
+# losing its coin flip on a single retry silently cut whole sentences from
+# the output (see the ko-028-adjacent "2차 Pilot" bug report: segment 0 lost
+# its composition card outright, and only a low-priority scramble backfill
+# ever surfaced it). Raising this does not relax any gate; a segment still
+# has to pass the exact same checks, it just gets more chances to.
+_SEGMENT_REVIEW_MAX_RETRIES = 2
 
 _CLOZE_RELEASE_SCORE = 92
 _BLANK_RUN_RE = re.compile(r"_{2,}")
@@ -2326,11 +2335,15 @@ async def generate_quiz_bundle(
     # Sentence-terminator boundaries (periods) are unambiguous and still
     # split a genuinely multi-sentence Statement — the only case where one
     # written unit truly holds more than one learnable proposition.
-    source_units = (
-        _deterministic_sentence_units(original_statement)
-        if len(_SENTENCE_TERMINATOR_RE.findall(original_statement)) > 1
-        else [original_statement]
-    )
+    # _deterministic_sentence_units already falls back to [original_statement]
+    # when it can't find more than one unit, so it's safe to call unguarded.
+    # A separate ">1 terminator" pre-check here used to gate the call, but it
+    # undercounted whenever the final sentence had no closing punctuation
+    # (e.g. a trailing clause cut off before "." was typed/extracted) —
+    # _deterministic_sentence_units still emits that trailing text as its own
+    # unit via its tail-append step, so the pre-check silently merged a
+    # genuinely multi-sentence statement into one oversized study unit.
+    source_units = _deterministic_sentence_units(original_statement)
     segment_step = tracer.begin_step(
         "bundle_study_segment", "policy", phase="quiz_path",
         input_data={"language": language},
@@ -2540,9 +2553,12 @@ async def generate_quiz_bundle(
                     "but preserve every event, participant, negation, time, cause, contrast, and reciprocal action from source_text. "
                     "Return a complete independent learner sentence; do not replace a meeting event with merely talking."
                 )
-                retry_index, retry_row, retry_usage = await review_unit(index, raw_segments[index], retry_feedback)
-                plan_review_usage.append(retry_usage)
-                if retry_row is not None:
+                repaired_row = None
+                for _attempt in range(_SEGMENT_REVIEW_MAX_RETRIES):
+                    _retry_index, retry_row, retry_usage = await review_unit(index, raw_segments[index], retry_feedback)
+                    plan_review_usage.append(retry_usage)
+                    if retry_row is None:
+                        continue
                     retry_row = {
                         **retry_row,
                         "segment_index": index,
@@ -2554,12 +2570,15 @@ async def generate_quiz_bundle(
                         target_language=language,
                         check_expressions=False,
                     ):
-                        reviewed = retry_row
-                    else:
-                        review_errors.append(f"segment {index}: reviewer returned an incomplete study unit after targeted repair")
-                        continue
+                        repaired_row = retry_row
+                        break
+                if repaired_row is not None:
+                    reviewed = repaired_row
                 else:
-                    review_errors.append(f"segment {index}: reviewer returned an incomplete study unit")
+                    review_errors.append(
+                        f"segment {index}: reviewer returned an incomplete study unit after "
+                        f"{_SEGMENT_REVIEW_MAX_RETRIES} targeted repair attempt(s)"
+                    )
                     continue
             unit_domain_reason = (
                 _plan_domain_contract_reason(
@@ -2578,21 +2597,27 @@ async def generate_quiz_bundle(
                     "result and reason clauses are part of the event: render them in the reference instead of dropping them to stay short, "
                     "and only keep a translation note for a realization the reference actually contains."
                 )
-                _retry_index, retry_row, retry_usage = await review_unit(index, raw_segments[index], retry_feedback)
-                plan_review_usage.append(retry_usage)
-                if retry_row is not None:
+                repaired_row = None
+                for _attempt in range(_SEGMENT_REVIEW_MAX_RETRIES):
+                    _retry_index, retry_row, retry_usage = await review_unit(index, raw_segments[index], retry_feedback)
+                    plan_review_usage.append(retry_usage)
+                    if retry_row is None:
+                        continue
                     retry_row = {**retry_row, "segment_index": index, "source_text": raw_segments[index]["source_text"]}
                     if not _plan_has_incomplete_units(
                         [retry_row], native_language=native_language, target_language=language, check_expressions=False
                     ) and not _plan_domain_contract_reason(
                         retry_row["source_text"], [retry_row], native_language=native_language, target_language=language
                     ) and not _translation_note_contract_reason(retry_row) and not _scramble_units_contract_reason(retry_row):
-                        reviewed = retry_row
-                    else:
-                        review_errors.append(f"segment {index}: {unit_domain_reason} after targeted repair")
-                        continue
+                        repaired_row = retry_row
+                        break
+                if repaired_row is not None:
+                    reviewed = repaired_row
                 else:
-                    review_errors.append(f"segment {index}: {unit_domain_reason}")
+                    review_errors.append(
+                        f"segment {index}: {unit_domain_reason} after "
+                        f"{_SEGMENT_REVIEW_MAX_RETRIES} targeted repair attempt(s)"
+                    )
                     continue
             reviewed_rows.append(reviewed)
         reviewed_rows.sort(key=lambda item: int(item.get("segment_index") or 0))
@@ -3042,8 +3067,21 @@ async def generate_quiz_bundle(
         if generation_version:
             generation_identity = f"{generation_identity}|{generation_version}"
         generation_key = hashlib.sha256(generation_identity.encode()).hexdigest()
+        # An archived row must never block regenerating its identity: an
+        # archived scramble/composition is invisible to the learner, but its
+        # generation_key survives archival unless the specific code path that
+        # archived it happened to null it out (not every one does — see the
+        # composition-supersede step in ensure_learning_material, which
+        # doesn't). Left unguarded, that stale key makes this segment's
+        # identity look "already generated" forever, so a re-run silently
+        # skips it while every other segment regenerates fine — exactly the
+        # "2차 Pilot" bug where segment 0's composition vanished for good.
         existing = await session.scalar(
-            select(Quiz).where(Quiz.user_id == user.id, Quiz.generation_key == generation_key)
+            select(Quiz).where(
+                Quiz.user_id == user.id,
+                Quiz.generation_key == generation_key,
+                Quiz.queue_kind != "archived",
+            )
         )
         if existing is not None:
             logger.info("Skipping duplicate bundle quiz: node=%s type=%s expression=%s", seed_node_id, spec["quiz_type"], identity)

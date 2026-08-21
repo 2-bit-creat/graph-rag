@@ -73,6 +73,33 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
   bool _showRelations = false;
   bool _showMore = false;
 
+  /// Content/type as loaded, so _saveNode can tell whether the user actually
+  /// changed a Statement's content before saving — the backend only wipes
+  /// and regenerates quizzes/expressions when the content text itself
+  /// differs, or the node leaves the Statement type (see graph.py's
+  /// `changed` check), and the user should see that coming, not discover it
+  /// after the fact. Name and context_type are never compared here: neither
+  /// feeds quiz/expression generation, so editing only those never wipes
+  /// anything on the backend either.
+  String? _originalContent;
+  String? _originalType;
+
+  /// Statement source/context type while editing — a free dropdown, not a
+  /// read-only Chip. Stored inside the same `description` JSON as `content`
+  /// (see _buildStmtDescription), but read separately from content on the
+  /// backend's regeneration check, so editing only this never wipes quizzes.
+  String? _ctxType;
+
+  static const List<String> _statementContextTypes = [
+    '개인일기',
+    '대화',
+    '회의록',
+    '책',
+    '뉴스',
+    '강연',
+    '논문',
+  ];
+
   /// Event day currently shown for a Statement, and the value it was loaded
   /// with. Only a real change is sent, so editing the text of a statement whose
   /// date was inferred never silently promotes that guess to a confirmed date.
@@ -352,6 +379,9 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         _descCtrl.text = node['description']?.toString() ?? '';
       }
       _type = _resolveEntityType(node['type']?.toString());
+      _ctxType = _isStatementNode(node) ? _stmtCtxType(node) : null;
+      _originalContent = _descCtrl.text;
+      _originalType = _type;
       _occurredAt = _nodeEventDate(node);
       _loadedOccurredAt = _occurredAt;
       _showAdvanced = false;
@@ -415,10 +445,46 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     return ok ?? false;
   }
 
+  /// Warn before a Statement edit that the backend will treat as an actual
+  /// content change: it retires every quiz and expression derived from this
+  /// node and regenerates them from scratch (graph.py's `changed` gate,
+  /// which — like this check — only looks at the statement's content text
+  /// and whether it's leaving the Statement type; quiz/expression generation
+  /// never reads name or context_type, so editing only those no longer wipes
+  /// anything on either side). A no-op save (open, don't touch anything,
+  /// press 저장) never hits this — only a real content/type difference does.
+  Future<bool> _confirmContentRegeneration(Map<String, dynamic> node) async {
+    if (!_isStatementNode(node)) return true;
+    final contentChanged = _descCtrl.text.trim() != (_originalContent ?? '').trim();
+    final typeChanged = _type != _originalType;
+    if (!contentChanged && !typeChanged) return true;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('inspector.confirmRegenerateTitle')),
+        content: Text(tr('inspector.confirmRegenerateBody')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(tr('common.cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(tr('inspector.confirmRegenerateConfirm')),
+          ),
+        ],
+      ),
+    );
+    return ok ?? false;
+  }
+
   Future<void> _saveNode() async {
     final node = widget.selectedNode;
     if (node == null || _type == null) return;
     if (!await _confirmHeadDemotion(node)) return;
+    if (!mounted) return;
+    if (!await _confirmContentRegeneration(node)) return;
     if (!mounted) return;
     setState(() => _saving = true);
 
@@ -426,7 +492,7 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
     String? descToSave;
     final contentText = _descCtrl.text.trim();
     if (_isStatementNode(node) && contentText.isNotEmpty) {
-      final ctxType = _stmtCtxType(node);
+      final ctxType = _ctxType ?? _stmtCtxType(node);
       descToSave = _buildStmtDescription(ctxType, contentText);
     } else {
       descToSave = contentText.isEmpty ? null : contentText;
@@ -1193,25 +1259,21 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       ),
       const SizedBox(height: 10),
       if (_isStatementNode(node)) ...[
-        Row(
-          children: [
-            Icon(Icons.category_outlined, size: 13, color: AppColors.textMuted),
-            const SizedBox(width: 4),
-            Text(tr('inspector.sourceTypeLabel'),
-                style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
-            Chip(
-              label: Text(
-                _stmtCtxType(node),
-                style:
-                    const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
-              ),
-              visualDensity: VisualDensity.compact,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-            ),
+        DropdownButtonFormField<String>(
+          initialValue: _statementContextTypes.contains(_ctxType)
+              ? _ctxType
+              : null,
+          decoration: InputDecoration(
+              labelText: tr('inspector.sourceTypeLabel'),
+              border: const OutlineInputBorder(),
+              isDense: true),
+          items: [
+            for (final option in _statementContextTypes)
+              DropdownMenuItem(value: option, child: Text(option)),
           ],
+          onChanged: (v) => setState(() => _ctxType = v),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 10),
       ],
       TextField(
         controller: _descCtrl,

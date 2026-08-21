@@ -75,14 +75,16 @@ class RankedContext:
     node_ids: list[uuid.UUID] = field(default_factory=list)
 
 
-def statement_content(node: Node) -> str:
-    """The diary sentence a Statement node actually holds. ``description`` is
-    JSON with the real text under ``content``; ``name`` is a short title, not
-    the sentence — callers that render node.name for a Statement show the
-    wrong thing."""
-    desc = (node.description or "").strip()
+def statement_content_from(name: str, description: str | None) -> str:
+    """Same extraction as :func:`statement_content`, on raw strings.
+
+    Lets a caller compare a Statement's content across an edit (e.g. before
+    vs. after a PATCH) without needing two live ``Node`` objects — useful
+    when "before" only survives as a plain tuple snapshot.
+    """
+    desc = (description or "").strip()
     if not desc:
-        return node.name
+        return name
     try:
         content = (json.loads(desc).get("content") or "").strip()
         if content:
@@ -90,7 +92,15 @@ def statement_content(node: Node) -> str:
     except (ValueError, AttributeError):
         pass
     parts = desc.split("\n", 1)
-    return (parts[1] if len(parts) > 1 else parts[0]).strip() or node.name
+    return (parts[1] if len(parts) > 1 else parts[0]).strip() or name
+
+
+def statement_content(node: Node) -> str:
+    """The diary sentence a Statement node actually holds. ``description`` is
+    JSON with the real text under ``content``; ``name`` is a short title, not
+    the sentence — callers that render node.name for a Statement show the
+    wrong thing."""
+    return statement_content_from(node.name, node.description)
 
 
 async def _hydrate_packages(

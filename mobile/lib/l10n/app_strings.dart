@@ -213,6 +213,7 @@ const Map<String, String> _ko = {
   'kg.speakerLabel': '화자',
   'kg.sourceLabel': '출처',
   'kg.detail': '자세히',
+  'kg.viewFullText': '전체 보기',
   'kg.langEnglish': '영어',
   'kg.langGerman': '독일어',
   'kg.langKorean': '한국어',
@@ -816,6 +817,10 @@ const Map<String, String> _ko = {
       '기록되지 않고, 해당 관계는 진술 → 개념으로 뒤집힙니다. 되돌리려면 다시 '
       '정체성으로 바꾼 뒤 화자 관계를 직접 이어야 합니다.',
   'inspector.demoteHeadConfirm': '그래도 변경',
+  'inspector.confirmRegenerateTitle': '내용을 수정하면 학습 문제가 새로 생성돼요',
+  'inspector.confirmRegenerateBody':
+      '이 진술에서 만들어진 기존 문장 배열·작문 문제와 표현이 모두 삭제되고, 수정된 내용으로 다시 생성됩니다. 계속할까요?',
+  'inspector.confirmRegenerateConfirm': '수정하고 다시 생성',
   'inspector.deleteFailed': '삭제 실패: {error}',
   'inspector.deleteNodeTitle': '노드 삭제',
   'inspector.deleteNodeSimpleBody': '「{name}」 노드와 연결된 관계도 삭제됩니다.',
@@ -862,7 +867,7 @@ const Map<String, String> _ko = {
   'inspector.targetNode': '도착 노드',
   'inspector.moreSection': '더보기',
   'inspector.typeLabel': '타입',
-  'inspector.sourceTypeLabel': '소스 유형: ',
+  'inspector.sourceTypeLabel': '소스 유형',
   'inspector.statementContentLabel': '본문 내용 (정제)',
   'inspector.descriptionLabel': '설명',
   'inspector.mergeConvertButton': '병합·정체성 전환',
@@ -1576,6 +1581,7 @@ const Map<String, String> _en = {
   'kg.speakerLabel': 'Speaker',
   'kg.sourceLabel': 'Source',
   'kg.detail': 'Details',
+  'kg.viewFullText': 'View full text',
   'kg.langEnglish': 'English',
   'kg.langGerman': 'German',
   'kg.langKorean': 'Korean',
@@ -2242,6 +2248,10 @@ const Map<String, String> _en = {
           'flip to statement → concept. Undoing it means changing the type back '
           'and re-linking the speaker by hand.',
   'inspector.demoteHeadConfirm': 'Change anyway',
+  'inspector.confirmRegenerateTitle': 'Editing this will regenerate its quizzes',
+  'inspector.confirmRegenerateBody':
+      'Every scramble/composition quiz and expression made from this statement will be deleted and rebuilt from the edited text. Continue?',
+  'inspector.confirmRegenerateConfirm': 'Edit and regenerate',
   'inspector.deleteFailed': 'Delete failed: {error}',
   'inspector.deleteNodeTitle': 'Delete node',
   'inspector.deleteNodeSimpleBody':
@@ -2296,7 +2306,7 @@ const Map<String, String> _en = {
   'inspector.targetNode': 'Target node',
   'inspector.moreSection': 'More',
   'inspector.typeLabel': 'Type',
-  'inspector.sourceTypeLabel': 'Source type: ',
+  'inspector.sourceTypeLabel': 'Source type',
   'inspector.statementContentLabel': 'Content (cleaned)',
   'inspector.descriptionLabel': 'Description',
   'inspector.mergeConvertButton': 'Merge / convert to identity',

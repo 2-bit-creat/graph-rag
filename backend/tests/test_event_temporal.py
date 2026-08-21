@@ -34,6 +34,24 @@ def test_no_explicit_time_is_recorded_day_fallback_with_lower_confidence():
     assert value.confidence == 0.6
 
 
+def test_goal_date_in_statement_is_not_mistaken_for_the_occurred_date():
+    # No event_time_text was extracted, so resolve_event_temporal falls back
+    # to scanning the raw statement — but "9월 초 목표로" ("aiming for early
+    # September") names a target, not when the diary entry's event happened.
+    # Before the planning-cue guard, the bare "9월" match here overwrote
+    # occurred_at with 2026-09-01 even though the entry was written in July.
+    value = resolve_event_temporal(
+        statement=(
+            "1차 Pilot 결과 보완을 위해 9월 초 목표로 2차 Pilot 분석을 진행 중이다. "
+            "본 모델링에 약 2개월이 소요되어 모형 검증까지 마칠 예정이다."
+        ),
+        entry_at=datetime.fromisoformat("2026-07-30T10:15:00+09:00"),
+        tz_name="Asia/Seoul",
+    )
+    assert value.occurred_at.isoformat() == "2026-07-30"
+    assert value.precision == "recorded_date"
+
+
 def test_planned_event_keeps_status_out_of_default_past_recall_candidates():
     value = resolve_event_temporal(
         statement="내일 보고서를 작성할 예정이다.",

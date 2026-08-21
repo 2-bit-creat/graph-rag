@@ -938,6 +938,26 @@ def test_sentence_fallback_does_not_split_on_a_decimal_number() -> None:
     ) == ["The price was 3.5 dollars."]
 
 
+def test_sentence_fallback_splits_even_when_the_final_sentence_has_no_terminator() -> None:
+    # generate_quiz_bundle used to gate this call behind
+    # `len(_SENTENCE_TERMINATOR_RE.findall(statement)) > 1`, which undercounts
+    # a statement whose trailing sentence has no closing punctuation (a diary
+    # entry cut off before the final period, or trimmed on extraction). That
+    # merged two real sentences into one oversized study unit and silently
+    # halved the scramble/composition cards generated for it. The function
+    # itself has always handled this correctly via its tail-append step —
+    # the bug was the redundant pre-check at the call site, not this function
+    # — but this pins the behavior the call site now relies on unguarded.
+    units = quiz_bundle._deterministic_sentence_units(
+        "1차 Pilot 결과 보완을 위해 9월 초 목표로 2차 Pilot 분석을 진행 중이다. "
+        "본 모델링에 약 2개월이 소요되어 모형 검증까지 마칠 예정"
+    )
+    assert units == [
+        "1차 Pilot 결과 보완을 위해 9월 초 목표로 2차 Pilot 분석을 진행 중이다.",
+        "본 모델링에 약 2개월이 소요되어 모형 검증까지 마칠 예정",
+    ]
+
+
 def test_expression_candidates_reject_dangling_connectors_and_whole_sentence_spans() -> None:
     chunks = [
         {

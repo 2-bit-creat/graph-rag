@@ -7,6 +7,7 @@ three paths from silently using different extraction rules.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import uuid
@@ -39,6 +40,28 @@ MATERIAL_CONTRACT_VERSION = CLOZE_GENERATOR_VERSION
 # Graph refreshes can overlap while the first background response is running.
 # Keep legacy adoption single-flight per process to avoid duplicate model work.
 _BACKFILL_IN_FLIGHT: set[uuid.UUID] = set()
+
+# Two entry points can legitimately race for the same (user, node, language):
+# adding a target language schedules a background analyse_material_background
+# task for every existing Statement, and opening that node's study panel (or
+# pressing an explicit "generate now" prompt) hits the same
+# ensure_learning_material path through a different route. Both see
+# status != "ready" and both call generate_quiz_bundle, and each call's own
+# "archive whatever I didn't just create" step then archives the OTHER call's
+# freshly created card for the segment it didn't happen to touch — the two
+# calls stomp on each other instead of one winning cleanly. A per-identity
+# lock serializes them so the second caller sees the first one's completed,
+# "ready" material and does nothing.
+_MATERIAL_LOCKS: dict[tuple[uuid.UUID, uuid.UUID, str], asyncio.Lock] = {}
+
+
+def _material_lock(user_id: uuid.UUID, node_id: uuid.UUID, language: str) -> asyncio.Lock:
+    key = (user_id, node_id, language)
+    lock = _MATERIAL_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _MATERIAL_LOCKS[key] = lock
+    return lock
 
 
 def source_hash(text: str) -> str:
@@ -360,91 +383,110 @@ async def ensure_learning_material(
     priority: int = 0,
     force: bool = False,
 ) -> tuple[QuizLearningMaterial, list[Quiz], dict]:
-    """Analyse one node once and prepare its composition cards immediately."""
-    row = await get_or_mark_material(
-        session, user, node_id=node_id, language=language, priority=priority
-    )
-    if row.status == "ready" and not force:
-        backfilled = await ensure_scramble_inventory_for_node(
-            session, user, node_id=node_id, language=language
+    """Analyse one node once and prepare its composition cards immediately.
+
+    Serialized per (user, node, language): adding a target language and
+    opening/refreshing that node's study panel can both land here for the
+    same identity within moments of each other, and running the generation
+    +archive-old sequence twice concurrently makes each call archive the
+    other's freshly created card — see the lock's docstring above.
+    """
+    async with _material_lock(user.id, node_id, language):
+        row = await get_or_mark_material(
+            session, user, node_id=node_id, language=language, priority=priority
         )
-        if backfilled:
-            await session.commit()
-        return row, backfilled, row.result or {}
-    row.status = "analyzing"
-    row.error = None
-    await session.commit()
-    try:
-        created, trace = await generate_quiz_bundle(
-            session,
-            user,
-            language=language,
-            seed_node_ids={str(node_id)},
-            generation_version=row.source_hash,
-            materialize_cloze=False,
-        )
-        composition = [quiz for quiz in created if quiz.quiz_type == "composition"]
-        scrambles = [quiz for quiz in created if quiz.quiz_type == "scramble"]
-        # The analysis pass needs composition references to judge expressions,
-        # but those cards are not automatically part of the learner's active
-        # queue.  Keep them as cheap text inventory until refill or an explicit
-        # node study action promotes them.  No TTS is generated on this path.
-        for quiz in composition + scrambles:
-            quiz.queue_kind = "inventory"
-        expression_count = next(
-            (
-                int(step.get("input", {}).get("expression_count") or 0)
-                for step in (trace.get("steps") or [])
-                if step.get("name") == "bundle_structural_validation"
-            ),
-            0,
-        )
-        # A new source version supersedes old composition cards only after the
-        # replacement has been created successfully.
-        if composition:
-            old = (
-                await session.scalars(
-                    select(Quiz).where(
-                        Quiz.user_id == user.id,
-                        Quiz.language == language,
-                        Quiz.quiz_type == "composition",
-                        Quiz.queue_kind != "archived",
-                        Quiz.source_nodes.any(node_id),
-                        Quiz.id.not_in([quiz.id for quiz in composition]),
-                    )
-                )
-            ).all()
-            for quiz in old:
-                quiz.queue_kind = "archived"
-        row.status = "ready"
-        row.composition_count = len(composition)
-        row.expression_count = expression_count
-        row.result = {
-            "trace": trace,
-            "ready_at": datetime.now(UTC).isoformat(),
-            "material_contract_version": MATERIAL_CONTRACT_VERSION,
-        }
+        if row.status == "ready" and not force:
+            backfilled = await ensure_scramble_inventory_for_node(
+                session, user, node_id=node_id, language=language
+            )
+            if backfilled:
+                await session.commit()
+            return row, backfilled, row.result or {}
+        row.status = "analyzing"
         row.error = None
-        await record_policy_decision(
-            session,
-            user_id=user.id,
-            policy="generation",
-            policy_version=GENERATION_POLICY_VERSION,
-            entity_type="learning_material",
-            entity_id=row.id,
-            reason="진술 노드 분석 완료: 작문 단위와 표현 인벤토리를 준비",
-            details={"node_id": str(node_id), "language": language, "composition_count": len(composition), "expression_count": expression_count},
-        )
         await session.commit()
-        return row, created, trace
-    except Exception as exc:
-        await session.rollback()
-        row = await session.get(QuizLearningMaterial, row.id)
-        if row is not None:
-            row.status = "failed"
-            row.error = str(exc)[:1000]
+        try:
+            created, trace = await generate_quiz_bundle(
+                session,
+                user,
+                language=language,
+                seed_node_ids={str(node_id)},
+                generation_version=row.source_hash,
+                materialize_cloze=False,
+            )
+            composition = [quiz for quiz in created if quiz.quiz_type == "composition"]
+            scrambles = [quiz for quiz in created if quiz.quiz_type == "scramble"]
+            # The analysis pass needs composition references to judge expressions,
+            # but those cards are not automatically part of the learner's active
+            # queue.  Keep them as cheap text inventory until refill or an explicit
+            # node study action promotes them.  No TTS is generated on this path.
+            for quiz in composition + scrambles:
+                quiz.queue_kind = "inventory"
+            expression_count = next(
+                (
+                    int(step.get("input", {}).get("expression_count") or 0)
+                    for step in (trace.get("steps") or [])
+                    if step.get("name") == "bundle_structural_validation"
+                ),
+                0,
+            )
+            # A new source version supersedes old composition cards only after the
+            # replacement has been created successfully.
+            if composition:
+                old = (
+                    await session.scalars(
+                        select(Quiz).where(
+                            Quiz.user_id == user.id,
+                            Quiz.language == language,
+                            Quiz.quiz_type == "composition",
+                            Quiz.queue_kind != "archived",
+                            Quiz.source_nodes.any(node_id),
+                            Quiz.id.not_in([quiz.id for quiz in composition]),
+                        )
+                    )
+                ).all()
+                for quiz in old:
+                    quiz.queue_kind = "archived"
+                    # Every other archival site (archive_quiz, _supersede_material)
+                    # clears generation_key so the identity is free to regenerate.
+                    # This one didn't, and generation_key is DB-unique, so a
+                    # segment's composition superseded here could never be
+                    # remade: the duplicate-guard lookup kept finding this row
+                    # (archived or not) and skipping the new candidate, and even
+                    # a lookup fixed to ignore archived rows would still crash on
+                    # insert against the same unique key. See the "2차 Pilot"
+                    # bug — segment 0 lost its composition permanently this way.
+                    quiz.generation_key = None
+                    quiz.batch_id = None
+            row.status = "ready"
+            row.composition_count = len(composition)
+            row.expression_count = expression_count
+            row.result = {
+                "trace": trace,
+                "ready_at": datetime.now(UTC).isoformat(),
+                "material_contract_version": MATERIAL_CONTRACT_VERSION,
+            }
+            row.error = None
+            await record_policy_decision(
+                session,
+                user_id=user.id,
+                policy="generation",
+                policy_version=GENERATION_POLICY_VERSION,
+                entity_type="learning_material",
+                entity_id=row.id,
+                reason="진술 노드 분석 완료: 작문 단위와 표현 인벤토리를 준비",
+                details={"node_id": str(node_id), "language": language, "composition_count": len(composition), "expression_count": expression_count},
+            )
             await session.commit()
-        raise
+            return row, created, trace
+        except Exception as exc:
+            await session.rollback()
+            row = await session.get(QuizLearningMaterial, row.id)
+            if row is not None:
+                row.status = "failed"
+                row.error = str(exc)[:1000]
+                await session.commit()
+            raise
 
 
 async def ensure_scramble_inventory_for_node(

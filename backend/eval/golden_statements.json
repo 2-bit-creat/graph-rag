@@ -184,7 +184,7 @@
       },
       "expect_cloze_by_target": {
         "german": {
-          "target_contains": ["konservativ", "diskontsatz"],
+          "target_contains": ["konservativ", ["diskontsatz", "abzinsungssatz"]],
           "native_contains": ["보수적", "할인율"],
           "native_forbidden_exact": ["보수적으로"]
         }
@@ -218,17 +218,8 @@
       "native": "korean",
       "text": "그는 남는 시간에 자기 발표 자료를 다듬었고, 동료는 자기 예약을 오후로 옮겼다.",
       "tags": ["possessive_deixis", "answer_boundary"],
-      "note": "독일어로 가면 seine/ihre Unterlagen 처럼 소유격이 정답에 딸려 들어가기 쉬운 문장. 소유격은 화자에 따라 바뀌는 직시라 빈칸에 들어가면 안 됨. 영어 ko-026의 독일어판.",
-      "expect_cloze": {
-        "target_forbidden_words": [
-          "my", "your", "his", "her", "its", "our", "their",
-          "meine", "meinen", "meinem", "meiner", "meines",
-          "seine", "seinen", "seinem", "seiner", "seines",
-          "ihre", "ihren", "ihrem", "ihrer", "ihres",
-          "unsere", "unseren", "eure", "euren"
-        ],
-        "note_on_omissions": "bare 'sein' and 'ihr' are deliberately absent: they are homographs of the infinitive 'to be' and the pronoun 'you/her', and this check is a plain token match with no noun-following rule, so listing them would fail a correct card like 'überrascht sein'"
-      }
+      "note": "독일어로 가면 seine/ihre Unterlagen 처럼 소유격이 정답에 딸려 들어가기 쉬운 문장. 영어 ko-026의 독일어판. cloze 시절엔 소유격이 고립된 빈칸에 들어가면 지시대상을 못 찾는다는 문제였지만, scramble/composition은 문장 전체(주어 포함)가 항상 함께 보이므로 그 전제가 사라짐 — 'Er ... seine ...'/'der Kollege ... seine ...'처럼 같은 문장 안에서 지시대상이 바로 옆에 있으면 소유격 자체는 정상. expect_cloze를 비워 cloze 전용 체크로 되돌림.",
+      "expect_cloze": null
     },
     {
       "id": "en-001",

@@ -108,50 +108,69 @@ def _load_golden(ids: set[str] | None) -> list[dict]:
 def _check_golden_expectation(
     statement: dict, views: list[dict], *, target_language: str = "english"
 ) -> dict | None:
-    """Check a narrow semantic regression contract on the generated cloze."""
+    """Check a narrow semantic regression contract on the generated cards.
+
+    Written for the current scramble/composition-only pipeline (``cloze`` is
+    disabled — see ``quiz_types.ENABLED_QUIZ_TYPES``). Unlike cloze, neither
+    card type has a model-generated native-language gloss to check: a
+    scramble's ``question_native``/composition's ``question_native`` is the
+    untranslated source statement verbatim, not something the model produced.
+    So only the TARGET-language output is checked here — ``native_contains``/
+    ``native_forbidden_exact`` in a golden statement's ``expect_cloze`` are
+    silently unused in this mode (they were meaningful only for cloze's
+    generated native gloss field, which no longer exists).
+    """
     by_target = statement.get("expect_cloze_by_target") or {}
     expected = by_target.get(target_language) or statement.get("expect_cloze")
     if not isinstance(expected, dict):
         return None
-    target_terms = [str(v).casefold() for v in expected.get("target_contains") or []]
-    native_terms = [str(v).casefold() for v in expected.get("native_contains") or []]
-    forbidden_exact = {
-        str(v).strip().casefold() for v in expected.get("native_forbidden_exact") or []
-    }
-    # A word that must never appear in ANY cloze answer for this statement.
-    # Unlike the positive checks above, which need one card to match and so
-    # ride on which expressions the planner happened to pick, this holds for
-    # every card — the right shape for a boundary invariant such as "no cloze
-    # answer may contain a possessive determiner".
+    # A target_contains entry is normally one required substring. An entry
+    # that is itself a list is an any-of group (e.g. synonymous domain terms
+    # like "Diskontsatz"/"Abzinsungssatz" for "discount rate") — at least one
+    # of its members must be present, not all of them.
+    target_terms = [
+        [str(v).casefold()] if not isinstance(v, list) else [str(alt).casefold() for alt in v]
+        for v in expected.get("target_contains") or []
+    ]
+    # A word that must never appear in ANY generated target-language text for
+    # this statement. Unlike the positive check above, which needs one card to
+    # match and so rides on which expressions the planner happened to pick,
+    # this holds for every card — the right shape for a boundary invariant
+    # such as "no generated sentence may contain a possessive determiner".
     forbidden_words = {
         str(v).strip().casefold() for v in expected.get("target_forbidden_words") or []
     }
-    matching = []
-    violations = []
+    # Every target-language string actually produced for this statement: a
+    # scramble card's reference sentence, plus each composition card's model
+    # answers.
+    target_texts: list[str] = []
     for view in views:
-        if view.get("quiz_type") != "cloze":
-            continue
-        target = str(view.get("surface_answer") or "").casefold()
-        native = str(view.get("target_native") or "").strip().casefold()
-        if forbidden_words & set(target.split()):
-            violations.append(target)
-        if all(term in target for term in target_terms):
-            matching.append((target, native))
+        if view.get("quiz_type") == "scramble":
+            text = view.get("sentence_target")
+            if text:
+                target_texts.append(str(text))
+        elif view.get("quiz_type") == "composition":
+            target_texts.extend(str(m) for m in (view.get("model_answers") or []) if m)
+    violations = []
+    matching = []
+    for text in target_texts:
+        folded = text.casefold()
+        if forbidden_words & set(folded.split()):
+            violations.append(text)
+        if all(any(alt in folded for alt in group) for group in target_terms):
+            matching.append(text)
     passed = not violations and (
-        any(
-            all(term in native for term in native_terms) and native not in forbidden_exact
-            for _target, native in matching
-        )
+        bool(matching)
         # A statement that only states a forbidden-word invariant passes on
         # not violating it; it must not require a positive match it never set.
-        or (not target_terms and not native_terms)
+        or not target_terms
     )
     return {
         "statement_id": statement["id"],
         "quality_case_id": statement.get("quality_case_id"),
         "passed": passed,
         "expected": expected,
-        "matching_clozes": matching,
+        "matching_target_texts": matching,
         "forbidden_word_violations": violations,
     }
 

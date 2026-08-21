@@ -3389,14 +3389,31 @@ class _SelectionInfoCard extends StatelessWidget {
                 ],
                 if (preview.isNotEmpty) ...[
                   const SizedBox(height: 4),
-                  Text(
-                    preview,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.35,
-                      color: shell.mutedText,
+                  GestureDetector(
+                    onTap: onDetail,
+                    behavior: HitTestBehavior.opaque,
+                    child: Text(
+                      preview,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.35,
+                        color: shell.mutedText,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  GestureDetector(
+                    onTap: onDetail,
+                    behavior: HitTestBehavior.opaque,
+                    child: Text(
+                      '${tr('kg.viewFullText')} ›',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.accent,
+                      ),
                     ),
                   ),
                 ],

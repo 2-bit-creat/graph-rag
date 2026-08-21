@@ -292,18 +292,26 @@ def _is_operator(user: User) -> bool:
     return bool(handle) and handle in settings.operator_handle_list
 
 
-async def _ensure_cloze_audio(session: AsyncSession, quizzes: list) -> None:
-    """Backfill legacy cloze audio, including the new answer-first asset."""
+async def _ensure_quiz_audio(session: AsyncSession, quizzes: list) -> None:
+    """Backfill missing TTS for cloze and scramble quizzes.
+
+    Covers two gaps: legacy cards from before audio existed, and cards whose
+    TTS synthesis simply failed at generation time (see
+    ``quiz_bundle.generate_quiz_bundle``, which logs and moves on rather than
+    retrying). Nothing else ever revisits a scramble quiz's audio once it's
+    created, so without this it stays permanently silent.
+    """
     changed = False
     for quiz in quizzes:
-        if quiz.quiz_type != "cloze":
+        if quiz.quiz_type not in ("cloze", "scramble"):
             continue
         quiz_changed = False
         qd = dict(quiz.quiz_data or {})
         language = quiz.language or qd.get("language") or "english"
         if not qd.get("audio_url"):
             text = resolve_quiz_tts_text(
-                "cloze", {"sentence_en": quiz.sentence_target, "quiz_data": qd}
+                quiz.quiz_type,
+                {"sentence_en": quiz.sentence_target, "quiz_data": qd},
             )
             audio_url, _ = await synthesize_quiz_audio(
                 quiz.id, text, language=language
@@ -312,7 +320,7 @@ async def _ensure_cloze_audio(session: AsyncSession, quizzes: list) -> None:
                 qd["audio_url"] = audio_url
                 changed = True
                 quiz_changed = True
-        if not qd.get("answer_audio_url"):
+        if quiz.quiz_type == "cloze" and not qd.get("answer_audio_url"):
             answer_text = resolve_cloze_answer_tts_text({"quiz_data": qd})
             answer_url, _ = await synthesize_quiz_audio(
                 quiz.id,
@@ -332,7 +340,7 @@ async def _ensure_cloze_audio(session: AsyncSession, quizzes: list) -> None:
         await session.commit()
 
 
-async def _backfill_cloze_audio_background(quiz_ids: list[uuid.UUID]) -> None:
+async def _backfill_quiz_audio_background(quiz_ids: list[uuid.UUID]) -> None:
     """Prepare later session cards without delaying the first question."""
     if not quiz_ids:
         return
@@ -342,7 +350,7 @@ async def _backfill_cloze_audio_background(quiz_ids: list[uuid.UUID]) -> None:
             for quiz_id in quiz_ids
             if (quiz := await background_session.get(Quiz, quiz_id)) is not None
         ]
-        await _ensure_cloze_audio(background_session, quizzes)
+        await _ensure_quiz_audio(background_session, quizzes)
 
 
 @router.get("/queue/items", response_model=QuizQueueListOut)
@@ -1374,18 +1382,24 @@ async def start_session(
             )
     if picked:
         # The learner sees this first card immediately, so ensure its answer
-        # clip before returning. Remaining legacy cards are repaired in the
-        # background while the learner works on the first one.
-        await _ensure_cloze_audio(session, picked[:1])
+        # clip before returning. Remaining legacy/failed-TTS cards are
+        # repaired in the background while the learner works on the first one.
+        await _ensure_quiz_audio(session, picked[:1])
         remaining_legacy_ids = [
             quiz.id
             for quiz in picked[1:]
-            if quiz.quiz_type == "cloze"
-            and not (quiz.quiz_data or {}).get("answer_audio_url")
+            if (
+                quiz.quiz_type == "cloze"
+                and not (quiz.quiz_data or {}).get("answer_audio_url")
+            )
+            or (
+                quiz.quiz_type == "scramble"
+                and not (quiz.quiz_data or {}).get("audio_url")
+            )
         ]
         if remaining_legacy_ids:
             background_tasks.add_task(
-                _backfill_cloze_audio_background, remaining_legacy_ids
+                _backfill_quiz_audio_background, remaining_legacy_ids
             )
         lo, hi = window_for_level(user.current_level)
         await trace_quiz_queue_pick(
@@ -1568,6 +1582,13 @@ async def submit_quiz(
     explanation = None
     if quiz.quiz_data:
         explanation = quiz.quiz_data.get("explanation")
+
+    # The grading reveal is the learner's one chance to hear this sentence.
+    # Background repair (see the session-build endpoint) usually wins the
+    # race, but if it hasn't landed yet — or this card was never covered by
+    # it at all — catch it here rather than leaving the card silent forever.
+    if quiz.quiz_type == "scramble" and not (quiz.quiz_data or {}).get("audio_url"):
+        await _ensure_quiz_audio(session, [quiz])
 
     return QuizSubmitResponse(
         correct=correct,

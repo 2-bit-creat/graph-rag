@@ -2658,10 +2658,21 @@ async def update_node(
     node = await session.get(Node, node_id)
     if node is None:
         return None
+    # RAG retrieval embeds "{name}\n{content}" (see rag._node_embed_text), and
+    # ensure_statement_embeddings only fills a NULL vector — it never
+    # refreshes one that already exists. Left alone, an edited Statement
+    # would keep matching queries against its pre-edit wording forever.
+    embed_text_changed = False
     if name is not None:
-        node.name = normalize_node_name(name)
-    if description is not None:
+        normalized_name = normalize_node_name(name)
+        if normalized_name != node.name:
+            embed_text_changed = True
+        node.name = normalized_name
+    if description is not None and description != node.description:
+        embed_text_changed = True
         node.description = description
+    if embed_text_changed:
+        node.name_embedding = None
 
     fixup = {"relations_fixed": 0, "duplicates_merged": 0, "heads_demoted": 0}
     if type_ is not None:
