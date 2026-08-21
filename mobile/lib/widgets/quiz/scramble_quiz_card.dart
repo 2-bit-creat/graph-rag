@@ -214,13 +214,16 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
                 Icon(Icons.lightbulb_rounded, size: 14, color: fg),
                 const SizedBox(width: 6),
               ],
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: fg,
-                  height: 1.2,
+              Flexible(
+                child: Text(
+                  label,
+                  softWrap: true,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: fg,
+                    height: 1.2,
+                  ),
                 ),
               ),
             ],
