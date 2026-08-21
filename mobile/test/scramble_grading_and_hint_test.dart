@@ -140,4 +140,82 @@ void main() {
     );
     expect(button.onPressed, isNull);
   });
+
+  testWidgets('grading clears away the editing tools', (tester) async {
+    await tester.pumpWidget(_harness(WordQuizCard(
+      quiz: _scrambleQuiz(),
+      onHint: (level) async => {'hint_level': level, 'ordered_prefix': ['c0']},
+      onSubmit: ({answer, order, selectedIndex, hintLevel = 0}) async =>
+          {'correct': true, 'quality': 4},
+      onNext: () {},
+      onExit: () {},
+    )));
+
+    expect(find.text(tr('scrambleCard.undo')), findsOneWidget);
+    expect(find.text(tr('scrambleCard.reset')), findsOneWidget);
+    expect(find.text(tr('scrambleCard.wordPieces')), findsOneWidget);
+
+    for (final chunk in _chunks) {
+      await _tapChunk(tester, chunk['text']!);
+    }
+    await tester.tap(find.text(tr('common.confirm')));
+    await tester.pumpAndSettle();
+
+    // Nothing left to undo, reset, re-confirm or drag from the drawer — the
+    // only move now is "next question", and it should not have to compete.
+    expect(find.text(tr('scrambleCard.undo')), findsNothing);
+    expect(find.text(tr('scrambleCard.reset')), findsNothing);
+    expect(find.text(tr('scrambleCard.hint')), findsNothing);
+    expect(find.text(tr('common.confirm')), findsNothing);
+    expect(find.text(tr('scrambleCard.wordPieces')), findsNothing);
+    // The learner's arrangement stays on screen.
+    expect(find.text(tr('scrambleCard.myAnswer')), findsOneWidget);
+  });
+
+  testWidgets('a revisited card is rebuilt from the submitted order',
+      (tester) async {
+    // Re-entering an answered question builds a brand new card State, so the
+    // board has to come back from the stored order rather than empty.
+    await tester.pumpWidget(_harness(WordQuizCard(
+      quiz: _scrambleQuiz(),
+      submittedOrder: const ['c2', 'c0', 'c1'],
+      externalResult: const {'correct': false, 'quality': 1},
+      onSubmit: ({answer, order, selectedIndex, hintLevel = 0}) async => null,
+      onNext: () {},
+      onExit: () {},
+    )));
+    await tester.pumpAndSettle();
+
+    expect(find.text(tr('chat.incorrectAnswer')), findsOneWidget);
+    expect(find.text(tr('scrambleCard.tapWordsInOrder')), findsNothing);
+    for (final chunk in _chunks) {
+      expect(find.text(chunk['text']!), findsOneWidget,
+          reason: '${chunk['text']} should be back on the board');
+    }
+  });
+
+  testWidgets('the back control appears only when there is somewhere to go',
+      (tester) async {
+    await tester.pumpWidget(_harness(WordQuizCard(
+      quiz: _scrambleQuiz(),
+      onSubmit: ({answer, order, selectedIndex, hintLevel = 0}) async => null,
+      onNext: () {},
+      onExit: () {},
+    )));
+    expect(find.byKey(const Key('quiz.prevQuestion')), findsNothing);
+
+    var backTaps = 0;
+    await tester.pumpWidget(_harness(WordQuizCard(
+      quiz: _scrambleQuiz(),
+      onSubmit: ({answer, order, selectedIndex, hintLevel = 0}) async => null,
+      onNext: () {},
+      onExit: () {},
+      onPrev: () => backTaps++,
+    )));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('quiz.prevQuestion')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('quiz.prevQuestion')));
+    expect(backTaps, 1);
+  });
 }

@@ -19,6 +19,7 @@ class _CardShell extends StatelessWidget {
     this.title,
     this.progress,
     this.onClose,
+    this.onPrev,
     this.fillKeyboardViewport = false,
     this.onContentHeightChanged,
   });
@@ -30,6 +31,10 @@ class _CardShell extends StatelessWidget {
   /// to the close button. Null hides it (e.g. while the queue is refilling).
   final String? progress;
   final VoidCallback? onClose;
+
+  /// Step back to the previous question. Null on the first card (and outside
+  /// the quiz modes), which hides the control rather than greying it out.
+  final VoidCallback? onPrev;
   final bool fillKeyboardViewport;
   final ValueChanged<double>? onContentHeightChanged;
 
@@ -80,6 +85,21 @@ class _CardShell extends StatelessWidget {
                     style: const TextStyle(
                         fontSize: 13, fontWeight: FontWeight.w700)),
               ),
+              if (onPrev != null)
+                InkWell(
+                  key: const Key('quiz.prevQuestion'),
+                  onTap: onPrev,
+                  borderRadius: BorderRadius.circular(6),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 4, vertical: 2),
+                    child: Icon(
+                      Icons.chevron_left_rounded,
+                      size: 20,
+                      color: context.shell.mutedText,
+                    ),
+                  ),
+                ),
               if (progress != null) ...[
                 Padding(
                   padding: const EdgeInsets.only(right: 6),
@@ -327,6 +347,7 @@ class CompositionDrillCard extends StatefulWidget {
     required this.busy,
     required this.onNext,
     required this.onExit,
+    this.onPrev,
     this.progress,
   });
 
@@ -335,6 +356,7 @@ class CompositionDrillCard extends StatefulWidget {
   final bool busy;
   final VoidCallback onNext;
   final VoidCallback onExit;
+  final VoidCallback? onPrev;
 
   /// Short "3 / 8" style position within the current quiz queue.
   final String? progress;
@@ -367,6 +389,7 @@ class _CompositionDrillCardState extends State<CompositionDrillCard> {
       title: tr('chat.compositionQuizTitle'),
       progress: widget.progress,
       onClose: widget.onExit,
+      onPrev: widget.onPrev,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
@@ -618,7 +641,9 @@ class WordQuizCard extends StatefulWidget {
     required this.onSubmit,
     required this.onNext,
     required this.onExit,
+    this.onPrev,
     this.onHint,
+    this.submittedOrder,
     this.externalResult,
     this.clozeSolved = false,
     this.clozeCompletedWords = const [],
@@ -647,6 +672,11 @@ class WordQuizCard extends StatefulWidget {
   final Future<Map<String, dynamic>?> Function(int hintLevel)? onHint;
   final VoidCallback onNext;
   final VoidCallback onExit;
+  final VoidCallback? onPrev;
+
+  /// Scramble chunk order already submitted for this quiz — see
+  /// ScrambleQuizCard.submittedOrder.
+  final List<String>? submittedOrder;
   final Map<String, dynamic>? externalResult;
   final bool clozeSolved;
 
@@ -729,6 +759,7 @@ class _WordQuizCardState extends State<WordQuizCard> {
         busy: false,
         onNext: widget.onNext,
         onExit: widget.onExit,
+        onPrev: widget.onPrev,
         progress: widget.progress,
       );
     }
@@ -743,6 +774,7 @@ class _WordQuizCardState extends State<WordQuizCard> {
           audioButtonKey: _audioKey,
           questionKo: question,
           onHint: widget.onHint,
+          submittedOrder: widget.submittedOrder,
           onSubmit: (order, hintLevel) =>
               _grade(order: order, hintLevel: hintLevel),
         );
@@ -789,6 +821,7 @@ class _WordQuizCardState extends State<WordQuizCard> {
       title: tr('chat.wordQuizTitle'),
       progress: widget.progress,
       onClose: widget.onExit,
+      onPrev: widget.onPrev,
       fillKeyboardViewport: true,
       onContentHeightChanged: widget.onContentHeightChanged,
       child: Column(

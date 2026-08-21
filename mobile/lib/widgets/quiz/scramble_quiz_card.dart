@@ -14,6 +14,7 @@ class ScrambleQuizCard extends StatefulWidget {
     this.audioButtonKey,
     this.enabled = true,
     this.questionKo,
+    this.submittedOrder,
   });
 
   final Map<String, dynamic> quizData;
@@ -30,6 +31,12 @@ class ScrambleQuizCard extends StatefulWidget {
   final GlobalKey<QuizAudioButtonState>? audioButtonKey;
   final bool enabled;
   final String? questionKo;
+
+  /// Chunk ids the learner already submitted. Set when re-entering a card that
+  /// was answered earlier in the session: the board is rebuilt from it so the
+  /// learner sees their own arrangement, right or wrong, instead of an empty
+  /// answer area. The card's own State does not survive that navigation.
+  final List<String>? submittedOrder;
 
   @override
   State<ScrambleQuizCard> createState() => _ScrambleQuizCardState();
@@ -63,7 +70,29 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
   @override
   void initState() {
     super.initState();
-    _resetPool();
+    if (!_restoreSubmittedOrder()) _resetPool();
+  }
+
+  /// Rebuild the board from [ScrambleQuizCard.submittedOrder]. Returns false
+  /// when there is nothing to restore, so the caller falls back to a fresh pool.
+  bool _restoreSubmittedOrder() {
+    final order = widget.submittedOrder;
+    if (order == null || order.isEmpty) return false;
+    final chunks = _chunks;
+    final placed = <int>[];
+    for (final id in order) {
+      final index = chunks.indexWhere((chunk) => chunk['id'] == id);
+      if (index >= 0 && !placed.contains(index)) placed.add(index);
+    }
+    if (placed.isEmpty) return false;
+    _selectedIndices
+      ..clear()
+      ..addAll(placed);
+    _poolIndices = [
+      for (var i = 0; i < chunks.length; i++)
+        if (!placed.contains(i)) i,
+    ];
+    return true;
   }
 
   void _resetPool() {
@@ -334,60 +363,66 @@ class _ScrambleQuizCardState extends State<ScrambleQuizCard> {
                   ],
                 ),
         ),
-        const SizedBox(height: AppSpacing.xxl),
-        Text(
-          tr('scrambleCard.wordPieces'),
-          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                color: AppColors.textMuted,
-              ),
-        ),
-        const SizedBox(height: AppSpacing.md),
-        Wrap(
-          spacing: AppSpacing.sm,
-          runSpacing: AppSpacing.sm,
-          children: [
-            for (var i = 0; i < _poolIndices.length; i++)
-              _wordChip(
-                label: chunks[_poolIndices[i]]['text']!,
-                isSelected: false,
-                onTap: () => _tapPoolIndex(i),
-              ),
-          ],
-        ),
-        const SizedBox(height: AppSpacing.xxl),
-        Row(
-          children: [
-            TextButton(onPressed: _undoLast, child: Text(tr('scrambleCard.undo'))),
-            TextButton(onPressed: _resetPool, child: Text(tr('scrambleCard.reset'))),
-            if (widget.onHint != null && widget.enabled)
-              TextButton.icon(
-                onPressed: _hintExhausted || _hintBusy ? null : _requestHint,
-                icon: _hintBusy
+        // 채점이 끝나면 조각 서랍과 편집 도구는 할 일이 없다. 남겨 두면 누를
+        // 수 있을 것처럼 보이고(되돌리기·초기화는 실제로 아직 동작한다),
+        // 다음 문제로 가는 버튼과 시선을 다툰다. 통째로 걷어낸다.
+        if (widget.enabled) ...[
+          const SizedBox(height: AppSpacing.xxl),
+          Text(
+            tr('scrambleCard.wordPieces'),
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: AppColors.textMuted,
+                ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Wrap(
+            spacing: AppSpacing.sm,
+            runSpacing: AppSpacing.sm,
+            children: [
+              for (var i = 0; i < _poolIndices.length; i++)
+                _wordChip(
+                  label: chunks[_poolIndices[i]]['text']!,
+                  isSelected: false,
+                  onTap: () => _tapPoolIndex(i),
+                ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.xxl),
+          Row(
+            children: [
+              TextButton(
+                  onPressed: _undoLast, child: Text(tr('scrambleCard.undo'))),
+              TextButton(
+                  onPressed: _resetPool, child: Text(tr('scrambleCard.reset'))),
+              if (widget.onHint != null)
+                TextButton.icon(
+                  onPressed: _hintExhausted || _hintBusy ? null : _requestHint,
+                  icon: _hintBusy
+                      ? const SizedBox(
+                          height: 14,
+                          width: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.lightbulb_outline_rounded, size: 16),
+                  label: Text(tr('scrambleCard.hint')),
+                ),
+              const Spacer(),
+              FilledButton(
+                onPressed: !_submitting &&
+                        _selectedIndices.length == chunks.length
+                    ? _submit
+                    : null,
+                child: _submitting
                     ? const SizedBox(
-                        height: 14,
-                        width: 14,
+                        height: 20,
+                        width: 20,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(Icons.lightbulb_outline_rounded, size: 16),
-                label: Text(tr('scrambleCard.hint')),
+                    : Text(tr('common.confirm')),
               ),
-            const Spacer(),
-            FilledButton(
-              onPressed: widget.enabled &&
-                      !_submitting &&
-                      _selectedIndices.length == chunks.length
-                  ? _submit
-                  : null,
-              child: _submitting
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Text(tr('common.confirm')),
-            ),
-          ],
-        ),
+            ],
+          ),
+        ],
       ],
     );
   }

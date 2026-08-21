@@ -42,9 +42,88 @@ class ChatSessionController extends ChangeNotifier {
   int _quizIndex = 0;
   String _quizType = 'composition';
   String? _quizLanguage; // sticky across "더보기" retries within the same mode
-  Map<String, dynamic>?
-      _quizFeedback; // composition tutor feedback for current item
-  bool _wordQuizSolved = false;
+
+  // Answer history, keyed by quiz id rather than queue position.
+  //
+  // The learner can step back to a question they already answered, so a single
+  // "current result" field is not enough — each item has to remember its own
+  // verdict, and re-entering it has to show that verdict rather than a blank
+  // card. Keyed by id, not index, because the queue can be refilled underneath
+  // the cursor and index keys would then point results at the wrong question.
+  final Map<String, Map<String, dynamic>> _quizResults = {};
+  final Set<String> _quizSolvedIds = {};
+
+  /// Chunk order the learner submitted for a scramble, so revisiting the card
+  /// shows THEIR arrangement (right or wrong) instead of an empty board.
+  final Map<String, List<String>> _quizOrders = {};
+
+  String? get _activeQuizId => activeQuiz?['id']?.toString();
+
+  /// Result for the active card. Reads and writes are proxied onto
+  /// [_quizResults] so every existing call site keeps working unchanged while
+  /// the history survives navigation.
+  Map<String, dynamic>? get _quizFeedback {
+    final id = _activeQuizId;
+    return id == null ? null : _quizResults[id];
+  }
+
+  set _quizFeedback(Map<String, dynamic>? value) {
+    final id = _activeQuizId;
+    if (id == null) return;
+    if (value == null) {
+      _quizResults.remove(id);
+    } else {
+      _quizResults[id] = value;
+    }
+  }
+
+  bool get _wordQuizSolved {
+    final id = _activeQuizId;
+    return id != null && _quizSolvedIds.contains(id);
+  }
+
+  set _wordQuizSolved(bool value) {
+    final id = _activeQuizId;
+    if (id == null) return;
+    if (value) {
+      _quizSolvedIds.add(id);
+    } else {
+      _quizSolvedIds.remove(id);
+    }
+  }
+
+  /// Drop every remembered answer. Only for starting or leaving a quiz run —
+  /// moving between questions must never call this.
+  void _clearQuizHistory() {
+    _quizResults.clear();
+    _quizSolvedIds.clear();
+    _quizOrders.clear();
+  }
+
+  /// Seed a queue without a network round trip, so navigation and answer
+  /// history can be tested for what they are: local state.
+  @visibleForTesting
+  void debugSeedQuizQueue(List<Map<String, dynamic>> items) {
+    _mode = ChatMode.quizWord;
+    _quizItems
+      ..clear()
+      ..addAll(items);
+    _quizIndex = 0;
+    _clearQuizHistory();
+    _clozeCompletedWords.clear();
+    _clozeLiveDraft = '';
+    notifyListeners();
+  }
+
+  /// Record a verdict against the active card, as grading would.
+  @visibleForTesting
+  void debugRecordResult(Map<String, dynamic> result, {List<String>? order}) {
+    _quizFeedback = result;
+    _wordQuizSolved = quizResultIsCorrect(result);
+    final id = _activeQuizId;
+    if (id != null && order != null) _quizOrders[id] = List<String>.from(order);
+    notifyListeners();
+  }
 
   // Live word-by-word cloze typing (composer feeds keystrokes here instead of
   // grading the whole phrase at once — see [updateClozeDraft]).
@@ -82,6 +161,15 @@ class ChatSessionController extends ChangeNotifier {
       _quizIndex < _quizItems.length ? _quizItems[_quizIndex] : null;
   Map<String, dynamic>? get quizFeedback => _quizFeedback;
   bool get wordQuizSolved => _wordQuizSolved;
+
+  /// Chunk order the learner submitted for the active scramble, if any.
+  List<String>? get activeQuizOrder {
+    final id = _activeQuizId;
+    return id == null ? null : _quizOrders[id];
+  }
+
+  /// Whether stepping back to an earlier question is possible.
+  bool get canGoPrevQuiz => _quizIndex > 0 && _quizItems.isNotEmpty;
   List<String> get clozeCompletedWords =>
       List.unmodifiable(_clozeCompletedWords);
   String get clozeLiveDraft => _clozeLiveDraft;
@@ -146,8 +234,7 @@ class ChatSessionController extends ChangeNotifier {
     _quizIndex = 0;
     _quizType = 'composition';
     _quizLanguage = null;
-    _quizFeedback = null;
-    _wordQuizSolved = false;
+    _clearQuizHistory();
     _quizUnavailable = false;
     _clozeCompletedWords.clear();
     _clozeLiveDraft = '';
@@ -333,8 +420,7 @@ class ChatSessionController extends ChangeNotifier {
       _quizUnavailable = false;
       _quizItems.clear();
       _quizIndex = 0;
-      _quizFeedback = null;
-      _wordQuizSolved = false;
+      _clearQuizHistory();
       _clozeCompletedWords.clear();
       _clozeLiveDraft = '';
       _distillSentences.clear();
@@ -647,8 +733,7 @@ class ChatSessionController extends ChangeNotifier {
         : ChatMode.quizWord;
     _quizItems.clear();
     _quizIndex = 0;
-    _quizFeedback = null;
-    _wordQuizSolved = false;
+    _clearQuizHistory();
     _quizUnavailable = false;
     _clozeCompletedWords.clear();
     _clozeLiveDraft = '';
@@ -790,6 +875,12 @@ class ChatSessionController extends ChangeNotifier {
       // and audio clip (the session payload deliberately withholds all three
       // — see _public_quiz_data). Fold the revealed item back into the queue
       // so the card can show the reference sentence and play its clip.
+      // Remember what the learner actually arranged. The card keeps that in
+      // its own State, which is thrown away the moment we navigate off it, so
+      // without this a revisited scramble comes back with an empty board.
+      if (order != null && order.isNotEmpty) {
+        _quizOrders[quiz['id'].toString()] = List<String>.from(order);
+      }
       final revealed = (resp['quiz'] as Map?)?.cast<String, dynamic>();
       if (revealed != null && _quizIndex < _quizItems.length) {
         _quizItems[_quizIndex] = {..._quizItems[_quizIndex], ...revealed};
@@ -894,11 +985,38 @@ class ChatSessionController extends ChangeNotifier {
   /// Advance to the next quiz item, or leave quiz mode when the session is done.
   void nextQuiz() {
     _quizIndex++;
-    _quizFeedback = null;
-    _wordQuizSolved = false;
-    _clozeCompletedWords.clear();
-    _clozeLiveDraft = '';
+    _syncClozeDraftToActive();
     notifyListeners();
+  }
+
+  /// Step back to the previous question. The card re-renders from the stored
+  /// result, so an already-answered item comes back answered.
+  void prevQuiz() {
+    if (!canGoPrevQuiz) return;
+    _quizIndex--;
+    _syncClozeDraftToActive();
+    notifyListeners();
+  }
+
+  /// Point the live cloze typing state at whatever card is now active.
+  ///
+  /// Those two fields are the composer's in-progress word list, not part of
+  /// the answer history: an unanswered card starts empty, and a card already
+  /// solved shows its full answer so stepping back does not look like the
+  /// progress was lost.
+  void _syncClozeDraftToActive() {
+    _clozeLiveDraft = '';
+    _clozeCompletedWords.clear();
+    final quiz = activeQuiz;
+    if (quiz == null || !_wordQuizSolved) return;
+    if (quiz['quiz_type']?.toString() != 'cloze') return;
+    final qd = (quiz['quiz_data'] as Map?)?.cast<String, dynamic>() ?? {};
+    _clozeCompletedWords.addAll(
+      (qd['blank']?.toString() ?? '')
+          .trim()
+          .split(RegExp(r'\s+'))
+          .where((w) => w.isNotEmpty),
+    );
   }
 
   /// Renders a submitted scramble [order] (opaque chunk ids) as the words the

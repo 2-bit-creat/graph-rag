@@ -704,35 +704,40 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
             ),
             _buildChatSheet(graphAreaHeight,
                 typeColors: typeColors, nodeById: nodeById),
-            ValueListenableBuilder<double>(
-              valueListenable: _inputBarHeight,
-              builder: (context, barHeight, child) => Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                // The panel itself is intentionally translucent. The mask must
-                // be wider and end in an opaque version of that color, otherwise
-                // the final bubble still ghosts through above the composer.
-                height: barHeight + 56,
-                child: child!,
-              ),
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        context.shell.panelBackground.withValues(alpha: 0),
-                        context.shell.panelBackground.withValues(alpha: 0.96),
-                        context.shell.panelBackground.withValues(alpha: 1),
-                      ],
-                      stops: const [0, 0.46, 0.78],
+            // 이 마스크는 "위로 흘러가는 채팅 버블이 컴포저 뒤로 사라지게"
+            // 하려고 있다. 퀴즈 카드는 흘러가지 않는 고정 패널이고, 그 하단에
+            // 확인·다음 문제 버튼이 산다 — 마스크를 그대로 씌우면 정작 눌러야
+            // 할 곳만 그늘진다. 퀴즈 모드에서는 덮을 버블도 없으니 끈다.
+            if (!_isQuizMode)
+              ValueListenableBuilder<double>(
+                valueListenable: _inputBarHeight,
+                builder: (context, barHeight, child) => Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  // The panel itself is intentionally translucent. The mask must
+                  // be wider and end in an opaque version of that color, otherwise
+                  // the final bubble still ghosts through above the composer.
+                  height: barHeight + 56,
+                  child: child!,
+                ),
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          context.shell.panelBackground.withValues(alpha: 0),
+                          context.shell.panelBackground.withValues(alpha: 0.96),
+                          context.shell.panelBackground.withValues(alpha: 1),
+                        ],
+                        stops: const [0, 0.46, 0.78],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
             _buildPersistentInputBar(),
             // Last: it has to cover the chat sheet and the composer, not sit
             // behind them.
@@ -1531,6 +1536,7 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
           busy: chatSession.busy,
           onNext: chatSession.nextQuiz,
           onExit: _exitInputMode,
+          onPrev: chatSession.canGoPrevQuiz ? chatSession.prevQuiz : null,
           progress: _quizProgressLabel(),
         );
       case ChatMode.quizWord:
@@ -1553,6 +1559,13 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
             _chatInputFocusNode.unfocus();
           },
           onExit: _exitInputMode,
+          onPrev: chatSession.canGoPrevQuiz
+              ? () {
+                  chatSession.prevQuiz();
+                  _chatInputFocusNode.unfocus();
+                }
+              : null,
+          submittedOrder: chatSession.activeQuizOrder,
           externalResult: chatSession.quizFeedback,
           clozeSolved: chatSession.wordQuizSolved,
           clozeCompletedWords: chatSession.clozeCompletedWords,
