@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/graph_layout.dart';
+import '../utils/graph_projection.dart';
 
 /// Sentinel for "no entity-type filter". It is a stored value, not a
 /// label — the chip renders `tr('common.all')` instead, so this string
@@ -146,6 +147,74 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
   // Pure function of the controller value — no per-particle state.
   late final AnimationController _glowAnim;
 
+  // ── 3D 계층 뷰 ───────────────────────────────────────────────────────────
+  // 노드의 z는 타입별로 고정이고 물리는 여전히 순수 2D다. 기울이기는 물리
+  // 평면과 카메라 사이에 끼어드는 평행투영일 뿐이므로, GraphLayoutEngine은
+  // 이 모드의 존재를 전혀 모른다. _tilt == 0이면 투영이 항등변환이라
+  // 지금까지의 2D 그래프가 그대로 복원된다.
+  late final AnimationController _tiltAnim;
+  double _tilt = 0.0;
+  double _tiltFrom = 0.0;
+  double _tiltTarget = 0.0;
+  double _layerGap = 600.0;
+  GraphTiltProjection _proj = GraphTiltProjection.flat;
+  Matrix4? _tiltCamBegin;
+  Matrix4? _tiltCamEnd;
+
+  /// 2D로 돌아갈 때 복원할 카메라. "Top view를 누르면 원래 지도로"는 배치뿐
+  /// 아니라 보고 있던 위치까지 돌아온다는 뜻이다.
+  Matrix4? _pre3dCamera;
+
+  final _layerById = <String, int>{};
+
+  /// 투영된 위치 캐시. 평면 모드에서는 `layout.positions`를 그대로 가리켜
+  /// 할당이 0이다 — 2D 경로가 이전과 비트 단위로 같아지는 지점.
+  Map<String, Offset> _viewPos = const {};
+
+  bool get is3d => _tilt > 1e-4;
+
+  int _layerOf(String id) => _layerById[id] ?? kGraphLayerStatement;
+
+  /// 한 노드의 투영 위치 (히트 경로용 O(1) 조회).
+  Offset? _vp(String id) {
+    final p = _layout?.positions[id];
+    if (p == null) return null;
+    return _proj.isFlat ? p : _proj.project(p, _layerOf(id));
+  }
+
+  /// 화면 좌표 → **물리** 좌표. 노드의 층을 타입에서 알기 때문에 역투영이
+  /// 정확하고 모호하지 않다. [_toWorld]와 혼동하지 말 것 — 그쪽은 뷰 월드에서
+  /// 멈추며, 페인트 중 기록된 엣지 라벨 rect가 사는 공간이 바로 거기다.
+  Offset? _toPhysics(Offset local, int layer) {
+    final v = _toWorld(local);
+    if (v == null) return null;
+    return _proj.isFlat ? v : _proj.unproject(v, layer);
+  }
+
+  /// 이번 프레임의 투영 위치를 한 번에 계산한다. 페인터 다섯 개가 같은 맵을
+  /// 보게 해서 노드당 투영이 프레임당 정확히 한 번만 일어나게 하는 것이 요점.
+  void _buildViewPos() {
+    final layout = _layout;
+    if (layout == null) {
+      _viewPos = const {};
+      return;
+    }
+    if (_proj.isFlat) {
+      _viewPos = layout.positions;
+      return;
+    }
+    _viewPos = {
+      for (final e in layout.positions.entries)
+        e.key: _proj.project(e.value, _layerOf(e.key)),
+    };
+  }
+
+  /// 현재 그래프에서 실제로 노드가 있는 층들. 화자 숨김 모드나 타입 필터가
+  /// 한 층을 통째로 비울 수 있는데, 그때 빈 평면 쿼드만 남으면 고장처럼 보인다.
+  Set<int> get _occupiedLayers => {
+        for (final n in _visibleNodes) _layerOf(n['id'].toString()),
+      };
+
   // Per-node hover/selection scale progress, eased in the paint loop.
   final _activeT = <String, double>{};
 
@@ -226,13 +295,121 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     );
+    _tiltAnim = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 620),
+    )
+      ..addListener(_onTiltTick)
+      ..addStatusListener(_onTiltStatus);
     _repaint = Listenable.merge([
       _transformationController,
       _frameNotifier,
       _focusAnim,
       _glowAnim,
+      _tiltAnim,
     ]);
     _rebuildLayout();
+  }
+
+  // ---------------------------------------------------------------------
+  // 3D 계층 뷰 전환
+  // ---------------------------------------------------------------------
+
+  /// [_tilt]/[_proj]를 임시로 [v]로 두고 [body]를 평가한 뒤 되돌린다.
+  /// 목적지 tilt에서의 월드 프레임과 fit 행렬을 "미리" 재기 위한 것.
+  T _withTilt<T>(double v, T Function() body) {
+    final savedTilt = _tilt;
+    final savedProj = _proj;
+    _tilt = v;
+    _proj = GraphTiltProjection(t: v, layerGap: _layerGap);
+    try {
+      return body();
+    } finally {
+      _tilt = savedTilt;
+      _proj = savedProj;
+    }
+  }
+
+  /// 3D 계층 뷰 ↔ Top view 전환.
+  ///
+  /// 전환 중에는 월드 프레임을 **얼리고 카메라만 tween한다**. 틱마다 다시
+  /// 맞추면 투영 bounds가 자라면서 장면이 흔들리고, `_cameraAnim`과 이 틱이
+  /// 같은 `_transformationController`를 두고 싸운다.
+  void setLayeredView(bool on) {
+    if (on == (_tiltTarget > 0.5)) return;
+    if (_layout == null || _lastViewport == Size.zero) return;
+    _cameraAnim.stop();
+    _tiltFrom = _tilt;
+    _tiltTarget = on ? 1.0 : 0.0;
+    if (on) _pre3dCamera = Matrix4.copy(_transformationController.value);
+
+    // 1. 목적지 월드 프레임을 한 번만 재서 지금 설치한다.
+    final oldTranslate = _worldTranslate;
+    _withTilt(_tiltTarget, () => _syncWorldFrame(viewport: _lastViewport));
+
+    // 2. 새 _worldTranslate 기준으로 현재 카메라를 다시 표현 — 0프레임에서
+    //    화면이 튀지 않게.
+    //
+    //    화면 = M·(월드 + T). T가 T_old에서 T_new로 바뀌어도 같은 그림을
+    //    유지하려면 d_new = d + s·(T_old - T_new)여야 한다. translateByDouble은
+    //    post-multiply(M·T(v))라 변환 성분이 d + s·v가 되므로, 넘길 벡터는
+    //    델타 그 자체다 — 부호를 뒤집으면 두 배로 어긋난다.
+    final delta = oldTranslate - _worldTranslate;
+    _tiltCamBegin = Matrix4.copy(_transformationController.value)
+      ..translateByDouble(delta.dx, delta.dy, 0, 1);
+
+    // 3. 목적지 카메라. 2D로 돌아갈 때는 3D에 들어가기 전 카메라를 그대로
+    //    복원한다. 보정하지 않는다 — _pre3dCamera는 애초에 2D 월드 프레임
+    //    소속이고, 방금 설치한 _worldTranslate가 바로 그 프레임이다.
+    _tiltCamEnd = (!on ? _pre3dCamera : null) ??
+        _withTilt(_tiltTarget, () => _fitMatrixFor(_lastViewport));
+
+    setState(() {}); // 페인트 순서(_paintNodes)를 다시 만들어야 한다
+    _tiltAnim.forward(from: 0);
+  }
+
+  void _onTiltTick() {
+    final e = Curves.easeInOutCubic.transform(_tiltAnim.value);
+    _tilt = _tiltFrom + (_tiltTarget - _tiltFrom) * e;
+    _proj = GraphTiltProjection(t: _tilt, layerGap: _layerGap);
+    final begin = _tiltCamBegin;
+    final end = _tiltCamEnd;
+    if (begin != null && end != null) {
+      _transformationController.value =
+          Matrix4Tween(begin: begin, end: end).lerp(e);
+    }
+    // 적응형 노드 배율 메모는 _layoutEpoch와 줌 버킷으로만 무효화된다.
+    // tilt는 둘 다 바꾸지 않으므로 여기서 직접 깨 주지 않으면 전환 내내
+    // 배율이 stale이다.
+    _layoutEpoch++;
+    _frameNotifier.value++;
+  }
+
+  /// 전환을 즉시 목적지로 끝낸다. 중간 각도에 멈춰 서면 이후의 카메라
+  /// 조작이 어중간한 기울기 위에서 벌어지므로, 끊을 거면 끝까지 보낸다.
+  void _settleTilt() {
+    if (!_tiltAnim.isAnimating) return;
+    _tiltAnim.stop();
+    _tiltCamBegin = null;
+    _tiltCamEnd = null;
+    _tilt = _tiltTarget;
+    _tiltFrom = _tiltTarget;
+    _proj = GraphTiltProjection(t: _tilt, layerGap: _layerGap);
+    if (!is3d) _pre3dCamera = null;
+    _layoutEpoch++;
+    _frameNotifier.value++;
+  }
+
+  void _onTiltStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed) return;
+    _tilt = _tiltTarget;
+    _proj = GraphTiltProjection(t: _tilt, layerGap: _layerGap);
+    _tiltCamBegin = null;
+    _tiltCamEnd = null;
+    if (!is3d) _pre3dCamera = null;
+    setState(() {});
+    _syncWorldFrame(viewport: _lastViewport);
+    _clampTransformToViewport(_lastViewport);
   }
 
   void _onCameraTick() {
@@ -250,7 +427,7 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
   void centerOnNode(String nodeId, {double minZoom = 0.9, double verticalBias = 0.42}) {
     final layout = _layout;
     if (layout == null || _lastViewport == Size.zero) return;
-    final wp = layout.positions[nodeId];
+    final wp = _vp(nodeId);
     if (wp == null) return;
     final zoom = _currentScale < minZoom ? minZoom : _currentScale;
     final world = wp + _worldTranslate;
@@ -305,7 +482,7 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     if (layout == null || nodeIds.isEmpty || _lastViewport == Size.zero) return;
     Rect? bounds;
     for (final id in nodeIds) {
-      final wp = layout.positions[id];
+      final wp = _vp(id);
       if (wp == null) continue;
       final r = Rect.fromCircle(center: wp, radius: kGraphNodeRadius * 3);
       bounds = bounds == null ? r : bounds.expandToInclude(r);
@@ -386,6 +563,8 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
       _layout = null;
       _hubId = null;
       _typeById = const {};
+      _layerById.clear();
+      _viewPos = const {};
       return;
     }
     final degrees = degreeByNodeId(effEdges);
@@ -413,6 +592,12 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     _typeById = types;
     _degrees = degrees;
     _maxDegree = maxDegree;
+    _layerById
+      ..clear()
+      ..addAll({
+        for (final e in types.entries) e.key: graphLayerIndexForType(e.value),
+      });
+    _refreshLayerGap();
     _hubId = ids.reduce((a, b) {
       final da = degrees[a] ?? 0;
       final db = degrees[b] ?? 0;
@@ -541,7 +726,7 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
   /// on a stub of them.
   @visibleForTesting
   Offset? debugScreenPositionOf(String id) {
-    final wp = _layout?.positions[id];
+    final wp = _vp(id);
     if (wp == null) return null;
     return MatrixUtils.transformPoint(
       _transformationController.value,
@@ -551,6 +736,28 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
 
   @visibleForTesting
   Matrix4 get debugTransform => Matrix4.copy(_transformationController.value);
+
+  /// 물리(미투영) 좌표. 3D 전환이 레이아웃을 건드리지 않는다는 것을
+  /// 테스트가 직접 확인할 수 있게 노출한다.
+  @visibleForTesting
+  Map<String, Offset> get debugPhysicsPositions =>
+      Map<String, Offset>.from(_layout?.positions ?? const {});
+
+  /// 투영된(뷰 월드) 좌표 — 화면 좌표가 아니라 카메라 적용 전이다.
+  @visibleForTesting
+  Offset? debugViewPositionOf(String id) => _vp(id);
+
+  @visibleForTesting
+  int debugLayerOf(String id) => _layerOf(id);
+
+  @visibleForTesting
+  double get debugTilt => _tilt;
+
+  @visibleForTesting
+  double get debugLayerGap => _layerGap;
+
+  @visibleForTesting
+  String? debugHitNodeAt(Offset local) => _hitNodeAt(local);
 
   void clearInteractionFocus() {
     _hoveredNodeId = null;
@@ -596,12 +803,29 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
   // World frame / viewport helpers (unchanged math)
   // ---------------------------------------------------------------------
 
+  /// 층 간격을 그래프 크기에 맞춰 다시 잰다.
+  ///
+  /// 레이아웃 epoch마다 한 번만 — 프레임마다 재면 물리가 안정화되는 동안
+  /// bounds가 조금씩 변하면서 장면 전체가 호흡하듯 흔들린다.
+  void _refreshLayerGap() {
+    final layout = _layout;
+    if (layout == null) return;
+    final gap = graphLayerGapFor(layout.boundingRect(padding: 48));
+    if ((gap - _layerGap).abs() < 0.5) return;
+    _layerGap = gap;
+    if (!_proj.isFlat) {
+      _proj = GraphTiltProjection(t: _tilt, layerGap: _layerGap);
+    }
+  }
+
   void _syncWorldFrame({Size? viewport, bool preserveOrigin = false}) {
     final layout = _layout;
     if (layout == null) return;
     final vp = viewport ?? _lastViewport;
     if (vp == Size.zero) return;
-    final bounds = layout.boundingRect(padding: 48);
+    // 투영된 bounds여야 한다 — 기울인 스택은 물리 bounds보다 세로로 크고,
+    // 물리 bounds로 프레임을 잡으면 위아래 층이 화면 밖으로 잘린다.
+    final bounds = _proj.projectBounds(layout.boundingRect(padding: 48));
     final newSize = _worldSizeFor(bounds, vp);
     if (preserveOrigin) {
       _worldSize = Size(
@@ -625,11 +849,10 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     });
   }
 
-  void _fitToView(Size viewport) {
-    if (_layout == null || viewport.width <= 0 || viewport.height <= 0) return;
-
-    _syncWorldFrame(viewport: viewport);
-    final bounds = _layout!.boundingRect(padding: 48);
+  /// 그래프 전체를 담는 카메라 행렬. 현재 `_worldTranslate`를 기준으로
+  /// 계산하므로, 전환 애니메이션이 목적지 카메라를 미리 재는 데도 쓴다.
+  Matrix4 _fitMatrixFor(Size viewport) {
+    final bounds = _proj.projectBounds(_layout!.boundingRect(padding: 48));
     // _worldTranslate is an offset relative to bounds.topLeft (see
     // _syncWorldFrame), not an absolute position — shift the bounds by it
     // rather than replacing its origin, or the fit frames the wrong region
@@ -643,9 +866,16 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     final dx = (viewport.width - graphRect.width * scale) / 2 - graphRect.left * scale;
     final dy = (viewport.height - graphRect.height * scale) / 2 - graphRect.top * scale;
 
-    _transformationController.value = Matrix4.identity()
+    return Matrix4.identity()
       ..translateByDouble(dx, dy, 0, 1)
       ..scaleByDouble(scale, scale, 1, 1);
+  }
+
+  void _fitToView(Size viewport) {
+    if (_layout == null || viewport.width <= 0 || viewport.height <= 0) return;
+
+    _syncWorldFrame(viewport: viewport);
+    _transformationController.value = _fitMatrixFor(viewport);
     _fitted = true;
     _lastViewport = viewport;
   }
@@ -656,6 +886,12 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
   /// nothing — the graph stays exactly where they left it.
   void _adoptViewportChange(Size viewport) {
     if (viewport.width <= 0 || viewport.height <= 0) return;
+    // 전환 중에는 건너뛴다: 여기서 프리멀티플라이한 시프트를 다음 프레임의
+    // _onTiltTick이 덮어써 버린다. 620ms 동안 재앵커를 잃는 건 보이지 않는다.
+    if (_tiltAnim.isAnimating) {
+      _lastViewport = viewport;
+      return;
+    }
     final previous = _lastViewport;
     _lastViewport = viewport;
     if (previous == Size.zero) return;
@@ -677,13 +913,18 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     );
   }
 
-  Rect get _layoutBounds =>
+  /// 물리 공간 bounds. `layout.positions`를 직접 제한하는 곳에서만 쓴다 —
+  /// 투영된 rect를 주면 기울인 상태에서 놓은 노드가 엉뚱한 좌표로 스냅된다.
+  Rect get _physicsBounds =>
       _layout?.boundingRect(padding: 32) ?? const Rect.fromLTWH(0, 0, 400, 300);
+
+  /// 뷰(투영) 공간 bounds. 카메라 행렬로 변환하는 곳에서 쓴다.
+  Rect get _viewBounds => _proj.projectBounds(_physicsBounds);
 
   void _clampNodeToBounds(String id) {
     final layout = _layout;
     if (layout == null) return;
-    final b = _layoutBounds;
+    final b = _physicsBounds;
     final p = layout.positions[id]!;
     layout.positions[id] = Offset(
       p.dx.clamp(b.left, b.right),
@@ -709,7 +950,7 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     if (_layout == null || viewport == Size.zero) return;
 
     final m = Matrix4.copy(_transformationController.value);
-    final contentRect = _layoutBounds.shift(_worldTranslate);
+    final contentRect = _viewBounds.shift(_worldTranslate);
     final tl = MatrixUtils.transformPoint(m, contentRect.topLeft);
     final br = MatrixUtils.transformPoint(m, contentRect.bottomRight);
 
@@ -804,6 +1045,10 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
   // Hit testing (world-space, replaces the per-node widget overlay)
   // ---------------------------------------------------------------------
 
+  /// 화면 → **뷰 월드** (투영된 공간). 물리 좌표가 아니다.
+  ///
+  /// 엣지 라벨 hit rect는 페인터가 그리던 공간 그대로 기록되므로(= 투영 공간)
+  /// 여기서 멈추는 것이 정확하다. 물리 좌표가 필요하면 [_toPhysics]를 쓸 것.
   Offset? _toWorld(Offset local) {
     final inv = Matrix4.tryInvert(_transformationController.value);
     if (inv == null) return null;
@@ -820,9 +1065,15 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
         (simActive || bucket == _adaptiveBucket)) {
       return _cachedAdaptiveScale;
     }
+    // 투영된 위치여야 한다: 기울이면 세 평면이 화면에서 cos φ ≈ 0.57로
+    // 압축되며 서로 접근한다. 물리 위치를 주면 "안 겹침"이라 보고하는 동안
+    // 실제 디스크는 겹친다.
+    // 메모가 빗나갔을 때만 여기 온다 — 뒤따르는 O(n²) 이분 탐색에 비하면
+    // O(n) 재투영은 공짜다.
+    _buildViewPos();
     _cachedAdaptiveScale = _computeZoomAdaptiveNodeScale(
       nodeIds: _visibleNodes.map((n) => n['id'].toString()).toList(),
-      worldPositions: layout.positions,
+      worldPositions: _viewPos,
       worldRadii: layout.nodeRadii,
       worldTranslate: _worldTranslate,
       matrix: matrix,
@@ -845,7 +1096,7 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     for (final node in _paintNodes.reversed) {
       final id = node['id'].toString();
       if (id == ignoreId) continue;
-      final wp = layout.positions[id];
+      final wp = _vp(id);
       if (wp == null) continue;
       final sp = MatrixUtils.transformPoint(matrix, wp + _worldTranslate);
       final screenR = math.max(
@@ -906,7 +1157,11 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
       _ensureTicking();
       setState(() => _draggingId = id);
     }
-    final world = _toWorld(e.localPosition);
+    // 끄는 노드 자신의 층으로 역투영한다. z가 타입별로 고정이라 이 역변환에
+    // 모호성이 없고, 노드는 자기 평면에 머문 채 손가락 아래에 붙어 있는다.
+    // 연결된 다른 층의 노드는 기존 스프링이 알아서 끌고 온다 — 물리는
+    // 이 모드를 전혀 모른다.
+    final world = _toPhysics(e.localPosition, _layerOf(id));
     if (world != null) {
       layout.positions[id] = world;
       _dragSamples.add((t: e.timeStamp, p: world));
@@ -1115,6 +1370,9 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
   void _paintScene(Canvas canvas, Size size) {
     final layout = _layout;
     if (layout == null) return;
+    // 이번 프레임의 투영 위치를 한 번에 계산 — 이하 모든 페인터는 물리
+    // 좌표가 아니라 이 맵을 본다.
+    _buildViewPos();
 
     // Nebula background — screen space, before the world transform. A soft
     // radial in dark mode; a barely-there light wash in light mode so the
@@ -1142,9 +1400,10 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     try {
       cullWorld = MatrixUtils.inverseTransformRect(matrix, bgRect)
           .shift(-_worldTranslate)
-          .inflate(160);
+          // yaw가 내용을 옆으로 밀기 때문에 기울인 모드에서는 여유가 더 필요하다.
+          .inflate(160 + (is3d ? _layerGap * 0.15 : 0));
     } catch (_) {
-      cullWorld = layout.boundingRect(padding: 200);
+      cullWorld = _proj.projectBounds(layout.boundingRect(padding: 200));
     }
 
     _advanceActive();
@@ -1153,6 +1412,10 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     canvas.save();
     canvas.transform(matrix.storage);
     canvas.translate(_worldTranslate.dx, _worldTranslate.dy);
+
+    // 평면은 포커스 분기 앞에서 그린다 — 이웃 하이라이트로 디밍되면
+    // 계층 자체가 사라져 보인다.
+    _paintLayerPlanes(canvas, zoom);
 
     final focusProgress = widget.focusMode
         ? Curves.easeInOutCubic.transform(_focusAnim.value)
@@ -1203,6 +1466,78 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     canvas.restore();
   }
 
+  /// 세 층의 반투명 평면과 옆면 라벨.
+  ///
+  /// 뒤→앞(Identity→Concept) 순으로 그린다. 세 쿼드를 노드보다 먼저 다 그리는
+  /// 탓에 Concept 평면이 화면상 겹치는 Identity 노드 뒤로 깔리지만, 채움
+  /// alpha가 5.5%라 보이지 않는다. 노드 패스 사이에 끼우려면 포커스 2-패스를
+  /// 6-패스로 쪼개야 하므로 이쪽이 훨씬 싸다.
+  void _paintLayerPlanes(Canvas canvas, double zoom) {
+    if (!is3d) return;
+    final layout = _layout;
+    if (layout == null) return;
+    final fade = _canvasSmoothstep(_tilt, 0.05, 0.45);
+    if (fade <= 0.01) return;
+    // 물리 bounds에서 코너를 뽑는다 — planeQuad가 투영을 직접 한다.
+    final bounds = layout.boundingRect(padding: 48);
+    final occupied = _occupiedLayers;
+
+    for (var layer = 0; layer < kGraphLayerCount; layer++) {
+      if (!occupied.contains(layer)) continue; // 빈 층은 고장처럼 보인다
+      final quad = _proj.planeQuad(bounds, layer);
+      final tint = kGraphLayerColors[layer];
+      final path = Path()..addPolygon(quad, true);
+
+      canvas.drawPath(path, Paint()..color = tint.withValues(alpha: 0.055 * fade));
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = tint.withValues(alpha: 0.28 * fade)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2 / zoom,
+      );
+
+      // 좌변 바깥에 층 이름. 캔버스 변환이 translate+scale뿐이라 그냥
+      // 그리면 화면 정립이 유지된다.
+      final mid = Offset.lerp(quad[0], quad[3], 0.5)!;
+      final tp = _planeLabelPainter(
+        tr(kGraphLayerLabelKeys[layer]),
+        tint,
+        fade,
+        zoom,
+      );
+      tp.paint(canvas, mid + Offset(-tp.width - 14 / zoom, -tp.height / 2));
+    }
+  }
+
+  TextPainter _planeLabelPainter(
+    String text,
+    Color tint,
+    double fade,
+    double zoom,
+  ) {
+    // 폰트 크기가 /zoom이라 줌을 버킷팅하지 않으면 4000개짜리 라벨 캐시를
+    // 매 프레임 갈아치운다.
+    final zq = (zoom.clamp(0.05, 8.0) * 20).round();
+    final fq = ((fade * 5).round().clamp(1, 5)) / 5;
+    final key = 'p|$text|$zq|$fq|$_darkCanvas';
+    return _cachedPainter(key, () {
+      final fontSize = 15.0 / (zq / 20);
+      return TextPainter(
+        text: TextSpan(
+          text: text,
+          style: TextStyle(
+            color: tint.withValues(alpha: 0.85 * fq),
+            fontSize: fontSize,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.2,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+    });
+  }
+
   /// 참조 노드 스파크: 확장 펄스 링 + 밝아진 코어 + 바깥으로 비산하는 파티클.
   /// 전부 _glowAnim.value(t)의 순수 함수 — 파티클 상태를 저장하지 않는다.
   void _paintGlow(Canvas canvas, double zoom, double adaptive) {
@@ -1214,7 +1549,7 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     final fade = 1.0 - t;
 
     for (final id in widget.glowNodeIds) {
-      final wp = layout.positions[id];
+      final wp = _viewPos[id];
       if (wp == null) continue;
       final tint = _nodeColors[id] ?? const Color(0xFF888888);
       // "Brighter than the node" only reads as a spark against a dark canvas.
@@ -1285,8 +1620,10 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     for (final edge in edges) {
       final srcId = edge['source_id'].toString();
       final tgtId = edge['target_id'].toString();
-      final src = layout.positions[srcId];
-      final tgt = layout.positions[tgtId];
+      // 투영 좌표. 디스크가 빌보드(항상 정원)라 뷰 공간의 rim이 곧 시각적
+      // rim이고, 따라서 _rimPoint와 곡선 제어점 계산은 그대로 정답이다.
+      final src = _viewPos[srcId];
+      final tgt = _viewPos[tgtId];
       if (src == null || tgt == null) continue;
       if (!cullWorld.contains(src) && !cullWorld.contains(tgt)) continue;
 
@@ -1341,7 +1678,7 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     final layout = _layout!;
     for (final node in nodes) {
       final id = node['id'].toString();
-      final wp = layout.positions[id];
+      final wp = _viewPos[id];
       if (wp == null || !cullWorld.contains(wp)) continue;
 
       final color = _nodeColors[id] ?? const Color(0xFF888888);
@@ -1468,7 +1805,7 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     if (adaptiveFade <= 0.02 && !litPass) return;
     for (final node in nodes) {
       final id = node['id'].toString();
-      final wp = layout.positions[id];
+      final wp = _viewPos[id];
       if (wp == null || !cullWorld.contains(wp)) continue;
 
       // Degree-priority LOD: hubs keep labels longest while zooming out.
@@ -1555,8 +1892,8 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     for (final edge in edges) {
       final srcId = edge['source_id'].toString();
       final tgtId = edge['target_id'].toString();
-      final src = layout.positions[srcId];
-      final tgt = layout.positions[tgtId];
+      final src = _viewPos[srcId];
+      final tgt = _viewPos[tgtId];
       if (src == null || tgt == null) continue;
       if (!cullWorld.contains(src) && !cullWorld.contains(tgt)) continue;
 
@@ -1722,13 +2059,23 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
       (m, n) => math.max(m, (n['importance_score'] as num?)?.toInt() ?? 0),
     );
     // Tier paint order: concepts below, statements middle, speakers on top.
+    //
+    // 3D에서는 뒤집는다. 위-앞에서 내려다보는 스택에서는 맨 위 평면인
+    // Concept이 눈에 가장 가까우므로 마지막에 그려야 한다. 외관만의 문제가
+    // 아니다 — _hitNodeAt이 _paintNodes.reversed를 돌기 때문에, 이 순서가
+    // "겹쳐 보이면 앞쪽 층이 이긴다"는 히트테스트 규칙까지 겸한다.
     _paintNodes = [
-      for (var tier = 0; tier <= 3; tier++)
+      for (final tier in is3d ? const [0, 3, 2, 1] : const [0, 1, 2, 3])
         ..._visibleNodes.where((n) => _tierPaintOrder(n) == tier),
     ];
-    final selId = widget.selectedNodeId;
-    if (selId != null) {
-      final idx = _paintNodes.indexWhere((n) => n['id'].toString() == selId);
+    // 맨 위로 올릴 노드들. 뒤쪽이 나중에 그려지므로 우선순위가 낮은 것부터.
+    //
+    // 끌고 있는 노드가 여기 낀 이유: 3D에서는 아래 평면이 먼저 그려지므로,
+    // Identity 노드를 끌어 위층과 겹치는 자리로 가져가면 손에 쥔 노드가
+    // 위층 노드 뒤로 사라진다. 무엇을 쥐고 있는지는 항상 보여야 한다.
+    for (final id in [widget.selectedNodeId, _mergeSourceId, _draggingId]) {
+      if (id == null) continue;
+      final idx = _paintNodes.indexWhere((n) => n['id'].toString() == id);
       if (idx >= 0 && idx != _paintNodes.length - 1) {
         _paintNodes.add(_paintNodes.removeAt(idx));
       }
@@ -1789,6 +2136,8 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
                       trackpadScrollCausesScale: true,
                       onInteractionStart: (_) {
                         _cameraAnim.stop();
+                        // 전환 중 핀치가 tween과 싸우지 않게.
+                        _settleTilt();
                         _notifyGraphPan(true);
                       },
                       onInteractionEnd: (_) {
@@ -1878,6 +2227,8 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
                     _fitToView(viewport);
                   },
                   onRelayout: relayout,
+                  is3d: is3d,
+                  onToggle3d: () => setLayeredView(!is3d),
                   // The scene is one CustomPainter repainted only via the
                   // merged `_repaint` listenable (ticker/frame/anim ticks) —
                   // shouldRepaint() can't see this toggle since it compares
@@ -1956,6 +2307,7 @@ class KnowledgeGraphCanvasState extends State<KnowledgeGraphCanvas>
     _focusAnim.dispose();
     _cameraAnim.dispose();
     _glowAnim.dispose();
+    _tiltAnim.dispose();
     _frameNotifier.dispose();
     _clearLabelCache();
     _transformationController.dispose();
@@ -2084,6 +2436,8 @@ class _ZoomControls extends StatelessWidget {
     required this.onZoomOut,
     required this.onFit,
     required this.onRelayout,
+    required this.is3d,
+    required this.onToggle3d,
     required this.onToggleNodeLabels,
     required this.onToggleEdgeLabels,
   });
@@ -2091,10 +2445,12 @@ class _ZoomControls extends StatelessWidget {
   final int scalePercent;
   final bool showNodeLabels;
   final bool showEdgeLabels;
+  final bool is3d;
   final VoidCallback onZoomIn;
   final VoidCallback onZoomOut;
   final VoidCallback onFit;
   final VoidCallback onRelayout;
+  final VoidCallback onToggle3d;
   final VoidCallback onToggleNodeLabels;
   final VoidCallback onToggleEdgeLabels;
 
@@ -2118,6 +2474,13 @@ class _ZoomControls extends StatelessWidget {
         _ZoomBtn(icon: Icons.remove, tooltip: tr('canvas.zoomOut'), onTap: onZoomOut),
         _ZoomBtn(icon: Icons.fit_screen, tooltip: tr('canvas.fitView'), onTap: onFit),
         _ZoomBtn(icon: Icons.bubble_chart_outlined, tooltip: tr('canvas.relayout'), onTap: onRelayout),
+        _ZoomBtn(
+          key: const Key('canvas.toggle3d'),
+          icon: is3d ? Icons.grid_on_rounded : Icons.layers_rounded,
+          tooltip: is3d ? tr('canvas.viewTop') : tr('canvas.view3d'),
+          active: is3d,
+          onTap: onToggle3d,
+        ),
         Padding(
           padding: const EdgeInsets.only(top: 8, bottom: 2),
           child: SizedBox(
@@ -2143,6 +2506,7 @@ class _ZoomControls extends StatelessWidget {
 
 class _ZoomBtn extends StatelessWidget {
   const _ZoomBtn({
+    super.key,
     required this.icon,
     required this.tooltip,
     required this.onTap,
