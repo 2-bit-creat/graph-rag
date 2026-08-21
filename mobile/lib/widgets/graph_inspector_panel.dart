@@ -1248,33 +1248,50 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
       // with the name rather than in the diagnostic footer it used to share
       // with the node id.
       if (_isStatementNode(node)) _eventDateField(node, theme),
-      DropdownButtonFormField<String>(
-        initialValue: _selectedTypeValue(),
-        decoration: InputDecoration(
-            labelText: tr('inspector.typeLabel'),
-            border: const OutlineInputBorder(),
-            isDense: true),
-        items: _typeDropdownItems(),
-        onChanged: (v) => setState(() => _type = v),
-      ),
-      const SizedBox(height: 10),
-      if (_isStatementNode(node)) ...[
-        DropdownButtonFormField<String>(
-          initialValue: _statementContextTypes.contains(_ctxType)
-              ? _ctxType
-              : null,
-          decoration: InputDecoration(
-              labelText: tr('inspector.sourceTypeLabel'),
-              border: const OutlineInputBorder(),
-              isDense: true),
-          items: [
-            for (final option in _statementContextTypes)
-              DropdownMenuItem(value: option, child: Text(option)),
+      // Type and (for a Statement) source type are both short classification
+      // pickers, not primary content — pairing them side by side keeps the
+      // form from reading as one long undifferentiated stack of fields.
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: DropdownButtonFormField<String>(
+              initialValue: _selectedTypeValue(),
+              decoration: InputDecoration(
+                  labelText: tr('inspector.typeLabel'),
+                  prefixIcon: const Icon(Icons.label_outline, size: 18),
+                  border: const OutlineInputBorder(),
+                  isDense: true),
+              items: _typeDropdownItems(),
+              onChanged: (v) => setState(() => _type = v),
+            ),
+          ),
+          if (_isStatementNode(node)) ...[
+            const SizedBox(width: 10),
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                initialValue: _statementContextTypes.contains(_ctxType)
+                    ? _ctxType
+                    : null,
+                decoration: InputDecoration(
+                    labelText: tr('inspector.sourceTypeLabel'),
+                    prefixIcon:
+                        const Icon(Icons.category_outlined, size: 18),
+                    border: const OutlineInputBorder(),
+                    isDense: true),
+                items: [
+                  for (final option in _statementContextTypes)
+                    DropdownMenuItem(value: option, child: Text(option)),
+                ],
+                onChanged: (v) => setState(() => _ctxType = v),
+              ),
+            ),
           ],
-          onChanged: (v) => setState(() => _ctxType = v),
-        ),
-        const SizedBox(height: 10),
-      ],
+        ],
+      ),
+      // Extra breathing room before the body text — it is the one field that
+      // actually matters most here, not just another row of metadata.
+      const SizedBox(height: 18),
       TextField(
         controller: _descCtrl,
         maxLines: 3,
@@ -1433,12 +1450,25 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
         spacing: 7,
         runSpacing: 7,
         children: [
-          _InspectorMetaPill(label: _type ?? node['type']?.toString() ?? ''),
-          if (isStatement) _InspectorMetaPill(label: _stmtCtxType(node)),
+          _InspectorMetaPill(
+            label: _type ?? node['type']?.toString() ?? '',
+            tint: color,
+          ),
+          if (isStatement)
+            _InspectorMetaPill(
+              icon: Icons.category_outlined,
+              label: _stmtCtxType(node),
+            ),
           if (isStatement && _occurredAt != null)
             _InspectorMetaPill(
               icon: Icons.calendar_today_outlined,
               label: _inspectorDayLabel(_occurredAt!),
+              // Same guessed/confirmed language the edit-mode date field
+              // uses, so a low-confidence date reads as low-confidence here
+              // too instead of looking identical to a user-set one.
+              tint: _dateIsGuessed(node)
+                  ? AppColors.accentWarm
+                  : (_dateIsConfirmed(node) ? AppColors.hubGraph : null),
             ),
         ],
       ),
@@ -1640,31 +1670,42 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
 }
 
 class _InspectorMetaPill extends StatelessWidget {
-  const _InspectorMetaPill({required this.label, this.icon});
+  const _InspectorMetaPill({required this.label, this.icon, this.tint});
 
   final String label;
   final IconData? icon;
 
+  /// Overrides the neutral fill/text color — used to echo a node's type
+  /// color or a date's confidence tone, so the pill row carries the same
+  /// at-a-glance signal the rest of the inspector already gives.
+  final Color? tint;
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final fg = tint ?? colors.onSurfaceVariant;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: colors.surfaceContainerHighest.withValues(alpha: .55),
+        color: tint != null
+            ? tint!.withValues(alpha: .14)
+            : colors.surfaceContainerHighest.withValues(alpha: .55),
         borderRadius: BorderRadius.circular(999),
+        border: tint != null
+            ? Border.all(color: tint!.withValues(alpha: .30))
+            : null,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (icon != null) ...[
-            Icon(icon, size: 13, color: colors.onSurfaceVariant),
+            Icon(icon, size: 13, color: fg),
             const SizedBox(width: 5),
           ],
           Text(
             label,
             style: TextStyle(
-              color: colors.onSurfaceVariant,
+              color: fg,
               fontSize: 11.5,
               fontWeight: FontWeight.w600,
             ),
