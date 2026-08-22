@@ -44,3 +44,25 @@ String? resolveMediaUrl(String? path) {
   final rel = path.startsWith('/') ? path : '/$path';
   return '$base$rel';
 }
+
+/// OAuth client ids for Google sign-in.
+///
+/// Google issues a SEPARATE client id per platform and the app must present the
+/// one that matches how it was built, so these are injected per build rather
+/// than hardcoded:
+///
+///   --dart-define=GOOGLE_WEB_CLIENT_ID=...apps.googleusercontent.com
+///
+/// It is empty by default, and `googleSignInAvailable` is false on web then, so a
+/// build that has not been given them simply does not offer the button instead
+/// of failing at tap time. The backend independently refuses `/auth/google`
+/// with 503 unless the same ids are configured there.
+const String googleWebClientId =
+    String.fromEnvironment('GOOGLE_WEB_CLIENT_ID', defaultValue: '');
+
+/// Android reads its client id from the OAuth client registered against the
+/// package name + signing SHA-1, not from a define, so this stays empty there.
+/// On web the SDK needs it explicitly, and it doubles as the `serverClientId`
+/// used to request an ID token whose audience the backend accepts.
+bool get googleSignInAvailable =>
+    !kIsWeb || googleWebClientId.isNotEmpty;

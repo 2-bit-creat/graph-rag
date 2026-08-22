@@ -82,6 +82,14 @@ class Settings(BaseSettings):
     # (LearningProfileOut.is_operator) and the app only renders the answer.
     # Comma-separated; empty disables the tools for everyone.
     operator_handles: str = "main"
+    # OAuth client IDs allowed as the `aud` of a Google ID token. Google issues a
+    # SEPARATE client id per platform (Web / Android / iOS) and stamps whichever
+    # one the app used into the token, so every platform that can sign in must be
+    # listed here or its users get 401 with a valid token. Comma-separated; empty
+    # disables /auth/google entirely (503) rather than accepting any audience —
+    # an unset audience check would let a token minted for ANY Google app log in
+    # here, which is the classic ID-token confused-deputy hole.
+    google_client_ids: str = ""
     # Knowledge-graph extraction must not silently lose sentences. After the LLM
     # responds, the concatenated claim statements are measured against the source
     # with precision_text.native_ngram_coverage; below this the extractor spends
@@ -272,6 +280,14 @@ class Settings(BaseSettings):
     @property
     def operator_handle_list(self) -> list[str]:
         return [h.strip().lower() for h in self.operator_handles.split(",") if h.strip()]
+
+    @property
+    def google_client_id_list(self) -> list[str]:
+        return [c.strip() for c in self.google_client_ids.split(",") if c.strip()]
+
+    @property
+    def google_login_enabled(self) -> bool:
+        return bool(self.google_client_id_list)
 
     @property
     def is_production(self) -> bool:

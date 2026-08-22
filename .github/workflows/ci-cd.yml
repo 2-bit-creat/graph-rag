@@ -154,6 +154,10 @@ jobs:
           WEB_DISTRIBUTION_ID: ${{ vars.WEB_DISTRIBUTION_ID }}
           APP_VERSION: ${{ github.sha }}
           API_BASE_URL: ${{ steps.backend.outputs.api_base_url || vars.API_BASE_URL }}
+          # Public by design (a client id is not a secret), so a repo variable
+          # rather than a secret. Unset simply ships a build with no Google
+          # button — the sign-in UI is gated on it being non-empty.
+          GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID }}
         run: |
           test -n "$API_BASE_URL"
           case "$API_BASE_URL" in
@@ -162,7 +166,7 @@ jobs:
           esac
           cd mobile
           flutter pub get
-          flutter build web --release --dart-define=API_BASE_URL="$API_BASE_URL"
+          flutter build web --release             --dart-define=API_BASE_URL="$API_BASE_URL"             --dart-define=GOOGLE_WEB_CLIENT_ID="$GOOGLE_WEB_CLIENT_ID"
           cd ..
           aws s3api put-bucket-versioning --bucket "$WEB_BUCKET" --versioning-configuration Status=Enabled
           bash scripts/deploy_frontend.sh mobile/build/web

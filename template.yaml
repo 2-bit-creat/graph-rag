@@ -52,6 +52,15 @@ Parameters:
   # generated, either pass them via --parameter-overrides, or add the two
   # JSON keys to the existing secret and switch these back to
   # {{resolve:secretsmanager:...}} to match the other three.
+  GoogleClientIds:
+    Type: String
+    Default: ""
+    Description: >-
+      Comma-separated OAuth client ids accepted as the audience of a Google ID
+      token. Use the WEB client id even for Android: Credential Manager mints
+      the token against the serverClientId, so the Android client id never
+      appears in it. Empty disables /auth/google (503) rather than accepting
+      any audience. Not a secret — a client id is public by design.
   VapidPublicKey:
     Type: String
     Default: ""
@@ -112,6 +121,9 @@ Resources:
           # why these are plain parameters rather than a secretsmanager ref.
           VAPID_PUBLIC_KEY: !Ref VapidPublicKey
           VAPID_PRIVATE_KEY: !Ref VapidPrivateKey
+          # Google sign-in. Empty makes /auth/google answer 503 rather than
+          # trusting an unchecked audience — see app/google_auth.py.
+          GOOGLE_CLIENT_IDS: !Ref GoogleClientIds
           APP_VERSION: !Ref AppVersion
           CORS_ORIGINS: !Ref CorsOrigins
           ENVIRONMENT: !Ref Environment

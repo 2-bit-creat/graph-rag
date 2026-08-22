@@ -193,6 +193,43 @@ class ApiClient {
     }
   }
 
+  /// Exchange a Google ID token for this server's bearer token.
+  ///
+  /// [nativeLanguage] is required only the first time a given Google account
+  /// signs in; the server answers `native_language_required` until it is given,
+  /// and the caller re-sends the SAME id token with the answer.
+  Future<GoogleLoginResult> googleLogin(String idToken,
+      {String? nativeLanguage}) async {
+    try {
+      final resp = await _dio.post('/auth/google', data: {
+        'id_token': idToken,
+        if (nativeLanguage != null) 'native_language': nativeLanguage,
+      });
+      final data = resp.data as Map;
+      return GoogleLoginResult(
+        token: data['access_token'] as String,
+        handle: data['handle'] as String,
+      );
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 503) {
+        throw Exception(appLocaleController.isEnglish
+            ? 'Google sign-in is not available on this server.'
+            : '이 서버에서는 구글 로그인을 쓸 수 없어요.');
+      }
+      if (e.response?.statusCode == 401) {
+        throw Exception(appLocaleController.isEnglish
+            ? 'Google sign-in failed. Please try again.'
+            : '구글 로그인에 실패했어요. 다시 시도해 주세요.');
+      }
+      if (_isNativeLanguageRequired(e)) {
+        // First sign-in for this Google account: the caller asks which language
+        // the learner speaks and retries with the same id token.
+        throw const GoogleNeedsNativeLanguage();
+      }
+      throw _friendlyError(e, '구글 로그인');
+    }
+  }
+
   /// Delete the current account and all its data (server-side cascade).
   Future<void> deleteAccount() async {
     try {
@@ -354,6 +391,15 @@ class ApiClient {
     }
     final text = data.toString().trim();
     return text.isEmpty ? null : text;
+  }
+
+  /// The server answers 400 `native_language_required` when a Google account
+  /// signs in for the very first time and has no space yet.
+  bool _isNativeLanguageRequired(DioException e) {
+    if (e.response?.statusCode != 400) return false;
+    final data = e.response?.data;
+    final detail = data is Map ? data['detail'] : null;
+    return detail is Map && detail['code'] == 'native_language_required';
   }
 
   Exception _friendlyError(DioException e, String action) {
@@ -2229,3 +2275,19 @@ class ApiClient {
 }
 
 final apiClient = ApiClient();
+
+/// What `/auth/google` gives back: the bearer token plus the name the account
+/// is filed under on this device (the client cannot derive it — it is built
+/// from Google's subject id, which never leaves the server).
+class GoogleLoginResult {
+  const GoogleLoginResult({required this.token, required this.handle});
+
+  final String token;
+  final String handle;
+}
+
+/// Thrown on the first sign-in of a Google account, before a space exists.
+/// The caller asks for a native language and retries with the same id token.
+class GoogleNeedsNativeLanguage implements Exception {
+  const GoogleNeedsNativeLanguage();
+}

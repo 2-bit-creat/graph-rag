@@ -80,6 +80,35 @@ iOS `CFBundleDisplayName` — 둘 다 현재 "Daynode"). 출시 후에도 자유
 > 이 ID를 바꾼다면 **Google OAuth Android 클라이언트**(구글 로그인)도 같이 고쳐야
 > 합니다. 그 클라이언트는 패키지명 + 서명 SHA-1로 등록되기 때문입니다.
 
+### 구글 로그인 — 코드 완료, 콘솔 설정 대기
+
+구현은 끝났고 **값만 꽂으면 동작**합니다. 값이 없으면 버튼이 아예 안 뜨고
+`POST /auth/google`은 503을 반환하므로, 미설정 상태로 배포돼도 안전합니다.
+
+| 넣어야 할 값 | 어디에 |
+|---|---|
+| `GOOGLE_CLIENT_IDS` | 백엔드 환경변수(쉼표 구분). Secrets Manager / `template.yaml` |
+| `GOOGLE_WEB_CLIENT_ID` | 웹·앱 빌드의 `--dart-define` |
+
+**Google Cloud Console에서 만들 것**
+
+1. OAuth 동의 화면 — 앱 이름, 지원 이메일, **개인정보처리방침 URL**(§1 완료 후)
+2. **웹 클라이언트 ID** — 이게 주역입니다. 웹은 `clientId`로 쓰고,
+   **Android도 `serverClientId`로 이 값을 씁니다**. Credential Manager가 발급하는
+   ID 토큰의 `aud`가 안드로이드 클라이언트가 아니라 이 웹 클라이언트이기 때문에,
+   백엔드 `GOOGLE_CLIENT_IDS`에는 **웹 클라이언트 ID**가 들어가야 합니다.
+3. **Android 클라이언트 ID** — 패키지명 `io.github.twobitcreat.daynode` +
+   업로드 키 SHA-1. 토큰에는 안 나타나지만 이게 없으면 플로우 자체가 안 뜹니다.
+   SHA-1 추출: `keytool -list -v -keystore <경로> -alias daynode-upload`
+4. ⚠️ **Play App Signing 재서명 키**: Play 콘솔 업로드 후
+   "앱 무결성"에서 **앱 서명 키 SHA-1**을 확인해 3번 클라이언트에 **추가 등록**.
+   빠뜨리면 로컬 빌드는 되는데 **스토어에서 받은 앱만** 로그인이 실패합니다.
+
+**개인정보:** 이메일 주소는 **저장하지 않습니다.** 계정 키는 구글의 불변 식별자
+`sub`이며 `google:<sub>@local` 형태로 기존 `simple:` 인코딩과 같은 컬럼에 들어갑니다
+(마이그레이션 없음). 처리방침·Data safety에는 "이메일 주소 수집"이 아니라
+**"구글 계정 식별자"**로 기재하면 됩니다.
+
 ### TTS 공급자
 현재 `edge-tts` — Microsoft의 비공식 무료 엔드포인트라 상용 약관/SLA가 없습니다.
 선택지: 온디바이스 `flutter_tts`(비용 0, 음질 기기별 상이, 기존 캐시 mp3 무용지물)

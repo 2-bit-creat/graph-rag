@@ -325,9 +325,27 @@ class SimpleLoginRequest(BaseModel):
     create: bool = True
 
 
+class GoogleLoginRequest(BaseModel):
+    """Sign in with the ID token the Google SDK returned on the device.
+
+    Only the token crosses the wire — the client is never trusted for the
+    account identity, which the server reads out of the verified token.
+    """
+
+    id_token: str
+    # Same contract as SimpleLoginRequest: needed only when this Google account
+    # is signing in for the first time and a new space has to be created.
+    native_language: str | None = None
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    # The name this account is filed under on the device. Handle logins already
+    # know it (the user typed it), but a Google account has no handle the client
+    # could have guessed, so the server names it. Optional to keep older clients
+    # — which will outlive any given release once the app ships — working.
+    handle: str | None = None
 
 
 class UserOut(BaseModel):

@@ -9,6 +9,7 @@ import '../api/client.dart';
 import '../chat/chat_session_controller.dart';
 import '../l10n/app_strings.dart';
 import '../utils/browser_context.dart';
+import 'google_sign_in_service.dart';
 
 /// ID-entry accounts: no signup form, just a handle. Each handle maps to its own
 /// backend space (JWT); bearer tokens are cached in platform secure storage
@@ -112,6 +113,31 @@ class AccountController extends ChangeNotifier {
     notifyListeners();
     await _refreshConsent();
   }
+
+  /// Enter the space belonging to a Google account.
+  ///
+  /// The device-local name comes from the server: it is derived from Google's
+  /// subject id, which the client never sees, so it cannot be guessed here.
+  /// Throws [GoogleNeedsNativeLanguage] on the account's very first sign-in,
+  /// which the caller answers and retries with the SAME id token.
+  Future<void> enterWithGoogle(String idToken, {String? nativeLanguage}) async {
+    final result =
+        await apiClient.googleLogin(idToken, nativeLanguage: nativeLanguage);
+    _tokens[result.handle] = result.token;
+    _current = result.handle;
+    _sessionExpired = false;
+    _resetConsent();
+    setApiAuthToken(result.token);
+    chatSession.reset();
+    await _persist();
+    notifyListeners();
+    await _refreshConsent();
+  }
+
+  /// Whether a saved account was created through Google. Those cannot be
+  /// re-entered by typing an id — tapping one has to restart the Google flow,
+  /// since `/auth/simple` would reject the name as a malformed handle.
+  static bool isGoogleHandle(String handle) => handle.startsWith('google:');
 
   /// Switch to an already-saved account (re-uses its cached token).
   Future<void> switchTo(String handle) async {
@@ -221,12 +247,17 @@ class AccountController extends ChangeNotifier {
   }
 
   Future<void> signOut() async {
+    // Drop the Google session too. Without this the SDK keeps its own
+    // credential and the next sign-in silently re-enters the SAME account with
+    // no picker, so a user cannot switch away from a Google account.
+    final wasGoogle = _current != null && isGoogleHandle(_current!);
     _current = null;
     _resetConsent();
     setApiAuthToken(null);
     chatSession.reset();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_currentKey);
+    if (wasGoogle) await GoogleSignInService.instance.signOut();
     notifyListeners();
   }
 

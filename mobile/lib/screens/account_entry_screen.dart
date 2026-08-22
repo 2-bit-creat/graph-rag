@@ -1,6 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../api/client.dart';
 import '../auth/account_controller.dart';
+import '../auth/google_rendered_button.dart';
+import '../auth/google_sign_in_service.dart';
+import '../l10n/languages.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import 'privacy_policy_screen.dart';
@@ -36,14 +42,34 @@ class _AccountEntryScreenState extends State<AccountEntryScreen> {
   String? _pending;
   String? _error;
 
+  StreamSubscription<String>? _googleTokens;
+
   @override
   void initState() {
     super.initState();
     _controller.addListener(_clearErrorOnEdit);
+    if (GoogleSignInService.instance.isConfigured) {
+      // Web signs in through Google's own rendered button, which reports its
+      // result on this stream rather than returning it, so the listener is the
+      // only way that path completes. Native pushes onto the same stream, but
+      // _signInWithGoogle already has the token by then — hence _googleBusy,
+      // which keeps the duplicate from starting a second exchange.
+      _googleTokens = GoogleSignInService.instance.idTokens.listen(
+        (token) {
+          if (_googleBusy) return;
+          unawaited(_exchangeGoogleToken(token));
+        },
+        onError: (Object e) {
+          if (mounted) setState(() => _error = _clean(e));
+        },
+      );
+      unawaited(GoogleSignInService.instance.ensureInitialized());
+    }
   }
 
   @override
   void dispose() {
+    _googleTokens?.cancel();
     _controller.removeListener(_clearErrorOnEdit);
     _controller.dispose();
     _focusNode.dispose();
@@ -56,6 +82,12 @@ class _AccountEntryScreenState extends State<AccountEntryScreen> {
 
   Future<void> _enter(String handle, {bool fromSaved = false}) async {
     final h = handle.trim().toLowerCase();
+    if (AccountController.isGoogleHandle(h)) {
+      // Saved Google rows have no typable id — /auth/simple would reject the
+      // name outright — so tapping one re-runs the Google flow.
+      await _signInWithGoogle();
+      return;
+    }
     if (h.isEmpty) {
       setState(() => _error = tr('account.emptyHandle'));
       _focusNode.requestFocus();
@@ -84,6 +116,83 @@ class _AccountEntryScreenState extends State<AccountEntryScreen> {
         });
       }
     }
+  }
+
+  bool _googleBusy = false;
+
+  String _clean(Object e) => e.toString().replaceFirst('Exception: ', '');
+
+  /// Start the Google flow from our own button (native platforms). On web the
+  /// SDK's rendered button drives this instead and the token arrives on the
+  /// stream set up in initState.
+  Future<void> _signInWithGoogle() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _googleBusy = true;
+      _error = null;
+    });
+    try {
+      final token = await GoogleSignInService.instance.signIn();
+      if (token == null) {
+        // Dismissing the account picker is a choice, not a failure.
+        if (mounted) setState(() => _error = null);
+        return;
+      }
+      await _exchangeGoogleToken(token, alreadyBusy: true);
+    } catch (e) {
+      if (mounted) setState(() => _error = _clean(e));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _googleBusy = false;
+        });
+      }
+    }
+  }
+
+  /// Trade a verified Google ID token for this server's session.
+  ///
+  /// The first sign-in of an account has no space yet, so the server asks for a
+  /// native language and we retry with the SAME token — it is still valid,
+  /// having been minted seconds earlier.
+  Future<void> _exchangeGoogleToken(String token,
+      {bool alreadyBusy = false}) async {
+    if (!alreadyBusy) {
+      if (_busy) return;
+      setState(() {
+        _busy = true;
+        _googleBusy = true;
+        _error = null;
+      });
+    }
+    try {
+      try {
+        await accountController.enterWithGoogle(token);
+      } on GoogleNeedsNativeLanguage {
+        final native = await _pickNativeLanguage();
+        if (native == null) return;
+        await accountController.enterWithGoogle(token, nativeLanguage: native);
+      }
+      if (mounted) widget.onEntered?.call();
+    } catch (e) {
+      if (mounted) setState(() => _error = _clean(e));
+    } finally {
+      if (!alreadyBusy && mounted) {
+        setState(() {
+          _busy = false;
+          _googleBusy = false;
+        });
+      }
+    }
+  }
+
+  Future<String?> _pickNativeLanguage() {
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => _NativeLanguageDialog(),
+    );
   }
 
   Future<void> _forget(String handle) async {
@@ -217,6 +326,35 @@ class _AccountEntryScreenState extends State<AccountEntryScreen> {
               const SizedBox(height: 8),
             ],
             const SizedBox(height: AppSpacing.xs),
+            _OrDivider(label: tr('account.orDivider')),
+          ],
+          if (GoogleSignInService.instance.isConfigured) ...[
+            const SizedBox(height: AppSpacing.xl),
+            if (GoogleSignInService.instance.supportsOwnButton)
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _signInWithGoogle,
+                icon: const _GoogleGlyph(),
+                label: Text(tr('account.googleSignIn')),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(50),
+                  foregroundColor: shell.primaryText,
+                  side: BorderSide(color: shell.panelBorder),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                  ),
+                  textStyle: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w600),
+                ),
+              )
+            else
+              // Web: Google requires its own button — a synthesised click on a
+              // Flutter widget is refused by the SDK. Height is fixed because
+              // the button is an HTML element view with no intrinsic size.
+              SizedBox(
+                height: 44,
+                child: googleRenderedButton() ?? const SizedBox.shrink(),
+              ),
+            const SizedBox(height: AppSpacing.md),
             _OrDivider(label: tr('account.orDivider')),
           ],
           const SizedBox(height: AppSpacing.xl),
@@ -532,6 +670,118 @@ class _ErrorBanner extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+
+/// Google's mark, drawn rather than shipped as an asset: the brand guidelines
+/// require the four-colour "G", and an inline glyph keeps the button working
+/// offline and in both themes without another bundled file.
+class _GoogleGlyph extends StatelessWidget {
+  const _GoogleGlyph();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      width: 18,
+      height: 18,
+      child: CustomPaint(painter: _GooglePainter()),
+    );
+  }
+}
+
+class _GooglePainter extends CustomPainter {
+  const _GooglePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final stroke = size.width * 0.26;
+    final arc = Rect.fromCircle(
+      center: rect.center,
+      radius: (size.width - stroke) / 2,
+    );
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..strokeCap = StrokeCap.butt;
+
+    // Quadrants, clockwise from the right: red (top), yellow (left),
+    // green (bottom), blue (the bar side).
+    const segments = <(double, double, Color)>[
+      (-1.05, 1.05, Color(0xFFEA4335)),
+      (1.6, 1.6, Color(0xFFFBBC05)),
+      (3.1, 1.4, Color(0xFF34A853)),
+      (0.0, 0.0, Color(0xFF4285F4)),
+    ];
+    for (final (start, sweep, color) in segments) {
+      if (sweep == 0) continue;
+      canvas.drawArc(arc, start, sweep, false, paint..color = color);
+    }
+
+    // The blue crossbar that makes the ring read as a "G".
+    final bar = Paint()..color = const Color(0xFF4285F4);
+    canvas.drawRect(
+      Rect.fromLTRB(
+        rect.center.dx,
+        rect.center.dy - stroke / 2,
+        rect.right,
+        rect.center.dy + stroke / 2,
+      ),
+      bar,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _GooglePainter oldDelegate) => false;
+}
+
+/// Asked once, on the first sign-in of a Google account, because the server
+/// cannot create a space without it. Pops the language key, or null on cancel.
+class _NativeLanguageDialog extends StatefulWidget {
+  @override
+  State<_NativeLanguageDialog> createState() => _NativeLanguageDialogState();
+}
+
+class _NativeLanguageDialogState extends State<_NativeLanguageDialog> {
+  String? _native;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(tr('account.pickNativeTitle')),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(tr('account.pickNativeBody'),
+              style: const TextStyle(fontSize: 12.5)),
+          const SizedBox(height: AppSpacing.md),
+          Wrap(
+            spacing: AppSpacing.sm,
+            children: kNativeLanguages
+                .map((lang) => ChoiceChip(
+                      label: Text(lang.label),
+                      selected: _native == lang.key,
+                      onSelected: (_) => setState(() => _native = lang.key),
+                    ))
+                .toList(),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(tr('account.cancel')),
+        ),
+        FilledButton(
+          onPressed: _native == null
+              ? null
+              : () => Navigator.of(context).pop(_native),
+          child: Text(tr('account.confirm')),
+        ),
+      ],
     );
   }
 }

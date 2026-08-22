@@ -9,9 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import crud
 from ..auth_utils import create_access_token, hash_password, verify_password
+from ..config import get_settings
 from ..db import get_session
 from ..deps import get_current_user, request_user_dep
 from ..dev_user import DEV_EMAIL, DEV_USER_ID, get_dev_user
+from ..google_auth import GoogleAuthError, verify_id_token
 from ..languages import SUPPORTED_NATIVE
 from ..models import ChatSession, JournalEntry, Node, Quiz, User
 from .. import storage_usage
@@ -20,6 +22,7 @@ from ..schemas import (
     AccountCreateRequest,
     AccountSummaryOut,
     ConsentRequest,
+    GoogleLoginRequest,
     LoginRequest,
     RegisterRequest,
     SimpleLoginRequest,
@@ -34,6 +37,10 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # journals/graph/quizzes stay accessible under it.
 _HANDLE_RE = re.compile(r"^[a-z0-9]{3,20}$")
 _RESERVED_MAIN = "main"
+# Google accounts are keyed by the immutable `sub`, not the address, and are
+# encoded like the handle accounts so one unique column keeps serving both.
+_GOOGLE_PREFIX = "google:"
+_LOCAL_SUFFIX = "@local"
 
 
 def require_main_account(user: User = Depends(request_user_dep)) -> User:
@@ -96,6 +103,60 @@ async def simple_login(
                 native_language=native_language,
             )
     return TokenResponse(access_token=create_access_token(str(user.id)))
+
+
+@router.post("/google", response_model=TokenResponse)
+async def google_login(
+    payload: GoogleLoginRequest, session: AsyncSession = Depends(get_session)
+) -> TokenResponse:
+    """Enter (or create) a space with a Google account.
+
+    The account is keyed by Google's ``sub`` rather than the email address.
+    Google permits an address change, which would otherwise strand the user's
+    journals behind an identifier they no longer own, and keying on ``sub``
+    also means the address itself never has to be stored.
+    """
+    if not get_settings().google_login_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "google_login_unavailable",
+                "message": "Google sign-in is not configured on this server",
+            },
+        )
+    try:
+        subject = await verify_id_token(payload.id_token)
+    except GoogleAuthError:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "bad_google_token", "message": "Google sign-in failed"},
+        )
+
+    email = f"{_GOOGLE_PREFIX}{subject}{_LOCAL_SUFFIX}"
+    user = await crud.get_user_by_email(session, email)
+    if user is None:
+        native_language = (payload.native_language or "").strip().lower()
+        if native_language not in SUPPORTED_NATIVE:
+            # First sign-in for this Google account. The app re-sends the same
+            # token with a language once the picker is answered; the token is
+            # still valid because verification happened only moments ago.
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "native_language_required",
+                    "message": "Choose a supported native language when creating an account",
+                },
+            )
+        user = await crud.create_user(
+            session,
+            email,
+            password_hash="",
+            native_language=native_language,
+        )
+    return TokenResponse(
+        access_token=create_access_token(str(user.id)),
+        handle=handle_from_email(user.email),
+    )
 
 
 @router.delete("/me")
@@ -182,6 +243,13 @@ def handle_from_email(email: str) -> str:
         return _RESERVED_MAIN
     if email.startswith("simple:") and email.endswith("@local"):
         return email[len("simple:") : -len("@local")]
+    if email.startswith(_GOOGLE_PREFIX) and email.endswith(_LOCAL_SUFFIX):
+        # Google accounts have no handle the user ever typed. The subject id is
+        # a ~21-digit opaque number, so the admin list shows a short prefix —
+        # enough to tell two Google accounts apart without pretending it is a
+        # name, and the address is not stored so it cannot be shown instead.
+        subject = email[len(_GOOGLE_PREFIX) : -len(_LOCAL_SUFFIX)]
+        return f"google:{subject[:8]}"
     return email
 
 
