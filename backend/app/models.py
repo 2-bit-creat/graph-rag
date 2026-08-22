@@ -183,7 +183,9 @@ class ReviewSchedule(Base):
 class Node(Base):
     __tablename__ = "nodes"
     __table_args__ = (
-        UniqueConstraint("user_id", "name", "type", name="uq_node_user_name_type"),
+        UniqueConstraint(
+            "user_id", "name", "type", "is_source", name="uq_node_user_name_type"
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -212,6 +214,10 @@ class Node(Base):
     # partial unique index). The diary "나" and any conversation speaker the user
     # confirms as themselves all resolve to this node, regardless of its name.
     is_self: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # 정체성 카테고리 내 출처 플래그: 매체·기관·책·AI 등 사람이 아닌 귀속 head.
+    # "Source"는 더 이상 별도의 저장 type이 아니다 — type은 항상 "Identity"이고
+    # 이 플래그 하나로 병합 버킷과 음성 링크 자격을 가른다 (entity_types.py 참고).
+    is_source: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     speaker_profile_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("speaker_profiles.id", ondelete="SET NULL"),

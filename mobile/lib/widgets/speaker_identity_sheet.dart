@@ -219,7 +219,11 @@ class _SpeakerIdentitySheetState extends State<_SpeakerIdentitySheet> {
     return list;
   }
 
+  // `type` is always "Identity" now — is_source is what used to be a distinct
+  // "Source" type string (see backend entity_types.py). Falls back to the
+  // literal string for any stale cached payload from before that change.
   bool _isSourceType(Map<String, dynamic> node) =>
+      node['is_source'] == true ||
       (node['type']?.toString() ?? '').trim().toLowerCase() == 'source';
 
   /// The OTHER speaker label in this entry already confirmed as this identity.

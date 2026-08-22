@@ -43,6 +43,7 @@ from ..entity_types import (
     is_identity_type,
     is_source_like_type,
     normalize_entity_type,
+    resolve_is_source,
 )
 from ..journal_pipeline import transcribe_audio
 from ..graph_schema import REL_SPOKE_OR_PUBLISHED
@@ -170,21 +171,27 @@ class TemporalBackfillRequest(BaseModel):
     dry_run: bool = True
 
 
-# Allowed statement head-node types. Identity and Source never merge by name
-# alone (see entity_types.identity_merge_group) — both are valid "화자" (speaker)
-# picks, Source included, e.g. an external entity like 기업은행 publishing a
-# statement with no voice of its own.
-_HEAD_NODE_TYPES = frozenset({IDENTITY_ENTITY_TYPE, SOURCE_ENTITY_TYPE})
+# Allowed statement head-node types. There is only one now — Identity — with
+# is_source distinguishing 화자 (speaker) from 출처 (source): both are valid
+# picks, source included, e.g. an external entity like 기업은행 publishing a
+# statement with no voice of its own. See entity_types.identity_merge_group.
+_HEAD_NODE_TYPES = frozenset({IDENTITY_ENTITY_TYPE})
 
 
 def _claim_head_type(raw: str | None) -> str:
     """Sanitize a claim's speaker_type to a valid head-node entity type.
 
-    The compatibility funnel: legacy "Person"/"Speaker"/"화자" from stored
-    graph_staging drafts and older review clients all land on "Identity" here,
-    which is why this coerces rather than rejects.
+    The compatibility funnel: legacy "Person"/"Speaker"/"화자"/"Source" from
+    stored graph_staging drafts and older review clients all land on
+    "Identity" here — which one they were is carried by _claim_head_is_source,
+    not by this type string any more.
     """
     return canonical_identity_type(raw or IDENTITY_ENTITY_TYPE)
+
+
+def _claim_head_is_source(raw: str | None) -> bool:
+    """Whether a claim's speaker_type names a Source-like head (매체·기관·AI)."""
+    return resolve_is_source(raw)
 
 
 async def _resolve_head_node(
@@ -195,22 +202,24 @@ async def _resolve_head_node(
 ) -> Node:
     """Resolve a statement head (화자/출처) to an existing identity, never forking.
 
-    A head is created by name+type, but a mentioned identity may already exist under
-    the same name (e.g. '엄마' first appeared as a MENTIONS target → Identity node).
-    Blindly creating a head would fork it. So resolve across the whole 정체성
-    category first and reuse whenever the merge groups agree — an Identity head
-    reuses an Identity node, a Source head reuses a Source node.
+    A head is created by name+is_source, but a mentioned identity may already
+    exist under the same name (e.g. '엄마' first appeared as a MENTIONS target
+    → Identity node). Blindly creating a head would fork it. So resolve across
+    the whole 정체성 category first and reuse whenever the merge groups agree —
+    a plain-speaker head reuses a plain-speaker node, a source head reuses a
+    source node.
 
     Speaking does NOT change the node's type. An identity that turns out to be a
     person is marked by its bound voice profile, not by a type promotion.
     An identity↔source name clash falls through to a fresh node.
     """
     name = (name or "").strip()
+    head_is_source = _claim_head_is_source(head_type)
     head_type = _claim_head_type(head_type)
 
     existing = await crud.find_identity_node_by_name_or_alias(session, user_id, name)
     if existing is not None:
-        if identity_types_compatible(head_type, existing.type):
+        if identity_types_compatible(head_is_source, existing.is_source):
             crud.add_node_alias(existing, name)
             await session.flush()
             await crud.index_identity_alias(session, user_id, existing, name)
@@ -218,7 +227,7 @@ async def _resolve_head_node(
         # incompatible role (identity↔source name clash) → create a fresh head node.
 
     node = await crud._get_or_create_node(
-        session, name=name, type_=head_type, user_id=user_id
+        session, name=name, type_=head_type, user_id=user_id, is_source=head_is_source
     )
     await crud.index_identity_alias(session, user_id, node, name)
     return node
@@ -1523,8 +1532,10 @@ async def kg_commit(
 # — this is an explicit user-driven correction, the one place edge surgery is allowed.
 
 class ReclassifyNodeRequest(BaseModel):
-    # "Person" is accepted only for older clients and is normalized to
-    # "Identity" by the handler; there is no Person type any more.
+    # "Person"/"Source" are accepted only for older clients and are normalized
+    # by the handler — "Person" folds onto "Identity", and "Source" sets the
+    # is_source flag rather than a distinct type; there is no Person or Source
+    # type any more.
     to_type: Literal["Person", "Identity", "Source", "Concept"] = "Identity"
     # When set, merge this node INTO the target identity instead of just retyping.
     merge_into: _uuid.UUID | None = None
@@ -1622,11 +1633,16 @@ async def kg_reclassify_node(
         }
 
     requested = normalize_entity_type(body.to_type)
-    # Legacy "Person" from an older client folds into Identity.
+    requested_is_source = None
+    # Legacy "Person"/"Source" from an older client fold into Identity —
+    # "Source" additionally sets the is_source flag instead of a distinct type.
     if is_identity_type(requested):
+        requested_is_source = resolve_is_source(requested, default=node.is_source)
         requested = canonical_identity_type(requested)
     # Realigns MENTIONS ↔ CONTEXT and the alias index along with the type.
-    fixup = await crud.apply_type_change(session, user.id, node, requested)
+    fixup = await crud.apply_type_change(
+        session, user.id, node, requested, is_source=requested_is_source
+    )
     await session.commit()
     return {
         "ok": True,
@@ -1663,7 +1679,15 @@ async def _confirmed_speaker_identity(
         node = await session.get(Node, profile.node_id)
         if node is not None and node.user_id == user_id:
             name = (node.name or "").strip() or None
-            return name, (normalize_entity_type(node.type) if name else None)
+            # node.type is always "Identity" now — is_source is what used to be
+            # a distinct "Source" type string, and downstream (claim speaker_type,
+            # _claim_head_is_source) still reads that distinction off this string.
+            node_type = (
+                ("Source" if node.is_source else normalize_entity_type(node.type))
+                if name
+                else None
+            )
+            return name, node_type
     return (profile.display_name or "").strip() or None, None
 
 
@@ -1737,7 +1761,7 @@ async def _link_confirmed_voices_to_nodes(
         if not name or name == "나":
             continue
         node = await crud.find_identity_node_by_name_or_alias(session, user_id, name)
-        if node is not None and is_source_like_type(node.type):
+        if node is not None and node.is_source:
             node = None  # never attach a voice to an external 출처
         if node is None:
             node = await crud._get_or_create_node(
@@ -2079,8 +2103,12 @@ async def extract_statement_graph_draft(
     source_category = raw_category or "대화"
 
     # Entry-level attribution (text paste): the user already told us who asserted
-    # this content — no speaker inference. 'source' heads get a Source node (매체·
-    # 기관·AI), 'person' an Identity node. 'self' flows through the diary path below.
+    # this content — no speaker inference. 'source' heads get an is_source=True
+    # Identity node (매체·기관·AI), 'person' a plain Identity node. 'self' flows
+    # through the diary path below. speaker_type here is just the draft claim's
+    # transient label — _claim_head_type/_claim_head_is_source resolve it into
+    # the stored type + flag at persist time, so "Source" only ever exists as
+    # this in-flight string.
     attribution_kind = (getattr(entry, "attribution_kind", None) or "").strip().lower()
     attribution_name = (getattr(entry, "attribution_name", None) or "").strip()
 

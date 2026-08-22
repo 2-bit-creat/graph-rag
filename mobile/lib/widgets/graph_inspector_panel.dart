@@ -830,8 +830,9 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
                         setState(() => _editing = true);
                       }
                     },
-              child: Text(
-                  _editing ? tr('common.cancel') : tr('inspector.editAction')),
+              child: Text(_editing
+                  ? tr('inspector.cancelEditAction')
+                  : tr('inspector.editAction')),
             ),
           IconButton(
             icon: const Icon(Icons.close),
@@ -1360,12 +1361,17 @@ class _GraphInspectorPanelState extends State<GraphInspectorPanel> {
           _ImportanceCard(score: (node['importance_score'] as num).toInt()),
           const SizedBox(height: 12),
         ],
-        _EmbeddingStatusCard(
-          node: node,
-          onUnlinkVoice: node['voice_embedding_registered'] == true
-              ? _unlinkNodeVoice
-              : null,
-        ),
+        // Voice/alias embeddings only ever exist on identity-category nodes
+        // (see backend crud.index_identity_alias) — showing this card for a
+        // Statement/Concept just displayed two permanently-"없음" rows with no
+        // path to fix them.
+        if (_isIdentityCategoryType(node['type']?.toString()))
+          _EmbeddingStatusCard(
+            node: node,
+            onUnlinkVoice: node['voice_embedding_registered'] == true
+                ? _unlinkNodeVoice
+                : null,
+          ),
         // 병합·전환: 잘못 추출된 노드를 사후 교정하는 허브. Concept는 정체성 전환/
         // 정체성·개념 병합, 정체성은 다른 정체성에 병합(중복 제거). 병합 시 관계와
         // 일기 연결(provenance)이 대상 노드로 승계되고 별칭으로 학습된다.
@@ -1876,7 +1882,7 @@ class _EmbeddingStatusCard extends StatelessWidget {
     final samples = node['voice_sample_count'];
     final duration =
         (node['voice_total_duration_sec'] as num?)?.toDouble() ?? 0.0;
-    final isSpeakerLike = isNonSourceIdentityType(node['type']?.toString());
+    final isSpeakerLike = !nodeIsSource(node);
 
     return Card(
       color: Colors.blueGrey.withValues(alpha: 0.08),

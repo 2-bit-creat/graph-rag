@@ -386,6 +386,10 @@ async def test_source_head_does_not_hijack_person_of_same_name(db_session, iso_u
     nodes = await crud.get_all_nodes(db_session, iso_user.id)
     newes = [n for n in nodes if n.name == "뉴스" and n.deleted_at is None]
     assert len(newes) == 2  # separate Person and Source identities
-    types = {crud.normalize_entity_type(n.type) for n in newes}
-    assert types == {"Person", "Source"}
+    # The pre-existing Person node keeps its literal legacy type string (only
+    # repair_identity_types collapses that); the new Source head is a flag on
+    # an "Identity" node now, not a distinct "Source" type (see entity_types.py).
+    is_source_flags = {n.is_source for n in newes}
+    assert is_source_flags == {False, True}
     assert person.id in {n.id for n in newes}  # original Person untouched
+    assert person.type == "Person"

@@ -642,6 +642,24 @@ _MIGRATIONS = [
         END IF;
     END $$;
     """,
+    # Source retired as a stored node type: it is now the `is_source` flag on an
+    # Identity node (see entity_types.py). Existing 'Source' rows are flagged...
+    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS is_source BOOLEAN NOT NULL DEFAULT FALSE",
+    "UPDATE nodes SET is_source = TRUE WHERE lower(type) = 'source' AND is_source = FALSE",
+    # ...then retyped to 'Identity', guarded the same way the legacy Person/
+    # Speaker backfill above is: skip a row if retyping it would collide with
+    # another node that already occupies (user_id, name, 'Identity', is_source).
+    """
+    UPDATE nodes SET type = 'Identity'
+    WHERE lower(type) = 'source'
+      AND NOT EXISTS (
+        SELECT 1 FROM nodes n2
+        WHERE n2.user_id IS NOT DISTINCT FROM nodes.user_id
+          AND n2.name = nodes.name
+          AND n2.type = 'Identity'
+          AND n2.is_source = TRUE
+      )
+    """,
 ]
 
 
@@ -975,8 +993,11 @@ async def _run_legacy_migrations(conn) -> None:
                     "ALTER TABLE nodes DROP CONSTRAINT IF EXISTS uq_node_name_type"
                 )
                 await conn.exec_driver_sql(
+                    "ALTER TABLE nodes DROP CONSTRAINT IF EXISTS uq_node_user_name_type"
+                )
+                await conn.exec_driver_sql(
                     "ALTER TABLE nodes ADD CONSTRAINT uq_node_user_name_type "
-                    "UNIQUE (user_id, name, type)"
+                    "UNIQUE (user_id, name, type, is_source)"
                 )
         except Exception as exc:
             logger.warning("Constraint migration skipped (non-fatal): %s", exc)

@@ -37,7 +37,6 @@ from .models import (
 )
 from .entity_types import (
     IDENTITY_ENTITY_TYPE,
-    canonical_identity_type,
     identity_merge_group,
     is_identity_type,
     is_source_like_type,
@@ -132,6 +131,7 @@ def build_node_out(
         deleted_context=getattr(node, "deleted_context", None),
         importance_score=getattr(node, "importance_score", 0) or 0,
         is_self=getattr(node, "is_self", False) or False,
+        is_source=getattr(node, "is_source", False) or False,
         source_entry_id=source_entry_id,
         source_transcript_ko=source_transcript_ko,
         source_transcript_clean_ko=source_transcript_clean_ko,
@@ -1007,15 +1007,29 @@ async def _get_or_create_node(
     temporal_anchor_at: datetime | None = None,
     event_status: str = "happened",
     event_timezone: str | None = None,
+    is_source: bool = False,
 ) -> Node:
     name = normalize_node_name(name)
     type_ = normalize_entity_type(type_)
+    # "Source"/"media" are legacy input tokens, not a stored type — callers that
+    # still pass one of these get is_source=True normalized in and the type
+    # itself collapses onto "Identity" (see entity_types.py). Deliberately
+    # narrower than canonical_identity_type: this must NOT also collapse other
+    # identity-legacy spellings ("Person", "Speaker", "화자", …) onto "Identity"
+    # here — that backfill happens separately (repair_identity_types); doing it
+    # inline would make type_="Person" and type_="Identity" silently resolve to
+    # the same node for callers that still rely on them staying distinct until
+    # the backfill runs.
+    if is_source_like_type(type_):
+        is_source = True
+        type_ = IDENTITY_ENTITY_TYPE
 
     # Statements are event claims, not globally-deduplicated concepts.  A
     # repeated title on a different journal entry must create a separate memory.
     filters = [
         (Node.claim_key == claim_key) if type_ == "Statement" and claim_key else Node.name == name,
         func.lower(Node.type) == type_group_key(type_),
+        Node.is_source == is_source,
         Node.deleted_at.is_(None),  # never match soft-deleted nodes
     ]
     if user_id is not None:
@@ -1031,6 +1045,7 @@ async def _get_or_create_node(
             select(Node).where(
                 Node.user_id == user_id,
                 func.lower(Node.type) == type_group_key(type_),
+                Node.is_source == is_source,
                 Node.deleted_at.is_(None),
             )
         )
@@ -1071,6 +1086,7 @@ async def _get_or_create_node(
             temporal_anchor_at=temporal_anchor_at,
             event_status=event_status,
             event_timezone=event_timezone,
+            is_source=is_source,
         )
         session.add(node)
         await session.flush()
@@ -3251,7 +3267,7 @@ async def list_person_nodes(
         name_key = normalize_node_name(node.name).lower()
         if not name_key:
             continue
-        key = (name_key, identity_merge_group(node.type))
+        key = (name_key, identity_merge_group(node.is_source))
         existing = by_key.get(key)
         if existing is None:
             by_key[key] = node
@@ -3987,20 +4003,31 @@ async def realign_node_edges(
 
 
 async def apply_type_change(
-    session: AsyncSession, user_id: uuid.UUID, node: Node, new_type: str | None
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    node: Node,
+    new_type: str | None,
+    *,
+    is_source: bool | None = None,
 ) -> dict[str, int]:
-    """Change a node's type and bring its edges and alias embeddings along.
+    """Change a node's type (and optionally its is_source flag) and bring its
+    edges and alias embeddings along.
 
-    Returns the realignment counts (all zero when the type didn't actually
-    change). Does not commit — the caller owns the transaction.
+    Returns the realignment counts (all zero when nothing actually changed).
+    Does not commit — the caller owns the transaction.
     """
     counts = {"relations_fixed": 0, "duplicates_merged": 0, "heads_demoted": 0}
     before = normalize_entity_type(node.type)
     after = normalize_entity_type(new_type)
-    if not after or before == after:
+    is_source = node.is_source if is_source is None else is_source
+    type_changed = bool(after) and before != after
+    source_changed = is_source != node.is_source
+    if not type_changed and not source_changed:
         return counts
 
-    node.type = after
+    if type_changed:
+        node.type = after
+    node.is_source = is_source
     node.updated_at = datetime.now(UTC)
     await session.flush()
 
@@ -4211,8 +4238,12 @@ async def repair_identity_types(
         if not name_key:
             continue
         # Source stays its own bucket — a same-name Identity and Source are
-        # deliberately distinct and must both survive.
-        groups.setdefault((name_key, identity_merge_group(node.type)), []).append(node)
+        # deliberately distinct and must both survive. A node whose type is
+        # still the legacy 'Source' string (is_source not yet backfilled) has
+        # to be treated as source-bucketed here too, or it would merge into a
+        # same-name plain Identity before step 2b gets a chance to flag it.
+        node_is_source = node.is_source or is_source_like_type(node.type)
+        groups.setdefault((name_key, identity_merge_group(node_is_source)), []).append(node)
 
     for (_, group), members in groups.items():
         if group == "source" or len(members) < 2:
@@ -4250,6 +4281,21 @@ async def repair_identity_types(
         .execution_options(synchronize_session="fetch")
     )
     counts["retyped"] = int(retype.rowcount or 0)
+
+    # Stray 'Source' rows the db.py startup backfill hasn't reached yet (e.g.
+    # RUN_DB_MIGRATIONS was off for a deploy) — same collapse, but this one also
+    # sets is_source=True since that flag is what used to be the type string.
+    source_retype = await session.execute(
+        update(Node)
+        .where(
+            Node.user_id == user_id,
+            Node.deleted_at.is_(None),
+            func.lower(Node.type) == "source",
+        )
+        .values(type=IDENTITY_ENTITY_TYPE, is_source=True)
+        .execution_options(synchronize_session="fetch")
+    )
+    counts["retyped"] += int(source_retype.rowcount or 0)
     await session.flush()
 
     # ── 3. Graph-wide relation repair ────────────────────────────────────────

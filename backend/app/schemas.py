@@ -66,6 +66,9 @@ class NodeOut(BaseModel):
     deleted_context: dict | None = None
     importance_score: int = 0
     is_self: bool = False
+    # True for an Identity head that is a 매체·기관·책·AI 출처 rather than a
+    # person/pet/group — the old "Source" type is now this flag (entity_types.py).
+    is_source: bool = False
     source_entry_id: uuid.UUID | None = None
     source_transcript_ko: str | None = None
     source_transcript_clean_ko: str | None = None
@@ -421,9 +424,11 @@ class PipelineTraceOut(BaseModel):
 class RecommendedNodeOut(BaseModel):
     id: uuid.UUID | None = None
     name: str
-    # Entity type (Person / Source / Identity / …) — lets the client render a
-    # distinct icon and avoid assuming every speaker candidate is a person.
+    # Entity type — always "Identity" now; see is_source for the Person/Source
+    # distinction, which lets the client render a distinct icon instead of
+    # assuming every speaker candidate is a person.
     type: str | None = None
+    is_source: bool = False
     # The other speaker label in THIS entry that is already confirmed as this
     # identity, when there is one. The picker shows the row either way and
     # offers to treat the two labels as the same person — see

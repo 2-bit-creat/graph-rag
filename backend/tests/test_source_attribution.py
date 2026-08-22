@@ -1,11 +1,16 @@
 """외부 출처(Source) 귀속: 붙여넣은 소스 자료의 진술 head는 Person이 아닌
-Source 노드가 된다.
+is_source=True Identity 노드가 된다.
+
+Source는 더 이상 별도의 저장 type이 아니다 — head node의 type은 항상
+"Identity"이고, `is_source` 플래그가 매체·기관·책·AI 출처를 구분한다
+(entity_types.py 참고).
 
 - Source는 person-like가 아니므로 동명의 Person과 병합되지 않는다 — 그래도
-  둘 다 화자 피커에는 노출된다: 정체성 전체(Person·Source·Identity)가 화자가
-  될 수 있다는 것이 이 그래프 모델의 핵심 컨셉이다.
+  둘 다 화자 피커에는 노출된다: 정체성 전체(is_source 여부와 무관하게)가
+  화자가 될 수 있다는 것이 이 그래프 모델의 핵심 컨셉이다.
 - 리뷰 클라이언트가 claims에서 speaker_type을 떨어뜨려도, 엔트리의
-  attribution_kind='source'에서 head 타입이 복원된다 (Person 오염 방지).
+  attribution_kind='source'에서 head의 is_source 플래그가 복원된다
+  (Person 오염 방지).
 - content-type 게이트: 출처 귀속 텍스트는 단일 화자여도 개인일기가 될 수 없다.
 """
 
@@ -19,6 +24,7 @@ from app.entity_types import (
     identity_merge_group,
     identity_types_compatible,
     is_source_like_type,
+    resolve_is_source,
 )
 from app.journal_pipeline import DIARY_CATEGORY, gate_source_type
 from app.models import JournalEntry
@@ -42,28 +48,28 @@ def _disable_llm_learning_materials(monkeypatch):
 # ─── Pure helpers ──────────────────────────────────────────────────────────────
 
 def test_source_never_merges_with_a_plain_identity():
-    """Source is its own merge bucket — a same-name Identity must not absorb it."""
+    """is_source is its own merge bucket — a same-name Identity must not absorb it."""
     assert is_source_like_type("Source")
     assert is_source_like_type("media")
     assert not is_source_like_type("Identity")
 
-    assert identity_merge_group("Source") != identity_merge_group("Identity")
-    assert not identity_types_compatible("Source", "Identity")
-    assert identity_types_compatible("Identity", "Identity")
-    # Legacy rows on an un-migrated graph share the Identity bucket.
-    assert identity_types_compatible("Person", "Identity")
-    assert not identity_types_compatible("Person", "Source")
+    assert identity_merge_group(True) != identity_merge_group(False)
+    assert not identity_types_compatible(True, False)
+    assert identity_types_compatible(False, False)
+    # Legacy rows on an un-migrated graph share the (non-source) Identity bucket.
+    assert identity_types_compatible(resolve_is_source("Person"), False)
+    assert not identity_types_compatible(resolve_is_source("Person"), True)
 
 
 @pytest.mark.parametrize(
     "raw,expected",
     [
-        ("Source", "Source"),
-        ("source", "Source"),
+        # head type is always "Identity" now — Source is a flag, not a type.
+        ("Source", "Identity"),
+        ("source", "Identity"),
         ("Identity", "Identity"),
         (None, "Identity"),
         ("", "Identity"),
-        # head must be Identity|Source — anything else is coerced
         ("Concept", "Identity"),
         ("Statement", "Identity"),
         # legacy wire values from stored drafts / older clients
@@ -73,6 +79,23 @@ def test_source_never_merges_with_a_plain_identity():
 )
 def test_claim_head_type_sanitized(raw, expected):
     assert _claim_head_type(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("Source", True),
+        ("source", True),
+        ("media", True),
+        ("Identity", False),
+        ("Person", False),
+        ("Concept", False),
+        (None, False),
+        ("", False),
+    ],
+)
+def test_claim_head_is_source_resolved(raw, expected):
+    assert resolve_is_source(raw) is expected
 
 
 @pytest.mark.parametrize(
@@ -171,13 +194,14 @@ async def test_source_attributed_apply_creates_source_head(db_session, iso_user)
 
     nodes = await crud.get_all_nodes(db_session, iso_user.id)
     head = next(n for n in nodes if n.name == "Claude")
-    assert head.type == "Source"
+    assert head.type == "Identity"
+    assert head.is_source is True
 
-    # Source head도 다른 정체성과 마찬가지로 화자 피커에 나온다 — 다만 타입은
-    # Source로 남아, 동명의 Person과 절대 하나로 합쳐지지 않는다.
+    # Source head도 다른 정체성과 마찬가지로 화자 피커에 나온다 — 다만
+    # is_source=True로 남아, 동명의 Person과 절대 하나로 합쳐지지 않는다.
     picker = await crud.list_person_nodes(db_session, iso_user.id)
     picked = next(n for n in picker if n.name == "Claude")
-    assert picked.type == "Source"
+    assert picked.is_source is True
 
 
 @pytest.mark.asyncio
@@ -210,7 +234,8 @@ async def test_speaker_type_restored_when_client_drops_it(db_session, iso_user):
 
     nodes = await crud.get_all_nodes(db_session, iso_user.id)
     head = next(n for n in nodes if n.name == "한국경제")
-    assert head.type == "Source"
+    assert head.type == "Identity"
+    assert head.is_source is True
 
 
 @pytest.mark.asyncio
@@ -219,13 +244,20 @@ async def test_person_and_source_same_name_stay_distinct(db_session, iso_user):
     person = await crud._get_or_create_node(
         db_session, name="제니", type_="Person", user_id=iso_user.id
     )
+    # type_="Source" is a legacy input token — _get_or_create_node still
+    # normalizes it onto is_source=True rather than storing "Source" as a type.
     source = await crud._get_or_create_node(
         db_session, name="제니", type_="Source", user_id=iso_user.id
     )
     assert person.id != source.id
+    assert person.is_source is False
+    assert source.is_source is True
 
-    # 둘 다 피커에 노출되지만, 병합되지 않은 별개 노드로 남는다.
+    # 둘 다 피커에 노출되지만, 병합되지 않은 별개 노드로 남는다. person은 원래
+    # type_="Person"으로 만들었으니 문자 그대로 저장돼 있다 — Person→Identity
+    # 축약은 repair_identity_types만 하는 별개의 일괄 백필이다.
     picker = await crud.list_person_nodes(db_session, iso_user.id)
     picked = [n for n in picker if n.name == "제니"]
     assert {n.id for n in picked} == {person.id, source.id}
-    assert {n.type for n in picked} == {"Person", "Source"}
+    assert person.type == "Person"
+    assert {n.is_source for n in picked} == {False, True}

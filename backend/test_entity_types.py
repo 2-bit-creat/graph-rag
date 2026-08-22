@@ -4,6 +4,7 @@ from app.entity_types import (
     identity_types_compatible,
     is_identity_type,
     normalize_entity_type,
+    resolve_is_source,
     type_group_key,
 )
 from app.ontology_presets import ensure_identity_hierarchy
@@ -22,19 +23,24 @@ def test_legacy_person_spellings_are_identities():
     for legacy in ("Person", "person", "Speaker", "화자", "Human", "Individual"):
         assert is_identity_type(legacy)
         assert canonical_identity_type(legacy) == "Identity"
-    assert canonical_identity_type("Source") == "Source"
-    assert canonical_identity_type("media") == "Source"
+    # Source was retired as a type too — canonical_identity_type collapses it
+    # onto "Identity"; resolve_is_source carries the distinction as a flag.
+    assert canonical_identity_type("Source") == "Identity"
+    assert canonical_identity_type("media") == "Identity"
+    assert resolve_is_source("Source") is True
+    assert resolve_is_source("media") is True
+    assert resolve_is_source("Person") is False
+    assert resolve_is_source(None, default=True) is True
     # Non-identities are not swept in.
     assert not is_identity_type("Concept")
     assert not is_identity_type("Statement")
 
 
 def test_identity_and_source_are_separate_merge_groups():
-    assert identity_merge_group("Identity") == "identity"
-    assert identity_merge_group("Person") == "identity"
-    assert identity_merge_group("Source") == "source"
-    assert identity_types_compatible("Person", "Identity")
-    assert not identity_types_compatible("Identity", "Source")
+    assert identity_merge_group(False) == "identity"
+    assert identity_merge_group(True) == "source"
+    assert identity_types_compatible(False, False)
+    assert not identity_types_compatible(False, True)
 
 
 def test_ensure_identity_hierarchy_migrates_legacy_speaker():

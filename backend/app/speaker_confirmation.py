@@ -13,7 +13,6 @@ from .config import get_settings
 from .entity_types import (
     IDENTITY_ENTITY_TYPE,
     is_identity_type,
-    is_source_like_type,
     normalize_entity_type,
 )
 from .models import JournalEntry, Node, SpeakerProfile
@@ -46,9 +45,12 @@ def _has_valid_voice_node_link(
 class RecommendedNode:
     id: uuid.UUID | None
     name: str
-    # Entity type (Person / Source / Identity / …) — lets the client distinguish
-    # a person from an external source in the picker instead of assuming Person.
+    # Entity type — always "Identity" now (Person/Source both fold onto it);
+    # see is_source for the flag that used to be a distinct "Source" type.
     type: str | None = None
+    # True when this candidate is a 매체·기관·책·AI 출처 rather than a person —
+    # lets the client distinguish that in the picker instead of assuming Person.
+    is_source: bool = False
     # Set when ANOTHER speaker label in this same entry is already confirmed as
     # this identity. The picker used to drop those rows entirely; see
     # _list_person_nodes for why that made OCR typos unfixable.
@@ -199,6 +201,7 @@ async def build_speaker_summaries_for_entry(
                         id=node.id,
                         name=_linked_speaker_display_name(node, profile),
                         type=normalize_entity_type(node.type),
+                        is_source=node.is_source,
                     )
                     claimed_node_ids.add(node.id)
                 else:
@@ -317,6 +320,7 @@ async def _suggested_node_candidates(
                         id=node.id,
                         name=_linked_speaker_display_name(node, profile),
                         type=normalize_entity_type(node.type),
+                        is_source=node.is_source,
                     ),
                     1.0,
                 )
@@ -356,6 +360,7 @@ async def _suggested_node_candidates(
                     id=node.id,
                     name=_linked_speaker_display_name(node, matched_profile),
                     type=normalize_entity_type(node.type),
+                    is_source=node.is_source,
                 ),
                 score,
             )
@@ -481,7 +486,12 @@ async def recommend_speaker_node(
             match_score = (
                 round(float(appearance.match_score), 4) if appearance else None
             )
-            person = RecommendedNode(id=node.id, name=display, type=normalize_entity_type(node.type))
+            person = RecommendedNode(
+                id=node.id,
+                name=display,
+                type=normalize_entity_type(node.type),
+                is_source=node.is_source,
+            )
             human_confirmed = (
                 appearance is not None
                 and _is_human_confirmed_match_score(float(appearance.match_score or 0.0))
@@ -562,7 +572,12 @@ async def recommend_speaker_node(
         candidate = SpeakerCandidate(id=node.id, name=display, match_score=score)
         candidates.append(candidate)
         if recommended is None:
-            recommended = RecommendedNode(id=node.id, name=display, type=normalize_entity_type(node.type))
+            recommended = RecommendedNode(
+                id=node.id,
+                name=display,
+                type=normalize_entity_type(node.type),
+                is_source=node.is_source,
+            )
             best_score = score
 
     above = (
@@ -642,6 +657,7 @@ async def _list_person_nodes(
             id=n.id,
             name=n.name,
             type=normalize_entity_type(n.type),
+            is_source=n.is_source,
             claimed_by_label=(claimed.get(n.id) or (None, None))[1],
         )
         for n in nodes
@@ -738,13 +754,18 @@ async def confirm_speaker_identity(
         profile, session_label = await _resolve_profile_for_session(
             session, user_id, journal_entry_id, speaker_profile_id, session_label
         )
-        # Never fork: reuse an existing Source node under this name if one exists
-        # (mirrors kg_build._resolve_head_node's dedup rule for Source heads).
-        source_type = normalize_entity_type("Source")
+        # Never fork: reuse an existing is_source node under this name if one
+        # exists (mirrors kg_build._resolve_head_node's dedup rule for source
+        # heads). Source is a flag, not a type — the node still stores
+        # type="Identity".
         node = await crud.find_identity_node_by_name_or_alias(session, user_id, name)
-        if node is None or not is_source_like_type(node.type):
+        if node is None or not node.is_source:
             node = await crud._get_or_create_node(
-                session, name=name, type_=source_type, user_id=user_id
+                session,
+                name=name,
+                type_=IDENTITY_ENTITY_TYPE,
+                user_id=user_id,
+                is_source=True,
             )
         await crud.index_identity_alias(session, user_id, node, name)
         profile = await crud.assign_exclusive_voice_profile_to_node(
@@ -767,7 +788,9 @@ async def confirm_speaker_identity(
         await session.refresh(node)
         return SpeakerConfirmResult(
             speaker_profile_id=profile.id,
-            confirmed_node=RecommendedNode(id=node.id, name=name, type=source_type),
+            confirmed_node=RecommendedNode(
+                id=node.id, name=name, type=IDENTITY_ENTITY_TYPE, is_source=True
+            ),
             transcript_replacements=replacements,
             edges_reassigned=0,
         )
@@ -893,6 +916,7 @@ async def confirm_speaker_identity(
             id=linked_node.id if linked_node is not None else None,
             name=confirmed_name,
             type=normalize_entity_type(linked_node.type) if linked_node is not None else None,
+            is_source=linked_node.is_source if linked_node is not None else False,
         ),
         transcript_replacements=replacements,
         edges_reassigned=0,

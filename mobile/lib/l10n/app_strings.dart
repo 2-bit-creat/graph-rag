@@ -864,6 +864,9 @@ const Map<String, String> _ko = {
   'inspector.nodeLabel': '노드',
   'inspector.nodeDetailTitle': '노드 상세',
   'inspector.editAction': '수정',
+  // Toggles OFF edit mode without closing the sheet — reusing 'common.cancel'
+  // ("취소") here reads as "close this sheet", which it isn't.
+  'inspector.cancelEditAction': '수정 취소',
   'inspector.backToNode': '노드 상세로 돌아가기',
   'inspector.sourceNode': '시작 노드',
   'inspector.targetNode': '도착 노드',
@@ -2310,6 +2313,7 @@ const Map<String, String> _en = {
   'inspector.nodeLabel': 'Node',
   'inspector.nodeDetailTitle': 'Node details',
   'inspector.editAction': 'Edit',
+  'inspector.cancelEditAction': 'Cancel edit',
   'inspector.backToNode': 'Back to node details',
   'inspector.sourceNode': 'Source node',
   'inspector.targetNode': 'Target node',

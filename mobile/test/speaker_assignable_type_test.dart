@@ -97,13 +97,30 @@ void main() {
   });
 
   group('entityTypeMatches', () {
-    test('the Identity chip also catches legacy rows', () {
+    test('the Identity chip also catches legacy rows and is_source identities', () {
       expect(entityTypeMatches('Identity', 'Identity'), isTrue);
       expect(entityTypeMatches('Person', 'Identity'), isTrue);
       expect(entityTypeMatches('Speaker', 'Identity'), isTrue);
-      // Source keeps its own chip.
-      expect(entityTypeMatches('Source', 'Identity'), isFalse);
+      // Source is no longer a distinct stored type/chip — an is_source
+      // identity's node.type is "Identity" already, and a stale literal
+      // "Source" string must still match since there is no other chip left
+      // to select it with.
+      expect(entityTypeMatches('Source', 'Identity'), isTrue);
       expect(entityTypeMatches('Concept', 'Identity'), isFalse);
+    });
+  });
+
+  group('nodeIsSource', () {
+    test('true when the backend flag is set, regardless of type string', () {
+      expect(nodeIsSource({'type': 'Identity', 'is_source': true}), isTrue);
+      expect(nodeIsSource({'type': 'Identity', 'is_source': false}), isFalse);
+      expect(nodeIsSource({'type': 'Identity'}), isFalse);
+    });
+
+    test('falls back to the legacy literal "Source" type string', () {
+      // A stale cached payload from before is_source existed.
+      expect(nodeIsSource({'type': 'Source'}), isTrue);
+      expect(nodeIsSource({'type': 'media'}), isTrue);
     });
   });
 }

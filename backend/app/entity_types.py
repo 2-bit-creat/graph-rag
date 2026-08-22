@@ -22,25 +22,28 @@ def type_group_key(type_: str | None) -> str:
 
 # ─── Identity category (정체성 계층) ──────────────────────────────────────────
 # The graph's top conceptual tier is 정체성–진술–개념 (Identity–Statement–Concept).
-# There are exactly TWO stored identity types:
+# There is exactly ONE stored identity type, "Identity" — 외부 출처 귀속 head
+# (매체·기관·책·AI, formerly a distinct "Source" type) is now just an Identity
+# node with its `is_source` column set. Both still anchor SPOKE_OR_PUBLISHED and
+# both are valid 화자/speaker picks, but the flag keeps them in separate merge
+# buckets so a same-name Identity and Source never auto-merge — see
+# identity_merge_group / identity_types_compatible, which take the flag
+# directly rather than a type string.
 #
-#   - Identity : any named being/thing that recurs and accumulates statements —
-#                humans, pets, groups, companies-as-speakers. Resolved by
-#                name/alias, never forked into duplicate Concepts.
-#   - Source   : 외부 출처 귀속 head (매체·기관·책·AI). Anchors
-#                SPOKE_OR_PUBLISHED just like Identity, but stays a distinct
-#                category so a same-name Identity and Source never auto-merge.
-#
-# There is deliberately NO "Person" type and no is_human flag. "This identity is
-# a real person" is not a type — it is a bound speaker_profiles row. Voice
-# EMBEDDING binding is a per-confirmation user choice; most Identity nodes
-# (반려동물·단체) simply never get one, and Source nodes are refused one by the
-# automatic voice-linking path.
+# There is deliberately NO "Person" type and no is_human flag either. "This
+# identity is a real person" is not a type — it is a bound speaker_profiles
+# row. Voice EMBEDDING binding is a per-confirmation user choice; most Identity
+# nodes (반려동물·단체) simply never get one, and is_source nodes are refused
+# one by the automatic voice-linking path.
 #
 # Any identity in this category can be a segment's 화자 (speaker) — the
-# 화자/speaker picker spans Identity ∪ Source.
+# 화자/speaker picker spans plain Identity ∪ is_source Identity.
 
 IDENTITY_ENTITY_TYPE = "Identity"
+# No longer a value ever written to Node.type — kept only as a recognizable
+# legacy input token (old clients, stored graph_staging JSON, older DB rows
+# not yet touched by the db.py backfill) that is_source_like_type still has to
+# classify into the `is_source` flag.
 SOURCE_ENTITY_TYPE = "Source"
 
 _SOURCE_LIKE = frozenset({"source", "media", "publication", "출처"})
@@ -77,26 +80,41 @@ def is_identity_type(type_: str | None) -> bool:
     return key in _IDENTITY_LIKE or key in _SOURCE_LIKE
 
 
-def identity_merge_group(type_: str | None) -> str:
+def identity_merge_group(is_source: bool) -> str:
     """Merge bucket within the identity category: "source" or "identity".
 
     This is where "a same-name Identity and Source never auto-merge" lives. Two
     identity nodes merge (or dedupe in the speaker picker) only when they share
     a bucket.
     """
-    return "source" if is_source_like_type(type_) else "identity"
+    return "source" if is_source else "identity"
 
 
-def identity_types_compatible(a: str | None, b: str | None) -> bool:
-    """True when two identity types name the same kind of head."""
-    return identity_merge_group(a) == identity_merge_group(b)
+def identity_types_compatible(a_is_source: bool, b_is_source: bool) -> bool:
+    """True when two identity heads belong to the same merge bucket."""
+    return identity_merge_group(a_is_source) == identity_merge_group(b_is_source)
 
 
 def canonical_identity_type(type_: str | None) -> str:
-    """Map any identity-ish string onto a stored type: "Source" or "Identity".
+    """Map any identity-ish string onto the single stored identity type.
 
     The single conversion funnel shared by claim head resolution, reclassify,
-    update_node and the backfill — legacy "Person"/"Speaker"/"화자" all land on
-    "Identity" here.
+    update_node and the backfill — legacy "Person"/"Speaker"/"화자"/"Source"/
+    "media" all land on "Identity" here. The Identity/Source distinction is no
+    longer a type string — see resolve_is_source for the companion flag.
     """
-    return SOURCE_ENTITY_TYPE if is_source_like_type(type_) else IDENTITY_ENTITY_TYPE
+    return IDENTITY_ENTITY_TYPE
+
+
+def resolve_is_source(type_: str | None, *, default: bool = False) -> bool:
+    """Whether a raw type/label string names a Source-like head.
+
+    Companion to canonical_identity_type: call both when persisting a head
+    node's type and is_source flag from a raw string (extraction output, a
+    reclassify request, a legacy stored value). `default` lets a caller carry
+    forward an existing node's current flag when the raw string is empty/None
+    rather than silently clearing it.
+    """
+    if type_ is None or not str(type_).strip():
+        return default
+    return is_source_like_type(type_)

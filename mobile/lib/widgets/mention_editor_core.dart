@@ -9,8 +9,7 @@ import 'package:flutter/services.dart'
 import '../api/client.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
-import '../utils/graph_layout.dart'
-    show isSpeakerAssignableType, isNonSourceIdentityType;
+import '../utils/graph_layout.dart' show isSpeakerAssignableType, nodeIsSource;
 import '../utils/keep_keyboard_on_tap.dart';
 
 // 추출 품질이 급격히 떨어지는 지점 이전으로 캡 (백엔드 JournalTextEntryRequest와 동일).
@@ -983,7 +982,7 @@ class MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
         if (name.isEmpty || _isSelfMentionName(name) || !seen.add(name)) continue;
         out.add(SpeakerOption(
           name,
-          isSource: !isNonSourceIdentityType(type),
+          isSource: nodeIsSource(raw),
           weight: degree[raw['id']?.toString()] ?? 0,
         ));
       }

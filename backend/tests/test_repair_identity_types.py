@@ -33,16 +33,18 @@ async def test_legacy_types_are_retyped(db_session, iso_user):
     counts = await crud.repair_identity_types(db_session, iso_user.id)
     await db_session.commit()
 
-    assert counts["retyped"] == 2  # 제니, 마야 — Source is already canonical
-    types = {
-        n.name: n.type
+    assert counts["retyped"] == 3  # 제니, 마야, 뉴스 — Source retypes too now
+    nodes_by_name = {
+        n.name: n
         for n in await crud.get_all_nodes(db_session, iso_user.id)
         if n.deleted_at is None
     }
-    assert types["제니"] == "Identity"
-    assert types["마야"] == "Identity"
-    assert types["뉴스"] == "Source"      # Source survives the collapse
-    assert types["커피"] == "Concept"
+    assert nodes_by_name["제니"].type == "Identity"
+    assert nodes_by_name["마야"].type == "Identity"
+    # Source is a flag now, not a distinct type — it also collapses to Identity.
+    assert nodes_by_name["뉴스"].type == "Identity"
+    assert nodes_by_name["뉴스"].is_source is True
+    assert nodes_by_name["커피"].type == "Concept"
     await db_session.refresh(concept)
 
 
@@ -138,7 +140,7 @@ async def test_a_voiced_duplicate_wins_over_an_older_one(db_session, iso_user):
 
 @pytest.mark.asyncio
 async def test_same_name_identity_and_source_both_survive(db_session, iso_user):
-    """Different merge groups — the whole reason Source stayed a separate type."""
+    """Different merge groups — the whole reason is_source stays a separate bucket."""
     await crud.clear_user_knowledge_graph(db_session, iso_user.id)
     await _node(db_session, iso_user.id, "기업은행", "Person")
     await _node(db_session, iso_user.id, "기업은행", "Source")
@@ -148,12 +150,15 @@ async def test_same_name_identity_and_source_both_survive(db_session, iso_user):
     await db_session.commit()
 
     assert counts["merged"] == 0
-    types = sorted(
-        n.type
+    survivors = [
+        n
         for n in await crud.get_all_nodes(db_session, iso_user.id)
         if n.name == "기업은행" and n.deleted_at is None
-    )
-    assert types == ["Identity", "Source"]
+    ]
+    # Both store type="Identity" now — is_source is what used to be the
+    # distinct "Source" type string.
+    assert {n.type for n in survivors} == {"Identity"}
+    assert sorted(n.is_source for n in survivors) == [False, True]
 
 
 @pytest.mark.asyncio

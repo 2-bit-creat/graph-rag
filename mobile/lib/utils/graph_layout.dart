@@ -818,9 +818,11 @@ bool entityTypeMatches(String? nodeType, String filter) {
   if (nodeType == null) return false;
   final node = canonicalEntityType(nodeType).toLowerCase();
   final selected = canonicalEntityType(filter).toLowerCase();
-  // The Identity chip must also catch legacy rows on a graph that hasn't been
-  // through the Person→Identity backfill yet.
-  if (selected == 'identity') return isNonSourceIdentityType(nodeType);
+  // The Identity chip must also catch legacy rows (Person/Speaker/화자 — a
+  // graph that hasn't been through the backfill yet) AND is_source identities
+  // (no longer a distinct "Source" type/chip, but still literal "Source" on a
+  // stale cached payload) — there is no other chip left to select them with.
+  if (selected == 'identity') return isSpeakerAssignableType(nodeType);
   return node == selected;
 }
 
@@ -948,6 +950,13 @@ bool isSourceType(String? raw) {
 /// 책 아이콘으로 렌더된다. 레거시 철자(person/speaker/화자)도 여기 포함된다.
 bool isNonSourceIdentityType(String? raw) =>
     isSpeakerAssignableType(raw) && !isSourceType(raw);
+
+/// 노드 맵에서 출처 여부를 판정하는 짝 함수. 백엔드가 Source를 별도 type
+/// 문자열이 아니라 `is_source` 플래그로 보내기 시작한 뒤로는 이게 진짜
+/// 신호다 — [isSourceType]은 아직 새로고침 전인 캐시 페이로드의 레거시
+/// "Source" 타입 문자열을 잡아내는 대비책으로만 남는다.
+bool nodeIsSource(Map<dynamic, dynamic> node) =>
+    node['is_source'] == true || isSourceType(node['type']?.toString());
 
 /// 정체성 카테고리 전체 — Identity ∪ Source. 백엔드 `_IDENTITY_LIKE | _SOURCE_LIKE`.
 /// 레거시 철자를 포함하는 이유는 백필이 코드 배포와 동시가 아니기 때문 —

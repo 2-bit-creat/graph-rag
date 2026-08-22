@@ -2165,7 +2165,9 @@ class _KnowledgeGraphViewState extends State<KnowledgeGraphView>
     // Every legacy identity spelling (Person/Speaker/화자) folds into the one
     // Identity chip — on a graph that hasn't been through the backfill these
     // are the same category, and showing them separately reads as duplicates.
-    // Source keeps its own chip; it is a deliberately distinct identity.
+    // Source is no longer a distinct stored type either (it's the is_source
+    // flag now — see entity_types.py) so it folds in here too; the legend has
+    // no per-node is_source breakdown to give it a separate chip.
     var identityCount = 0;
     var sawIdentity = false;
     final result = <Map<String, dynamic>>[];
@@ -3413,7 +3415,7 @@ class _SelectionInfoCard extends StatelessWidget {
                       const SizedBox(width: 6),
                       Flexible(
                         child: Text(
-                          '${isNonSourceIdentityType(headNode['type']?.toString()) ? tr('kg.speakerLabel') : tr('kg.sourceLabel')}: ${headNode['name'] ?? '?'}',
+                          '${nodeIsSource(headNode) ? tr('kg.sourceLabel') : tr('kg.speakerLabel')}: ${headNode['name'] ?? '?'}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
