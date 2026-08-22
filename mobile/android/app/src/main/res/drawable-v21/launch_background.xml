@@ -7,7 +7,7 @@
      window was white and then flipped to the dark app. Pin it to the app's own
      background instead.
 
-     The hub mark is drawn on top so a cold start reads as Daylog starting
+     The hub mark is drawn on top so a cold start reads as Daynode starting
      rather than as an empty black window. (Android 12+ ignores this and builds
      its splash from the adaptive icon, which carries the same mark.) -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">

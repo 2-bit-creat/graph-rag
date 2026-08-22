@@ -1,4 +1,4 @@
-package com.example.graphrag_mobile
+package io.github.twobitcreat.daynode
 
 import io.flutter.embedding.android.FlutterActivity
 

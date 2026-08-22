@@ -119,7 +119,7 @@ async def send_test(
         session,
         user.id,
         {
-            "title": "Daylog",
+            "title": "Daynode",
             "body": "알림이 정상적으로 설정되었습니다.",
             "url": "/",
             "tag": "push-test",

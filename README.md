@@ -1,4 +1,4 @@
-# Daylog — GraphRAG Language Platform
+# Daynode — GraphRAG Language Platform
 
 Flutter (mobile/web) + FastAPI backend. Personalized daily English learning from Korean voice journals.
 

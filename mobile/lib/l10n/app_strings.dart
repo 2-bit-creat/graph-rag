@@ -83,7 +83,7 @@ String tr(String key, [Map<String, Object?>? args]) {
 
 const Map<String, String> _ko = {
   // App shell
-  'app.title': 'Daylog',
+  'app.title': 'Daynode',
   'shell.graphChat': '그래프 대화',
   'shell.roomsMenu': '채팅방 · 메뉴',
   'shell.collapseChat': '대화 패널 접기',
@@ -1451,7 +1451,7 @@ const Map<String, String> _ko = {
 };
 
 const Map<String, String> _en = {
-  'app.title': 'Daylog',
+  'app.title': 'Daynode',
   'shell.graphChat': 'Graph chat',
   'shell.roomsMenu': 'Rooms · Menu',
   'shell.collapseChat': 'Collapse chat panel',

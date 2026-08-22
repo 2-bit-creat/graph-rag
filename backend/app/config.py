@@ -170,7 +170,7 @@ class Settings(BaseSettings):
     vapid_public_key: str = ""
     vapid_private_key: str = ""
     # RFC 8292 requires a contact for the push service to reach on abuse.
-    vapid_subject: str = "mailto:support@daylog.app"
+    vapid_subject: str = "mailto:support@daynode.app"
 
     daily_limits_premium: dict[str, int] = {
         "quiz_gen": 200,

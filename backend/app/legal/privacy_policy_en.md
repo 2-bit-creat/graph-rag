@@ -3,7 +3,7 @@
 > **Draft.** Replace the `{{bracketed}}` fields with actual values and have this policy reviewed by a lawyer or privacy professional before launch.
 > Effective date: {{Effective date, e.g. 2026-08-01}}
 
-Daylog (the "Service") processes users' personal data as described below in accordance with South Korea's Personal Information Protection Act.
+Daynode (the "Service") processes users' personal data as described below in accordance with South Korea's Personal Information Protection Act.
 
 ## 1. Personal data we collect
 

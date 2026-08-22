@@ -21,14 +21,14 @@ self.addEventListener('push', (event) => {
     payload = {};
   }
 
-  const title = payload.title || 'Daylog';
+  const title = payload.title || 'Daynode';
   const options = {
     body: payload.body || '',
     icon: 'icons/Icon-192.png',
     badge: 'icons/Icon-192.png',
     // Same tag replaces the previous notification instead of stacking a new one
     // each night.
-    tag: payload.tag || 'daylog',
+    tag: payload.tag || 'daynode',
     data: { url: payload.url || '/' },
   };
 

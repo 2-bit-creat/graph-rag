@@ -1,4 +1,4 @@
-# Daylog — Flutter App
+# Daynode — Flutter App
 
 GraphRAG-based personalized daily English learning client.
 

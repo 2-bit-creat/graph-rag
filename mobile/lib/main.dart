@@ -48,7 +48,7 @@ class GraphRagApp extends StatelessWidget {
           [appThemeController, appLocaleController, accountController]),
       builder: (context, _) {
         return MaterialApp(
-          title: 'Daylog',
+          title: 'Daynode',
           debugShowCheckedModeBanner: false,
           theme: buildAppTheme(brightness: Brightness.light),
           darkTheme: buildAppTheme(brightness: Brightness.dark),
