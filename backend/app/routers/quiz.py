@@ -101,42 +101,6 @@ from ..workers.quiz_refill import refill_user_quizzes
 router = APIRouter(prefix="/quiz", tags=["quiz"])
 
 
-async def _pair_scrambles_with_compositions(
-    session: AsyncSession, user_id: uuid.UUID, quizzes: list[Quiz]
-) -> tuple[list[Quiz], dict[uuid.UUID, str]]:
-    """Expand a scramble session into ordered scramble → composition units.
-
-    The composition twin drills the *same* reviewed sentence, so it inherits
-    the scramble's synthesized clip instead of paying for a second identical
-    TTS render (compositions are never given their own audio).
-    """
-    ordered: list[Quiz] = []
-    inherited_audio: dict[uuid.UUID, str] = {}
-    for quiz in quizzes:
-        ordered.append(quiz)
-        if quiz.quiz_type != "scramble":
-            continue
-        unit_id = str((quiz.quiz_data or {}).get("learning_unit_id") or "")
-        if not unit_id:
-            continue
-        companion = await session.scalar(
-            select(Quiz).where(
-                Quiz.user_id == user_id,
-                Quiz.quiz_type == "composition",
-                Quiz.queue_kind.in_(("new", "review")),
-                Quiz.language == quiz.language,
-                Quiz.source_nodes == quiz.source_nodes,
-                Quiz.quiz_data["learning_unit_id"].astext == unit_id,
-            )
-        )
-        if companion is not None:
-            ordered.append(companion)
-            audio_url = _quiz_audio_url(quiz)
-            if audio_url and not _quiz_audio_url(companion):
-                inherited_audio[companion.id] = audio_url
-    return ordered, inherited_audio
-
-
 def _attempt_out(attempt: QuizAttempt) -> QuizAttemptOut:
     return QuizAttemptOut(
         id=attempt.id,
@@ -1342,7 +1306,6 @@ async def start_session(
     if payload.quiz_type == "word":
         payload = payload.model_copy(update={"quiz_type": "scramble"})
 
-    inherited_audio: dict[uuid.UUID, str] = {}
     quiz_type = validate_quiz_type(payload.quiz_type)
     if quiz_type not in ENABLED_QUIZ_TYPES:
         raise HTTPException(
@@ -1369,17 +1332,6 @@ async def start_session(
         )
         if archived_scrambles and not picked:
             await session.commit()
-        # Pairing only applies to the auto-built daily queue. An explicit
-        # quiz_ids selection (studying specific cards from a node) is a
-        # deliberate, scoped choice — silently appending each scramble's
-        # composition twin turned "study just this scramble" into "and then
-        # a composition card you never asked for" once the scramble was
-        # answered. Scramble and composition stay independent selections
-        # until pairing them is an explicit, opt-in feature.
-        if not payload.quiz_ids:
-            picked, inherited_audio = await _pair_scrambles_with_compositions(
-                session, user.id, list(picked)
-            )
     if picked:
         # The learner sees this first card immediately, so ensure its answer
         # clip before returning. Remaining legacy/failed-TTS cards are
@@ -1413,7 +1365,7 @@ async def start_session(
         )
     new_n = sum(1 for q in picked if q.queue_kind == "new")
     return QuizSessionOut(
-        items=[_quiz_out(q, audio_url=inherited_audio.get(q.id)) for q in picked],
+        items=[_quiz_out(q) for q in picked],
         quiz_type=quiz_type,
         new_count=new_n,
         review_count=len(picked) - new_n,

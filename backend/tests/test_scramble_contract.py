@@ -14,11 +14,7 @@ from app.quiz_bundle import (
 )
 from app.quiz_queue import grade_answer
 from app.quiz_types import ENABLED_QUIZ_TYPES, validate_quiz_type
-from app.routers.quiz import (
-    _pair_scrambles_with_compositions,
-    _quiz_out,
-    scramble_hint,
-)
+from app.routers.quiz import scramble_hint
 from app.schemas import ScrambleHintRequest
 
 
@@ -144,47 +140,6 @@ async def test_hint_reveals_a_prefix_and_never_the_whole_sentence(
     )
     assert greedy.ordered_prefix == payload["correct_order"][: first.max_hint_level]
     assert len(greedy.ordered_prefix) < len(payload["correct_order"])
-
-
-@pytest.mark.asyncio
-async def test_composition_twin_inherits_the_scramble_clip(
-    db_session: AsyncSession, iso_user: User
-) -> None:
-    """Both cards drill the same reviewed sentence — one clip serves both."""
-    unit_id = "node-1:0"
-    node_id = uuid.uuid4()
-    scramble = Quiz(
-        user_id=iso_user.id,
-        quiz_type="scramble",
-        language="korean",
-        queue_kind="new",
-        source_nodes=[node_id],
-        quiz_data={
-            "learning_unit_id": unit_id,
-            "audio_url": "/static/audio/clip.mp3",
-            "chunks": [],
-        },
-    )
-    composition = Quiz(
-        user_id=iso_user.id,
-        quiz_type="composition",
-        language="korean",
-        queue_kind="new",
-        source_nodes=[node_id],
-        quiz_data={"learning_unit_id": unit_id},
-    )
-    db_session.add_all([scramble, composition])
-    await db_session.flush()
-
-    ordered, inherited = await _pair_scrambles_with_compositions(
-        db_session, iso_user.id, [scramble]
-    )
-
-    assert [quiz.quiz_type for quiz in ordered] == ["scramble", "composition"]
-    assert inherited == {composition.id: "/static/audio/clip.mp3"}
-    assert _quiz_out(
-        composition, audio_url=inherited[composition.id]
-    ).audio_url == "/static/audio/clip.mp3"
 
 
 def test_a_documented_clause_missing_from_the_reference_is_a_release_failure():
@@ -372,17 +327,20 @@ def test_scramble_units_contract_reason_only_flags_real_word_loss():
 
 
 @pytest.mark.asyncio
-async def test_explicit_quiz_ids_session_does_not_inject_the_composition_twin(
+async def test_scramble_session_never_injects_a_composition_twin(
     db_session: AsyncSession, iso_user: User
 ) -> None:
-    """Studying a specific card from a node must stay exactly that card.
+    """Picking scramble mode must stay scramble-only, explicit pick or not.
 
-    Regression: selecting a single scramble quiz from a node's detail sheet
-    used to come back from /quiz/session with its composition twin silently
-    appended (start_session paired unconditionally for quiz_type=="scramble"),
-    so finishing the one scramble card the learner picked kept going into a
-    composition card they never selected. Pairing is still correct for the
-    auto-built daily queue — this only scopes it away from an explicit pick.
+    Regression #1: selecting a single scramble quiz from a node's detail
+    sheet used to come back from /quiz/session with its composition twin
+    silently appended.
+
+    Regression #2: start_session used to pair every scramble in the normal
+    auto-built queue (picking "scramble" mode from the study menu) with its
+    composition twin too — so "study just scramble" kept turning into a mix
+    of scramble and composition cards. Pairing is gone entirely now; the two
+    quiz types are independent selections.
     """
     from fastapi import BackgroundTasks
 
@@ -415,14 +373,21 @@ async def test_explicit_quiz_ids_session_does_not_inject_the_composition_twin(
     db_session.add_all([scramble, composition])
     await db_session.flush()
 
-    result = await start_session(
+    explicit = await start_session(
         QuizSessionRequest(quiz_type="scramble", quiz_ids=[scramble.id]),
         BackgroundTasks(),
         user=iso_user,
         session=db_session,
     )
+    assert [item.quiz_type for item in explicit.items] == ["scramble"]
 
-    assert [item.quiz_type for item in result.items] == ["scramble"]
+    auto_built = await start_session(
+        QuizSessionRequest(quiz_type="scramble"),
+        BackgroundTasks(),
+        user=iso_user,
+        session=db_session,
+    )
+    assert all(item.quiz_type == "scramble" for item in auto_built.items)
 
 
 def test_a_dropped_appositive_descriptor_is_exempt_from_the_clause_gate():
