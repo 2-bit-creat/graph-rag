@@ -85,10 +85,19 @@ iOS `CFBundleDisplayName` — 둘 다 현재 "Daynode"). 출시 후에도 자유
 구현은 끝났고 **값만 꽂으면 동작**합니다. 값이 없으면 버튼이 아예 안 뜨고
 `POST /auth/google`은 503을 반환하므로, 미설정 상태로 배포돼도 안전합니다.
 
-| 넣어야 할 값 | 어디에 |
+**프로덕션 값은 이미 커밋되어 있습니다.** 클라이언트 ID는 설계상 공개 값이라
+(웹 번들과 APK 안에 그대로 들어갑니다) 콘솔에 숨길 이유가 없고, 저장소에 두면
+배포 전 클릭 작업이 사라집니다. 클라이언트 **시크릿**은 이 흐름에서 쓰지 않으며
+어디에도 넣으면 안 됩니다.
+
+| 값 | 위치 |
 |---|---|
-| `GOOGLE_CLIENT_IDS` | 백엔드 환경변수(쉼표 구분). Secrets Manager / `template.yaml` |
-| `GOOGLE_WEB_CLIENT_ID` | 웹·앱 빌드의 `--dart-define` |
+| `DEFAULT_GOOGLE_WEB_CLIENT_ID` | `.github/workflows/ci-cd.yml` 최상단 `env:` — 웹 빌드와 SAM 파라미터 양쪽이 씀 |
+| `GoogleClientIds` | `samconfig.toml` (로컬 수동 배포용) / CI는 위 env에서 주입 |
+| 로컬 개발 | `backend/.env`의 `GOOGLE_CLIENT_IDS`, 앱 실행 시 `--dart-define=GOOGLE_WEB_CLIENT_ID` |
+
+`GOOGLE_WEB_CLIENT_ID` 저장소 Variable을 만들면 커밋된 기본값을 덮어씁니다
+(포크를 다른 Google 프로젝트로 향하게 할 때).
 
 **Google Cloud Console에서 만들 것**
 
