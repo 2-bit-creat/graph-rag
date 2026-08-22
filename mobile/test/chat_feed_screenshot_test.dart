@@ -250,6 +250,18 @@ void main() {
     await tester.tap(find.byIcon(Icons.add_circle_outline_rounded));
     await tester.pump();
 
+    // The menu is two levels: the root offers groups, and the journal actions
+    // live inside "Write a journal". The widest label sits at that second
+    // level, so opening the group is what actually puts the layout under test.
+    final group = find.text('Write a journal');
+    expect(group, findsOneWidget);
+    final groupRect = tester.getRect(group);
+    expect(groupRect.left, greaterThanOrEqualTo(0));
+    expect(groupRect.right, lessThanOrEqualTo(320));
+
+    await tester.tap(group);
+    await tester.pump();
+
     final action = find.text('Turn this chat into a journal');
     expect(action, findsOneWidget);
     final rect = tester.getRect(action);

@@ -23,8 +23,26 @@ void main() {
         names.toList()..sort((a, b) => b.length.compareTo(a.length)),
       );
       expect(hits.length, 2);
-      expect(toLabeledLines(splitByMentions(text, hits)),
+      expect(toLabeledLines(splitByMentions(text, hits, '나')),
           '[나]: 첫 발언\n[부부장님]: 두 번째 발언');
+    });
+
+    // The text before the first @mention carries no label of its own, so it
+    // is attributed to the writer, and that third argument is the writer's
+    // name ('Me' in English). Nothing exercised it, which is how a signature
+    // change reached main leaving this file uncompilable.
+    test('text before the first mention belongs to the writer', () {
+      const text = '회의 시작 전 메모\n@부부장님: 산업별로 나누면 설문이 폭증해';
+      final hits = findMentions(text, ['부부장님']);
+      expect(hits.length, 1);
+      expect(
+        toLabeledLines(splitByMentions(text, hits, '나')),
+        '[나]: 회의 시작 전 메모\n[부부장님]: 산업별로 나누면 설문이 폭증해',
+      );
+      expect(
+        toLabeledLines(splitByMentions(text, hits, 'Me')),
+        '[Me]: 회의 시작 전 메모\n[부부장님]: 산업별로 나누면 설문이 폭증해',
+      );
     });
   });
 
