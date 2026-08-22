@@ -45,24 +45,25 @@ String? resolveMediaUrl(String? path) {
   return '$base$rel';
 }
 
-/// OAuth client ids for Google sign-in.
+/// The Google OAuth **web** client id, used on every platform.
 ///
-/// Google issues a SEPARATE client id per platform and the app must present the
-/// one that matches how it was built, so these are injected per build rather
-/// than hardcoded:
+/// Web passes it as `clientId`. Android passes the same value as
+/// `serverClientId`, because Credential Manager mints the ID token against
+/// that id — the Android OAuth client (registered by package name + signing
+/// SHA-1) has to exist for the flow to appear, but never shows up as the
+/// token's audience. So the backend allowlist holds this one id, not two.
+///
+/// Injected per build rather than hardcoded, since a debug build and a store
+/// build can legitimately point at different Google projects:
 ///
 ///   --dart-define=GOOGLE_WEB_CLIENT_ID=...apps.googleusercontent.com
 ///
-/// It is empty by default, and `googleSignInAvailable` is false on web then, so a
-/// build that has not been given them simply does not offer the button instead
-/// of failing at tap time. The backend independently refuses `/auth/google`
-/// with 503 unless the same ids are configured there.
+/// This is not a secret. A client id is public by design and ships inside the
+/// APK and the web bundle either way; the client SECRET is what must never
+/// appear here, and this flow does not use one.
+///
+/// Empty is a supported state: `GoogleSignInService.isConfigured` is false, so
+/// the button is not offered at all rather than failing on tap. The backend
+/// independently refuses `/auth/google` with 503 unless it has the same id.
 const String googleWebClientId =
     String.fromEnvironment('GOOGLE_WEB_CLIENT_ID', defaultValue: '');
-
-/// Android reads its client id from the OAuth client registered against the
-/// package name + signing SHA-1, not from a define, so this stays empty there.
-/// On web the SDK needs it explicitly, and it doubles as the `serverClientId`
-/// used to request an ID token whose audience the backend accepts.
-bool get googleSignInAvailable =>
-    !kIsWeb || googleWebClientId.isNotEmpty;

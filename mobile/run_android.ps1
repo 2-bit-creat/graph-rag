@@ -1,7 +1,12 @@
 # Physical Android dev launcher (wireless or USB).
 param(
     [Parameter(Mandatory = $true)]
-    [string]$ApiBaseUrl
+    [string]$ApiBaseUrl,
+
+    # Google OAuth *web* client id. Android passes it as serverClientId, so it
+    # is the same value the backend lists in GOOGLE_CLIENT_IDS. Omit it and the
+    # app simply does not show the Google button — handle sign-in still works.
+    [string]$GoogleWebClientId = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -125,7 +130,15 @@ try {
     }
 
     Write-Host "[run_android] flutter device: $flutterDevice" -ForegroundColor Cyan
-    flutter run -d $flutterDevice --dart-define=API_BASE_URL=$ApiBaseUrl
+    $defines = @("--dart-define=API_BASE_URL=$ApiBaseUrl")
+    if ($GoogleWebClientId) {
+        $defines += "--dart-define=GOOGLE_WEB_CLIENT_ID=$GoogleWebClientId"
+        Write-Host "[run_android] Google sign-in: enabled" -ForegroundColor Cyan
+    }
+    else {
+        Write-Host "[run_android] Google sign-in: off (no -GoogleWebClientId)" -ForegroundColor DarkGray
+    }
+    flutter run -d $flutterDevice @defines
     if ($LASTEXITCODE -ne 0) { throw "flutter run failed (exit $LASTEXITCODE)" }
 }
 catch {
