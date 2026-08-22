@@ -60,6 +60,10 @@ class _AccountEntryScreenState extends State<AccountEntryScreen> {
           unawaited(_exchangeGoogleToken(token));
         },
         onError: (Object e) {
+          // Same reason as the data callback: a button-driven sign-in already
+          // reports its own failure, and without this guard the stream's copy
+          // overwrites it.
+          if (_googleBusy) return;
           if (mounted) setState(() => _error = _clean(e));
         },
       );
@@ -120,7 +124,25 @@ class _AccountEntryScreenState extends State<AccountEntryScreen> {
 
   bool _googleBusy = false;
 
-  String _clean(Object e) => e.toString().replaceFirst('Exception: ', '');
+  String _clean(Object e) {
+    // The Google SDK's exception text is for developers, not users — it names
+    // enum values and internal reasons. GoogleSignInService reduces it to a
+    // cause; this turns that cause into the one sentence worth showing.
+    if (e is GoogleSignInFailure) {
+      switch (e.problem) {
+        case GoogleSignInProblem.noGoogleAccountOnDevice:
+          return tr('account.googleNoAccount');
+        case GoogleSignInProblem.misconfigured:
+          return tr('account.googleMisconfigured');
+        case GoogleSignInProblem.interrupted:
+          return tr('account.googleInterrupted');
+        case GoogleSignInProblem.noToken:
+        case GoogleSignInProblem.unknown:
+          return tr('account.googleFailed');
+      }
+    }
+    return e.toString().replaceFirst('Exception: ', '');
+  }
 
   /// Start the Google flow from our own button (native platforms). On web the
   /// SDK's rendered button drives this instead and the token arrives on the
@@ -352,7 +374,10 @@ class _AccountEntryScreenState extends State<AccountEntryScreen> {
               // the button is an HTML element view with no intrinsic size.
               SizedBox(
                 height: 44,
-                child: googleRenderedButton() ?? const SizedBox.shrink(),
+                child: googleRenderedButton(
+                      dark: Theme.of(context).brightness == Brightness.dark,
+                    ) ??
+                    const SizedBox.shrink(),
               ),
             const SizedBox(height: AppSpacing.md),
             _OrDivider(label: tr('account.orDivider')),

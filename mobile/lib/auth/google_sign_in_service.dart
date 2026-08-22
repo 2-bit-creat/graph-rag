@@ -57,7 +57,15 @@ class GoogleSignInService {
         final token = event.user.authentication.idToken;
         if (token != null && token.isNotEmpty) _idTokens.add(token);
       },
-      onError: (Object error) => _idTokens.addError(error),
+      // authenticate() reports a failure BOTH by throwing and by putting the
+      // raw exception on this stream, so the classification has to happen here
+      // too — otherwise the stream path races the thrown one and wins, and the
+      // UI shows Google's developer-facing text after all.
+      onError: (Object error) => _idTokens.addError(
+        error is GoogleSignInException
+            ? GoogleSignInFailure(_classify(error))
+            : error,
+      ),
     );
   }
 
@@ -72,12 +80,40 @@ class GoogleSignInService {
       final account = await GoogleSignIn.instance.authenticate();
       final token = account.authentication.idToken;
       if (token == null || token.isEmpty) {
-        throw StateError('Google returned no ID token');
+        throw const GoogleSignInFailure(GoogleSignInProblem.noToken);
       }
       return token;
     } on GoogleSignInException catch (e) {
       if (e.code == GoogleSignInExceptionCode.canceled) return null;
-      rethrow;
+      throw GoogleSignInFailure(_classify(e));
+    }
+  }
+
+  /// Turn the SDK's exception into something the UI can phrase for a person.
+  ///
+  /// The raw exception is developer text — "GoogleSignInException(code
+  /// GoogleSignInExceptionCode.unknownError, No credential available: ...)" —
+  /// and showing it verbatim tells the user nothing they can act on.
+  ///
+  /// The awkward case is a device with no Google account: Android reports it as
+  /// `unknownError` with "No credential available" in the description, so the
+  /// only way to distinguish it from a genuine fault is that string. It is
+  /// worth doing, because the fix ("add a Google account") is entirely in the
+  /// user's hands and is otherwise unguessable.
+  static GoogleSignInProblem _classify(GoogleSignInException e) {
+    final description = (e.description ?? '').toLowerCase();
+    if (description.contains('no credential')) {
+      return GoogleSignInProblem.noGoogleAccountOnDevice;
+    }
+    switch (e.code) {
+      case GoogleSignInExceptionCode.clientConfigurationError:
+      case GoogleSignInExceptionCode.providerConfigurationError:
+        return GoogleSignInProblem.misconfigured;
+      case GoogleSignInExceptionCode.interrupted:
+      case GoogleSignInExceptionCode.uiUnavailable:
+        return GoogleSignInProblem.interrupted;
+      default:
+        return GoogleSignInProblem.unknown;
     }
   }
 
@@ -92,4 +128,31 @@ class GoogleSignInService {
       // Best effort: our own session is already gone either way.
     }
   }
+}
+
+/// Why a Google sign-in attempt did not produce a token.
+enum GoogleSignInProblem {
+  /// The device has no Google account at all. Common on a fresh emulator.
+  noGoogleAccountOnDevice,
+
+  /// The OAuth client does not match this build — wrong package name, or a
+  /// signing certificate whose SHA-1 is not registered. Note that a release
+  /// build signed by Play uses a DIFFERENT certificate than the upload key, so
+  /// both fingerprints have to be registered.
+  misconfigured,
+
+  /// Something took the flow away before it finished.
+  interrupted,
+
+  /// Google reported success but handed back no ID token.
+  noToken,
+
+  unknown,
+}
+
+/// A sign-in failure already reduced to a cause the UI can phrase.
+class GoogleSignInFailure implements Exception {
+  const GoogleSignInFailure(this.problem);
+
+  final GoogleSignInProblem problem;
 }
